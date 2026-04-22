@@ -6,6 +6,24 @@
 
 ---
 
+## Testing
+
+Three test layers:
+
+| Layer | Command | What it covers |
+|---|---|---|
+| Unit | `npm test` | Vitest unit tests |
+| E2E — API | `npm run test:e2e` | 28 Playwright API-level tests (`e2e/api.spec.ts`) |
+| E2E — UI | `npm run test:e2e` | 13 Playwright browser tests (`e2e/features.spec.ts`) |
+
+E2E tests run against a production preview build (`npm run build && npm run preview` on port 4173). Tests run serially (`workers: 1`) because they share a single SQLite database and each `beforeEach` clears state.
+
+E2E API coverage: Entities CRUD, Relationships CRUD, Canvas Positions upsert — all valid types, error cases (400/404), and ordering.
+
+E2E feature coverage: Wiki (create/edit/preview/search), Timeline (create acts & events, expand rows), World Map (create locations, linked entity chips).
+
+---
+
 
 ## Skill routing
 

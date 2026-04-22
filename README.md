@@ -1,42 +1,59 @@
-# sv
+# Betwixt and Between
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+A world-building tool for fiction writers — manage characters, locations, events, and notes in a floating-window desktop-style interface.
 
-## Creating a project
+## Tech stack
 
-If you're seeing this, you've probably already done this step. Congrats!
-
-```sh
-# create a new project
-npx sv create my-app
-```
-
-To recreate this project with the same configuration:
-
-```sh
-# recreate this project
-npx sv@0.15.1 create --template minimal --types ts --install npm .
-```
+- [SvelteKit](https://kit.svelte.dev/) + TypeScript
+- [Drizzle ORM](https://orm.drizzle.team/) + SQLite (via `better-sqlite3`)
+- [tldraw](https://tldraw.dev/) for the Story Graph canvas
+- [marked](https://marked.js.org/) for Wiki markdown preview
 
 ## Developing
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
 ```sh
+npm install
 npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
 ```
 
 ## Building
 
-To create a production version of your app:
-
 ```sh
 npm run build
+npm run preview   # preview the production build on port 4173
 ```
 
-You can preview the production build with `npm run preview`.
+## Database
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+```sh
+npm run db:push      # push schema changes to the local SQLite file
+npm run db:studio    # open Drizzle Studio
+```
+
+## Testing
+
+Three test layers:
+
+| Layer | Command | What it covers |
+|---|---|---|
+| Unit | `npm test` | Vitest unit tests |
+| E2E — API | `npm run test:e2e` | 28 Playwright API-level tests |
+| E2E — UI | `npm run test:e2e` | 13 Playwright browser tests |
+
+E2E tests spin up a production preview server (`npm run build && npm run preview`) and run serially (`workers: 1`) because all tests share a single SQLite database.
+
+```sh
+# install Playwright browsers once
+npx playwright install firefox
+
+# run all E2E tests
+npm run test:e2e
+```
+
+E2E API coverage: Entities CRUD, Relationships CRUD, Canvas Positions upsert — all valid types, error cases (400/404), and insertion ordering.
+
+E2E feature coverage: Wiki (create/edit/preview/search), Timeline (acts & events, expand rows), World Map (locations, linked entity chips).
+
+## Deploying
+
+Install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment before deploying.
