@@ -145,7 +145,7 @@ EntityLink chip pattern:
   - `Ctrl+K` — reserved for future command palette (no-op for now, don't let browser default handle it)
 - [x] **Focus rings:** All interactive elements (chips, buttons, window controls) must have a visible focus ring using `outline: 2px solid var(--color-accent)` — never `outline: none` without a replacement.
 - [x] **First-open / empty state:** Clean dark desktop with app icons in the dock. No windows open on fresh launch. A one-time tutorial overlay identifies each dock icon with a label + one-line description (e.g. "Characters — manage your cast", "Story Graph — see how they connect"). Overlay is dismissible and never shows again after first close. The empty desktop itself shows a subtle centered line: "Your story starts here." (disappears once the first entity is created). This preserves the OS aesthetic while orienting new users.
-- [ ] Playwright tests:
+- [x] Playwright tests:
   - Open window → appears on screen
   - Click taskbar button → window comes to front (z-index check)
   - Drag window → position updates
@@ -223,7 +223,7 @@ Every window is a wiki page. Connections are primary, fields are secondary.
 ## Testing Checklist
 
 - [x] Vitest: all data layer tests pass (`npm run test`)
-- [ ] Playwright: window manager E2E tests pass (`npx playwright test`)
+- [x] Playwright: window manager E2E tests pass (`npx playwright test`)
 - [ ] Manual: open app, create character in <30 seconds
 - [ ] Manual: click character node in graph → opens same character in Character Editor
 - [ ] Manual: add event → appears as node option in graph
