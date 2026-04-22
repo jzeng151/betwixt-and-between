@@ -47,7 +47,7 @@
     bare={win.appId === 'story-graph'}
   >
     {#if win.appId === 'character-editor'}
-      <CharacterEditor entityId={win.entityId} />
+      <CharacterEditor winId={win.id} entityId={win.entityId} />
     {:else if win.appId === 'wiki'}
       <Wiki entityId={win.entityId} />
     {:else if win.appId === 'timeline'}

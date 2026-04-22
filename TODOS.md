@@ -224,10 +224,10 @@ Every window is a wiki page. Connections are primary, fields are secondary.
 
 - [x] Vitest: all data layer tests pass (`npm run test`)
 - [x] Playwright: window manager E2E tests pass (`npx playwright test`)
-- [ ] Manual: open app, create character in <30 seconds
-- [ ] Manual: click character node in graph → opens same character in Character Editor
-- [ ] Manual: add event → appears as node option in graph
-- [ ] Manual: rename character in editor → graph node label updates in same tick
+- [x] Manual: open app, create character in <30 seconds
+- [x] Manual: click character node in graph → opens same character in Character Editor
+- [x] Manual: add event → appears as node option in graph
+- [x] Manual: rename character in editor → graph node label updates in same tick
 
 ---
 

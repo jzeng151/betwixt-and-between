@@ -101,6 +101,10 @@ function createWindowStore() {
 		update((all) => all.map((w) => (w.id === id ? { ...w, width, height } : w)));
 	}
 
+	function setEntityId(id: string, entityId: string) {
+		update((all) => all.map((w) => (w.id === id ? { ...w, entityId } : w)));
+	}
+
 	function focusedWindow(): WindowState | undefined {
 		const all = get({ subscribe });
 		return all.reduce<WindowState | undefined>(
@@ -134,6 +138,7 @@ function createWindowStore() {
 		minimize,
 		move,
 		resize,
+		setEntityId,
 		focusedWindow,
 		cycleForward,
 		cycleBackward

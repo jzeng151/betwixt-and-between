@@ -1,11 +1,35 @@
 <script lang="ts">
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
+  import { windowStore } from '$lib/stores/windows.js';
   import EntityLink from '$lib/components/EntityLink.svelte';
   import type { RelationshipType } from '$lib/server/db/schema.js';
 
-  interface Props { entityId: string | null; }
-  let { entityId }: Props = $props();
+  interface Props { winId: string; entityId: string | null; }
+  let { winId, entityId }: Props = $props();
+
+  // When opened from the dock with no entity, track local creation
+  let newName = $state('');
+  let creating = $state(false);
+  let createError = $state('');
+
+  async function createCharacter() {
+    if (!newName.trim()) return;
+    creating = true;
+    createError = '';
+    try {
+      const created = await entities.createEntity('Character', newName.trim());
+      windowStore.setEntityId(winId, created.id);
+    } catch {
+      createError = "Couldn't create character. Try again.";
+    } finally {
+      creating = false;
+    }
+  }
+
+  function handleCreateKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') createCharacter();
+  }
 
   const entity = $derived($entities.find((e) => e.id === entityId));
 
@@ -50,8 +74,24 @@
   }
 </script>
 
-{#if !entity}
-  <p class="muted center">Entity not found.</p>
+{#if !entityId}
+  <div class="create-state">
+    <p class="create-heading">New Character</p>
+    <!-- svelte-ignore a11y_autofocus -->
+    <input
+      class="field-input"
+      placeholder="Character name…"
+      bind:value={newName}
+      onkeydown={handleCreateKeydown}
+      autofocus
+    />
+    {#if createError}<p class="save-error">{createError}</p>{/if}
+    <button class="create-btn" onclick={createCharacter} disabled={creating || !newName.trim()}>
+      {creating ? 'Creating…' : 'Create Character'}
+    </button>
+  </div>
+{:else if !entity}
+  <p class="muted center">Loading…</p>
 {:else}
   <div class="char-editor">
     <div class="header">
@@ -206,6 +246,36 @@
     color: var(--color-rel-rival);
     font-size: 11px;
   }
+
+  .create-state {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px 0;
+  }
+
+  .create-heading {
+    font-family: var(--font-display);
+    font-size: 16px;
+    color: var(--color-text);
+  }
+
+  .create-btn {
+    background: var(--color-accent);
+    border: none;
+    border-radius: 6px;
+    color: var(--color-surface);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: opacity 0.12s;
+    align-self: flex-start;
+  }
+
+  .create-btn:hover { opacity: 0.85; }
+  .create-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .muted {
     color: var(--color-text-muted);

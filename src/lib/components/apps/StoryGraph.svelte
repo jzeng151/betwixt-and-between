@@ -4,6 +4,7 @@
   import { get } from 'svelte/store';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
+  import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
 
   type CanvasPos = { entityId: string; x: number; y: number; width: number; height: number };
@@ -268,6 +269,19 @@
 
       reactRoot = createRoot(container);
       reactRoot.render(React.createElement(TldrawApp));
+
+      // Double-click entity node → open its window
+      container.addEventListener('dblclick', (e) => {
+        if (!editor) return;
+        const rect = container.getBoundingClientRect();
+        const pagePoint = editor.screenToPage({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+        const shape = editor.getShapeAtPoint(pagePoint, { hitInside: true, margin: 4 });
+        if (!shape) return;
+        const entityId = entityIdFromShapeId(shape.id as string);
+        if (!entityId) return;
+        e.stopPropagation();
+        openEntity(entityId);
+      });
 
       // Sync entity changes to tldraw
       const unsubEntities = entities.subscribe((ents) => {
