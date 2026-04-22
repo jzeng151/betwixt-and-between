@@ -187,9 +187,9 @@ Every window is a wiki page. Connections are primary, fields are secondary.
 ### 7. Wiki / Notes
 
 - [x] `src/lib/components/apps/Wiki.svelte` — opens focused on a `Note` entity (receives `focusEntityId`)
-- [ ] Markdown editor for note body (`marked` for rendering)
-- [ ] **Linked entities panel**: entities tagged in this note → click any → `openEntity(id)`
-- [ ] Search bar across all note content
+- [x] Markdown editor for note body (`marked` for rendering)
+- [x] **Linked entities panel**: entities tagged in this note → click any → `openEntity(id)`
+- [x] Search bar across all note content
 - [x] Sidebar: all notes list, click to navigate within the Wiki window
 
 ### 8. Timeline
