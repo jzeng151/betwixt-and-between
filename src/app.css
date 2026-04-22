@@ -1,0 +1,101 @@
+:root {
+  /* Surfaces */
+  --color-desktop:    #0d0f14;
+  --color-surface:    #161920;
+  --color-surface-2:  #1c1f28;
+  --color-border:     #2a2d35;
+
+  /* Text */
+  --color-text:       #e8e0d0;
+  --color-text-muted: #6b7280;
+
+  /* Accent */
+  --color-accent:     #c8942a;
+
+  /* Relationship type colors */
+  --color-rel-arc:    #c8942a;
+  --color-rel-ally:   #2dd4bf;
+  --color-rel-rival:  #ef4444;
+  --color-rel-mentor: #818cf8;
+  --color-rel-family: #86efac;
+  --color-rel-loc:    #818cf8;
+  --color-rel-event:  #94a3b8;
+  --color-rel-other:  #94a3b8;
+
+  /* Typography */
+  --font-ui:      'Inter', 'Segoe UI', sans-serif;
+  --font-display: 'Fraunces', Georgia, serif;
+
+  /* Window chrome */
+  --window-radius:   8px;
+  --window-shadow:   0 20px 60px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(255,255,255,0.04);
+  --titlebar-height: 36px;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text);
+  background: var(--color-desktop);
+  overflow: hidden;
+}
+
+button {
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* EntityLink chip */
+.entity-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 400;
+  background: color-mix(in srgb, var(--chip-color) 13%, transparent);
+  color: var(--chip-color);
+  border: 1px solid color-mix(in srgb, var(--chip-color) 33%, transparent);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-decoration: none;
+}
+
+.entity-chip:hover {
+  background: color-mix(in srgb, var(--chip-color) 22%, transparent);
+}
+
+.entity-chip:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.entity-chip-add {
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px dashed var(--color-border);
+  --chip-color: var(--color-text-muted);
+}
+
+/* Too small lockout */
+@media (max-width: 1279px) {
+  .app-shell {
+    display: none;
+  }
+  .too-small {
+    display: flex !important;
+  }
+}
