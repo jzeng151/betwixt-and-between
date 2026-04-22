@@ -10,10 +10,11 @@
     height: number;
     zIndex: number;
     minimized: boolean;
+    bare?: boolean;
     children?: import('svelte').Snippet;
   }
 
-  let { id, title, x, y, width, height, zIndex, minimized, children }: Props = $props();
+  let { id, title, x, y, width, height, zIndex, minimized, bare = false, children }: Props = $props();
 
   let dragging = false;
   let dragOffsetX = 0;
@@ -88,7 +89,7 @@
       </div>
       <span class="win-title">{title}</span>
     </div>
-    <div class="win-content">
+    <div class="win-content" class:bare>
       {@render children?.()}
     </div>
     <div class="resize-handle" onmousedown={onResizeMousedown} role="presentation"></div>
@@ -161,6 +162,12 @@
     flex: 1;
     overflow: auto;
     padding: 16px;
+    position: relative;
+  }
+
+  .win-content.bare {
+    padding: 0;
+    overflow: hidden;
   }
 
   .resize-handle {

@@ -157,14 +157,14 @@ EntityLink chip pattern:
 
 ### 5. tldraw Integration
 
-- [ ] Install tldraw: `npm install tldraw`
-- [ ] `src/lib/components/apps/StoryGraph.svelte` — tldraw canvas inside a Window
-- [ ] On window open: fetch entities + canvas_positions from API, build tldraw snapshot, call `editor.store.loadSnapshot(snapshot)`
-- [ ] On node move (tldraw interaction): write new x/y to `/api/canvas-positions`
-- [ ] On edge create (tldraw interaction): animate edge into place, then immediately show an inline relationship mini-form overlaid on the edge midpoint — type dropdown (allies/rivals/mentor/family/caused_by/located_at/appears_in) + optional label text field + Save/Cancel. On Save: write relationship to `/api/relationships` with type + label, update edge label in tldraw. On Cancel: delete the edge. This is the core 'aha moment' interaction — the connection becomes semantically meaningful in the same gesture it's drawn.
-- [ ] Subscribe to `$entities` store: on change, call `editor.updateShapes([...])` for modified entities
-- [ ] On entity delete: remove shape from tldraw on next render (handled by store subscription)
-- [ ] Pin tldraw version in `package.json` — do not upgrade without re-testing `loadSnapshot()`
+- [x] Install tldraw: `npm install tldraw`
+- [x] `src/lib/components/apps/StoryGraph.svelte` — tldraw canvas inside a Window
+- [x] On window open: fetch entities + canvas_positions from API, build tldraw snapshot, call `editor.store.loadSnapshot(snapshot)`
+- [x] On node move (tldraw interaction): write new x/y to `/api/canvas-positions`
+- [x] On edge create (tldraw interaction): animate edge into place, then immediately show an inline relationship mini-form overlaid on the edge midpoint — type dropdown (allies/rivals/mentor/family/caused_by/located_at/appears_in) + optional label text field + Save/Cancel. On Save: write relationship to `/api/relationships` with type + label, update edge label in tldraw. On Cancel: delete the edge. This is the core 'aha moment' interaction — the connection becomes semantically meaningful in the same gesture it's drawn.
+- [x] Subscribe to `$entities` store: on change, call `editor.updateShapes([...])` for modified entities
+- [x] On entity delete: remove shape from tldraw on next render (handled by store subscription)
+- [x] Pin tldraw version in `package.json` — do not upgrade without re-testing `loadSnapshot()`
 
 ---
 

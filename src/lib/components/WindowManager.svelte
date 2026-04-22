@@ -44,6 +44,7 @@
     height={win.height}
     zIndex={win.zIndex}
     minimized={win.minimized}
+    bare={win.appId === 'story-graph'}
   >
     {#if win.appId === 'character-editor'}
       <CharacterEditor entityId={win.entityId} />
