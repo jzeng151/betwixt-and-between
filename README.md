@@ -1,59 +1,30 @@
 # Betwixt and Between
 
-A world-building tool for fiction writers — manage characters, locations, events, and notes in a floating-window desktop-style interface.
+A visual worldbuilding OS for fiction writers. Manage characters, locations, events, acts, scenes, and notes in a floating-window desktop interface — where every entity is hyperlinked to every other.
 
-## Tech stack
+Click a character in the Story Graph and their wiki page opens. Click a location in the Timeline and the World Map zooms to it. There are no dead ends.
 
-- [SvelteKit](https://kit.svelte.dev/) + TypeScript
-- [Drizzle ORM](https://orm.drizzle.team/) + SQLite (via `better-sqlite3`)
-- [tldraw](https://tldraw.dev/) for the Story Graph canvas
-- [marked](https://marked.js.org/) for Wiki markdown preview
+**Who it's for:** Writers whose mental model is relational, not linear — fantasy and sci-fi worldbuilders, tabletop RPG designers, anyone who finds Scrivener's outlines hostile to how they actually think.
 
-## Developing
+## Features
+
+| Feature | What it does |
+|---|---|
+| **Story Graph** | Visual relationship map — characters, locations, events as nodes with typed edges (`allied_with`, `rivals`, `appears_in`, `caused_by`, etc.). |
+| **Wiki** | Markdown notes for any entity. Full preview, inline search, linked entity chips. |
+| **Timeline** | Acts, scenes, and events on a scrollable timeline. Expand rows to see nested detail. |
+| **World Map** | Location cards with linked character and event chips. |
+| **Window manager** | Every entity opens in its own floating window. Multiple windows of the same type stay open simultaneously. Taskbar groups them. |
+
+## Running locally
+
+**Prerequisites:** Node.js 18+, npm
 
 ```sh
 npm install
+cp .env.example .env
+npm run db:migrate
 npm run dev
 ```
 
-## Building
-
-```sh
-npm run build
-npm run preview   # preview the production build on port 4173
-```
-
-## Database
-
-```sh
-npm run db:push      # push schema changes to the local SQLite file
-npm run db:studio    # open Drizzle Studio
-```
-
-## Testing
-
-Three test layers:
-
-| Layer | Command | What it covers |
-|---|---|---|
-| Unit | `npm test` | Vitest unit tests |
-| E2E — API | `npm run test:e2e` | 28 Playwright API-level tests |
-| E2E — UI | `npm run test:e2e` | 13 Playwright browser tests |
-
-E2E tests spin up a production preview server (`npm run build && npm run preview`) and run serially (`workers: 1`) because all tests share a single SQLite database.
-
-```sh
-# install Playwright browsers once
-npx playwright install firefox
-
-# run all E2E tests
-npm run test:e2e
-```
-
-E2E API coverage: Entities CRUD, Relationships CRUD, Canvas Positions upsert — all valid types, error cases (400/404), and insertion ordering.
-
-E2E feature coverage: Wiki (create/edit/preview/search), Timeline (acts & events, expand rows), World Map (locations, linked entity chips).
-
-## Deploying
-
-Install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment before deploying.
+Open [http://localhost:5173](http://localhost:5173).
