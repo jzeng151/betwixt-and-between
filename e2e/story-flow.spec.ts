@@ -1,89 +1,65 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
+async function clearEntities(request: APIRequestContext) {
+	const ents: Array<{ id: string }> = await (await request.get('/api/entities')).json();
+	await Promise.all(ents.map((e) => request.delete(`/api/entities/${e.id}`)));
+}
+
 test.describe('Story flow', () => {
-	test.beforeEach(async ({ page }) => {
-		await page.addInitScript(() => {
-			localStorage.setItem('tutorial-dismissed', 'true');
-		});
-		// Reset DB between tests via the API (delete all entities)
+	test.beforeEach(async ({ page, request }) => {
+		await clearEntities(request);
+		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 		await page.goto('/');
-		await page.evaluate(async () => {
-			const res = await fetch('/api/entities');
-			const ents: Array<{ id: string }> = await res.json();
-			await Promise.all(ents.map((e) => fetch(`/api/entities/${e.id}`, { method: 'DELETE' })));
-		});
 	});
 
 	test('create a character in under 30 seconds', async ({ page }) => {
 		const start = Date.now();
 
-		// Open Characters from dock
 		await page.click('button[title="Characters"]');
-		const charWin = page.locator('.window[aria-label="Character"]');
-		await expect(charWin).toBeVisible();
+		const listWin = page.locator('.window[aria-label="Characters"]');
+		await expect(listWin).toBeVisible();
 
-		// Creation form should appear since no entityId
-		const nameInput = charWin.locator('input[placeholder="Character name…"]');
+		const nameInput = listWin.locator('input[placeholder="Character name…"]');
 		await expect(nameInput).toBeVisible();
-
-		// Type a name and submit
 		await nameInput.fill('Elara Voss');
 		await nameInput.press('Enter');
 
-		// Editor should now show the entity name
-		await expect(charWin.locator('.entity-name')).toHaveText('Elara Voss', { timeout: 5000 });
+		// Creation opens a separate detail window titled with the character's name
+		const detailWin = page.locator('.window[aria-label="Elara Voss"]');
+		await expect(detailWin.locator('.entity-name')).toContainText('Elara Voss', { timeout: 5000 });
 
 		expect(Date.now() - start).toBeLessThan(30_000);
 	});
 
-	test('rename character in editor → name updates immediately', async ({ page }) => {
-		// Create a character through the UI creation flow
+	test('rename character via InlineEdit pencil → name updates', async ({ page }) => {
 		await page.click('button[title="Characters"]');
-		const charWin = page.locator('.window[aria-label="Character"]');
-		await expect(charWin).toBeVisible();
+		const listWin = page.locator('.window[aria-label="Characters"]');
+		await expect(listWin).toBeVisible();
 
-		await charWin.locator('input[placeholder="Character name…"]').fill('Original Name');
-		await charWin.locator('input[placeholder="Character name…"]').press('Enter');
-		await expect(charWin.locator('.entity-name')).toHaveText('Original Name', { timeout: 5000 });
+		await listWin.locator('input[placeholder="Character name…"]').fill('Original Name');
+		await listWin.locator('input[placeholder="Character name…"]').press('Enter');
 
-		// Open Details section and rename
-		await charWin.locator('button', { hasText: 'Details' }).click();
-		const nameInput = charWin.locator('#char-name');
-		await nameInput.fill('Renamed Character');
-		await nameInput.blur();
+		// Scope to the char-detail div to stay stable across title changes
+		const charDetail = page.locator('.char-detail');
+		await expect(charDetail.locator('.entity-name')).toContainText('Original Name', { timeout: 5000 });
 
-		// Header should update in the same tick via optimistic store update
-		await expect(charWin.locator('.entity-name')).toHaveText('Renamed Character', { timeout: 3000 });
+		// Hover the name to reveal the pencil button, then click it
+		await charDetail.locator('.entity-name').hover();
+		await charDetail.locator('button[aria-label="Rename"]').click({ force: true });
+		await page.locator('.inline-edit-input').fill('Renamed Character');
+		await page.locator('.inline-edit-input').press('Enter');
+
+		await expect(charDetail.locator('.entity-name')).toContainText('Renamed Character', { timeout: 3000 });
 	});
 
-	test('add event entity → appears as a node in Story Graph', async ({ page }) => {
-		// Open Story Graph first
-		await page.click('button[title="Story Graph"]');
-		const graphWin = page.locator('.window[aria-label="Story Graph"]');
-		await expect(graphWin).toBeVisible();
-
-		// Create an event via API
-		await page.evaluate(async () => {
-			await fetch('/api/entities', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ type: 'Event', name: 'The Battle' }),
-			});
-		});
-
-		// Reload the page stores by navigating (simplest way in preview mode)
-		await page.reload();
-		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+	test('add event entity → Story Graph no longer shows empty overlay', async ({ page, request }) => {
+		await request.post('/api/entities', { data: { type: 'Event', name: 'The Battle' } });
 		await page.goto('/');
-		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 
 		await page.click('button[title="Story Graph"]');
-		await page.waitForTimeout(2000);
-
-		// The graph should no longer show the empty overlay
-		const emptyOverlay = page.locator('.empty-overlay');
-		await expect(emptyOverlay).not.toBeVisible();
+		await page.waitForTimeout(1000);
+		await expect(page.locator('.empty-overlay')).not.toBeVisible();
 	});
 });
