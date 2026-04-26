@@ -1,413 +1,537 @@
 <script lang="ts">
-  import 'tldraw/tldraw.css';
-  import { onMount, onDestroy } from 'svelte';
-  import { get } from 'svelte/store';
+  import { onMount } from 'svelte';
+  import { untrack } from 'svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
 
-  type CanvasPos = { entityId: string; x: number; y: number; width: number; height: number };
+  // ── Constants ──────────────────────────────────────────────────────────────
+  const NODE_W = 120;
+  const NODE_H = 32;
 
-  let container: HTMLDivElement = $state(null!);
-  let reactRoot: any = null;
-  let editor: any = null;
+  const REL_COLOR: Record<string, string> = {
+    allied_with:    'var(--color-rel-ally)',
+    rivals:         'var(--color-rel-rival)',
+    appears_in:     'var(--color-rel-arc)',
+    takes_place_at: 'var(--color-rel-event)',
+    caused_by:      'var(--color-rel-other)',
+    located_at:     'var(--color-rel-loc)',
+    mentor_of:      'var(--color-rel-mentor)',
+  };
 
-  let pending: {
-    shapeId: string;
-    fromEntityId: string;
-    toEntityId: string;
-    x: number;
-    y: number;
-  } | null = $state(null);
+  const NODE_COLOR: Record<string, string> = {
+    Character: 'var(--color-accent)',
+    Location:  'var(--color-rel-loc)',
+    Event:     'var(--color-rel-event)',
+    Act:       'var(--color-rel-arc)',
+    Scene:     'var(--color-rel-arc)',
+  };
 
+  const REL_TYPES: RelationshipType[] = [
+    'allied_with', 'rivals', 'mentor_of', 'appears_in',
+    'takes_place_at', 'caused_by', 'located_at',
+  ];
+
+  // ── Viewport transform ─────────────────────────────────────────────────────
+  let panX = $state(0);
+  let panY = $state(0);
+  let zoom = $state(1);
+
+  // ── Node positions (canvas coords) ─────────────────────────────────────────
+  let nodePos = $state<Record<string, { x: number; y: number; w: number; h: number }>>({});
+
+  // ── Interaction ────────────────────────────────────────────────────────────
+  let draggingNode: { id: string; offX: number; offY: number } | null = $state(null);
+  // connecting: screen-space endpoint as the mouse moves
+  let connecting: { fromId: string; screenX: number; screenY: number } | null = $state(null);
+  let panning: { startMX: number; startMY: number; startPX: number; startPY: number } | null = $state(null);
+  let pending: { fromId: string; toId: string; sx: number; sy: number } | null = $state(null);
+  let hoveredNodeId: string | null = $state(null);
+  // First × click arms delete; second click on same node confirms
+  let confirmDeleteId: string | null = $state(null);
+
+  // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
   let relLabel = $state('');
   let saving = $state(false);
-  let error: string | null = $state(null);
 
-  const REL_TYPES: RelationshipType[] = [
-    'allied_with',
-    'rivals',
-    'mentor_of',
-    'appears_in',
-    'takes_place_at',
-    'caused_by',
-    'located_at',
-  ];
+  let viewport: HTMLDivElement = $state(null!);
 
-  const ENTITY_COLOR: Record<string, string> = {
-    Character: 'blue',
-    Location: 'green',
-    Event: 'red',
-    Act: 'orange',
-    Scene: 'yellow',
-  };
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const displayEntities = $derived($entities.filter((e) => e.type !== 'Note'));
+  const hasEntities = $derived(displayEntities.length > 0);
 
-  const hasEntities = $derived($entities.filter((e) => e.type !== 'Note').length > 0);
+  // Edges in viewport (screen) coords — reacts to pan/zoom/nodePos changes
+  const screenEdges = $derived(
+    $relationships
+      .filter((r) =>
+        displayEntities.some((e) => e.id === r.fromId) &&
+        displayEntities.some((e) => e.id === r.toId)
+      )
+      .map((r) => {
+        const fp = nodePos[r.fromId];
+        const tp = nodePos[r.toId];
+        if (!fp || !tp) return null;
+        const fw = fp.w || NODE_W, fh = fp.h || NODE_H;
+        const tw = tp.w || NODE_W, th = tp.h || NODE_H;
+        return {
+          id: r.id,
+          x1: panX + (fp.x + fw / 2) * zoom,
+          y1: panY + (fp.y + fh / 2) * zoom,
+          x2: panX + (tp.x + tw / 2) * zoom,
+          y2: panY + (tp.y + th / 2) * zoom,
+          color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
+          label: r.label ?? r.type.replace(/_/g, ' '),
+        };
+      })
+      .filter(Boolean) as {
+        id: string; x1: number; y1: number; x2: number; y2: number;
+        color: string; label: string;
+      }[]
+  );
 
-  function entityShapeId(entityId: string): string {
-    return `shape:ent-${entityId}`;
-  }
+  // Screen position of connecting-line start (center of fromId node)
+  const connectLineStart = $derived(
+    connecting ? (() => {
+      const fp = nodePos[connecting.fromId];
+      if (!fp) return null;
+      return {
+        x: panX + (fp.x + (fp.w || NODE_W) / 2) * zoom,
+        y: panY + (fp.y + (fp.h || NODE_H) / 2) * zoom,
+      };
+    })() : null
+  );
 
-  function entityIdFromShapeId(shapeId: string): string | null {
-    const m = shapeId.match(/^shape:ent-(.+)$/);
-    return m ? m[1] : null;
-  }
-
-  async function fetchPositions(): Promise<Record<string, CanvasPos>> {
-    const res = await fetch('/api/canvas-positions');
-    if (!res.ok) return {};
-    const rows: CanvasPos[] = await res.json();
-    return Object.fromEntries(rows.map((r) => [r.entityId, r]));
-  }
-
+  // ── Position persistence ───────────────────────────────────────────────────
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function scheduleSavePosition(entityId: string, x: number, y: number, w: number, h: number) {
+  function scheduleSave(id: string) {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
+      const p = untrack(() => nodePos[id]);
+      if (!p) return;
       fetch('/api/canvas-positions', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entityId,
-          x: Math.round(x),
-          y: Math.round(y),
-          width: Math.round(w),
-          height: Math.round(h),
-        }),
+        body: JSON.stringify({ entityId: id, x: Math.round(p.x), y: Math.round(p.y), width: Math.round(p.w), height: Math.round(p.h) }),
       });
-    }, 600);
+    }, 500);
   }
 
-  function cancelPending() {
-    if (pending && editor) editor.deleteShapes([pending.shapeId]);
-    pending = null;
-    relLabel = '';
-    relType = 'allied_with';
+  // ── Fit-to-view ────────────────────────────────────────────────────────────
+  function fitView(np: Record<string, { x: number; y: number; w: number; h: number }>) {
+    if (!viewport) return;
+    const ents = displayEntities;
+    if (ents.length === 0) return;
+    const vw = viewport.clientWidth, vh = viewport.clientHeight;
+    const xs = ents.map((e) => np[e.id]?.x ?? 0);
+    const ys = ents.map((e) => np[e.id]?.y ?? 0);
+    const minX = Math.min(...xs), minY = Math.min(...ys);
+    const maxX = Math.max(...xs) + NODE_W, maxY = Math.max(...ys) + NODE_H;
+    const contentW = maxX - minX + 80, contentH = maxY - minY + 80;
+    // Clamp zoom: 0.7 minimum keeps text readable, 2 maximum avoids over-scaling
+    const z = Math.min(2, Math.max(0.7, Math.min((vw - 40) / contentW, (vh - 40) / contentH)));
+    zoom = z;
+    panX = (vw - contentW * z) / 2 - (minX - 40) * z;
+    panY = (vh - contentH * z) / 2 - (minY - 40) * z;
   }
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  onMount(async () => {
+    const res = await fetch('/api/canvas-positions').catch(() => null);
+    const rows: { entityId: string; x: number; y: number; width: number; height: number }[] =
+      res?.ok ? await res.json() : [];
+    const stored = Object.fromEntries(
+      rows.map((r) => [r.entityId, { x: r.x, y: r.y, w: r.width, h: r.height }])
+    );
+
+    const ents = displayEntities;
+    const positions: Record<string, { x: number; y: number; w: number; h: number }> = {};
+    ents.forEach((e, i) => {
+      positions[e.id] = stored[e.id] ?? {
+        x: 60 + (i % 4) * 180,
+        y: 60 + Math.floor(i / 4) * 100,
+        w: NODE_W,
+        h: NODE_H,
+      };
+    });
+    nodePos = positions;
+    fitView(positions);
+
+    // Re-fit when the viewport is resized (window resize or window drag-resize)
+    const ro = new ResizeObserver(() => {
+      fitView(untrack(() => nodePos));
+    });
+    ro.observe(viewport);
+    return () => ro.disconnect();
+  });
+
+  // Place new entities as they appear
+  $effect(() => {
+    const ents = displayEntities;
+    const missing = ents.filter((e) => !untrack(() => nodePos[e.id]));
+    if (missing.length > 0) {
+      const current = untrack(() => nodePos);
+      const idx = Object.keys(current).length;
+      const additions: Record<string, { x: number; y: number; w: number; h: number }> = {};
+      missing.forEach((e, i) => {
+        additions[e.id] = {
+          x: 60 + ((idx + i) % 4) * 180,
+          y: 60 + Math.floor((idx + i) / 4) * 100,
+          w: NODE_W,
+          h: NODE_H,
+        };
+      });
+      nodePos = { ...current, ...additions };
+    }
+  });
+
+  // ── Coord helpers ──────────────────────────────────────────────────────────
+  function screenToCanvas(clientX: number, clientY: number) {
+    const rect = viewport.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left - panX) / zoom,
+      y: (clientY - rect.top  - panY) / zoom,
+    };
+  }
+
+  function viewportXY(clientX: number, clientY: number) {
+    const rect = viewport.getBoundingClientRect();
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }
+
+  // ── Pointer handlers ───────────────────────────────────────────────────────
+  function onViewportPointerDown(e: PointerEvent) {
+    const target = e.target as HTMLElement;
+    if (target.closest('.node') || target.closest('.rel-form')) return;
+    panning = { startMX: e.clientX, startMY: e.clientY, startPX: panX, startPY: panY };
+    viewport.setPointerCapture(e.pointerId);
+  }
+
+  function onNodePointerDown(e: PointerEvent, id: string) {
+    if ((e.target as HTMLElement).classList.contains('connect-btn')) return;
+    e.stopPropagation();
+    const p = nodePos[id];
+    if (!p) return;
+    const rect = viewport.getBoundingClientRect();
+    draggingNode = {
+      id,
+      offX: e.clientX - rect.left - (panX + p.x * zoom),
+      offY: e.clientY - rect.top  - (panY + p.y * zoom),
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function onConnectPointerDown(e: PointerEvent, fromId: string) {
+    e.stopPropagation();
+    const vp = viewportXY(e.clientX, e.clientY);
+    connecting = { fromId, screenX: vp.x, screenY: vp.y };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if (draggingNode) {
+      const rect = viewport.getBoundingClientRect();
+      const nx = (e.clientX - rect.left - draggingNode.offX - panX) / zoom;
+      const ny = (e.clientY - rect.top  - draggingNode.offY - panY) / zoom;
+      nodePos = { ...nodePos, [draggingNode.id]: { ...nodePos[draggingNode.id], x: nx, y: ny } };
+    } else if (panning) {
+      panX = panning.startPX + (e.clientX - panning.startMX);
+      panY = panning.startPY + (e.clientY - panning.startMY);
+    } else if (connecting) {
+      const vp = viewportXY(e.clientX, e.clientY);
+      connecting = { ...connecting, screenX: vp.x, screenY: vp.y };
+    }
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if (draggingNode) {
+      scheduleSave(draggingNode.id);
+      draggingNode = null;
+    } else if (panning) {
+      panning = null;
+    } else if (connecting) {
+      const c = screenToCanvas(e.clientX, e.clientY);
+      const target = displayEntities.find((ent) => {
+        if (ent.id === connecting!.fromId) return false;
+        const p = nodePos[ent.id];
+        if (!p) return false;
+        const w = p.w || NODE_W, h = p.h || NODE_H;
+        return c.x >= p.x && c.x <= p.x + w && c.y >= p.y && c.y <= p.y + h;
+      });
+      if (target) {
+        const vp = viewportXY(e.clientX, e.clientY);
+        pending = { fromId: connecting.fromId, toId: target.id, sx: vp.x, sy: vp.y };
+        relType = 'allied_with';
+        relLabel = '';
+      }
+      connecting = null;
+    }
+  }
+
+  function onWheel(e: WheelEvent) {
+    e.preventDefault();
+    const rect = viewport.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const newZoom = Math.max(0.2, Math.min(4, zoom * factor));
+    panX = mx - (mx - panX) * (newZoom / zoom);
+    panY = my - (my - panY) * (newZoom / zoom);
+    zoom = newZoom;
+  }
+
+  function onNodeDblClick(e: MouseEvent, id: string) {
+    e.stopPropagation();
+    openEntity(id);
+  }
+
+  // ── Delete ─────────────────────────────────────────────────────────────────
+  function onDeleteClick(e: MouseEvent, id: string) {
+    e.stopPropagation();
+    if (confirmDeleteId === id) {
+      entities.deleteEntity(id);
+      confirmDeleteId = null;
+      hoveredNodeId = null;
+    } else {
+      confirmDeleteId = id;
+    }
+  }
+
+  // ── Rel form ───────────────────────────────────────────────────────────────
+  function cancelPending() { pending = null; relLabel = ''; relType = 'allied_with'; }
 
   async function savePending() {
     if (!pending) return;
     saving = true;
     try {
-      const label = relLabel.trim() || undefined;
-      await relationships.createRelationship(pending.fromEntityId, pending.toEntityId, relType, label);
-      if (editor) {
-        editor.updateShapes([{
-          id: pending.shapeId,
-          type: 'arrow',
-          props: { text: label ?? relType.replace(/_/g, ' '), color: 'grey' },
-        }]);
-      }
-    } catch (e) {
-      console.error('Failed to save relationship', e);
-    } finally {
-      saving = false;
-      pending = null;
-      relLabel = '';
-      relType = 'allied_with';
-    }
+      await relationships.createRelationship(pending.fromId, pending.toId, relType, relLabel.trim() || undefined);
+      pending = null; relLabel = ''; relType = 'allied_with';
+    } catch { /* noop */ }
+    finally { saving = false; }
   }
 
-  function handleRelFormKeydown(e: KeyboardEvent) {
+  function onRelFormKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') cancelPending();
-    if (e.key === 'Enter' && !e.shiftKey) savePending();
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); savePending(); }
   }
-
-  onMount(async () => {
-    try {
-      const [
-        { default: React },
-        { createRoot },
-        { Tldraw, getArrowBindings },
-      ] = await Promise.all([
-        import('react'),
-        import('react-dom/client'),
-        import('tldraw'),
-      ]);
-
-      const positions = await fetchPositions();
-
-      function buildEntityShapes() {
-        const ents = get(entities).filter((e) => e.type !== 'Note');
-        return ents.map((e, i) => {
-          const pos = positions[e.id];
-          return {
-            id: entityShapeId(e.id),
-            type: 'geo',
-            x: pos?.x ?? 80 + (i % 4) * 220,
-            y: pos?.y ?? 80 + Math.floor(i / 4) * 120,
-            props: {
-              w: pos?.width ?? 160,
-              h: pos?.height ?? 72,
-              geo: 'rectangle',
-              text: e.name,
-              color: ENTITY_COLOR[e.type] ?? 'blue',
-              fill: 'semi',
-              size: 's',
-              font: 'sans',
-              align: 'middle',
-              verticalAlign: 'middle',
-            },
-          };
-        });
-      }
-
-      function TldrawApp() {
-        return React.createElement(Tldraw, {
-          inferDarkMode: false,
-          onMount: (ed: any) => {
-            editor = ed;
-
-            // Create entity shapes
-            const entityShapes = buildEntityShapes();
-            if (entityShapes.length > 0) {
-              ed.createShapes(entityShapes);
-            }
-
-            // Create relationship arrows with bindings
-            const ents = get(entities).filter((e) => e.type !== 'Note');
-            const rels = get(relationships);
-            for (const rel of rels) {
-              const fromExists = ents.some((e) => e.id === rel.fromId);
-              const toExists = ents.some((e) => e.id === rel.toId);
-              if (!fromExists || !toExists) continue;
-
-              const arrowId = `shape:rel-${rel.id}`;
-              ed.createShapes([{
-                id: arrowId,
-                type: 'arrow',
-                x: 0,
-                y: 0,
-                props: {
-                  text: rel.label ?? rel.type.replace(/_/g, ' '),
-                  color: 'grey',
-                  size: 's',
-                },
-              }]);
-              ed.createBindings([
-                {
-                  type: 'arrow',
-                  fromId: arrowId,
-                  toId: entityShapeId(rel.fromId),
-                  props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false },
-                },
-                {
-                  type: 'arrow',
-                  fromId: arrowId,
-                  toId: entityShapeId(rel.toId),
-                  props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false },
-                },
-              ]);
-            }
-
-            // Zoom to fit on load
-            if (entityShapes.length > 0) {
-              setTimeout(() => {
-                try { ed.zoomToFit({ animation: { duration: 0 } }); } catch (_) {}
-              }, 50);
-            }
-
-            // Watch for shape moves and new arrows
-            const unsubStore = ed.store.listen(({ changes }: any) => {
-              // Detect completed arrows drawn between entity shapes
-              for (const record of Object.values(changes.added) as any[]) {
-                if (record.typeName !== 'binding' || record.type !== 'arrow') continue;
-                if (record.props?.terminal !== 'end') continue;
-
-                const arrowId = record.fromId as string;
-                if (arrowId.startsWith('shape:rel-')) continue;
-
-                const arrow = ed.getShape(arrowId);
-                if (!arrow || arrow.type !== 'arrow') continue;
-
-                const arrowBindings = getArrowBindings(ed, arrow);
-                if (!arrowBindings.start || !arrowBindings.end) continue;
-
-                const fromEntityId = entityIdFromShapeId(arrowBindings.start.toId);
-                const toEntityId = entityIdFromShapeId(arrowBindings.end.toId);
-                if (!fromEntityId || !toEntityId || fromEntityId === toEntityId) continue;
-
-                // Compute form position at arrow midpoint in viewport space
-                let formX = 200;
-                let formY = 200;
-                try {
-                  const bounds = ed.getShapePageBounds(arrowId);
-                  if (bounds) {
-                    const vp = ed.pageToViewport({ x: bounds.midX, y: bounds.midY });
-                    formX = vp.x;
-                    formY = vp.y;
-                  }
-                } catch (_) {}
-
-                pending = { shapeId: arrowId, fromEntityId, toEntityId, x: formX, y: formY };
-                relType = 'allied_with';
-                relLabel = '';
-              }
-
-              // Detect shape moves → save canvas position
-              for (const [, [before, after]] of Object.entries(changes.updated) as any[]) {
-                if (after.typeName !== 'shape') continue;
-                const entityId = entityIdFromShapeId(after.id as string);
-                if (!entityId) continue;
-                if (
-                  before.x === after.x &&
-                  before.y === after.y &&
-                  before.props?.w === after.props?.w &&
-                  before.props?.h === after.props?.h
-                ) continue;
-                scheduleSavePosition(entityId, after.x, after.y, after.props.w, after.props.h);
-              }
-            });
-
-            return unsubStore;
-          },
-        });
-      }
-
-      reactRoot = createRoot(container);
-      reactRoot.render(React.createElement(TldrawApp));
-
-      // Double-click entity node → open its window
-      container.addEventListener('dblclick', (e) => {
-        if (!editor) return;
-        const rect = container.getBoundingClientRect();
-        const pagePoint = editor.screenToPage({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-        const shape = editor.getShapeAtPoint(pagePoint, { hitInside: true, margin: 4 });
-        if (!shape) return;
-        const entityId = entityIdFromShapeId(shape.id as string);
-        if (!entityId) return;
-        e.stopPropagation();
-        openEntity(entityId);
-      });
-
-      // Sync entity changes to tldraw
-      const unsubEntities = entities.subscribe((ents) => {
-        if (!editor) return;
-        const filtered = ents.filter((e) => e.type !== 'Note');
-        const entityIds = new Set(filtered.map((e) => e.id));
-
-        // Add missing or update changed entities
-        for (const e of filtered) {
-          const sid = entityShapeId(e.id);
-          const shape = editor.getShape(sid);
-          if (!shape) {
-            const i = filtered.indexOf(e);
-            editor.createShapes([{
-              id: sid,
-              type: 'geo',
-              x: positions[e.id]?.x ?? 80 + (i % 4) * 220,
-              y: positions[e.id]?.y ?? 80 + Math.floor(i / 4) * 120,
-              props: {
-                w: positions[e.id]?.width ?? 160,
-                h: positions[e.id]?.height ?? 72,
-                geo: 'rectangle',
-                text: e.name,
-                color: ENTITY_COLOR[e.type] ?? 'blue',
-                fill: 'semi',
-                size: 's',
-                font: 'sans',
-                align: 'middle',
-                verticalAlign: 'middle',
-              },
-            }]);
-          } else if (shape.props.text !== e.name) {
-            editor.updateShapes([{ id: sid, type: 'geo', props: { text: e.name } }]);
-          }
-        }
-
-        // Remove shapes for deleted entities
-        for (const shape of editor.getCurrentPageShapes()) {
-          const entityId = entityIdFromShapeId(shape.id as string);
-          if (entityId && !entityIds.has(entityId)) {
-            editor.deleteShapes([shape.id]);
-          }
-        }
-      });
-
-      return () => {
-        unsubEntities();
-        reactRoot?.unmount();
-        reactRoot = null;
-        editor = null;
-      };
-    } catch (e) {
-      console.error('StoryGraph failed to initialize', e);
-      error = 'Graph failed to load. Refresh the window.';
-    }
-  });
-
-  onDestroy(() => {
-    reactRoot?.unmount();
-  });
 </script>
 
-<div class="story-graph-root">
-  {#if error}
-    <div class="error-state">
-      <p>{error}</p>
-      <button onclick={() => window.location.reload()}>Retry</button>
+<div
+  class="viewport"
+  role="application"
+  aria-label="Story graph canvas"
+  bind:this={viewport}
+  onpointerdown={onViewportPointerDown}
+  onpointermove={onPointerMove}
+  onpointerup={onPointerUp}
+  onwheel={onWheel}
+  style:cursor={panning ? 'grabbing' : 'default'}
+>
+  <!-- Edge SVG fills the viewport in screen coords — no transform needed -->
+  <svg class="edges" aria-hidden="true">
+    {#each screenEdges as edge (edge.id)}
+      {@const mx = (edge.x1 + edge.x2) / 2}
+      {@const my = (edge.y1 + edge.y2) / 2}
+      <line
+        x1={edge.x1} y1={edge.y1} x2={edge.x2} y2={edge.y2}
+        stroke={edge.color} stroke-width="1.5" stroke-opacity="0.45"
+      />
+      <text
+        x={mx} y={my - 5}
+        fill={edge.color} font-size="9" text-anchor="middle" opacity="0.75"
+        font-family="Inter, Segoe UI, sans-serif"
+      >{edge.label}</text>
+    {/each}
+    {#if connecting && connectLineStart}
+      <line
+        x1={connectLineStart.x} y1={connectLineStart.y}
+        x2={connecting.screenX}  y2={connecting.screenY}
+        stroke="var(--color-accent)" stroke-width="1.5"
+        stroke-dasharray="5 3" stroke-opacity="0.6"
+      />
+    {/if}
+  </svg>
+
+  <!-- Node canvas layer: pan/zoom applied here -->
+  <div
+    class="canvas"
+    style="transform: translate({panX}px,{panY}px) scale({zoom}); transform-origin: 0 0"
+  >
+    {#each displayEntities as entity (entity.id)}
+      {@const p = nodePos[entity.id]}
+      {#if p}
+        {@const nc = NODE_COLOR[entity.type] ?? 'var(--color-accent)'}
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <div
+          class="node"
+          class:node-active={hoveredNodeId === entity.id || draggingNode?.id === entity.id}
+          style="left:{p.x}px; top:{p.y}px; --nc:{nc}"
+          onpointerdown={(e) => onNodePointerDown(e, entity.id)}
+          ondblclick={(e) => onNodeDblClick(e, entity.id)}
+          onpointerenter={() => (hoveredNodeId = entity.id)}
+          onpointerleave={() => {
+            if (draggingNode?.id !== entity.id) hoveredNodeId = null;
+            if (confirmDeleteId === entity.id) confirmDeleteId = null;
+          }}
+          role="button"
+          tabindex="0"
+          aria-label="Open {entity.name}"
+        >
+          <span class="node-name">{entity.name}</span>
+          <span class="node-type">{entity.type}</span>
+          {#if hoveredNodeId === entity.id && !draggingNode && !panning}
+            <button
+              class="connect-btn"
+              title="Drag to connect"
+              onpointerdown={(e) => onConnectPointerDown(e, entity.id)}
+              aria-label="Connect {entity.name}"
+            >◉</button>
+            <button
+              class="delete-btn"
+              class:armed={confirmDeleteId === entity.id}
+              title={confirmDeleteId === entity.id ? 'Click again to confirm delete' : 'Delete'}
+              onclick={(e) => onDeleteClick(e, entity.id)}
+              aria-label="Delete {entity.name}"
+            >×</button>
+          {/if}
+        </div>
+      {/if}
+    {/each}
+  </div>
+
+  {#if !hasEntities}
+    <div class="empty-overlay">
+      <p>Create characters, locations, or events — they'll appear here automatically.</p>
+      <div class="ghost-nodes">
+        <span class="ghost-node">Character</span>
+        <span class="ghost-sep">──</span>
+        <span class="ghost-node">Location</span>
+      </div>
     </div>
-  {:else}
-    <div class="canvas-wrap" bind:this={container}></div>
+  {/if}
 
-    {#if !hasEntities}
-      <div class="empty-overlay">
-        <p>No characters yet. Create one in Characters → it will appear here automatically.</p>
-        <div class="ghost-nodes">
-          <span class="ghost-node">Character</span>
-          <span class="ghost-sep">──</span>
-          <span class="ghost-node">Location</span>
-        </div>
+  {#if pending}
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="rel-form"
+      style="left:{pending.sx}px; top:{pending.sy}px"
+      onkeydown={onRelFormKeydown}
+      role="dialog"
+      tabindex="-1"
+      aria-label="Define relationship"
+    >
+      <p class="rel-form-heading">Define relationship</p>
+      <select bind:value={relType}>
+        {#each REL_TYPES as t}
+          <option value={t}>{t.replace(/_/g, ' ')}</option>
+        {/each}
+      </select>
+      <input
+        type="text"
+        placeholder="Label (optional)"
+        bind:value={relLabel}
+        autocomplete="off"
+      />
+      <div class="rel-form-actions">
+        <button onclick={cancelPending}>Cancel</button>
+        <button class="primary" onclick={savePending} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
       </div>
-    {/if}
-
-    {#if pending}
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <div
-        class="rel-form"
-        role="dialog"
-        aria-label="Define relationship"
-        tabindex="-1"
-        style="left:{pending.x}px; top:{pending.y}px"
-        onkeydown={handleRelFormKeydown}
-      >
-        <p class="rel-form-heading">Define relationship</p>
-        <select bind:value={relType}>
-          {#each REL_TYPES as t}
-            <option value={t}>{t.replace(/_/g, ' ')}</option>
-          {/each}
-        </select>
-        <input
-          type="text"
-          placeholder="Label (optional)"
-          bind:value={relLabel}
-          autocomplete="off"
-        />
-        <div class="rel-form-actions">
-          <button onclick={cancelPending}>Cancel</button>
-          <button class="primary" onclick={savePending} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      </div>
-    {/if}
+    </div>
   {/if}
 </div>
 
 <style>
-  .story-graph-root {
+  .viewport {
     position: absolute;
     inset: 0;
+    overflow: hidden;
+    background: var(--color-surface);
+    touch-action: none;
+    user-select: none;
   }
 
-  .canvas-wrap {
+  /* SVG fills viewport; edges are computed in screen coords, no transform needed */
+  .edges {
     position: absolute;
     inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
   }
 
+  /* Canvas layer: only nodes live here; transformed for pan/zoom */
+  .canvas {
+    position: absolute;
+    width: 0;
+    height: 0;
+  }
+
+  /* Nodes */
+  .node {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: var(--color-surface-2);
+    border: 1.5px solid color-mix(in srgb, var(--nc) 40%, transparent);
+    border-radius: 6px;
+    box-shadow: 0 0 12px color-mix(in srgb, var(--nc) 12%, transparent);
+    cursor: grab;
+    font-family: var(--font-ui);
+    white-space: nowrap;
+    transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  .node:hover,
+  .node.node-active {
+    border-color: var(--nc);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--nc) 28%, transparent);
+  }
+  .node.node-active { cursor: grabbing; }
+
+  .node-name {
+    font-size: 11px;
+    color: var(--color-text);
+  }
+
+  .node-type {
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--color-text-muted);
+  }
+
+  .connect-btn {
+    background: none;
+    border: none;
+    padding: 0 0 0 2px;
+    font-size: 9px;
+    line-height: 1;
+    color: var(--nc);
+    cursor: crosshair;
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+  .connect-btn:hover { opacity: 1; }
+
+  .delete-btn {
+    background: none;
+    border: none;
+    padding: 0 0 0 2px;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    opacity: 0.5;
+    flex-shrink: 0;
+  }
+  .delete-btn:hover { color: var(--color-rel-rival); opacity: 1; }
+  .delete-btn.armed { color: var(--color-rel-rival); opacity: 1; font-weight: 700; }
+
+  /* Empty state */
   .empty-overlay {
     position: absolute;
     inset: 0;
@@ -416,27 +540,21 @@
     align-items: center;
     justify-content: center;
     gap: 16px;
-    background: rgba(13, 15, 20, 0.85);
-    z-index: 10;
     pointer-events: none;
-    text-align: center;
-    padding: 24px;
   }
-
   .empty-overlay p {
     font-family: var(--font-ui);
     font-size: 13px;
     color: var(--color-text-muted);
+    text-align: center;
     max-width: 260px;
   }
-
   .ghost-nodes {
     display: flex;
     align-items: center;
     gap: 8px;
     opacity: 0.3;
   }
-
   .ghost-node {
     border: 1px dashed var(--color-border);
     border-radius: 6px;
@@ -445,35 +563,9 @@
     color: var(--color-text-muted);
     font-family: var(--font-ui);
   }
+  .ghost-sep { color: var(--color-border); font-size: 10px; }
 
-  .ghost-sep {
-    color: var(--color-border);
-    font-size: 10px;
-  }
-
-  .error-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    gap: 12px;
-    color: var(--color-text-muted);
-    font-family: var(--font-ui);
-    font-size: 12px;
-  }
-
-  .error-state button {
-    background: var(--color-surface-2);
-    border: 1px solid var(--color-border);
-    color: var(--color-text);
-    font-family: var(--font-ui);
-    font-size: 11px;
-    padding: 6px 14px;
-    border-radius: 6px;
-    cursor: pointer;
-  }
-
+  /* Relationship form */
   .rel-form {
     position: absolute;
     transform: translate(-50%, -50%);
@@ -485,11 +577,10 @@
     flex-direction: column;
     gap: 8px;
     min-width: 200px;
-    box-shadow: var(--window-shadow);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     z-index: 100;
     font-family: var(--font-ui);
   }
-
   .rel-form-heading {
     font-size: 11px;
     font-weight: 600;
@@ -497,7 +588,6 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
-
   .rel-form select,
   .rel-form input {
     background: var(--color-surface);
@@ -510,21 +600,13 @@
     width: 100%;
     outline: none;
   }
-
   .rel-form select:focus,
-  .rel-form input:focus {
-    border-color: var(--color-accent);
-    outline: 2px solid var(--color-accent);
-    outline-offset: -1px;
-  }
-
+  .rel-form input:focus { border-color: var(--color-accent); }
   .rel-form-actions {
     display: flex;
     justify-content: flex-end;
     gap: 6px;
-    margin-top: 2px;
   }
-
   .rel-form-actions button {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
@@ -534,26 +616,14 @@
     padding: 5px 12px;
     border-radius: 6px;
     cursor: pointer;
-    transition: background 0.12s;
   }
-
-  .rel-form-actions button:hover {
-    background: var(--color-border);
-  }
-
+  .rel-form-actions button:hover { background: var(--color-border); }
   .rel-form-actions button.primary {
     background: var(--color-accent);
     border-color: var(--color-accent);
     color: var(--color-surface);
     font-weight: 600;
   }
-
-  .rel-form-actions button.primary:hover {
-    opacity: 0.85;
-  }
-
-  .rel-form-actions button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  .rel-form-actions button.primary:hover { opacity: 0.85; }
+  .rel-form-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

@@ -10,11 +10,12 @@
     height: number;
     zIndex: number;
     minimized: boolean;
+    maximized: boolean;
     bare?: boolean;
     children?: import('svelte').Snippet;
   }
 
-  let { id, title, x, y, width, height, zIndex, minimized, bare = false, children }: Props = $props();
+  let { id, title, x, y, width, height, zIndex, minimized, maximized, bare = false, children }: Props = $props();
 
   let dragging = false;
   let dragOffsetX = 0;
@@ -27,6 +28,7 @@
 
   function onTitlebarMousedown(e: MouseEvent) {
     if ((e.target as HTMLElement).closest('.win-control')) return;
+    if (maximized) return;
     dragging = true;
     dragOffsetX = e.clientX - x;
     dragOffsetY = e.clientY - y;
@@ -35,6 +37,7 @@
   }
 
   function onResizeMousedown(e: MouseEvent) {
+    if (maximized) return;
     resizing = true;
     resizeStartX = e.clientX;
     resizeStartY = e.clientY;
@@ -68,8 +71,9 @@
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     class="window"
-    style="left:{x}px; top:{y}px; width:{width}px; height:{height}px; z-index:{zIndex}"
-    onclick={() => windowStore.focus(id)}
+    class:maximized
+    style={maximized ? `z-index:${zIndex}` : `left:${x}px; top:${y}px; width:${width}px; height:${height}px; z-index:${zIndex}`}
+    onmousedown={() => windowStore.focus(id)}
     role="dialog"
     aria-label={title}
     tabindex="-1"
@@ -85,6 +89,11 @@
           class="win-control minimize"
           aria-label="Minimize"
           onclick={(e) => { e.stopPropagation(); windowStore.minimize(id); }}
+        ></button>
+        <button
+          class="win-control maximize-btn"
+          aria-label={maximized ? 'Restore' : 'Maximize'}
+          onclick={(e) => { e.stopPropagation(); windowStore.maximize(id); }}
         ></button>
       </div>
       <span class="win-title">{title}</span>
@@ -138,12 +147,17 @@
     padding: 0;
   }
 
-  .win-control.close {
-    background: #ef4444;
-  }
+  .win-control.close    { background: #ef4444; }
+  .win-control.minimize { background: #c8942a; }
+  .win-control.maximize-btn { background: #28c840; }
 
-  .win-control.minimize {
-    background: #c8942a;
+  .window.maximized {
+    position: fixed;
+    inset: 0;
+    bottom: 52px;
+    width: auto !important;
+    height: auto !important;
+    border-radius: 0;
   }
 
   .win-title {

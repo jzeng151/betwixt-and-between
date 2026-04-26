@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0] - 2026-04-25
+
+### Added
+- **Timeline redesign**: horizontal layout with acts as column headers — drag-and-drop event assignment to plot/world tracks, per-character rows with color-coded bars, resizable act columns and track rows
+- **Wiki redesign**: two-panel Notes app — sidebar with note list, search, and new note button; inline title editing; Markdown edit/preview toggle with auto-save
+- **InlineEdit component**: pencil-icon-reveal inline text editing used across CharacterEditor, Wiki, and WorldMap
+- **Window maximize**: green maximize button gives full-viewport overlay; drag and resize disabled while maximized
+- WorldMap location names now editable via InlineEdit
+- StoryGraph windows now open independent instances (each open call creates a new window)
+- Timeline and StoryGraph windows open at wider default width (640px)
+- Window spawn position uses continuous offset with wraparound instead of fixed step
+
+### Fixed
+- Timeline events with no relationship label now correctly appear in the plot track
+- Window focus now triggers on `mousedown` so drag starts with the window already focused
+
+### Changed
+- CharacterEditor: character name input is always visible (removed show/hide toggle)
+- Window default sizes tuned per app type (timeline/story-graph: 640×500, others: 320×480)
+- E2E test suite updated for new UI patterns (Wiki sidebar, Timeline horizontal layout, CharacterEditor always-visible input)
+- CLAUDE.md: added development guidelines and skill routing rules
+
 ## [0.0.2] - 2026-04-22
 
 ### Added

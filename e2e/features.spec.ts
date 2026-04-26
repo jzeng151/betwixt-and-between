@@ -95,7 +95,7 @@ test.describe('Timeline', () => {
 		await page.goto('/');
 	});
 
-	test('empty state → create act via button → row appears', async ({ page }) => {
+	test('empty state → create act → act label appears in header', async ({ page }) => {
 		await page.click('button[title="Timeline"]');
 		const win = page.locator('.window[aria-label="Timeline"]');
 		await expect(win).toBeVisible();
@@ -104,23 +104,21 @@ test.describe('Timeline', () => {
 		await expect(win.locator('.empty-state p')).toContainText('No events yet');
 
 		await win.locator('.empty-state button').click();
-		await expect(win.locator('.timeline-row')).toHaveCount(1, { timeout: 3000 });
-		await expect(win.locator('.row-name').first()).toHaveText('New Act');
+		await expect(win.locator('.tl-act-label')).toHaveCount(1, { timeout: 3000 });
 	});
 
-	test('second act created via actions-row button', async ({ page }) => {
+	test('second act created via separate + Act button', async ({ page }) => {
 		await page.click('button[title="Timeline"]');
 		const win = page.locator('.window[aria-label="Timeline"]');
-		await expect(win).toBeVisible();
 
 		await win.locator('.empty-state button').click();
-		await expect(win.locator('.timeline-row')).toHaveCount(1, { timeout: 3000 });
+		await expect(win.locator('.tl-act-label')).toHaveCount(1, { timeout: 3000 });
 
-		await win.locator('.actions-row button').click();
-		await expect(win.locator('.timeline-row')).toHaveCount(2, { timeout: 3000 });
+		await win.locator('.add-act-btn').click();
+		await expect(win.locator('.tl-act-label')).toHaveCount(2, { timeout: 3000 });
 	});
 
-	test('expand act row reveals linked entity chips', async ({ page, request }) => {
+	test('character linked to act shows character track row with presence bar', async ({ page, request }) => {
 		const act = await (
 			await request.post('/api/entities', { data: { type: 'Act', name: 'Act One' } })
 		).json();
@@ -134,22 +132,105 @@ test.describe('Timeline', () => {
 
 		await page.click('button[title="Timeline"]');
 		const win = page.locator('.window[aria-label="Timeline"]');
-		await expect(win.locator('.row-name')).toHaveText('Act One', { timeout: 3000 });
-
-		await win.locator('.expand-btn').first().click();
-		await expect(win.locator('.entity-chip')).toBeVisible({ timeout: 2000 });
-		await expect(win.locator('.entity-chip').first()).toContainText('Elara');
+		await expect(win.locator('.tl-char-label')).toHaveText('Elara', { timeout: 3000 });
+		await expect(win.locator('.tl-char-bar')).toBeVisible({ timeout: 2000 });
 	});
 
-	test('event rows show a bullet instead of expand arrow', async ({ page, request }) => {
-		await request.post('/api/entities', { data: { type: 'Event', name: 'The Battle' } });
+	test('event linked to act appears as bar in act segment', async ({ page, request }) => {
+		const act = await (
+			await request.post('/api/entities', { data: { type: 'Act', name: 'Act One' } })
+		).json();
+		const event = await (
+			await request.post('/api/entities', { data: { type: 'Event', name: 'The Battle' } })
+		).json();
+		await request.post('/api/relationships', {
+			data: { fromId: act.id, toId: event.id, type: 'appears_in' }
+		});
 		await page.goto('/');
 
 		await page.click('button[title="Timeline"]');
 		const win = page.locator('.window[aria-label="Timeline"]');
-		await expect(win.locator('.row-name')).toHaveText('The Battle', { timeout: 3000 });
-		// Event expand button shows bullet (•), not arrow
-		await expect(win.locator('.expand-btn').first()).toHaveText('•');
+		await expect(win.locator('.tl-event')).toBeVisible({ timeout: 3000 });
+	});
+});
+
+test.describe('Characters', () => {
+	test.beforeEach(async ({ page, request }) => {
+		await clearEntities(request);
+		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+		await page.goto('/');
+	});
+
+	test('character list shows role badge and affiliation when set', async ({ page, request }) => {
+		const char = await (
+			await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } })
+		).json();
+		await request.patch(`/api/entities/${char.id}`, {
+			data: { data: { role: 'Protagonist', affiliation: 'The Conclave' } }
+		});
+		await page.goto('/');
+
+		await page.click('button[title="Characters"]');
+		const win = page.locator('.window[aria-label="Characters"]');
+		await expect(win.locator('.char-role-badge').first()).toHaveText('Protagonist', { timeout: 3000 });
+		await expect(win.locator('.char-affiliation').first()).toHaveText('The Conclave');
+	});
+
+	test('set role via header pencil → badge appears in header', async ({ page, request }) => {
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } });
+		await page.goto('/');
+
+		await page.click('button[title="Characters"]');
+		const listWin = page.locator('.window[aria-label="Characters"]');
+		await expect(listWin.locator('.char-row')).toHaveCount(1, { timeout: 3000 });
+		await listWin.locator('.char-row').first().click();
+
+		const detailWin = page.locator('.window[aria-label="Elara"]');
+		await expect(detailWin).toBeVisible();
+
+		// Hover to reveal the pencil, force-click since opacity:0 until hover
+		await detailWin.locator('.header-meta').hover();
+		await detailWin.locator('button[title="Edit role"]').click({ force: true });
+		await detailWin.locator('.hfield-select').selectOption('Antagonist');
+
+		await expect(detailWin.locator('.role-badge')).toHaveText('Antagonist', { timeout: 3000 });
+	});
+
+	test('set affiliation via header pencil → text appears in header', async ({ page, request }) => {
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } });
+		await page.goto('/');
+
+		await page.click('button[title="Characters"]');
+		const listWin = page.locator('.window[aria-label="Characters"]');
+		await expect(listWin.locator('.char-row')).toHaveCount(1, { timeout: 3000 });
+		await listWin.locator('.char-row').first().click();
+
+		const detailWin = page.locator('.window[aria-label="Elara"]');
+		await expect(detailWin).toBeVisible();
+
+		await detailWin.locator('.header-meta').hover();
+		await detailWin.locator('button[title="Edit affiliation"]').click({ force: true });
+		await detailWin.locator('.hfield-input').fill('The Conclave');
+		await detailWin.locator('.hfield-input').press('Enter');
+
+		await expect(detailWin.locator('.hfield-text')).toHaveText('The Conclave', { timeout: 3000 });
+	});
+
+	test('details section contains only Motivation and Notes — not Role', async ({ page, request }) => {
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } });
+		await page.goto('/');
+
+		await page.click('button[title="Characters"]');
+		const listWin = page.locator('.window[aria-label="Characters"]');
+		await expect(listWin.locator('.char-row')).toHaveCount(1, { timeout: 3000 });
+		await listWin.locator('.char-row').first().click();
+
+		const detailWin = page.locator('.window[aria-label="Elara"]');
+		await expect(detailWin).toBeVisible();
+
+		// Two field headers: Motivation + Notes. Role lives in the header, not here.
+		await expect(detailWin.locator('.details .field-header')).toHaveCount(2);
+		await expect(detailWin.locator('.details')).not.toContainText('Role');
 	});
 });
 
