@@ -1,5 +1,6 @@
 <script lang="ts">
   import { windowStore } from '$lib/stores/windows.js';
+  import { entities } from '$lib/stores/entities.js';
   import Window from './Window.svelte';
   import CharacterEditor from './apps/CharacterEditor.svelte';
   import Wiki from './apps/Wiki.svelte';
@@ -8,12 +9,19 @@
   import StoryGraph from './apps/StoryGraph.svelte';
 
   const APP_TITLES: Record<string, string> = {
-    'character-editor': 'Character',
+    'character-editor': 'Characters',
     'world-map': 'World Map',
     'timeline': 'Timeline',
     'wiki': 'Wiki',
     'story-graph': 'Story Graph',
   };
+
+  function windowTitle(appId: string, entityId: string | null): string {
+    if (entityId && appId === 'character-editor') {
+      return $entities.find((e) => e.id === entityId)?.name ?? APP_TITLES[appId] ?? appId;
+    }
+    return APP_TITLES[appId] ?? appId;
+  }
 
   function onKeydown(e: KeyboardEvent) {
     if (e.ctrlKey && e.key === 'w') {
@@ -37,13 +45,14 @@
 {#each $windowStore as win (win.id)}
   <Window
     id={win.id}
-    title={APP_TITLES[win.appId] ?? win.appId}
+    title={windowTitle(win.appId, win.entityId)}
     x={win.x}
     y={win.y}
     width={win.width}
     height={win.height}
     zIndex={win.zIndex}
     minimized={win.minimized}
+    maximized={win.maximized}
     bare={win.appId === 'story-graph'}
   >
     {#if win.appId === 'character-editor'}
