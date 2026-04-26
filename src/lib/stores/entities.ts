@@ -27,7 +27,7 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity = await res.json();
-		update((all) => [created, ...all]);
+		update((all) => [...all, created]);
 		return created;
 	}
 

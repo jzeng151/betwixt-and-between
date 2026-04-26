@@ -2,6 +2,7 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import EntityLink from '$lib/components/EntityLink.svelte';
+  import InlineEdit from '$lib/components/InlineEdit.svelte';
   import { onMount } from 'svelte';
 
   interface Props { entityId: string | null; }
@@ -26,7 +27,15 @@
     try {
       await entities.createEntity('Location', 'New Location');
     } catch {
-      saveError = 'inline save error';
+      saveError = "Couldn't create location.";
+    }
+  }
+
+  async function renameLocation(id: string, newName: string) {
+    try {
+      await entities.updateEntity(id, { name: newName });
+    } catch {
+      saveError = "Couldn't rename.";
     }
   }
 
@@ -53,7 +62,9 @@
     {#each locations as loc}
       {@const chips = linkedChips(loc.id)}
       <div class="loc-card" data-id={loc.id} class:focus={loc.id === entityId}>
-        <h3 class="loc-name">{loc.name}</h3>
+        <h3 class="loc-name">
+          <InlineEdit value={loc.name} onSave={(n) => renameLocation(loc.id, n)} />
+        </h3>
         {#if chips.length > 0}
           <div class="chip-row">
             {#each chips as { entity, rel }}
