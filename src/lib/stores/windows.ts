@@ -17,6 +17,7 @@ export type WindowState = {
 	width: number;
 	height: number;
 	minimized: boolean;
+	maximized: boolean;
 	zIndex: number;
 };
 
@@ -29,25 +30,32 @@ const ENTITY_APP: Record<EntityType, AppId> = {
 	Note: 'wiki'
 };
 
-let spawnOffset = 0;
+let lastOpenX = 80;
+let lastOpenY = 80;
 let zCounter = 100;
 
 function createWindowStore() {
 	const { subscribe, update, set } = writable<WindowState[]>([]);
 
 	function open(appId: AppId, entityId: string | null = null): string {
-		const windowId = entityId ? `${appId}-${entityId}` : appId;
+		// story-graph windows are always independent — each open call creates a new instance
+		const windowId = appId === 'story-graph'
+			? `story-graph-${Date.now()}`
+			: entityId ? `${appId}-${entityId}` : appId;
+
 		const existing = get({ subscribe }).find((w) => w.id === windowId);
 		if (existing) {
 			focus(windowId);
 			return windowId;
 		}
 
-		const n = spawnOffset % 8;
-		const x = 60 + n * 24;
-		const y = 60 + n * 24;
-		spawnOffset++;
+		const x = lastOpenX;
+		const y = lastOpenY;
+		lastOpenX = lastOpenX + 28 > 520 ? 80 : lastOpenX + 28;
+		lastOpenY = lastOpenY + 28 > 400 ? 80 : lastOpenY + 28;
 		zCounter++;
+
+		const isGraph = appId === 'story-graph';
 
 		update((all) => [
 			...all,
@@ -57,9 +65,10 @@ function createWindowStore() {
 				entityId,
 				x,
 				y,
-				width: 320,
-				height: 480,
+				width: isGraph ? 640 : appId === 'timeline' ? 640 : 320,
+				height: isGraph ? 500 : 480,
 				minimized: false,
+				maximized: false,
 				zIndex: zCounter
 			}
 		]);
@@ -101,6 +110,14 @@ function createWindowStore() {
 		update((all) => all.map((w) => (w.id === id ? { ...w, width, height } : w)));
 	}
 
+	function maximize(id: string) {
+		zCounter++;
+		const z = zCounter;
+		update((all) =>
+			all.map((w) => (w.id === id ? { ...w, maximized: !w.maximized, minimized: false, zIndex: z } : w))
+		);
+	}
+
 	function setEntityId(id: string, entityId: string) {
 		update((all) => all.map((w) => (w.id === id ? { ...w, entityId } : w)));
 	}
@@ -136,6 +153,7 @@ function createWindowStore() {
 		close,
 		focus,
 		minimize,
+		maximize,
 		move,
 		resize,
 		setEntityId,
