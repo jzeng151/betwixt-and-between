@@ -263,6 +263,91 @@ export function dataNoteSnippet(entity: EntityForHelpers): string | null {
 	return firstLineSnippet(d.notes);
 }
 
+// ─── FK resolution (used by IntervalRow resize) ──────────────────────────────
+
+export interface StartFKs {
+	startActId: string;
+	startSceneId: string | null;
+}
+
+export interface EndFKs {
+	endActId: string;
+	endSceneId: string | null;
+}
+
+/**
+ * Map a snapped start position to FK references for updateInterval.
+ *
+ *   frac ≈ 0           → start of act (startSceneId null)
+ *   frac = k/m, k∈[1,m-1] → startSceneId = scenes[k] (scene k starts at actIdx + k/m)
+ *
+ * Returns null when position is out of range or unrepresentable (non-zero fraction
+ * with no scenes in that act).
+ *
+ * @param position      snapped position on the global story-time axis
+ * @param acts          root-level Acts in index order
+ * @param scenesByActId scenes per act, each list sorted by scene index
+ */
+export function positionToStartFKs(
+	position: number,
+	acts: { id: string }[],
+	scenesByActId: Map<string, { id: string }[]>
+): StartFKs | null {
+	const actIdx = Math.floor(position);
+	if (actIdx < 0 || actIdx >= acts.length) return null;
+	const frac = position - actIdx;
+	if (frac < 1e-9) return { startActId: acts[actIdx].id, startSceneId: null };
+	const scenes = scenesByActId.get(acts[actIdx].id) ?? [];
+	const m = scenes.length;
+	if (m === 0) return null;
+	// k: scene index whose range starts at frac (sceneRange(k, m, actIdx).start = actIdx + k/m)
+	const k = Math.round(frac * m);
+	if (k < 1 || k >= m) return null;
+	return { startActId: acts[actIdx].id, startSceneId: scenes[k].id };
+}
+
+/**
+ * Map a snapped end position to FK references for updateInterval.
+ *
+ * End is exclusive; boundary k/m means the last included scene is k-1
+ * (sceneRange(k-1, m, actIdx).end = actIdx + k/m).
+ *
+ *   position = acts.length    → end of story (last act, no scene FK)
+ *   frac ≈ 1                  → end of act (endSceneId null)
+ *   frac = k/m (0 < k < m)   → endSceneId = scenes[k-1]
+ *
+ * Returns null when position is out of range or unrepresentable.
+ *
+ * @param position      snapped position on the global story-time axis
+ * @param acts          root-level Acts in index order
+ * @param scenesByActId scenes per act, each list sorted by scene index
+ */
+export function positionToEndFKs(
+	position: number,
+	acts: { id: string }[],
+	scenesByActId: Map<string, { id: string }[]>
+): EndFKs | null {
+	if (Math.abs(position - acts.length) < 1e-9) {
+		const last = acts[acts.length - 1];
+		return last ? { endActId: last.id, endSceneId: null } : null;
+	}
+	// floor(position - ε): maps integer 2.0 → Act 1 (end-of-act), not Act 2 (start-of-act).
+	const actIdx = Math.floor(position - 1e-9);
+	if (actIdx < 0 || actIdx >= acts.length) return null;
+	const frac = position - actIdx;
+	if (frac > 1 - 1e-9) return { endActId: acts[actIdx].id, endSceneId: null };
+	const scenes = scenesByActId.get(acts[actIdx].id) ?? [];
+	const m = scenes.length;
+	if (m === 0) return null;
+	// k/m = frac; last included scene index is k-1
+	const k = Math.round(frac * m);
+	if (k < 1 || k > m) return null;
+	if (k === m) return { endActId: acts[actIdx].id, endSceneId: null };
+	return { endActId: acts[actIdx].id, endSceneId: scenes[k - 1].id };
+}
+
+// ─── Act-boundary hairlines ───────────────────────────────────────────────────
+
 /**
  * Compute the act-boundary fractions (within the bar, range (0, 1)) where
  * hairline markers should render for a multi-act interval.

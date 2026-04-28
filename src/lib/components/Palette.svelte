@@ -21,7 +21,18 @@
   <section class="palette-section">
     <header class="palette-label">Characters</header>
     {#each characters as char, i (char.id)}
-      <div class="palette-item" data-entity-id={char.id}>
+      <div
+        class="palette-item"
+        data-entity-id={char.id}
+        draggable="true"
+        role="button"
+        tabindex="0"
+        aria-label="Drag {char.name} onto timeline"
+        ondragstart={(e) => {
+          e.dataTransfer!.setData('text/plain', char.id);
+          e.dataTransfer!.effectAllowed = 'copy';
+        }}
+      >
         <span
           class="palette-dot"
           style="background: {colorFor(char, i)}"
@@ -38,7 +49,18 @@
   <section class="palette-section">
     <header class="palette-label">Events</header>
     {#each events as ev, i (ev.id)}
-      <div class="palette-item" data-entity-id={ev.id}>
+      <div
+        class="palette-item"
+        data-entity-id={ev.id}
+        draggable="true"
+        role="button"
+        tabindex="0"
+        aria-label="Drag {ev.name} onto timeline"
+        ondragstart={(e) => {
+          e.dataTransfer!.setData('text/plain', ev.id);
+          e.dataTransfer!.effectAllowed = 'copy';
+        }}
+      >
         <span class="palette-dot" style="background: {colorFor(ev, i)}" aria-hidden="true"></span>
         <span class="palette-name">{ev.name}</span>
       </div>
