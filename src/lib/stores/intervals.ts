@@ -40,6 +40,21 @@ export type UpdateIntervalInput = Partial<{
 	endSceneId: string | null;
 }>;
 
+// SvelteKit error responses are JSON { message: string }. Extract the
+// human-readable message rather than surfacing raw JSON to the UI.
+async function errorMessage(res: Response): Promise<string> {
+	const text = await res.text();
+	try {
+		const parsed: unknown = JSON.parse(text);
+		if (parsed && typeof parsed === 'object' && 'message' in parsed && typeof (parsed as Record<string, unknown>).message === 'string') {
+			return (parsed as { message: string }).message;
+		}
+	} catch {
+		// fall through to raw text
+	}
+	return text;
+}
+
 function createIntervalStore() {
 	const { subscribe, set, update } = writable<Interval[]>([]);
 
@@ -55,7 +70,7 @@ function createIntervalStore() {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(input)
 		});
-		if (!res.ok) throw new Error(await res.text());
+		if (!res.ok) throw new Error(await errorMessage(res));
 		const created: Interval = await res.json();
 		update((all) => [...all, created]);
 		return created;
@@ -69,7 +84,7 @@ function createIntervalStore() {
 		});
 		if (!res.ok) {
 			await load();
-			throw new Error(await res.text());
+			throw new Error(await errorMessage(res));
 		}
 		const updated: Interval = await res.json();
 		update((all) => all.map((i) => (i.id === id ? updated : i)));
@@ -81,7 +96,7 @@ function createIntervalStore() {
 		const res = await fetch(`/api/intervals/${id}`, { method: 'DELETE' });
 		if (!res.ok) {
 			await load();
-			throw new Error(await res.text());
+			throw new Error(await errorMessage(res));
 		}
 	}
 
