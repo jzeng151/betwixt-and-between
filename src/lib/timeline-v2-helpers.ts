@@ -6,6 +6,76 @@
  * the width-breakpoint contract.
  */
 
+/**
+ * Returns the position-axis range [start, end) for an Act with given index.
+ *
+ *   actIndex (i) → [i, i + 1)
+ */
+export function actRange(actIndex: number): { start: number; end: number } {
+	return { start: actIndex, end: actIndex + 1 };
+}
+
+/**
+ * Returns the position-axis range [start, end) for Scene k of m within Act i.
+ *
+ *   sceneIndex (k), sceneCount (m), actIndex (i) →
+ *     [i + k/m, i + (k+1)/m)
+ *
+ * @param sceneIndex   k = 0-based index of the scene within its parent act
+ * @param sceneCount   m = total number of scenes in the parent act (m > 0)
+ * @param actIndex     i = 0-based index of the parent act on the global axis
+ */
+export function sceneRange(
+	sceneIndex: number,
+	sceneCount: number,
+	actIndex: number
+): { start: number; end: number } {
+	if (sceneCount <= 0) {
+		throw new Error(`sceneCount must be positive (got ${sceneCount})`);
+	}
+	if (sceneIndex < 0 || sceneIndex >= sceneCount) {
+		throw new Error(
+			`sceneIndex out of range: ${sceneIndex} not in [0, ${sceneCount})`
+		);
+	}
+	return {
+		start: actIndex + sceneIndex / sceneCount,
+		end: actIndex + (sceneIndex + 1) / sceneCount
+	};
+}
+
+/**
+ * Smart-snap a raw cursor position to the nearest act/scene boundary.
+ *
+ *   1. actIndex = floor(position)
+ *   2. m = scene count for that act
+ *   3. if m > 0: snap to nearest scene boundary inside the act
+ *      fractionInAct  = position - actIndex
+ *      snappedFraction = round(fractionInAct * m) / m
+ *      snappedPosition = actIndex + snappedFraction
+ *   4. if m == 0: snap to nearest act boundary
+ *      snappedPosition = round(position)
+ *
+ * Caller controls Alt-bypass by skipping this function entirely.
+ *
+ * @param position  raw cursor position on the global axis
+ * @param sceneCountFor function returning m for a given act index. Implementations:
+ *                     in tests: a Map. In production: looks up scenes via DB.
+ */
+export function smartSnap(
+	position: number,
+	sceneCountFor: (actIndex: number) => number
+): number {
+	const actIndex = Math.floor(position);
+	const m = sceneCountFor(actIndex);
+	if (m > 0) {
+		const fractionInAct = position - actIndex;
+		const snappedFraction = Math.round(fractionInAct * m) / m;
+		return actIndex + snappedFraction;
+	}
+	return Math.round(position);
+}
+
 export type WidthClass = 'tiny' | 'narrow' | 'normal';
 
 /**

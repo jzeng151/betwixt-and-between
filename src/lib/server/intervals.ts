@@ -42,6 +42,10 @@ import { sql, eq, and, isNull, inArray } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from './db/schema.js';
 import { entities, intervals } from './db/schema.js';
+// Pure math (actRange, sceneRange, smartSnap) lives in
+// $lib/timeline-v2-helpers so non-server code (drag-preview snap) can import it
+// without violating SvelteKit's $lib/server/* boundary.
+import { actRange, sceneRange } from '$lib/timeline-v2-helpers.js';
 
 type DB = BetterSQLite3Database<typeof schema>;
 
@@ -75,80 +79,6 @@ export interface ComputeIntervalPositionsResult {
 
 /** Float epsilon for position equality. SQLite REAL is IEEE 754 double; 1e-9 is safe. */
 export const POSITION_EPSILON = 1e-9;
-
-// =============================================================================
-// Pure math
-// =============================================================================
-
-/**
- * Returns the position-axis range [start, end) for an Act with given index.
- *
- *   actIndex (i) → [i, i + 1)
- */
-export function actRange(actIndex: number): { start: number; end: number } {
-	return { start: actIndex, end: actIndex + 1 };
-}
-
-/**
- * Returns the position-axis range [start, end) for Scene k of m within Act i.
- *
- *   sceneIndex (k), sceneCount (m), actIndex (i) →
- *     [i + k/m, i + (k+1)/m)
- *
- * @param sceneIndex   k = 0-based index of the scene within its parent act
- * @param sceneCount   m = total number of scenes in the parent act (m > 0)
- * @param actIndex     i = 0-based index of the parent act on the global axis
- */
-export function sceneRange(
-	sceneIndex: number,
-	sceneCount: number,
-	actIndex: number
-): { start: number; end: number } {
-	if (sceneCount <= 0) {
-		throw new Error(`sceneCount must be positive (got ${sceneCount})`);
-	}
-	if (sceneIndex < 0 || sceneIndex >= sceneCount) {
-		throw new Error(
-			`sceneIndex out of range: ${sceneIndex} not in [0, ${sceneCount})`
-		);
-	}
-	return {
-		start: actIndex + sceneIndex / sceneCount,
-		end: actIndex + (sceneIndex + 1) / sceneCount
-	};
-}
-
-/**
- * Smart-snap a raw cursor position to the nearest act/scene boundary.
- *
- *   1. actIndex = floor(position)
- *   2. m = scene count for that act
- *   3. if m > 0: snap to nearest scene boundary inside the act
- *      fractionInAct  = position - actIndex
- *      snappedFraction = round(fractionInAct * m) / m
- *      snappedPosition = actIndex + snappedFraction
- *   4. if m == 0: snap to nearest act boundary
- *      snappedPosition = round(position)
- *
- * Caller controls Alt-bypass by skipping this function entirely.
- *
- * @param position  raw cursor position on the global axis
- * @param sceneCountFor function returning m for a given act index. Implementations:
- *                     in tests: a Map. In production: looks up scenes via DB.
- */
-export function smartSnap(
-	position: number,
-	sceneCountFor: (actIndex: number) => number
-): number {
-	const actIndex = Math.floor(position);
-	const m = sceneCountFor(actIndex);
-	if (m > 0) {
-		const fractionInAct = position - actIndex;
-		const snappedFraction = Math.round(fractionInAct * m) / m;
-		return actIndex + snappedFraction;
-	}
-	return Math.round(position);
-}
 
 // =============================================================================
 // FK-derivation: looks up Act/Scene entities and computes positions.

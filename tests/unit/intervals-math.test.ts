@@ -6,7 +6,9 @@ import { entities } from '../../src/lib/server/db/schema.js';
 import {
 	actRange,
 	sceneRange,
-	smartSnap,
+	smartSnap
+} from '../../src/lib/timeline-v2-helpers.js';
+import {
 	actIndexOf,
 	sceneIndexOf,
 	computeIntervalPositions,
