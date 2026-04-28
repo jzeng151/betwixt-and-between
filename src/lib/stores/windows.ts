@@ -5,6 +5,7 @@ export type AppId =
 	| 'character-editor'
 	| 'world-map'
 	| 'timeline'
+	| 'timeline-v2'
 	| 'wiki'
 	| 'story-graph';
 
@@ -65,7 +66,14 @@ function createWindowStore() {
 				entityId,
 				x,
 				y,
-				width: isGraph ? 640 : appId === 'timeline' ? 640 : 320,
+				width:
+					isGraph
+						? 640
+						: appId === 'timeline-v2'
+							? 960
+							: appId === 'timeline'
+								? 640
+								: 320,
 				height: isGraph ? 500 : 480,
 				minimized: false,
 				maximized: false,

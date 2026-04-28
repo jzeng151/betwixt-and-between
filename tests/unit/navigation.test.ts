@@ -23,6 +23,8 @@ function makeEntity(id: string, type: Entity['type'], name: string): Entity {
 		type,
 		name,
 		data: '{}',
+		parentId: null,
+		position: null,
 		createdAt: 0,
 		updatedAt: 0
 	};

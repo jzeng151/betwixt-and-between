@@ -6,6 +6,8 @@ export type Entity = {
 	type: EntityType;
 	name: string;
 	data: string;
+	parentId: string | null;
+	position: number | null;
 	createdAt: number | Date;
 	updatedAt: number | Date;
 };
