@@ -313,7 +313,27 @@ async function validateFKTypes(db: DB, input: WriteIntervalInput): Promise<void>
  *   - Validates FK types (start_act_id → Act, scene_id → Scene, etc.)
  *   - Derives positions from FKs unless caller supplied them
  *   - If caller supplied positions AND FKs, validates they match (within epsilon)
- *   - Writes the row in a transaction
+ *   - Performs the INSERT
+ *
+ * **Atomicity note (PR 1):** the validate / compute / insert sequence is NOT
+ * wrapped in `db.transaction()`. better-sqlite3 transactions are synchronous
+ * and our helpers use `async`/`await` for type compatibility with Drizzle's
+ * Promise-returning query API. Refactoring to a sync transaction means
+ * either duplicating the helper chain inside the callback or making every
+ * helper sync — both are out of scope for PR 1.
+ *
+ * In practice this is safe under the current stack: better-sqlite3 serializes
+ * ALL writes at the connection level (every `.insert()` is atomic), and
+ * during PR 1's life there is exactly one connection per process. The
+ * read-modify-write window for `validateFKTypes` and `computeIntervalPositions`
+ * is open to concurrent *write* races only if a parallel writer modifies
+ * `entities` between the validation reads and the insert — better-sqlite3
+ * makes that impossible.
+ *
+ * **Future-Turso flag:** under the Turso adapter swap, transactions become
+ * async-friendly AND replica lag opens a real read-modify-write window.
+ * Wrap this body in `db.transaction()` at that point. Same applies to
+ * `updateInterval` and to any overlap-rejection check added in PR 2.
  *
  * Throws on any validation failure.
  */

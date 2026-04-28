@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { unlinkSync, existsSync } from 'node:fs';
+import { unlinkSync, existsSync, readFileSync } from 'node:fs';
 import { eq } from 'drizzle-orm';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
@@ -248,6 +248,52 @@ describe('intervals migration', () => {
 		expect(ints).toHaveLength(1);
 		// The duplicate row remains in relationships.
 		expect(rels).toHaveLength(1);
+	});
+
+	// Greptile P2 regression: warnings file uses appendFileSync, not writeFileSync.
+	// Re-running the migration after malformed rows still surface must PRESERVE
+	// the original run's history rather than overwriting it.
+	it('appends to warnings file across runs; does not overwrite earlier history', async () => {
+		const { db, client, path } = createFileBackedDb();
+		await seedActs(db);
+		const [ellie] = await db
+			.insert(entities)
+			.values({ type: 'Character', name: 'Ellie' })
+			.returning();
+		const [damien] = await db
+			.insert(entities)
+			.values({ type: 'Character', name: 'Damien' })
+			.returning();
+		// Plant a malformed row that will be skipped both runs (Char→Char).
+		await db.insert(relationships).values({
+			fromId: ellie.id,
+			toId: damien.id,
+			type: 'appears_in'
+		});
+		client.close();
+		dbPath = path;
+		warningsPath = `${path}.warnings.txt`;
+
+		// First run
+		const stats1 = await migrate(dbPath, warningsPath);
+		expect(stats1.skippedTypeMismatch).toBe(1);
+		expect(existsSync(warningsPath)).toBe(true);
+		const firstContents = readFileSync(warningsPath, 'utf-8');
+		// First run should have written exactly one warning block + one warning line.
+		const firstHeaderCount = (firstContents.match(/# Migration warnings/g) ?? []).length;
+		expect(firstHeaderCount).toBe(1);
+
+		// Second run: same malformed row remains and is skipped again.
+		const stats2 = await migrate(dbPath, warningsPath);
+		expect(stats2.skippedTypeMismatch).toBe(1);
+		const secondContents = readFileSync(warningsPath, 'utf-8');
+		// File grew (append) rather than was replaced (overwrite).
+		expect(secondContents.length).toBeGreaterThan(firstContents.length);
+		// The first run's header/timestamp is still present.
+		expect(secondContents.startsWith(firstContents)).toBe(true);
+		// And there are now TWO header blocks.
+		const secondHeaderCount = (secondContents.match(/# Migration warnings/g) ?? []).length;
+		expect(secondHeaderCount).toBe(2);
 	});
 });
 

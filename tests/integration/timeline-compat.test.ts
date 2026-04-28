@@ -70,6 +70,34 @@ describe('compat: getCharacterAppearancesForActs', () => {
 		expect(result).toHaveLength(1);
 		expect(result[0].entityId).toBe(ellie);
 	});
+
+	// Greptile P1 regression: the canonical actIndexOf filters to root-level
+	// Acts (parent_id IS NULL). The compat layer's act-id-by-index map MUST
+	// match. If we include Acts with a non-NULL parent_id, the index map shifts
+	// and synthetic appears_in rows point to the wrong Acts.
+	it('ignores Acts with a non-null parent_id (matches actIndexOf canonical filter)', async () => {
+		// Seed three intervals across the three root-level Acts
+		await writeInterval(db, { entityId: ellie, startActId: acts.act0, endActId: acts.act0 });
+		await writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 });
+		await writeInterval(db, { entityId: ellie, startActId: acts.act2, endActId: acts.act2 });
+
+		// Plant a "child" Act — pathological but the schema permits it. If the
+		// compat layer doesn't filter it out, the idByIndex map gets a 4th
+		// entry and the existing intervals would be re-mapped to wrong Acts.
+		await db.insert(entities).values({
+			type: 'Act',
+			name: 'Inner Act',
+			parentId: acts.act1,
+			position: 0
+		});
+
+		const result = await getCharacterAppearancesForActs(db);
+		// Three single-act intervals → exactly three tuples, all pointing at
+		// the original root-level Acts.
+		expect(result).toHaveLength(3);
+		const actIdsReturned = new Set(result.map((r) => r.actId));
+		expect(actIdsReturned).toEqual(new Set([acts.act0, acts.act1, acts.act2]));
+	});
 });
 
 describe('compat: getAppearsInRelationships', () => {

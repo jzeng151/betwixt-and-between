@@ -24,7 +24,7 @@
  * which routes to writeInterval().
  */
 
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from './db/schema.js';
 import { entities, intervals } from './db/schema.js';
@@ -56,10 +56,14 @@ export async function getCharacterAppearancesForActs(
 
 	// Build the act-id-by-index map ONCE (per call) so multi-act expansion
 	// doesn't issue N queries.
+	// Match the canonical filter from actIndexOf: root-level Acts only
+	// (parent_id IS NULL). If we omit this, an Act with a non-NULL parent_id
+	// would shift the index map relative to the server's view, producing
+	// synthetic appears_in rows pointing at the wrong Acts.
 	const acts = await db
 		.select({ id: entities.id, position: entities.position, createdAt: entities.createdAt })
 		.from(entities)
-		.where(and(eq(entities.type, 'Act')));
+		.where(and(eq(entities.type, 'Act'), isNull(entities.parentId)));
 	// Match the ordering used in actIndexOf: position, then createdAt as tiebreaker.
 	acts.sort((a, b) => {
 		const ap = a.position ?? Number.MAX_SAFE_INTEGER;
