@@ -1,15 +1,13 @@
 <!--
   IntervalBar — atomic visual unit for the V2 Timeline.
-  Renders ONE bar with width-breakpoint text logic, hover tooltip via title,
-  ARIA label parity for screen readers / keyboard focus, and optional
-  vertical hairlines at internal act boundaries (multi-act spans).
+  Renders ONE bar as an <svg> so multi-act spans render as a single
+  continuous element with vector hairlines at internal act boundaries.
 
-  The parent (TimelineV2) positions the bar via inline style left/width and
-  passes the rendered widthPx so this component can pick its text class.
+  Public Props API is stable — TimelineV2 / IntervalRow / Palette callers
+  are unaffected. The parent positions the bar via inline style left/width.
 
   See src/lib/timeline-v2-helpers.ts for the pure helpers used here
   (widthClassForBar, internalActBoundaryFractions).
-  See CONSIDERATIONS.md → "/plan-design-review resolutions" for the spec.
 -->
 
 <script lang="ts">
@@ -20,7 +18,7 @@
     name: string;
     /** Optional snippet shown on line 2 when the bar is wide enough. */
     note?: string | null;
-    /** Full tooltip text — also goes to aria-label. */
+    /** Full tooltip text — also goes to aria-label and SVG <title>. */
     tooltipText: string;
     /** Per-character or event color, e.g., "#c8942a". */
     color: string;
@@ -48,94 +46,140 @@
   const widthClass: WidthClass = $derived(widthClassForBar(widthPx));
   const showName = $derived(widthClass !== 'tiny');
   const showNote = $derived(widthClass === 'normal' && note != null && note.trim() !== '');
+
+  // Bar geometry — body sits inside the 56px row at y=10, height 36.
+  const BODY_Y = 10;
+  const BODY_H = 36;
+  const PAD_X = $derived(widthClass === 'tiny' ? 0 : widthClass === 'narrow' ? 6 : 10);
+
+  // Unique clipPath id so multiple instances don't collide.
+  const clipId = `ib-clip-${Math.random().toString(36).slice(2, 9)}`;
+
+  const textColor = $derived(isEvent ? 'var(--color-text, #e8e0d0)' : color);
+  const nameY = $derived(showNote ? BODY_Y + 12 : BODY_Y + BODY_H / 2);
+  const nameBaseline = $derived(showNote ? 'hanging' : 'middle');
+
+  let focused = $state(false);
 </script>
 
-<div
-  class="interval-bar {widthClass}"
+<svg
+  class="interval-bar"
   class:event={isEvent}
-  style="--chip-color: {color}"
-  title={tooltipText}
+  width={widthPx}
+  height="56"
+  style="position: absolute; top: 0; left: 0; overflow: visible;"
   aria-label={tooltipText}
   role="button"
   tabindex="0"
+  onfocus={() => (focused = true)}
+  onblur={() => (focused = false)}
 >
+  <title>{tooltipText}</title>
+
+  <defs>
+    <clipPath id={clipId}>
+      <rect
+        x={PAD_X}
+        y={BODY_Y}
+        width={Math.max(0, widthPx - PAD_X * 2)}
+        height={BODY_H}
+      />
+    </clipPath>
+  </defs>
+
+  <!-- Body -->
+  <rect
+    x="0"
+    y={BODY_Y}
+    width={widthPx}
+    height={BODY_H}
+    rx="4"
+    ry="4"
+    fill={color}
+    fill-opacity="0.18"
+    stroke={color}
+    stroke-opacity="0.5"
+    stroke-width="1"
+  />
+
+  <!-- Internal act boundaries -->
+  {#each internalBoundaries as fraction (fraction)}
+    <line
+      x1={fraction * widthPx}
+      x2={fraction * widthPx}
+      y1={BODY_Y + 4}
+      y2={BODY_Y + BODY_H - 4}
+      stroke="rgba(255, 255, 255, 0.18)"
+      stroke-width="1"
+    />
+  {/each}
+
+  <!-- Name -->
   {#if showName}
-    <div class="bar-name">{name}</div>
-  {/if}
-  {#if showNote}
-    <div class="bar-note">{note}</div>
+    <text
+      class="bar-name"
+      x={PAD_X}
+      y={nameY}
+      fill={textColor}
+      dominant-baseline={nameBaseline}
+      clip-path="url(#{clipId})"
+    >
+      {name}
+    </text>
   {/if}
 
-  {#each internalBoundaries as fraction (fraction)}
-    <div class="hairline" style="left: {fraction * 100}%"></div>
-  {/each}
-</div>
+  <!-- Note -->
+  {#if showNote}
+    <text
+      class="bar-note"
+      x={PAD_X}
+      y={BODY_Y + 24}
+      fill={textColor}
+      fill-opacity="0.75"
+      dominant-baseline="hanging"
+      clip-path="url(#{clipId})"
+    >
+      {note}
+    </text>
+  {/if}
+
+  <!-- Focus ring -->
+  {#if focused}
+    <rect
+      class="focus-ring"
+      x="-2"
+      y={BODY_Y - 2}
+      width={widthPx + 4}
+      height={BODY_H + 4}
+      rx="6"
+      ry="6"
+      fill="none"
+      stroke="var(--color-accent, #c8942a)"
+      stroke-width="2"
+    />
+  {/if}
+</svg>
 
 <style>
   .interval-bar {
-    position: absolute;
-    top: 10px;
-    height: 36px;
-    border-radius: 4px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding: 4px 10px;
     cursor: pointer;
-    overflow: hidden;
-    background: color-mix(in srgb, var(--chip-color) 18%, transparent);
-    border: 1px solid color-mix(in srgb, var(--chip-color) 50%, transparent);
-    color: var(--chip-color);
-    transition: filter 0.15s ease, box-shadow 0.15s ease;
-    /* width and left set inline by parent */
+    transition: filter 0.15s ease;
   }
   .interval-bar:hover {
     filter: brightness(1.15);
   }
-  .interval-bar:focus-visible {
-    outline: 2px solid var(--color-accent, #c8942a);
-    outline-offset: 2px;
+  .interval-bar:focus {
+    outline: none;
   }
-  .interval-bar.event {
-    color: var(--color-text, #e8e0d0);
-  }
-
   .bar-name {
     font-family: var(--font-display, 'Fraunces', Georgia, serif);
     font-size: 13px;
     font-weight: 500;
-    line-height: 1.1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    pointer-events: none;
   }
-
   .bar-note {
     font-family: var(--font-ui, 'Inter', sans-serif);
     font-size: 10px;
-    line-height: 1.2;
-    opacity: 0.75;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-top: 1px;
-  }
-
-  /* Vertical hairline at internal act boundary — multi-act bars only */
-  .hairline {
-    position: absolute;
-    top: 4px;
-    bottom: 4px;
-    width: 1px;
-    background: rgba(255, 255, 255, 0.18);
     pointer-events: none;
-  }
-
-  /* Width breakpoint classes drive padding so tiny bars don't blow out */
-  .interval-bar.tiny {
-    padding: 0;
-  }
-  .interval-bar.narrow {
-    padding: 4px 6px;
   }
 </style>
