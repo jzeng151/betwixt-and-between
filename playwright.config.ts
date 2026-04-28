@@ -7,7 +7,7 @@ export default defineConfig({
 		reuseExistingServer: !process.env.CI,
 		timeout: 60_000
 	},
-	testDir: 'e2e',
+	testDir: 'tests/e2e',
 	// Tests share a single SQLite database, so they must run serially to avoid
 	// one test's beforeEach cleanup racing with another test's data creation.
 	workers: 1,

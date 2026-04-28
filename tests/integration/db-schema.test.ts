@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq, count } from 'drizzle-orm';
-import * as schema from './schema.js';
-import { entities, relationships, canvasPositions } from './schema.js';
+import * as schema from '../../src/lib/server/db/schema.js';
+import { entities, relationships, canvasPositions } from '../../src/lib/server/db/schema.js';
 
 function createTestDb() {
 	const client = new Database(':memory:');
@@ -14,10 +14,15 @@ function createTestDb() {
       type TEXT NOT NULL,
       name TEXT NOT NULL,
       data TEXT NOT NULL DEFAULT '{}',
+      parent_id TEXT,
+      position INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      FOREIGN KEY (parent_id) REFERENCES entities(id) ON DELETE CASCADE
     );
     CREATE INDEX entities_created_at_idx ON entities (created_at);
+    CREATE INDEX entities_parent_idx ON entities (parent_id);
+    CREATE INDEX entities_type_position_idx ON entities (type, position);
 
     CREATE TABLE relationships (
       id TEXT PRIMARY KEY NOT NULL,
@@ -38,6 +43,29 @@ function createTestDb() {
       height INTEGER NOT NULL DEFAULT 80,
       FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE intervals (
+      id TEXT PRIMARY KEY NOT NULL,
+      entity_id TEXT NOT NULL,
+      start_act_id TEXT NOT NULL,
+      start_scene_id TEXT,
+      end_act_id TEXT NOT NULL,
+      end_scene_id TEXT,
+      start_position REAL NOT NULL,
+      end_position REAL NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+      FOREIGN KEY (start_act_id) REFERENCES entities(id) ON DELETE CASCADE,
+      FOREIGN KEY (start_scene_id) REFERENCES entities(id) ON DELETE SET NULL,
+      FOREIGN KEY (end_act_id) REFERENCES entities(id) ON DELETE CASCADE,
+      FOREIGN KEY (end_scene_id) REFERENCES entities(id) ON DELETE SET NULL,
+      CONSTRAINT intervals_position_order CHECK (start_position < end_position)
+    );
+    CREATE INDEX intervals_entity_idx ON intervals (entity_id);
+    CREATE INDEX intervals_position_idx ON intervals (start_position, end_position);
+    CREATE INDEX intervals_start_scene_idx ON intervals (start_scene_id);
+    CREATE INDEX intervals_end_scene_idx ON intervals (end_scene_id);
   `);
 	return drizzle(client, { schema });
 }
