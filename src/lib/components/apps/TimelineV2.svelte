@@ -22,7 +22,7 @@
   import Palette from '$lib/components/Palette.svelte';
   import ActsHeader from '$lib/components/ActsHeader.svelte';
   import IntervalRow from '$lib/components/IntervalRow.svelte';
-  import { presenceLabel } from '$lib/timeline-v2-helpers.js';
+  import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
 
   interface Props {
     entityId: string | null;
@@ -107,23 +107,6 @@
     [...characters, ...events].filter((e) => (intervalsByEntityId.get(e.id)?.length ?? 0) > 0)
   );
 
-  // ── Color palette ────────────────────────────────────────────────────────
-  const CHARACTER_COLORS = [
-    '#c8942a', // amber
-    '#2dd4bf', // teal
-    '#818cf8', // indigo
-    '#86efac', // sage
-    '#f472b6', // rose
-    '#fbbf24', // gold
-    '#34d399', // emerald
-    '#60a5fa'  // sky
-  ];
-  const EVENT_COLOR = '#94a3b8';
-  function colorFor(entity: Entity, idx: number): string {
-    if (entity.type === 'Event') return EVENT_COLOR;
-    return CHARACTER_COLORS[idx % CHARACTER_COLORS.length];
-  }
-
   // ── Track measurement ────────────────────────────────────────────────────
   let trackEl: HTMLDivElement | null = $state(null);
   let trackWidthPx = $state(0);
@@ -145,23 +128,6 @@
   }
 
   // ── Per-bar render state ─────────────────────────────────────────────────
-  function dataNoteSnippet(entity: Entity): string | null {
-    try {
-      const d = JSON.parse(entity.data ?? '{}');
-      const notes = typeof d.notes === 'string' ? d.notes : null;
-      if (!notes) return null;
-      // First non-empty line, truncated to ~30 chars
-      const firstLine = notes
-        .split(/\r?\n/)
-        .map((s: string) => s.trim())
-        .filter(Boolean)[0];
-      if (!firstLine) return null;
-      return firstLine.length > 30 ? firstLine.slice(0, 30).trimEnd() + '…' : firstLine;
-    } catch {
-      return null;
-    }
-  }
-
   function tooltipFor(entity: Entity, interval: Interval): string {
     const range = presenceLabel(interval.startPosition, interval.endPosition);
     return `${entity.name} · ${range}`;

@@ -165,6 +165,104 @@ export function presenceLabel(
 	return `${startStr} → ${endStr}`;
 }
 
+// ─── Color + label helpers (consumed by TimelineV2.svelte) ───────────────
+
+/**
+ * The 8-color cycle used to color character bars by row index when a
+ * character has no custom color set in its data blob.
+ */
+export const CHARACTER_COLORS = [
+	'#c8942a', // amber
+	'#2dd4bf', // teal
+	'#818cf8', // indigo
+	'#86efac', // sage
+	'#f472b6', // rose
+	'#fbbf24', // gold
+	'#34d399', // emerald
+	'#60a5fa' // sky
+] as const;
+
+/** Solid grey for Event-type rows. */
+export const EVENT_COLOR = '#94a3b8';
+
+/** Hex color regex used by the color picker UI. */
+export const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
+
+/** Minimal entity shape consumed by these helpers (avoids store coupling). */
+export interface EntityForHelpers {
+	type: string;
+	data: string;
+}
+
+export type TimelineLabelMode =
+	| { mode: 'name-only' }
+	| { mode: 'name-and-note' }
+	| { mode: 'custom'; field: string };
+
+/**
+ * Parse the `entity.data` JSON string. Returns an empty object if the string
+ * is missing or invalid — never throws. Returned values are otherwise raw.
+ */
+export function parseEntityData(raw: string | null | undefined): Record<string, unknown> {
+	if (!raw) return {};
+	try {
+		const v = JSON.parse(raw);
+		return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * Color for an entity bar.
+ *   - Event rows always render in EVENT_COLOR.
+ *   - Characters with a custom `data.color` (validated hex) use that color.
+ *   - Otherwise, characters cycle through CHARACTER_COLORS by row index.
+ */
+export function colorFor(entity: EntityForHelpers, idx: number): string {
+	if (entity.type === 'Event') return EVENT_COLOR;
+	const d = parseEntityData(entity.data);
+	const custom = typeof d.color === 'string' ? d.color : null;
+	if (custom && HEX_COLOR_RE.test(custom)) return custom;
+	return CHARACTER_COLORS[idx % CHARACTER_COLORS.length];
+}
+
+/**
+ * Truncate to ~30 chars on whole-line basis: returns the first non-empty
+ * line, with an ellipsis if it exceeds 30 chars. Returns null when the
+ * source value is missing or contains no non-empty line.
+ */
+function firstLineSnippet(value: unknown): string | null {
+	if (typeof value !== 'string' || !value) return null;
+	const firstLine = value
+		.split(/\r?\n/)
+		.map((s) => s.trim())
+		.filter(Boolean)[0];
+	if (!firstLine) return null;
+	return firstLine.length > 30 ? firstLine.slice(0, 30).trimEnd() + '…' : firstLine;
+}
+
+/**
+ * Resolve the second-line label for an entity bar based on its
+ * `data.timelineLabel` setting.
+ *   - `name-only` → returns null (no second line)
+ *   - `custom` with `field` → first line of `data[field]` (or null)
+ *   - default / `name-and-note` / unset → first line of `data.notes`
+ */
+export function dataNoteSnippet(entity: EntityForHelpers): string | null {
+	const d = parseEntityData(entity.data);
+	const label = d.timelineLabel as TimelineLabelMode | undefined;
+	if (label && typeof label === 'object' && 'mode' in label) {
+		if (label.mode === 'name-only') return null;
+		if (label.mode === 'custom') {
+			const field = typeof label.field === 'string' ? label.field : '';
+			if (!field) return null;
+			return firstLineSnippet(d[field]);
+		}
+	}
+	return firstLineSnippet(d.notes);
+}
+
 /**
  * Compute the act-boundary fractions (within the bar, range (0, 1)) where
  * hairline markers should render for a multi-act interval.

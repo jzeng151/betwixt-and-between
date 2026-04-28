@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
 	widthClassForBar,
 	presenceLabel,
-	internalActBoundaryFractions
+	internalActBoundaryFractions,
+	colorFor,
+	dataNoteSnippet,
+	parseEntityData,
+	CHARACTER_COLORS,
+	EVENT_COLOR
 } from '../../src/lib/timeline-v2-helpers.js';
 
 describe('widthClassForBar', () => {
@@ -104,5 +109,128 @@ describe('internalActBoundaryFractions', () => {
 	it('end exactly on whole-act boundary is NOT itself a boundary marker', () => {
 		// span [1.0, 2.0): endActIdx = floor(2.0 - epsilon) = 1, so no internal boundaries.
 		expect(internalActBoundaryFractions(1.0, 2.0)).toEqual([]);
+	});
+});
+
+describe('parseEntityData', () => {
+	it('returns {} for null/undefined/empty', () => {
+		expect(parseEntityData(null)).toEqual({});
+		expect(parseEntityData(undefined)).toEqual({});
+		expect(parseEntityData('')).toEqual({});
+	});
+	it('returns {} for invalid JSON', () => {
+		expect(parseEntityData('{not json')).toEqual({});
+	});
+	it('returns {} for non-object JSON (array, string, number, null)', () => {
+		expect(parseEntityData('[1,2]')).toEqual({});
+		expect(parseEntityData('"foo"')).toEqual({});
+		expect(parseEntityData('42')).toEqual({});
+		expect(parseEntityData('null')).toEqual({});
+	});
+	it('parses plain objects', () => {
+		expect(parseEntityData('{"a":1,"b":"x"}')).toEqual({ a: 1, b: 'x' });
+	});
+});
+
+describe('colorFor', () => {
+	it('returns EVENT_COLOR for Event entities (custom color ignored)', () => {
+		expect(colorFor({ type: 'Event', data: '{}' }, 0)).toBe(EVENT_COLOR);
+		expect(colorFor({ type: 'Event', data: '{"color":"#ff0000"}' }, 0)).toBe(EVENT_COLOR);
+	});
+	it('returns custom hex color for Character with valid data.color', () => {
+		expect(colorFor({ type: 'Character', data: '{"color":"#abcdef"}' }, 5)).toBe('#abcdef');
+	});
+	it('falls back to CHARACTER_COLORS cycle when data.color is unset', () => {
+		expect(colorFor({ type: 'Character', data: '{}' }, 0)).toBe(CHARACTER_COLORS[0]);
+		expect(colorFor({ type: 'Character', data: '{}' }, 3)).toBe(CHARACTER_COLORS[3]);
+	});
+	it('cycles by index modulo CHARACTER_COLORS.length', () => {
+		expect(colorFor({ type: 'Character', data: '{}' }, 8)).toBe(CHARACTER_COLORS[0]);
+		expect(colorFor({ type: 'Character', data: '{}' }, 17)).toBe(CHARACTER_COLORS[1]);
+	});
+	it('falls back to cycle when data.color is invalid', () => {
+		expect(colorFor({ type: 'Character', data: '{"color":"red"}' }, 0)).toBe(CHARACTER_COLORS[0]);
+		expect(colorFor({ type: 'Character', data: '{"color":"#ggg"}' }, 0)).toBe(CHARACTER_COLORS[0]);
+	});
+	it('falls back to cycle when data is malformed JSON', () => {
+		expect(colorFor({ type: 'Character', data: 'garbage' }, 2)).toBe(CHARACTER_COLORS[2]);
+	});
+});
+
+describe('dataNoteSnippet', () => {
+	it('returns null when entity.data is empty/missing', () => {
+		expect(dataNoteSnippet({ type: 'Character', data: '' })).toBe(null);
+		expect(dataNoteSnippet({ type: 'Character', data: '{}' })).toBe(null);
+	});
+	it('default (unset timelineLabel) returns first line of notes', () => {
+		expect(
+			dataNoteSnippet({ type: 'Character', data: JSON.stringify({ notes: 'Loyal soldier' }) })
+		).toBe('Loyal soldier');
+	});
+	it('default trims and skips empty leading lines', () => {
+		expect(
+			dataNoteSnippet({
+				type: 'Character',
+				data: JSON.stringify({ notes: '\n\n  First real line  \nsecond' })
+			})
+		).toBe('First real line');
+	});
+	it('default truncates lines > 30 chars with ellipsis', () => {
+		const long = 'a'.repeat(40);
+		const r = dataNoteSnippet({ type: 'Character', data: JSON.stringify({ notes: long }) });
+		expect(r).toBe('a'.repeat(30) + '…');
+	});
+	it('mode=name-only returns null even when notes exist', () => {
+		expect(
+			dataNoteSnippet({
+				type: 'Character',
+				data: JSON.stringify({ notes: 'Hello', timelineLabel: { mode: 'name-only' } })
+			})
+		).toBe(null);
+	});
+	it('mode=name-and-note matches default behavior', () => {
+		expect(
+			dataNoteSnippet({
+				type: 'Character',
+				data: JSON.stringify({ notes: 'Hi there', timelineLabel: { mode: 'name-and-note' } })
+			})
+		).toBe('Hi there');
+	});
+	it('mode=custom reads from the named field', () => {
+		expect(
+			dataNoteSnippet({
+				type: 'Character',
+				data: JSON.stringify({
+					motivation: 'Avenge father',
+					timelineLabel: { mode: 'custom', field: 'motivation' }
+				})
+			})
+		).toBe('Avenge father');
+	});
+	it('mode=custom returns null when field is missing or empty', () => {
+		expect(
+			dataNoteSnippet({
+				type: 'Character',
+				data: JSON.stringify({ timelineLabel: { mode: 'custom', field: 'nope' } })
+			})
+		).toBe(null);
+		expect(
+			dataNoteSnippet({
+				type: 'Character',
+				data: JSON.stringify({ timelineLabel: { mode: 'custom', field: '' } })
+			})
+		).toBe(null);
+	});
+	it('mode=custom truncates field value > 30 chars', () => {
+		const long = 'b'.repeat(50);
+		expect(
+			dataNoteSnippet({
+				type: 'Character',
+				data: JSON.stringify({ arc: long, timelineLabel: { mode: 'custom', field: 'arc' } })
+			})
+		).toBe('b'.repeat(30) + '…');
+	});
+	it('handles malformed JSON gracefully', () => {
+		expect(dataNoteSnippet({ type: 'Character', data: '{bad' })).toBe(null);
 	});
 });
