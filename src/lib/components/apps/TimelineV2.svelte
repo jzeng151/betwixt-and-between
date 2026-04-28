@@ -19,11 +19,10 @@
   import { onMount } from 'svelte';
   import { entities, type Entity } from '$lib/stores/entities.js';
   import { intervals as intervalsStore, type Interval } from '$lib/stores/intervals.js';
-  import IntervalBar from '$lib/components/IntervalBar.svelte';
-  import {
-    presenceLabel,
-    internalActBoundaryFractions
-  } from '$lib/timeline-v2-helpers.js';
+  import Palette from '$lib/components/Palette.svelte';
+  import ActsHeader from '$lib/components/ActsHeader.svelte';
+  import IntervalRow from '$lib/components/IntervalRow.svelte';
+  import { presenceLabel } from '$lib/timeline-v2-helpers.js';
 
   interface Props {
     entityId: string | null;
@@ -42,6 +41,10 @@
       loaded = true;
     }
   });
+
+  // ── Interaction lock (reserved for upcoming drag/resize commits) ─────────
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  let interactionLock = $state(false);
 
   // ── Derived data ─────────────────────────────────────────────────────────
 
@@ -170,76 +173,11 @@
 </script>
 
 <div class="tl2">
-  <!-- ── Sidebar palette ────────────────────────────────────────────── -->
-  <aside class="palette" aria-label="Timeline palette">
-    <section class="palette-section">
-      <header class="palette-label">Characters</header>
-      {#each characters as char (char.id)}
-        <div class="palette-item" data-entity-id={char.id}>
-          <span
-            class="palette-dot"
-            style="background: {colorFor(char, characters.indexOf(char))}"
-            aria-hidden="true"
-          ></span>
-          <span class="palette-name">{char.name}</span>
-        </div>
-      {/each}
-      {#if characters.length === 0}
-        <div class="palette-empty">No characters yet.</div>
-      {/if}
-    </section>
-
-    <section class="palette-section">
-      <header class="palette-label">Events</header>
-      {#each events as ev (ev.id)}
-        <div class="palette-item" data-entity-id={ev.id}>
-          <span class="palette-dot" style="background: {EVENT_COLOR}" aria-hidden="true"></span>
-          <span class="palette-name">{ev.name}</span>
-        </div>
-      {/each}
-      {#if events.length === 0}
-        <div class="palette-empty">No events yet.</div>
-      {/if}
-    </section>
-  </aside>
+  <Palette {characters} {events} {colorFor} />
 
   <!-- ── Main timeline ──────────────────────────────────────────────── -->
   <div class="timeline">
-    <!-- Acts header -->
-    <div class="acts-header">
-      {#each acts as act, i (act.id)}
-        <div class="act-col-header" style="flex: 1;">
-          <div class="act-name">{act.name}</div>
-          <div class="act-meta">
-            {#if (scenesByActId.get(act.id)?.length ?? 0) > 0}
-              {scenesByActId.get(act.id)!.length} scenes
-            {:else}
-              act-level only
-            {/if}
-          </div>
-        </div>
-      {/each}
-      {#if acts.length === 0}
-        <div class="acts-empty">No acts yet. Add an Act to begin your story.</div>
-      {/if}
-    </div>
-
-    <!-- Scenes row -->
-    {#if acts.length > 0}
-      <div class="scenes-row">
-        {#each acts as act (act.id)}
-          <div class="scenes-act">
-            {#if (scenesByActId.get(act.id)?.length ?? 0) > 0}
-              {#each scenesByActId.get(act.id)! as scene, k (scene.id)}
-                <div class="scene-cell" title={scene.name}>s{k}</div>
-              {/each}
-            {:else}
-              <div class="scenes-act-empty">· · · · ·</div>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {/if}
+    <ActsHeader {acts} {scenesByActId} />
 
     <!-- Rows of intervals -->
     <div class="rows" bind:this={trackEl}>
@@ -250,25 +188,17 @@
       {/if}
 
       {#each rowEntities as entity, idx (entity.id)}
-        <div class="row" data-entity-id={entity.id}>
-          {#each intervalsByEntityId.get(entity.id) ?? [] as iv (iv.id)}
-            {@const span = iv.endPosition - iv.startPosition}
-            {@const leftPct = (iv.startPosition / Math.max(N, 1)) * 100}
-            {@const widthPct = (span / Math.max(N, 1)) * 100}
-            {@const widthPx = pxForFractionalSpan(span)}
-            <div class="bar-wrapper" style="left: {leftPct}%; width: {widthPct}%;">
-              <IntervalBar
-                name={entity.name}
-                note={dataNoteSnippet(entity)}
-                tooltipText={tooltipFor(entity, iv)}
-                color={colorFor(entity, idx)}
-                widthPx={widthPx}
-                internalBoundaries={internalActBoundaryFractions(iv.startPosition, iv.endPosition)}
-                isEvent={entity.type === 'Event'}
-              />
-            </div>
-          {/each}
-        </div>
+        <IntervalRow
+          {entity}
+          intervals={intervalsByEntityId.get(entity.id) ?? []}
+          {idx}
+          {trackWidthPx}
+          actCount={N}
+          {colorFor}
+          {dataNoteSnippet}
+          {tooltipFor}
+          {pxForFractionalSpan}
+        />
       {/each}
     </div>
   </div>
@@ -284,60 +214,6 @@
     overflow: hidden;
   }
 
-  /* ── Palette ─────────────────────────────────────────────────────── */
-  .palette {
-    width: 240px;
-    flex-shrink: 0;
-    background: var(--color-surface-2, #1c1f28);
-    border-right: 1px solid var(--color-border, #2a2d35);
-    overflow-y: auto;
-  }
-  .palette-section {
-    padding: 18px 16px 12px;
-    border-bottom: 1px solid var(--color-border, #2a2d35);
-  }
-  .palette-section:last-child {
-    border-bottom: none;
-  }
-  .palette-label {
-    font-size: 9px;
-    font-weight: 600;
-    color: var(--color-text-muted, #6b7280);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    margin-bottom: 10px;
-  }
-  .palette-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 7px 10px;
-    border-radius: 6px;
-    margin-bottom: 4px;
-    cursor: grab;
-    transition: background 0.15s ease;
-  }
-  .palette-item:hover {
-    background: rgba(255, 255, 255, 0.03);
-  }
-  .palette-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .palette-name {
-    font-family: var(--font-display, 'Fraunces', Georgia, serif);
-    font-size: 14px;
-    font-weight: 400;
-  }
-  .palette-empty {
-    font-size: 11px;
-    color: var(--color-text-muted, #6b7280);
-    font-style: italic;
-    padding: 4px 10px;
-  }
-
   /* ── Main timeline ───────────────────────────────────────────────── */
   .timeline {
     flex: 1;
@@ -346,99 +222,10 @@
     overflow: hidden;
   }
 
-  .acts-header {
-    display: flex;
-    height: 56px;
-    background: var(--color-surface-2, #1c1f28);
-    border-bottom: 1px solid var(--color-border, #2a2d35);
-  }
-  .act-col-header {
-    border-right: 1px solid var(--color-border, #2a2d35);
-    padding: 10px 14px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 2px;
-  }
-  .act-col-header:last-child {
-    border-right: none;
-  }
-  .act-name {
-    font-family: var(--font-display, 'Fraunces', Georgia, serif);
-    font-size: 16px;
-    font-weight: 500;
-    color: var(--color-text, #e8e0d0);
-  }
-  .act-meta {
-    font-size: 10px;
-    color: var(--color-text-muted, #6b7280);
-  }
-  .acts-empty {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    color: var(--color-text-muted, #6b7280);
-    font-style: italic;
-  }
-
-  .scenes-row {
-    display: flex;
-    height: 24px;
-    background: var(--color-desktop, #0d0f14);
-    border-bottom: 1px solid var(--color-border, #2a2d35);
-  }
-  .scenes-act {
-    flex: 1;
-    border-right: 1px solid var(--color-border, #2a2d35);
-    display: flex;
-  }
-  .scenes-act:last-child {
-    border-right: none;
-  }
-  .scene-cell {
-    flex: 1;
-    border-right: 1px dashed rgba(42, 45, 53, 0.6);
-    font-size: 9px;
-    color: var(--color-text-muted, #6b7280);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .scene-cell:last-child {
-    border-right: none;
-  }
-  .scenes-act-empty {
-    flex: 1;
-    font-size: 9px;
-    color: var(--color-text-muted, #6b7280);
-    font-style: italic;
-    opacity: 0.5;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
   .rows {
     flex: 1;
     position: relative;
     overflow-y: auto;
-  }
-  .row {
-    height: 56px;
-    border-bottom: 1px solid var(--color-border, #2a2d35);
-    position: relative;
-  }
-  .row:last-child {
-    border-bottom: none;
-  }
-  .bar-wrapper {
-    position: absolute;
-    top: 0;
-    bottom: 0;
   }
   .row-empty {
     padding: 24px;
