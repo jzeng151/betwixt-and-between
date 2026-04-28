@@ -66,19 +66,29 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Testing
 
-Three test layers:
+All tests live under `tests/`, split into three buckets by use pattern. Two Vitest projects (`unit` and `integration`) plus Playwright for `e2e`.
+
+```
+tests/
+  unit/           Pure logic, no DB, no I/O. Mocked fetch where needed.
+  integration/    DB-backed (in-memory SQLite via tests/helpers/test-db.ts)
+                  or handler-level via vi.mock of $lib/server/db/index.js.
+  e2e/            Playwright against the running preview server.
+  helpers/        Shared fixtures: test-db.ts (createTestDb, seedActs, SCHEMA_DDL).
+```
 
 | Layer | Command | What it covers |
 |---|---|---|
-| Unit | `npm test` | Vitest unit tests |
-| E2E — API | `npm run test:e2e` | 28 Playwright API-level tests (`e2e/api.spec.ts`) |
-| E2E — UI | `npm run test:e2e` | 13 Playwright browser tests (`e2e/features.spec.ts`) |
+| Unit (Vitest) | `npm test -- --project unit` | Pure math, store logic, navigation routing |
+| Integration (Vitest) | `npm test -- --project integration` | DB-backed + API handlers via vi.mock |
+| All Vitest | `npm test` | Both projects above |
+| E2E | `npm run test:e2e` | Playwright tests against `npm run preview` |
 
-E2E tests run against a production preview build (`npm run build && npm run preview` on port 4173). Tests run serially (`workers: 1`) because they share a single SQLite database and each `beforeEach` clears state.
+E2E tests build and serve a production preview (`npm run build && npm run preview`) on port 4173. Tests run serially (`workers: 1`) because they share a single SQLite database and each `beforeEach` clears state.
 
-E2E API coverage: Entities CRUD, Relationships CRUD, Canvas Positions upsert — all valid types, error cases (400/404), and ordering.
+**Coverage as of Phase 1A PR 1**: 215 Vitest tests (83 unit + 132 integration) across 17 files, plus 53 Playwright tests across 4 e2e specs. Critical regression cases for the appears_in hijack, polymorphic FK type-safety, migration idempotency, malformed-row policy, and Delete-Act cascade are all in `tests/integration/`.
 
-E2E feature coverage: Wiki (create/edit/preview/search), Timeline (create acts & events, expand rows), World Map (create locations, linked entity chips).
+**Vitest config pattern**: `vite.config.ts` declares two named projects under `test.projects[]`. Both extend the same base config but include different glob patterns (`tests/unit/**` vs `tests/integration/**`). Run them separately or together via `--project <name>`.
 
 ---
 
