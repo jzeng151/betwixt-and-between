@@ -1,0 +1,431 @@
+<!--
+  EditableField — atomic edit-on-blur field component.
+
+  Locked 2026-04-29 by /plan-eng-review (D13/Issue 10A). Used by ActEditor /
+  EventEditor / SceneEditor and (future) any other entity-detail surface.
+
+  Reads current value from `$entities.find(id).data[field]`. Commits via
+  `entities.updateEntity(id, { data: { ...existing, [field]: draft } })` —
+  preserves other fields in the data blob (P2-5: merged, not overwritten).
+
+  Commit timing (D14):
+    - kind='textarea' / 'single-line': commit on blur. Single-line also
+      commits on Enter.
+    - kind='picklist' / 'swatches' / 'multi-entity-picker': commit on change.
+    - Esc cancels (no commit).
+
+  Errors (D15): inline red message + Retry button on PATCH failure. Writer's
+  text preserved client-side.
+
+  Multi-entity-picker (kind='multi-entity-picker') writes to the relationships
+  table (D4/4C + D4-extension/18B). Multi-select chip picker; toggling a
+  candidate either creates or deletes a relationships row of the given
+  `relationshipType`.
+-->
+
+<script lang="ts">
+	import { entities } from '$lib/stores/entities.js';
+	import { relationships } from '$lib/stores/relationships.js';
+	import type { Entity } from '$lib/stores/entities.js';
+	import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
+
+	type Kind =
+		| 'single-line'
+		| 'textarea'
+		| 'picklist'
+		| 'swatches'
+		| 'multi-entity-picker';
+
+	interface PicklistOption {
+		value: string;
+		label: string;
+	}
+	interface SwatchOption {
+		value: string;
+		label: string;
+		color?: string;
+	}
+
+	interface Props {
+		entityId: string;
+		field: string;
+		label: string;
+		kind: Kind;
+		placeholder?: string;
+		rows?: number;
+		picklistOptions?: PicklistOption[];
+		swatchOptions?: SwatchOption[];
+		// Multi-entity-picker props.
+		relationshipType?: RelationshipType;
+		targetEntityType?: EntityType;
+		/** Optional explicit list of currently-linked entity ids (for tests
+		 *  or pre-seeded state). If omitted, derives from $relationships. */
+		currentIds?: string[];
+	}
+
+	const {
+		entityId,
+		field,
+		label,
+		kind,
+		placeholder = '',
+		rows = 4,
+		picklistOptions = [],
+		swatchOptions = [],
+		relationshipType,
+		targetEntityType,
+		currentIds = undefined
+	}: Props = $props();
+
+	// Current entity from store.
+	const entity = $derived(($entities as Entity[]).find((e) => e.id === entityId));
+
+	function parseData(raw: string): Record<string, unknown> {
+		try {
+			const v = JSON.parse(raw);
+			return v && typeof v === 'object' && !Array.isArray(v)
+				? (v as Record<string, unknown>)
+				: {};
+		} catch {
+			return {};
+		}
+	}
+	const data = $derived(entity ? parseData(entity.data) : {});
+	const currentValue = $derived(
+		typeof data[field] === 'string' ? (data[field] as string) : ''
+	);
+
+	// Local draft state for textarea / single-line. Synced from store value
+	// when the field isn't actively focused.
+	let draft = $state('');
+	let focused = $state(false);
+	let saveError = $state<string | null>(null);
+	let lastAttempt = $state<string | null>(null);
+
+	$effect(() => {
+		if (!focused) draft = currentValue;
+	});
+
+	async function commitText() {
+		const value = draft;
+		lastAttempt = value;
+		saveError = null;
+		const existing = entity ? parseData(entity.data) : {};
+		try {
+			await entities.updateEntity(entityId, {
+				data: { ...existing, [field]: value }
+			});
+			lastAttempt = null;
+		} catch (err) {
+			saveError = (err as Error).message || 'Save failed';
+		}
+	}
+
+	async function retry() {
+		if (lastAttempt == null) return;
+		const value = lastAttempt;
+		saveError = null;
+		const existing = entity ? parseData(entity.data) : {};
+		try {
+			await entities.updateEntity(entityId, {
+				data: { ...existing, [field]: value }
+			});
+			lastAttempt = null;
+		} catch (err) {
+			saveError = (err as Error).message || 'Save failed';
+		}
+	}
+
+	function onTextBlur() {
+		focused = false;
+		if (draft !== currentValue) commitText();
+	}
+
+	function onTextKeydown(e: KeyboardEvent, allowEnter: boolean) {
+		if (e.key === 'Escape') {
+			draft = currentValue;
+			focused = false;
+			(e.target as HTMLElement).blur();
+		} else if (allowEnter && e.key === 'Enter') {
+			e.preventDefault();
+			focused = false;
+			(e.target as HTMLElement).blur();
+			if (draft !== currentValue) commitText();
+		}
+	}
+
+	// Picklist / swatches: commit on change.
+	async function commitValue(value: string) {
+		const existing = entity ? parseData(entity.data) : {};
+		try {
+			await entities.updateEntity(entityId, {
+				data: { ...existing, [field]: value }
+			});
+			saveError = null;
+			lastAttempt = null;
+		} catch (err) {
+			saveError = (err as Error).message || 'Save failed';
+			lastAttempt = value;
+		}
+	}
+
+	// Multi-entity-picker: derive linked ids from relationships unless
+	// explicitly provided via currentIds.
+	const linkedIds = $derived.by(() => {
+		if (Array.isArray(currentIds)) return currentIds;
+		if (!relationshipType) return [] as string[];
+		return ($relationships as Array<{ fromId: string; toId: string; type: string }>)
+			.filter((r) => r.fromId === entityId && r.type === relationshipType)
+			.map((r) => r.toId);
+	});
+
+	const candidates = $derived.by(() => {
+		if (!targetEntityType) return [] as Entity[];
+		const linkedSet = new Set(linkedIds);
+		return ($entities as Entity[]).filter(
+			(e) => e.type === targetEntityType && !linkedSet.has(e.id)
+		);
+	});
+
+	const linkedEntities = $derived.by(() => {
+		const linkedSet = new Set(linkedIds);
+		return ($entities as Entity[]).filter((e) => linkedSet.has(e.id));
+	});
+
+	async function pickCandidate(targetId: string) {
+		if (!relationshipType) return;
+		try {
+			await relationships.createRelationship(entityId, targetId, relationshipType);
+		} catch (err) {
+			saveError = (err as Error).message || 'Save failed';
+		}
+	}
+
+	async function removeChip(targetId: string) {
+		if (!relationshipType) return;
+		const existing = ($relationships as Array<{
+			id: string;
+			fromId: string;
+			toId: string;
+			type: string;
+		}>).find(
+			(r) => r.fromId === entityId && r.toId === targetId && r.type === relationshipType
+		);
+		if (existing) {
+			try {
+				await relationships.deleteRelationship(existing.id);
+			} catch (err) {
+				saveError = (err as Error).message || 'Save failed';
+			}
+		}
+	}
+</script>
+
+<div class="field-row" data-field={field}>
+	<div class="field-header">
+		<span class="field-label">{label}</span>
+	</div>
+
+	{#if kind === 'textarea'}
+		<textarea
+			class="field-textarea"
+			placeholder={placeholder}
+			rows={rows}
+			value={draft}
+			oninput={(e) => (draft = (e.target as HTMLTextAreaElement).value)}
+			onfocus={() => (focused = true)}
+			onblur={onTextBlur}
+			onkeydown={(e) => onTextKeydown(e, false)}
+		></textarea>
+	{:else if kind === 'single-line'}
+		<input
+			type="text"
+			class="field-input"
+			placeholder={placeholder}
+			value={draft}
+			oninput={(e) => (draft = (e.target as HTMLInputElement).value)}
+			onfocus={() => (focused = true)}
+			onblur={onTextBlur}
+			onkeydown={(e) => onTextKeydown(e, true)}
+		/>
+	{:else if kind === 'picklist'}
+		<select
+			class="field-input"
+			value={currentValue}
+			onchange={(e) => commitValue((e.target as HTMLSelectElement).value)}
+		>
+			<option value="" disabled>{placeholder || 'Select…'}</option>
+			{#each picklistOptions as opt}
+				<option value={opt.value}>{opt.label}</option>
+			{/each}
+		</select>
+	{:else if kind === 'swatches'}
+		<div class="swatch-row" role="group" aria-label={label}>
+			{#each swatchOptions as opt}
+				<button
+					type="button"
+					class="swatch"
+					class:swatch-selected={currentValue === opt.value}
+					data-swatch-value={opt.value}
+					style:background={opt.color ?? opt.value}
+					aria-label={opt.label}
+					aria-pressed={currentValue === opt.value}
+					onclick={() => commitValue(opt.value)}
+				></button>
+			{/each}
+		</div>
+	{:else if kind === 'multi-entity-picker'}
+		<div class="picker-chips">
+			{#each linkedEntities as ent}
+				<span class="chip" data-chip-id={ent.id}>
+					{ent.name}
+					<button
+						type="button"
+						class="chip-remove"
+						data-remove-id={ent.id}
+						aria-label="Remove {ent.name}"
+						onclick={() => removeChip(ent.id)}
+					>×</button>
+				</span>
+			{/each}
+		</div>
+		<div class="picker-candidates">
+			{#each candidates as cand}
+				<button
+					type="button"
+					class="picker-candidate"
+					data-pick-id={cand.id}
+					onclick={() => pickCandidate(cand.id)}
+				>+ {cand.name}</button>
+			{/each}
+		</div>
+	{/if}
+
+	{#if saveError}
+		<p class="field-error">
+			{saveError}
+			<button type="button" class="retry" onclick={retry}>Retry</button>
+		</p>
+	{/if}
+</div>
+
+<style>
+	.field-row {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin-bottom: 14px;
+	}
+	.field-header {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+	}
+	.field-label {
+		font-size: 9px;
+		font-weight: 600;
+		color: var(--color-text-muted, #6b7280);
+		text-transform: uppercase;
+		letter-spacing: 0.12em;
+	}
+	.field-input,
+	.field-textarea {
+		background: var(--color-surface, #161920);
+		color: var(--color-text, #e8e0d0);
+		border: 1px solid var(--color-border, #2a2d35);
+		border-radius: 4px;
+		padding: 7px 10px;
+		font-family: var(--font-display, 'Fraunces', Georgia, serif);
+		font-size: 13px;
+		outline: none;
+		resize: vertical;
+		width: 100%;
+	}
+	.field-textarea {
+		min-height: 64px;
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		font-size: 12px;
+		line-height: 1.5;
+	}
+	.field-input:focus,
+	.field-textarea:focus {
+		border-color: var(--color-accent, #c8942a);
+	}
+	.swatch-row {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+	.swatch {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		border: 1.5px solid transparent;
+		cursor: pointer;
+		padding: 0;
+	}
+	.swatch-selected {
+		border-color: var(--color-text, #e8e0d0);
+	}
+	.picker-chips {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		background: rgba(200, 148, 42, 0.12);
+		color: var(--color-text, #e8e0d0);
+		border: 1px solid color-mix(in srgb, var(--color-accent, #c8942a) 40%, transparent);
+		border-radius: 12px;
+		padding: 3px 8px;
+		font-family: var(--font-display, 'Fraunces', Georgia, serif);
+		font-size: 12px;
+	}
+	.chip-remove {
+		background: transparent;
+		border: none;
+		color: var(--color-text-muted, #6b7280);
+		font-size: 14px;
+		line-height: 1;
+		cursor: pointer;
+		padding: 0;
+	}
+	.picker-candidates {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+		margin-top: 4px;
+	}
+	.picker-candidate {
+		background: transparent;
+		border: 1px dashed var(--color-text-muted, #6b7280);
+		color: var(--color-text-muted, #6b7280);
+		border-radius: 12px;
+		padding: 3px 8px;
+		font-family: var(--font-display, 'Fraunces', Georgia, serif);
+		font-size: 11px;
+		cursor: pointer;
+	}
+	.picker-candidate:hover {
+		color: var(--color-text, #e8e0d0);
+		border-color: var(--color-text, #e8e0d0);
+	}
+	.field-error {
+		color: #ef4444;
+		font-size: 11px;
+		margin-top: 4px;
+	}
+	.retry {
+		margin-left: 6px;
+		background: transparent;
+		border: 1px solid #ef4444;
+		color: #ef4444;
+		border-radius: 3px;
+		padding: 2px 6px;
+		font-size: 10px;
+		cursor: pointer;
+	}
+</style>

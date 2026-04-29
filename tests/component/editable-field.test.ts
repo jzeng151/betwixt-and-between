@@ -19,11 +19,11 @@ import type { Entity } from '../../src/lib/stores/entities.js';
 //   - Optimistic update applies via updateEntity; rollback handled inside store
 //   - On error: inline Retry button visible; click re-fires PATCH
 
-const { updateEntityMock, addRelationshipMock, removeRelationshipMock } = vi.hoisted(() => {
+const { updateEntityMock, createRelationshipMock, deleteRelationshipMock } = vi.hoisted(() => {
 	return {
 		updateEntityMock: vi.fn(),
-		addRelationshipMock: vi.fn(),
-		removeRelationshipMock: vi.fn()
+		createRelationshipMock: vi.fn(),
+		deleteRelationshipMock: vi.fn()
 	};
 });
 
@@ -47,11 +47,20 @@ vi.mock('../../src/lib/stores/relationships.js', async () => {
 		relationships: {
 			subscribe: store.subscribe,
 			set: store.set,
-			addRelationship: addRelationshipMock,
-			removeRelationship: removeRelationshipMock
+			update: store.update,
+			// EditableField calls these with positional args (fromId, toId, type, label?)
+			// per the relationships store contract.
+			createRelationship: createRelationshipMock,
+			deleteRelationship: deleteRelationshipMock
 		}
 	};
 });
+
+// Backward-compat aliases used by the tests below (originally written against
+// "addRelationship"/"removeRelationship" mocks; the actual store names are
+// create/delete per relationships.ts).
+const addRelationshipMock = createRelationshipMock;
+const removeRelationshipMock = deleteRelationshipMock;
 
 import { entities } from '../../src/lib/stores/entities.js';
 import EditableField from '../../src/lib/components/EditableField.svelte';
@@ -299,10 +308,11 @@ describe('EditableField — kind=multi-entity-picker', () => {
 		await fireEvent.click(addChip);
 
 		await waitFor(() => expect(addRelationshipMock).toHaveBeenCalled());
-		const call = addRelationshipMock.mock.calls[0][0];
-		expect(call.fromId).toBe('ev-1');
-		expect(call.toId).toBe('char-1');
-		expect(call.type).toBe('pov_of');
+		// relationships store uses positional args (fromId, toId, type, label?)
+		const args = addRelationshipMock.mock.calls[0];
+		expect(args[0]).toBe('ev-1'); // fromId
+		expect(args[1]).toBe('char-1'); // toId
+		expect(args[2]).toBe('pov_of'); // type
 		expect(updateEntityMock).not.toHaveBeenCalled();
 	});
 
@@ -321,9 +331,14 @@ describe('EditableField — kind=multi-entity-picker', () => {
 				updatedAt: 0
 			} as Entity
 		]);
-		// Pre-existing rel — render with currentValueIds prop or via the
-		// relationships store (here we'd seed via the mock store, but the
-		// picker reads the DOM state; we simulate by clicking a remove-chip).
+		// Seed the mocked relationships store so EditableField can find the row id
+		// to delete. Production reads relationships from the store; the
+		// currentIds prop is a render-only override for the chip list.
+		const { relationships } = await import('../../src/lib/stores/relationships.js');
+		(relationships as unknown as { update: (fn: (rs: unknown[]) => unknown[]) => void }).update(
+			() => [{ id: 'rel-1', fromId: 'ev-1', toId: 'char-1', type: 'pov_of' }]
+		);
+
 		const { container } = render(EditableField, {
 			props: {
 				entityId: 'ev-1',
