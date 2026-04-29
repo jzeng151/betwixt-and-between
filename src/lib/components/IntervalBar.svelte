@@ -74,7 +74,12 @@
   onfocus={() => (focused = true)}
   onblur={() => (focused = false)}
 >
-  <title>{tooltipText}</title>
+  <!--
+    No <title> child — the visible tooltip is rendered by IntervalRow's
+    .bar-wrapper::before/::after pseudo-elements (matching the locked v2
+    mockup). aria-label on the <svg> provides the accessible name for
+    screen readers and keyboard focus.
+  -->
 
   <defs>
     <clipPath id={clipId}>

@@ -150,6 +150,7 @@
 		<div
 			class="bar-wrapper"
 			class:resizing={resizing?.intervalId === iv.id}
+			data-tooltip={tooltipFor(entity, iv)}
 			style="left: {leftPct}%; width: {widthPct}%;"
 		>
 			<IntervalBar
@@ -195,6 +196,52 @@
 		/* Focus glow on the bar when it's being resized — matches the locked
 		   v2 mockup's `.interval.with-handles` box-shadow rule. The glow lives
 		   on the wrapper so it survives the SVG bar's clipping. */
+	}
+	/* Styled tooltip on bar hover — matches the locked v2 mockup
+	   (mockup CSS lines 311-349). Reads from the wrapper's
+	   `data-tooltip` attribute. Hidden by default; fades in on
+	   :hover and :focus-within so keyboard users see it too. */
+	.bar-wrapper::before {
+		content: attr(data-tooltip);
+		position: absolute;
+		bottom: calc(100% + 4px);
+		left: 50%;
+		transform: translateX(-50%);
+		background: var(--color-surface-2, #1c1f28);
+		color: var(--color-text, #e8e0d0);
+		border: 1px solid var(--color-border, #2a2d35);
+		border-radius: 4px;
+		padding: 6px 10px;
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		font-size: 11px;
+		font-weight: 400;
+		white-space: nowrap;
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.15s ease;
+		z-index: 5;
+	}
+	.bar-wrapper::after {
+		content: '';
+		position: absolute;
+		bottom: calc(100% - 1px);
+		left: 50%;
+		transform: translateX(-50%);
+		width: 0;
+		height: 0;
+		border-left: 5px solid transparent;
+		border-right: 5px solid transparent;
+		border-top: 5px solid var(--color-border, #2a2d35);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.15s ease;
+	}
+	.bar-wrapper:hover::before,
+	.bar-wrapper:hover::after,
+	.bar-wrapper:focus-within::before,
+	.bar-wrapper:focus-within::after {
+		opacity: 1;
 	}
 	.bar-wrapper.resizing :global(svg.interval-bar) {
 		box-shadow: 0 0 0 2px rgba(200, 148, 42, 0.45);

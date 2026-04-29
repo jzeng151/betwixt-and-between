@@ -118,6 +118,12 @@
 		[...characters, ...events].filter((e) => (intervalsByEntityId.get(e.id)?.length ?? 0) > 0)
 	);
 
+	// Set of entity ids with ≥1 interval — Palette greys out placed items so
+	// the writer can see who's still missing from the timeline at a glance.
+	const placedEntityIds = $derived(
+		new Set(rowEntities.map((e) => e.id))
+	);
+
 	// ── Track measurement ────────────────────────────────────────────────────
 	let trackEl: HTMLDivElement | null = $state(null);
 	let trackWidthPx = $state(0);
@@ -206,7 +212,7 @@
 </script>
 
 <div class="tl2">
-	<Palette {characters} {events} {colorFor} />
+	<Palette {characters} {events} {placedEntityIds} {colorFor} />
 
 	<!-- ── Main timeline ──────────────────────────────────────────────── -->
 	<div class="timeline">
