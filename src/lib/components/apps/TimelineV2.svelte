@@ -147,8 +147,18 @@
 	// ── Drag-from-palette drop handler ───────────────────────────────────────
 	let dragOver = $state(false);
 
+	// MIME types: V2 uses a custom application type so V1 Timeline (which
+	// reads text/plain) doesn't misinterpret our drags. V2 still sets
+	// text/plain on the source for browser-DnD compat but the drop handler
+	// reads from the custom type to confirm the drag belongs to V2.
+	const V2_MIME = 'application/x-betwixt-v2-entity';
+
 	function handleDragover(e: DragEvent) {
 		if (interactionLock || N === 0) return;
+		// Only react to drags that carry our marker. dataTransfer.types is
+		// the only field readable during dragover (the actual data is hidden
+		// until drop). Match case-insensitively per the spec.
+		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === V2_MIME)) return;
 		e.preventDefault();
 		dragOver = true;
 	}
@@ -162,8 +172,12 @@
 		dragOver = false;
 		if (interactionLock || N === 0 || !trackEl) return;
 
-		const entityId = e.dataTransfer?.getData('text/plain');
+		// Read from the V2-specific MIME first; fall back to text/plain only
+		// if the custom type is present (defensive — should always be set).
+		const entityId =
+			e.dataTransfer?.getData(V2_MIME) || e.dataTransfer?.getData('text/plain');
 		if (!entityId) return;
+		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === V2_MIME)) return;
 
 		// Map drop x-coord to act index
 		const rect = trackEl.getBoundingClientRect();

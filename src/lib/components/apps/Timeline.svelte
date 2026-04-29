@@ -125,9 +125,23 @@
     e.dataTransfer!.effectAllowed = 'link';
   }
   function onDragEnd() { draggingId = null; }
-  function onDragOver(e: DragEvent) { e.preventDefault(); }
+  // V2 Timeline drags carry an `application/x-betwixt-v2-entity` MIME marker.
+  // Ignore those here — they belong to the V2 timeline window's own drop
+  // targets. Without this check, V1 misinterprets V2's text/plain payload and
+  // surfaces "Could not assign character" toasts even when V2's drop succeeded.
+  function isV2Drag(e: DragEvent): boolean {
+    return !!e.dataTransfer?.types.some(
+      (t) => t.toLowerCase() === 'application/x-betwixt-v2-entity'
+    );
+  }
+
+  function onDragOver(e: DragEvent) {
+    if (isV2Drag(e)) return; // do NOT preventDefault → rejects the drop here
+    e.preventDefault();
+  }
 
   async function onDropOnTrack(e: DragEvent, actId: string, track: 'plot' | 'world') {
+    if (isV2Drag(e)) return;
     e.preventDefault();
     dragOver = null;
     const itemId = e.dataTransfer!.getData('text/plain');
@@ -176,6 +190,7 @@
   }
 
   async function onDropToCharAct(e: DragEvent, charId: string, actId: string) {
+    if (isV2Drag(e)) return;
     e.preventDefault();
     if (e.dataTransfer!.getData('text/plain') !== charId || charInAct(charId, actId)) return;
     try {
@@ -262,7 +277,7 @@
                 role="region"
                 aria-label="Plot act segment"
                 ondragover={onDragOver}
-                ondragenter={() => (dragOver = { actId: act.id, track: 'plot' })}
+                ondragenter={(e) => { if (!isV2Drag(e)) dragOver = { actId: act.id, track: 'plot' }; }}
                 ondragleave={(e) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dragOver = null; }}
                 ondrop={(e) => onDropOnTrack(e, act.id, 'plot')}
               >
@@ -330,7 +345,7 @@
                 role="region"
                 aria-label="World act segment"
                 ondragover={onDragOver}
-                ondragenter={() => (dragOver = { actId: act.id, track: 'world' })}
+                ondragenter={(e) => { if (!isV2Drag(e)) dragOver = { actId: act.id, track: 'world' }; }}
                 ondragleave={(e) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dragOver = null; }}
                 ondrop={(e) => onDropOnTrack(e, act.id, 'world')}
               >

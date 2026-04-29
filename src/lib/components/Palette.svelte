@@ -29,6 +29,7 @@
         tabindex="0"
         aria-label="Drag {char.name} onto timeline"
         ondragstart={(e) => {
+          e.dataTransfer!.setData('application/x-betwixt-v2-entity', char.id);
           e.dataTransfer!.setData('text/plain', char.id);
           e.dataTransfer!.effectAllowed = 'copy';
         }}
@@ -57,6 +58,7 @@
         tabindex="0"
         aria-label="Drag {ev.name} onto timeline"
         ondragstart={(e) => {
+          e.dataTransfer!.setData('application/x-betwixt-v2-entity', ev.id);
           e.dataTransfer!.setData('text/plain', ev.id);
           e.dataTransfer!.effectAllowed = 'copy';
         }}
