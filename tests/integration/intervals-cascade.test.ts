@@ -20,7 +20,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { eq, count } from 'drizzle-orm';
 import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
-import { writeInterval } from '../../src/lib/server/intervals.js';
+import { writeInterval, recomputeAllIntervals } from '../../src/lib/server/intervals.js';
 
 describe('cascade behavior on entity deletion', () => {
 	let db: ReturnType<typeof createTestDb>;
@@ -88,6 +88,12 @@ describe('cascade behavior on entity deletion', () => {
 
 		await db.delete(entities).where(eq(entities.id, acts.act1));
 
+		// REGRESSION TEST — locked 2026-04-29 in /plan-eng-review per the iron
+		// rule on regressions. Per Decision D1, the DELETE handler now fires
+		// recompute after act delete; survivors must reflect the NEW act
+		// ordering, not their pre-delete positions.
+		await recomputeAllIntervals(db);
+
 		// Scenes for Act 1 are gone (parent_id CASCADE).
 		const [scenesPost] = await db
 			.select({ c: count() })
@@ -105,6 +111,14 @@ describe('cascade behavior on entity deletion', () => {
 			const [a] = await db.select().from(entities).where(eq(entities.id, r.startActId));
 			expect(a).toBeDefined();
 		}
+
+		// REGRESSION assertion: Damien's interval was originally Act 2 → [2, 3).
+		// After Act 1 was deleted, original Act 2 is now at index 1 in the
+		// global act ordering, so the interval's positions become [1, 2).
+		// This tightens the previous "preserved (recompute would clear them;
+		// that's a follow-up)" comment into an active check.
+		expect(remaining[0].startPosition).toBeCloseTo(1.0, 9);
+		expect(remaining[0].endPosition).toBeCloseTo(2.0, 9);
 	});
 
 	it('deleting a Scene SETs NULL on intervals scene FKs (interval row preserved)', async () => {
@@ -132,8 +146,11 @@ describe('cascade behavior on entity deletion', () => {
 		expect(row.startSceneId).toBeNull();
 		// s1 is still alive; end_scene_id should remain.
 		expect(row.endSceneId).toBe(s1.id);
-		// Position values are preserved (recompute would clear them; that's a
-		// separate orchestrated step, not a cascade event).
+		// Position values are preserved by the cascade itself (SET NULL on
+		// scene FK doesn't move positions). Per Decision D1 (locked 2026-04-29
+		// in /plan-eng-review), the API DELETE handler orchestrates a recompute
+		// after structural mutations; that orchestration is covered by the
+		// act-delete regression block above and by api-entities-delete-reparent.
 		expect(row.startPosition).toBeCloseTo(1.0, 9);
 	});
 });
