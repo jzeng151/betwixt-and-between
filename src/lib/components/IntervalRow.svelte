@@ -186,6 +186,14 @@
 				{widthPx}
 				internalBoundaries={internalActBoundaryFractions(previewStart, previewEnd)}
 				isEvent={entity.type === 'Event'}
+				onSplit={async (fraction) => {
+					const atPosition = iv.startPosition + fraction * (iv.endPosition - iv.startPosition);
+					try {
+						await intervalsStore.splitIntervalAt(iv.id, atPosition);
+					} catch (err) {
+						onError((err as Error).message);
+					}
+				}}
 			/>
 			<div
 				class="resize-handle resize-handle--left"

@@ -93,6 +93,21 @@ function createIntervalStore() {
 		return updated;
 	}
 
+	async function splitIntervalAt(id: string, atPosition: number): Promise<void> {
+		const res = await fetch(`/api/intervals/${id}/split`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ atPosition })
+		});
+		if (!res.ok) {
+			await load();
+			throw new Error(await errorMessage(res));
+		}
+		// Server-side splitInterval mutates the original (left half) and inserts
+		// a new row (right half). Reload rather than tracking the diff client-side.
+		await load();
+	}
+
 	async function deleteInterval(id: string): Promise<void> {
 		update((all) => all.filter((i) => i.id !== id));
 		let res: Response;
@@ -110,7 +125,7 @@ function createIntervalStore() {
 		}
 	}
 
-	return { subscribe, load, createInterval, updateInterval, deleteInterval };
+	return { subscribe, load, createInterval, updateInterval, deleteInterval, splitIntervalAt };
 }
 
 export const intervals = createIntervalStore();

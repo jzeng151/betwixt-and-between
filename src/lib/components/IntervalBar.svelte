@@ -42,6 +42,8 @@
     internalBoundaries?: number[];
     /** Used by event bars to pick the neutral-gray treatment. */
     isEvent?: boolean;
+    /** Click on an internal hairline → split the interval at that fraction. */
+    onSplit?: (fraction: number) => void;
   }
 
   let {
@@ -52,6 +54,7 @@
     widthPx,
     internalBoundaries = [],
     isEvent = false,
+    onSplit,
   }: Props = $props();
 
   const widthClass: WidthClass = $derived(widthClassForBar(widthPx));
@@ -118,7 +121,7 @@
     stroke-width="1"
   />
 
-  <!-- Internal act boundaries -->
+  <!-- Internal act boundaries — clickable to split the interval (D7/5b A) -->
   {#each internalBoundaries as fraction (fraction)}
     <line
       x1={fraction * widthPx}
@@ -127,7 +130,28 @@
       y2={BODY_Y + BODY_H - 4}
       stroke="rgba(255, 255, 255, 0.18)"
       stroke-width="1"
+      pointer-events="none"
     />
+    {#if onSplit}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <rect
+        class="hairline-hit"
+        role="button"
+        aria-label="Split interval at this act boundary"
+        x={fraction * widthPx - 4}
+        y={BODY_Y}
+        width="8"
+        height={BODY_H}
+        fill="transparent"
+        onclick={(e) => {
+          e.stopPropagation();
+          onSplit?.(fraction);
+        }}
+      >
+        <title>Click to split here</title>
+      </rect>
+    {/if}
   {/each}
 
   <!-- Name -->
@@ -192,6 +216,12 @@
     font-size: 13px;
     font-weight: 500;
     pointer-events: none;
+  }
+  .hairline-hit {
+    cursor: col-resize;
+  }
+  .hairline-hit:hover {
+    fill: rgba(200, 148, 42, 0.15);
   }
   .bar-note {
     font-family: var(--font-ui, 'Inter', sans-serif);
