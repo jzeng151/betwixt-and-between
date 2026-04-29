@@ -63,16 +63,17 @@ function createEntityStore() {
 
 	async function deleteEntity(id: string): Promise<void> {
 		update((all) => all.filter((e) => e.id !== id));
+		let res: Response;
 		try {
-			const res = await fetch(`/api/entities/${id}`, { method: 'DELETE' });
-			if (!res.ok) {
-				await load();
-				throw new Error(await res.text());
-			}
+			res = await fetch(`/api/entities/${id}`, { method: 'DELETE' });
 		} catch (err) {
-			// Network error before response — recover the optimistic remove.
+			// Network error before any response — recover the optimistic remove.
 			await load();
 			throw err;
+		}
+		if (!res.ok) {
+			await load();
+			throw new Error(await res.text());
 		}
 	}
 

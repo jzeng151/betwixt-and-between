@@ -19,6 +19,8 @@
 	import Palette from '$lib/components/Palette.svelte';
 	import ActsHeader from '$lib/components/ActsHeader.svelte';
 	import IntervalRow from '$lib/components/IntervalRow.svelte';
+	import PlayheadOverlay from '$lib/components/PlayheadOverlay.svelte';
+	import { playhead } from '$lib/stores/playhead.js';
 	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
 
 	interface Props {
@@ -205,6 +207,19 @@
 	$effect(() => {
 		void entityId;
 	});
+
+	// ── Playhead (Phase 1.5 scrubber) ────────────────────────────────────────
+	function clickTrackToScrub(e: MouseEvent) {
+		// Only scrub when the playhead is active. Idle = let drag handlers run.
+		if ($playhead == null) return;
+		// Ignore clicks on the playhead handle itself (it has its own pointerdown).
+		const target = e.target as HTMLElement;
+		if (target.closest('.playhead')) return;
+		if (!trackEl || trackWidthPx === 0 || N === 0) return;
+		const rect = trackEl.getBoundingClientRect();
+		const t = ((e.clientX - rect.left) / trackWidthPx) * N;
+		playhead.scrubTo(Math.max(0, Math.min(t, N)));
+	}
 </script>
 
 <div class="tl2">
@@ -212,18 +227,38 @@
 
 	<!-- ── Main timeline ──────────────────────────────────────────────── -->
 	<div class="timeline">
+		<div class="timeline-controls">
+			<button
+				class="scrub-toggle"
+				class:active={$playhead != null}
+				onclick={() => playhead.toggle(0)}
+				title={$playhead == null ? 'Activate the scrubber' : 'Deactivate the scrubber'}
+			>
+				{#if $playhead == null}
+					▶ Scrub
+				{:else}
+					◼ Stop scrubbing
+					<span class="scrub-pos">T = {$playhead.toFixed(2)}</span>
+				{/if}
+			</button>
+		</div>
+
 		<ActsHeader {acts} {scenesByActId} />
 
 		<!-- Rows of intervals — also the palette drop target -->
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<div
 			class="rows"
 			class:drag-over={dragOver}
+			class:scrubbing={$playhead != null}
 			role="region"
 			aria-label="Timeline track"
 			bind:this={trackEl}
 			ondragover={handleDragover}
 			ondragleave={handleDragleave}
 			ondrop={handleDrop}
+			onclick={clickTrackToScrub}
 		>
 			{#if !loaded}
 				<div class="row-empty">Loading…</div>
@@ -255,6 +290,8 @@
 					onError={showError}
 				/>
 			{/each}
+
+			<PlayheadOverlay {trackWidthPx} actCount={N} />
 		</div>
 
 		<!-- Error toast -->
@@ -283,6 +320,44 @@
 		position: relative;
 	}
 
+	.timeline-controls {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		padding: 8px 14px;
+		border-bottom: 1px solid var(--color-border, #2a2d35);
+		background: var(--color-surface-2, #1c1f28);
+		gap: 8px;
+	}
+	.scrub-toggle {
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		font-size: 11px;
+		font-weight: 500;
+		color: var(--color-text-muted, #6b7280);
+		background: transparent;
+		border: 1px solid var(--color-border, #2a2d35);
+		border-radius: 4px;
+		padding: 5px 10px;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		transition: color 0.12s, border-color 0.12s, background 0.12s;
+	}
+	.scrub-toggle:hover {
+		color: var(--color-text, #e8e0d0);
+		border-color: var(--color-text-muted, #6b7280);
+	}
+	.scrub-toggle.active {
+		color: var(--color-accent, #c8942a);
+		border-color: var(--color-accent, #c8942a);
+		background: rgba(200, 148, 42, 0.08);
+	}
+	.scrub-pos {
+		font-variant-numeric: tabular-nums;
+		opacity: 0.8;
+	}
+
 	.rows {
 		flex: 1;
 		position: relative;
@@ -291,6 +366,9 @@
 	}
 	.rows.drag-over {
 		background: rgba(200, 148, 42, 0.04);
+	}
+	.rows.scrubbing {
+		cursor: ew-resize;
 	}
 
 	.row-empty {

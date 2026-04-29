@@ -37,16 +37,17 @@ function createRelationshipStore() {
 
 	async function deleteRelationship(id: string): Promise<void> {
 		update((all) => all.filter((r) => r.id !== id));
+		let res: Response;
 		try {
-			const res = await fetch(`/api/relationships/${id}`, { method: 'DELETE' });
-			if (!res.ok) {
-				await load();
-				throw new Error(await res.text());
-			}
+			res = await fetch(`/api/relationships/${id}`, { method: 'DELETE' });
 		} catch (err) {
-			// Network error before response — recover the optimistic remove.
+			// Network error before any response — recover the optimistic remove.
 			await load();
 			throw err;
+		}
+		if (!res.ok) {
+			await load();
+			throw new Error(await res.text());
 		}
 	}
 

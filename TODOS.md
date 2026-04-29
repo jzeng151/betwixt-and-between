@@ -287,11 +287,12 @@ Schema is the load-bearing piece. Ship first, derisk everything else.
 
 Falls out of the intervals schema for free. Ship as its own focused branch.
 
-- [ ] Global `currentT` Svelte store.
-- [ ] Vertical playhead overlay on the V2 timeline; click+drag to scrub.
-- [ ] Story Graph subscribes: hides entities where `currentT` is outside `[start_position, end_position)` (half-open).
-- [ ] World Map subscribes: highlights only locations active at T.
-- [ ] Wiki sidebar subscribes: filters notes by in-scope entities.
+- [x] Global `playhead` Svelte store at `src/lib/stores/playhead.ts` (renamed from `currentT` for clarity — matches video-editor mental model). `writable<number | null>` with `null = idle, number = scrubbing`. Helpers: `scrubTo(t)`, `toggle(defaultT)`, `dismiss()`.
+- [x] Vertical playhead overlay (`PlayheadOverlay.svelte`) on the timeline; click on track scrubs, drag the line to scrub. Toggle button in the timeline's controls bar activates/dismisses; idle hides the overlay.
+- [x] Story Graph subscribes: dims (opacity 0.18) entities whose intervals don't contain T, plus edges to/from them. Entities without intervals stay full opacity.
+- [x] World Map subscribes: dims (opacity 0.32) locations whose linked entities (with intervals) are all out of scope at T. Locations with no time-bound links stay visible.
+- [ ] **Wiki sidebar subscriber — DEFERRED** until the Wiki app gets refined. Notes don't currently carry parentId or a mention graph, so "in-scope" semantics for a Note isn't well-defined. Revisit after the Wiki rework.
+- [x] E2E coverage at `tests/e2e/playhead-scrubber.spec.ts`: toggle + dismiss, click-to-scrub, Story Graph dim-on-scope-change, World Map dim-on-scope-change.
 
 ### 13. Phase 1B — Graph features (separate branch)
 

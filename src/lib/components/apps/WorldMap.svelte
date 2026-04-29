@@ -1,6 +1,8 @@
 <script lang="ts">
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
+  import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+  import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
   import EntityLink from '$lib/components/EntityLink.svelte';
   import InlineEdit from '$lib/components/InlineEdit.svelte';
   import { onMount } from 'svelte';
@@ -9,6 +11,39 @@
   let { entityId }: Props = $props();
 
   const locations = $derived($entities.filter((e) => e.type === 'Location'));
+
+  // ── Playhead scope ─────────────────────────────────────────────────────────
+  // A location is "out of scope" at T iff at least one entity linked to it has
+  // intervals AND none of those linked entities are active at T. Locations
+  // with no linked-entities-with-intervals stay full-opacity (no time signal).
+  const outOfScopeLocs = $derived.by(() => {
+    const set = new Set<string>();
+    if ($playhead == null) return set;
+    const t = $playhead;
+
+    const ivsByEntity = new Map<string, typeof $intervalsStore>();
+    for (const iv of $intervalsStore) {
+      const list = ivsByEntity.get(iv.entityId) ?? [];
+      list.push(iv);
+      ivsByEntity.set(iv.entityId, list);
+    }
+    function entityActiveAtT(eid: string): boolean {
+      const ivs = ivsByEntity.get(eid);
+      if (!ivs || ivs.length === 0) return true; // no intervals → always active
+      return ivs.some((iv) => intervalContainsT(iv.startPosition, iv.endPosition, t));
+    }
+
+    for (const loc of locations) {
+      const linkedIds = $relationships
+        .filter((r) => r.fromId === loc.id || r.toId === loc.id)
+        .map((r) => (r.fromId === loc.id ? r.toId : r.fromId));
+      // Only consider links to entities that have at least one interval.
+      const ivLinks = linkedIds.filter((id) => (ivsByEntity.get(id)?.length ?? 0) > 0);
+      if (ivLinks.length === 0) continue; // no time-bound link → not dimmed
+      if (!ivLinks.some(entityActiveAtT)) set.add(loc.id);
+    }
+    return set;
+  });
 
   function linkedChips(locId: string) {
     return $relationships
@@ -61,7 +96,12 @@
     </div>
     {#each locations as loc}
       {@const chips = linkedChips(loc.id)}
-      <div class="loc-card" data-id={loc.id} class:focus={loc.id === entityId}>
+      <div
+        class="loc-card"
+        data-id={loc.id}
+        class:focus={loc.id === entityId}
+        class:out-of-scope={outOfScopeLocs.has(loc.id)}
+      >
         <h3 class="loc-name">
           <InlineEdit value={loc.name} onSave={(n) => renameLocation(loc.id, n)} />
         </h3>
@@ -111,11 +151,18 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    transition: border-color 0.15s;
+    transition: border-color 0.15s, opacity 0.15s ease;
   }
 
   .loc-card.focus {
     border-color: var(--color-accent);
+  }
+
+  .loc-card.out-of-scope {
+    opacity: 0.32;
+  }
+  .loc-card.out-of-scope:hover {
+    opacity: 0.6;
   }
 
   .loc-name {
