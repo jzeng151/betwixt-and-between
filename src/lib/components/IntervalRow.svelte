@@ -147,7 +147,11 @@
 		{@const leftPct = (previewStart / Math.max(actCount, 1)) * 100}
 		{@const widthPct = (span / Math.max(actCount, 1)) * 100}
 		{@const widthPx = pxForFractionalSpan(span)}
-		<div class="bar-wrapper" style="left: {leftPct}%; width: {widthPct}%;">
+		<div
+			class="bar-wrapper"
+			class:resizing={resizing?.intervalId === iv.id}
+			style="left: {leftPct}%; width: {widthPct}%;"
+		>
 			<IntervalBar
 				name={entity.name}
 				note={dataNoteSnippet(entity)}
@@ -188,14 +192,42 @@
 		position: absolute;
 		top: 0;
 		bottom: 0;
+		/* Focus glow on the bar when it's being resized — matches the locked
+		   v2 mockup's `.interval.with-handles` box-shadow rule. The glow lives
+		   on the wrapper so it survives the SVG bar's clipping. */
 	}
+	.bar-wrapper.resizing :global(svg.interval-bar) {
+		box-shadow: 0 0 0 2px rgba(200, 148, 42, 0.45);
+		border-radius: 4px;
+	}
+	/* Resize handles. Mockup spec: 4px wide vertical bar in amber, only
+	   visible on hover/focus or while resizing. We render a wider hit-box
+	   (10px) for ergonomics but the visible mark is 4px via inner gradient. */
 	.resize-handle {
 		position: absolute;
-		top: 10px;
-		bottom: 10px;
+		top: 14px;
+		bottom: 14px;
 		width: 10px;
 		cursor: ew-resize;
 		z-index: 2;
+		opacity: 0;
+		transition: opacity 0.12s ease;
+	}
+	.resize-handle::after {
+		content: '';
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 50%;
+		width: 4px;
+		transform: translateX(-50%);
+		background: var(--color-accent, #c8942a);
+		border-radius: 1px;
+	}
+	.bar-wrapper:hover .resize-handle,
+	.bar-wrapper:focus-within .resize-handle,
+	.bar-wrapper.resizing .resize-handle {
+		opacity: 1;
 	}
 	.resize-handle--left {
 		left: 0;
