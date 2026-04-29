@@ -122,13 +122,14 @@
 			if (edge === 'start') {
 				const fks = positionToStartFKs(previewStart, acts, scenesByActId);
 				if (!fks) { resizing = null; return; }
-				// When the FK resolver returns sceneId=null with a fractional position,
-				// send the explicit start_position so the server stores the precise value.
-				patch = { ...fks, startPosition: previewStart };
+				// fks.startPosition is canonicalized — when the resolver picks an
+				// integer-aligned boundary, the position snaps to it. Otherwise
+				// it's the raw fractional position, carrying the precision.
+				patch = fks;
 			} else {
 				const fks = positionToEndFKs(previewEnd, acts, scenesByActId);
 				if (!fks) { resizing = null; return; }
-				patch = { ...fks, endPosition: previewEnd };
+				patch = fks;
 			}
 
 			try {

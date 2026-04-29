@@ -244,33 +244,43 @@ describe('positionToStartFKs', () => {
 		expect(positionToStartFKs(-0.1, acts, new Map())).toBeNull();
 		expect(positionToStartFKs(3, acts, new Map())).toBeNull();
 	});
-	it('snaps to act start when fraction is ~0', () => {
+	it('snaps canonical position to act start when fraction is ~0', () => {
 		expect(positionToStartFKs(1.0, acts, new Map())).toEqual({
 			startActId: 'a1',
-			startSceneId: null
+			startSceneId: null,
+			startPosition: 1
 		});
 	});
-	it('returns scene FK when fraction matches a scene boundary', () => {
+	it('snaps canonical position even when input is float-near-boundary', () => {
+		// 1.0000000005: floor = 1, frac = 5e-10 < 1e-9 → snap to act1 boundary.
+		// Position must canonicalize to 1, not stay at 1.0000000005.
+		expect(positionToStartFKs(1.0000000005, acts, new Map())).toEqual({
+			startActId: 'a1',
+			startSceneId: null,
+			startPosition: 1
+		});
+	});
+	it('returns scene FK with snapped position when fraction matches scene boundary', () => {
 		const scenes = new Map([['a1', [{ id: 's0' }, { id: 's1' }, { id: 's2' }, { id: 's3' }, { id: 's4' }]]]);
-		// 1 + 2/5 = 1.4 → scene index 2
 		expect(positionToStartFKs(1.4, acts, scenes)).toEqual({
 			startActId: 'a1',
-			startSceneId: 's2'
+			startSceneId: 's2',
+			startPosition: 1.4
 		});
 	});
 	it('returns sceneId=null with free-fraction when no scenes', () => {
-		// Was previously null (rejected); now allowed — position carries precision.
 		expect(positionToStartFKs(1.37, acts, new Map())).toEqual({
 			startActId: 'a1',
-			startSceneId: null
+			startSceneId: null,
+			startPosition: 1.37
 		});
 	});
 	it('returns sceneId=null with free-fraction when off-grid in scened act', () => {
-		const scenes = new Map([['a1', [{ id: 's0' }, { id: 's1' }]]]); // m=2, boundaries at 0, 0.5
-		// 1.37 is between scene boundaries → free-fraction
+		const scenes = new Map([['a1', [{ id: 's0' }, { id: 's1' }]]]);
 		expect(positionToStartFKs(1.37, acts, scenes)).toEqual({
 			startActId: 'a1',
-			startSceneId: null
+			startSceneId: null,
+			startPosition: 1.37
 		});
 	});
 });
@@ -281,27 +291,41 @@ describe('positionToEndFKs', () => {
 	it('returns end-of-story when position == acts.length', () => {
 		expect(positionToEndFKs(3.0, acts, new Map())).toEqual({
 			endActId: 'a2',
-			endSceneId: null
+			endSceneId: null,
+			endPosition: 3
 		});
 	});
-	it('snaps to act end when fraction is ~1', () => {
+	it('snaps canonical position to act end when fraction is ~1', () => {
 		expect(positionToEndFKs(2.0, acts, new Map())).toEqual({
 			endActId: 'a1',
-			endSceneId: null
+			endSceneId: null,
+			endPosition: 2
 		});
 	});
-	it('returns scene FK when fraction matches a scene boundary', () => {
+	it('snaps canonical position when input is just-past-boundary float (regression)', () => {
+		// 1.0000000002: actIdx = floor(1.0000000002 - 1e-9) = floor(0.9999999992) = 0,
+		// frac = 1.0000000002 > 1 - 1e-9 → end-of-act0. Canonical position must be
+		// 1 (act boundary), NOT 1.0000000002 (which fails the server's range check
+		// for act0 = [0, 1]).
+		expect(positionToEndFKs(1.0000000002, acts, new Map())).toEqual({
+			endActId: 'a0',
+			endSceneId: null,
+			endPosition: 1
+		});
+	});
+	it('returns scene FK with snapped position when fraction matches scene boundary', () => {
 		const scenes = new Map([['a1', [{ id: 's0' }, { id: 's1' }, { id: 's2' }, { id: 's3' }, { id: 's4' }]]]);
-		// 1 + 3/5 = 1.6 → end of scene 2 (k=3, scenes[k-1]=scenes[2])
 		expect(positionToEndFKs(1.6, acts, scenes)).toEqual({
 			endActId: 'a1',
-			endSceneId: 's2'
+			endSceneId: 's2',
+			endPosition: 1.6
 		});
 	});
 	it('returns sceneId=null with free-fraction when no scenes', () => {
 		expect(positionToEndFKs(1.73, acts, new Map())).toEqual({
 			endActId: 'a1',
-			endSceneId: null
+			endSceneId: null,
+			endPosition: 1.73
 		});
 	});
 });

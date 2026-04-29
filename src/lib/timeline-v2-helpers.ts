@@ -268,11 +268,20 @@ export function dataNoteSnippet(entity: EntityForHelpers): string | null {
 export interface StartFKs {
 	startActId: string;
 	startSceneId: string | null;
+	/**
+	 * Position canonicalized to the act/scene boundary the FKs describe.
+	 * Use this — not the raw cursor position — as the start_position to
+	 * send in the PATCH. Resolves the float-near-boundary edge case where
+	 * a position like 1.0000000002 would roll its FK into act0 but the
+	 * raw position would fail the server's act-range check for act0.
+	 */
+	startPosition: number;
 }
 
 export interface EndFKs {
 	endActId: string;
 	endSceneId: string | null;
+	endPosition: number;
 }
 
 /**
@@ -297,7 +306,10 @@ export function positionToStartFKs(
 	const actIdx = Math.floor(position);
 	if (actIdx < 0 || actIdx >= acts.length) return null;
 	const frac = position - actIdx;
-	if (frac < 1e-9) return { startActId: acts[actIdx].id, startSceneId: null };
+	if (frac < 1e-9) {
+		// Snap canonical position to the integer boundary.
+		return { startActId: acts[actIdx].id, startSceneId: null, startPosition: actIdx };
+	}
 	const scenes = scenesByActId.get(acts[actIdx].id) ?? [];
 	const m = scenes.length;
 	if (m > 0) {
@@ -305,11 +317,15 @@ export function positionToStartFKs(
 		const k = Math.round(frac * m);
 		const matches = Math.abs(frac * m - k) < 1e-9;
 		if (matches && k >= 1 && k < m) {
-			return { startActId: acts[actIdx].id, startSceneId: scenes[k].id };
+			return {
+				startActId: acts[actIdx].id,
+				startSceneId: scenes[k].id,
+				startPosition: actIdx + k / m
+			};
 		}
 		// Off-grid or beyond scenes: fall through to free-fraction.
 	}
-	return { startActId: acts[actIdx].id, startSceneId: null };
+	return { startActId: acts[actIdx].id, startSceneId: null, startPosition: position };
 }
 
 /**
@@ -337,24 +353,31 @@ export function positionToEndFKs(
 ): EndFKs | null {
 	if (Math.abs(position - acts.length) < 1e-9) {
 		const last = acts[acts.length - 1];
-		return last ? { endActId: last.id, endSceneId: null } : null;
+		return last ? { endActId: last.id, endSceneId: null, endPosition: acts.length } : null;
 	}
 	// floor(position - ε): maps integer 2.0 → Act 1 (end-of-act), not Act 2 (start-of-act).
 	const actIdx = Math.floor(position - 1e-9);
 	if (actIdx < 0 || actIdx >= acts.length) return null;
 	const frac = position - actIdx;
-	if (frac > 1 - 1e-9) return { endActId: acts[actIdx].id, endSceneId: null };
+	if (frac > 1 - 1e-9) {
+		// Snap canonical position to the integer boundary (actIdx + 1).
+		return { endActId: acts[actIdx].id, endSceneId: null, endPosition: actIdx + 1 };
+	}
 	const scenes = scenesByActId.get(acts[actIdx].id) ?? [];
 	const m = scenes.length;
 	if (m > 0) {
 		const k = Math.round(frac * m);
 		const matches = Math.abs(frac * m - k) < 1e-9;
 		if (matches && k >= 1 && k < m) {
-			return { endActId: acts[actIdx].id, endSceneId: scenes[k - 1].id };
+			return {
+				endActId: acts[actIdx].id,
+				endSceneId: scenes[k - 1].id,
+				endPosition: actIdx + k / m
+			};
 		}
 		// Off-grid: fall through to free-fraction.
 	}
-	return { endActId: acts[actIdx].id, endSceneId: null };
+	return { endActId: acts[actIdx].id, endSceneId: null, endPosition: position };
 }
 
 // ─── Act-boundary hairlines ───────────────────────────────────────────────────
