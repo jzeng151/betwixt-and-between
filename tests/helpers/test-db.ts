@@ -46,6 +46,7 @@ CREATE TABLE relationships (
   FOREIGN KEY (from_id) REFERENCES entities(id) ON DELETE CASCADE,
   FOREIGN KEY (to_id) REFERENCES entities(id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX relationships_dedup ON relationships (from_id, to_id, type);
 
 CREATE TABLE canvas_positions (
   id TEXT PRIMARY KEY NOT NULL,

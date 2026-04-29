@@ -212,6 +212,12 @@ describe('intervals migration', () => {
 
 	it('logs warnings for duplicate (entityId, actId) pairs', async () => {
 		const { db, client, path } = createFileBackedDb();
+		// The relationships_dedup unique index (added 2026-04-29 in migration
+		// 0001) prevents duplicate (from_id, to_id, type) rows going forward.
+		// This test simulates legacy data that existed BEFORE the constraint —
+		// drop the index temporarily so we can insert the duplicates the
+		// one-shot migration was designed to handle.
+		client.exec('DROP INDEX IF EXISTS relationships_dedup');
 		const acts = await seedActs(db);
 		const [ellie] = await db
 			.insert(entities)
