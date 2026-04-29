@@ -75,16 +75,32 @@ describe('writeInterval — chokepoint', () => {
 		).rejects.toThrow(/Polymorphic FK violation/);
 	});
 
-	it('rejects when supplied positions disagree with FK derivation', async () => {
+	it('honors explicit fractional position when scene FK is null (free-fraction)', async () => {
+		// New contract: scene FK null + explicit position → position is authoritative.
+		// FK is a coarse "this boundary is in act N" hint; REAL column carries precision.
+		const row = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act1,
+			endActId: acts.act1,
+			startPosition: 1.0,
+			endPosition: 1.5
+		});
+		expect(row.startPosition).toBeCloseTo(1.0, 9);
+		expect(row.endPosition).toBeCloseTo(1.5, 9);
+		expect(row.startSceneId).toBeNull();
+		expect(row.endSceneId).toBeNull();
+	});
+
+	it('rejects explicit position outside the act range', async () => {
 		await expect(
 			writeInterval(db, {
 				entityId: ellie,
 				startActId: acts.act1,
 				endActId: acts.act1,
 				startPosition: 1.0,
-				endPosition: 1.5 // wrong; full Act 1 ends at 2.0
+				endPosition: 2.5 // outside [1, 2] for Act 1
 			})
-		).rejects.toThrow(/does not match derived/);
+		).rejects.toThrow(/outside act range/);
 	});
 
 	it('accepts supplied positions when they match FK derivation (within epsilon)', async () => {

@@ -88,15 +88,17 @@
 		function onMove(ev: PointerEvent) {
 			if (!resizing) return;
 			const rawPos = ((ev.clientX - trackLeft) / trackWidthPx) * actCount;
-			const snapped = smartSnap(Math.max(0, Math.min(rawPos, actCount)), sceneCountFor);
+			const clamped = Math.max(0, Math.min(rawPos, actCount));
+			// Default: free-fraction. Hold Alt to snap to act/scene grid.
+			const next = ev.altKey ? smartSnap(clamped, sceneCountFor) : clamped;
 
 			if (edge === 'start') {
-				if (snapped < resizing.previewEnd - 1e-9) {
-					resizing = { ...resizing, previewStart: snapped };
+				if (next < resizing.previewEnd - 1e-9) {
+					resizing = { ...resizing, previewStart: next };
 				}
 			} else {
-				if (snapped > resizing.previewStart + 1e-9) {
-					resizing = { ...resizing, previewEnd: snapped };
+				if (next > resizing.previewStart + 1e-9) {
+					resizing = { ...resizing, previewEnd: next };
 				}
 			}
 		}
@@ -109,15 +111,24 @@
 			if (!resizing) return;
 			const { intervalId, previewStart, previewEnd } = resizing;
 
-			let patch: { startActId?: string; startSceneId?: string | null; endActId?: string; endSceneId?: string | null };
+			let patch: {
+				startActId?: string;
+				startSceneId?: string | null;
+				endActId?: string;
+				endSceneId?: string | null;
+				startPosition?: number;
+				endPosition?: number;
+			};
 			if (edge === 'start') {
 				const fks = positionToStartFKs(previewStart, acts, scenesByActId);
 				if (!fks) { resizing = null; return; }
-				patch = fks;
+				// When the FK resolver returns sceneId=null with a fractional position,
+				// send the explicit start_position so the server stores the precise value.
+				patch = { ...fks, startPosition: previewStart };
 			} else {
 				const fks = positionToEndFKs(previewEnd, acts, scenesByActId);
 				if (!fks) { resizing = null; return; }
-				patch = fks;
+				patch = { ...fks, endPosition: previewEnd };
 			}
 
 			try {

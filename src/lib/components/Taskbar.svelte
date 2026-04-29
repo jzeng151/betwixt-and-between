@@ -12,6 +12,7 @@
     { id: 'character-editor', label: 'Characters', icon: '👤' },
     { id: 'story-graph',      label: 'Story Graph', icon: '🕸' },
     { id: 'timeline',         label: 'Timeline', icon: '📅' },
+    { id: 'timeline-v2',      label: 'Timeline V2', icon: '🗓' },
     { id: 'world-map',        label: 'World Map', icon: '🗺' },
     { id: 'wiki',             label: 'Wiki', icon: '📝' },
   ];

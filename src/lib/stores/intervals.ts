@@ -38,6 +38,8 @@ export type UpdateIntervalInput = Partial<{
 	startSceneId: string | null;
 	endActId: string;
 	endSceneId: string | null;
+	startPosition: number;
+	endPosition: number;
 }>;
 
 // SvelteKit error responses are JSON { message: string }. Extract the

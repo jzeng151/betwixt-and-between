@@ -6,6 +6,8 @@ import {
 	colorFor,
 	dataNoteSnippet,
 	parseEntityData,
+	positionToStartFKs,
+	positionToEndFKs,
 	CHARACTER_COLORS,
 	EVENT_COLOR
 } from '../../src/lib/timeline-v2-helpers.js';
@@ -232,5 +234,74 @@ describe('dataNoteSnippet', () => {
 	});
 	it('handles malformed JSON gracefully', () => {
 		expect(dataNoteSnippet({ type: 'Character', data: '{bad' })).toBe(null);
+	});
+});
+
+describe('positionToStartFKs', () => {
+	const acts = [{ id: 'a0' }, { id: 'a1' }, { id: 'a2' }];
+
+	it('returns null when out of range', () => {
+		expect(positionToStartFKs(-0.1, acts, new Map())).toBeNull();
+		expect(positionToStartFKs(3, acts, new Map())).toBeNull();
+	});
+	it('snaps to act start when fraction is ~0', () => {
+		expect(positionToStartFKs(1.0, acts, new Map())).toEqual({
+			startActId: 'a1',
+			startSceneId: null
+		});
+	});
+	it('returns scene FK when fraction matches a scene boundary', () => {
+		const scenes = new Map([['a1', [{ id: 's0' }, { id: 's1' }, { id: 's2' }, { id: 's3' }, { id: 's4' }]]]);
+		// 1 + 2/5 = 1.4 → scene index 2
+		expect(positionToStartFKs(1.4, acts, scenes)).toEqual({
+			startActId: 'a1',
+			startSceneId: 's2'
+		});
+	});
+	it('returns sceneId=null with free-fraction when no scenes', () => {
+		// Was previously null (rejected); now allowed — position carries precision.
+		expect(positionToStartFKs(1.37, acts, new Map())).toEqual({
+			startActId: 'a1',
+			startSceneId: null
+		});
+	});
+	it('returns sceneId=null with free-fraction when off-grid in scened act', () => {
+		const scenes = new Map([['a1', [{ id: 's0' }, { id: 's1' }]]]); // m=2, boundaries at 0, 0.5
+		// 1.37 is between scene boundaries → free-fraction
+		expect(positionToStartFKs(1.37, acts, scenes)).toEqual({
+			startActId: 'a1',
+			startSceneId: null
+		});
+	});
+});
+
+describe('positionToEndFKs', () => {
+	const acts = [{ id: 'a0' }, { id: 'a1' }, { id: 'a2' }];
+
+	it('returns end-of-story when position == acts.length', () => {
+		expect(positionToEndFKs(3.0, acts, new Map())).toEqual({
+			endActId: 'a2',
+			endSceneId: null
+		});
+	});
+	it('snaps to act end when fraction is ~1', () => {
+		expect(positionToEndFKs(2.0, acts, new Map())).toEqual({
+			endActId: 'a1',
+			endSceneId: null
+		});
+	});
+	it('returns scene FK when fraction matches a scene boundary', () => {
+		const scenes = new Map([['a1', [{ id: 's0' }, { id: 's1' }, { id: 's2' }, { id: 's3' }, { id: 's4' }]]]);
+		// 1 + 3/5 = 1.6 → end of scene 2 (k=3, scenes[k-1]=scenes[2])
+		expect(positionToEndFKs(1.6, acts, scenes)).toEqual({
+			endActId: 'a1',
+			endSceneId: 's2'
+		});
+	});
+	it('returns sceneId=null with free-fraction when no scenes', () => {
+		expect(positionToEndFKs(1.73, acts, new Map())).toEqual({
+			endActId: 'a1',
+			endSceneId: null
+		});
 	});
 });

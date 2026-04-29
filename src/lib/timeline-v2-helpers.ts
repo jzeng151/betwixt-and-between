@@ -276,15 +276,16 @@ export interface EndFKs {
 }
 
 /**
- * Map a snapped start position to FK references for updateInterval.
+ * Map a position to FK references for writeInterval/updateInterval.
  *
- *   frac ≈ 0           → start of act (startSceneId null)
- *   frac = k/m, k∈[1,m-1] → startSceneId = scenes[k] (scene k starts at actIdx + k/m)
+ *   frac ≈ 0                     → start of act (startSceneId null, exact)
+ *   frac = k/m, k∈[1,m-1] (snap) → startSceneId = scenes[k] (scene k starts at actIdx + k/m)
+ *   any other frac in (0, 1)     → startSceneId null (free-fraction; the position
+ *                                  REAL value carries the precision)
  *
- * Returns null when position is out of range or unrepresentable (non-zero fraction
- * with no scenes in that act).
+ * Returns null only when position is out of range.
  *
- * @param position      snapped position on the global story-time axis
+ * @param position      position on the global story-time axis
  * @param acts          root-level Acts in index order
  * @param scenesByActId scenes per act, each list sorted by scene index
  */
@@ -299,26 +300,33 @@ export function positionToStartFKs(
 	if (frac < 1e-9) return { startActId: acts[actIdx].id, startSceneId: null };
 	const scenes = scenesByActId.get(acts[actIdx].id) ?? [];
 	const m = scenes.length;
-	if (m === 0) return null;
-	// k: scene index whose range starts at frac (sceneRange(k, m, actIdx).start = actIdx + k/m)
-	const k = Math.round(frac * m);
-	if (k < 1 || k >= m) return null;
-	return { startActId: acts[actIdx].id, startSceneId: scenes[k].id };
+	if (m > 0) {
+		// k: scene index whose range starts at frac (sceneRange(k, m, actIdx).start = actIdx + k/m)
+		const k = Math.round(frac * m);
+		const matches = Math.abs(frac * m - k) < 1e-9;
+		if (matches && k >= 1 && k < m) {
+			return { startActId: acts[actIdx].id, startSceneId: scenes[k].id };
+		}
+		// Off-grid or beyond scenes: fall through to free-fraction.
+	}
+	return { startActId: acts[actIdx].id, startSceneId: null };
 }
 
 /**
- * Map a snapped end position to FK references for updateInterval.
+ * Map an end position to FK references for writeInterval/updateInterval.
  *
  * End is exclusive; boundary k/m means the last included scene is k-1
  * (sceneRange(k-1, m, actIdx).end = actIdx + k/m).
  *
- *   position = acts.length    → end of story (last act, no scene FK)
- *   frac ≈ 1                  → end of act (endSceneId null)
- *   frac = k/m (0 < k < m)   → endSceneId = scenes[k-1]
+ *   position = acts.length      → end of story (last act, no scene FK)
+ *   frac ≈ 1                    → end of act (endSceneId null, exact)
+ *   frac = k/m (0 < k ≤ m, snap) → endSceneId = scenes[k-1]
+ *   any other frac in (0, 1)    → endSceneId null (free-fraction; the position
+ *                                 REAL value carries the precision)
  *
- * Returns null when position is out of range or unrepresentable.
+ * Returns null only when position is out of range.
  *
- * @param position      snapped position on the global story-time axis
+ * @param position      position on the global story-time axis
  * @param acts          root-level Acts in index order
  * @param scenesByActId scenes per act, each list sorted by scene index
  */
@@ -338,12 +346,15 @@ export function positionToEndFKs(
 	if (frac > 1 - 1e-9) return { endActId: acts[actIdx].id, endSceneId: null };
 	const scenes = scenesByActId.get(acts[actIdx].id) ?? [];
 	const m = scenes.length;
-	if (m === 0) return null;
-	// k/m = frac; last included scene index is k-1
-	const k = Math.round(frac * m);
-	if (k < 1 || k > m) return null;
-	if (k === m) return { endActId: acts[actIdx].id, endSceneId: null };
-	return { endActId: acts[actIdx].id, endSceneId: scenes[k - 1].id };
+	if (m > 0) {
+		const k = Math.round(frac * m);
+		const matches = Math.abs(frac * m - k) < 1e-9;
+		if (matches && k >= 1 && k < m) {
+			return { endActId: acts[actIdx].id, endSceneId: scenes[k - 1].id };
+		}
+		// Off-grid: fall through to free-fraction.
+	}
+	return { endActId: acts[actIdx].id, endSceneId: null };
 }
 
 // ─── Act-boundary hairlines ───────────────────────────────────────────────────

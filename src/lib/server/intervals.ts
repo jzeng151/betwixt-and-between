@@ -70,6 +70,13 @@ export interface ComputeIntervalPositionsInput {
 	startSceneId?: string | null;
 	endActId: string;
 	endSceneId?: string | null;
+	/**
+	 * Optional explicit position overrides. Honored only when the matching
+	 * scene FK is null (free-fraction case). Must fall within the act's
+	 * range [actIdx, actIdx + 1] — out-of-range overrides throw.
+	 */
+	startPosition?: number;
+	endPosition?: number;
 }
 
 export interface ComputeIntervalPositionsResult {
@@ -152,11 +159,16 @@ export async function sceneIndexOf(
  *
  * Branches:
  *   start_scene_id NOT NULL → use sceneRange(k, m, actIndex_of_parent_act)
- *   start_scene_id IS NULL  → use actRange(actIndex_of_start_act_id) — start of act
- *   same logic for end side, where end uses .end of the range (exclusive)
+ *   start_scene_id IS NULL  → use input.startPosition if provided AND in
+ *                              [actIdx, actIdx + 1]; otherwise actRange(i).start
+ *   same logic for end side: explicit position honored when scene FK is null,
+ *                              else end-of-act. Must lie in [actIdx, actIdx + 1].
  *
- * If start has no scene FK and end has no scene FK, the interval covers the
- * full range from start of start_act to end of end_act (inclusive of end_act).
+ * Free-fraction support: when the caller wants a sub-act position without a
+ * scene anchor (e.g., dragged the resize handle to 1.37 in an act with no
+ * scenes), they pass startSceneId=null AND startPosition=1.37. The FK acts
+ * as a coarse "this boundary lives in act N" hint; the REAL column carries
+ * the exact value.
  */
 export async function computeIntervalPositions(
 	db: DB,
@@ -176,7 +188,17 @@ export async function computeIntervalPositions(
 		startPosition = sceneRange(sceneIndex, sceneCount, i).start;
 	} else {
 		const i = await actIndexOf(db, input.startActId);
-		startPosition = actRange(i).start;
+		const range = actRange(i);
+		if (input.startPosition !== undefined) {
+			if (input.startPosition < range.start - POSITION_EPSILON || input.startPosition > range.end + POSITION_EPSILON) {
+				throw new Error(
+					`start_position ${input.startPosition} outside act range [${range.start}, ${range.end}] for start_act_id ${input.startActId}`
+				);
+			}
+			startPosition = input.startPosition;
+		} else {
+			startPosition = range.start;
+		}
 	}
 
 	if (input.endSceneId) {
@@ -190,7 +212,17 @@ export async function computeIntervalPositions(
 		endPosition = sceneRange(sceneIndex, sceneCount, i).end;
 	} else {
 		const i = await actIndexOf(db, input.endActId);
-		endPosition = actRange(i).end;
+		const range = actRange(i);
+		if (input.endPosition !== undefined) {
+			if (input.endPosition < range.start - POSITION_EPSILON || input.endPosition > range.end + POSITION_EPSILON) {
+				throw new Error(
+					`end_position ${input.endPosition} outside act range [${range.start}, ${range.end}] for end_act_id ${input.endActId}`
+				);
+			}
+			endPosition = input.endPosition;
+		} else {
+			endPosition = range.end;
+		}
 	}
 
 	if (startPosition >= endPosition) {
@@ -361,13 +393,37 @@ export async function updateInterval(
 	const [existing] = await db.select().from(intervals).where(eq(intervals.id, id));
 	if (!existing) throw new Error(`Interval not found: ${id}`);
 
+	const mergedStartActId = patch.startActId ?? existing.startActId;
+	const mergedStartSceneId =
+		patch.startSceneId !== undefined ? patch.startSceneId : existing.startSceneId;
+	const mergedEndActId = patch.endActId ?? existing.endActId;
+	const mergedEndSceneId =
+		patch.endSceneId !== undefined ? patch.endSceneId : existing.endSceneId;
+
+	// Position overrides: explicit patch wins. If scene FK stays null and the
+	// start act didn't change, preserve the existing frozen fraction. Otherwise
+	// let computeIntervalPositions fall back to act-range defaults.
+	const startPosOverride =
+		patch.startPosition !== undefined
+			? patch.startPosition
+			: mergedStartSceneId === null && mergedStartActId === existing.startActId
+				? existing.startPosition
+				: undefined;
+	const endPosOverride =
+		patch.endPosition !== undefined
+			? patch.endPosition
+			: mergedEndSceneId === null && mergedEndActId === existing.endActId
+				? existing.endPosition
+				: undefined;
+
 	const merged: WriteIntervalInput = {
 		entityId: patch.entityId ?? existing.entityId,
-		startActId: patch.startActId ?? existing.startActId,
-		startSceneId:
-			patch.startSceneId !== undefined ? patch.startSceneId : existing.startSceneId,
-		endActId: patch.endActId ?? existing.endActId,
-		endSceneId: patch.endSceneId !== undefined ? patch.endSceneId : existing.endSceneId
+		startActId: mergedStartActId,
+		startSceneId: mergedStartSceneId,
+		endActId: mergedEndActId,
+		endSceneId: mergedEndSceneId,
+		startPosition: startPosOverride,
+		endPosition: endPosOverride
 	};
 
 	await validateFKTypes(db, merged);
