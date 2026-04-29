@@ -239,6 +239,123 @@
 		if (e.key === 'Enter') commitAddAct();
 		if (e.key === 'Escape') cancelAddAct();
 	}
+
+	// ── Act drag-reorder ──────────────────────────────────────────────────────
+	const ACT_MIME = 'application/x-betwixt-act-reorder';
+	const SCENE_MIME = 'application/x-betwixt-scene-move';
+
+	let dragActId: string | null = $state(null);
+	let actDropTarget: { idx: number; side: 'left' | 'right' } | null = $state(null);
+	let reorderError: string | null = $state(null);
+
+	function actDragStart(e: DragEvent, actId: string) {
+		if (!e.dataTransfer) return;
+		e.dataTransfer.effectAllowed = 'move';
+		e.dataTransfer.setData(ACT_MIME, actId);
+		e.dataTransfer.setData('text/plain', actId);
+		dragActId = actId;
+	}
+	function actDragEnd() {
+		dragActId = null;
+		actDropTarget = null;
+	}
+	function actDragOver(e: DragEvent, idx: number) {
+		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === ACT_MIME)) return;
+		e.preventDefault();
+		e.dataTransfer.dropEffect = 'move';
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const side: 'left' | 'right' = e.clientX - rect.left < rect.width / 2 ? 'left' : 'right';
+		actDropTarget = { idx, side };
+	}
+	async function actDrop(e: DragEvent, idx: number) {
+		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === ACT_MIME)) return;
+		e.preventDefault();
+		const movedId = e.dataTransfer.getData(ACT_MIME);
+		const target = actDropTarget ?? { idx, side: 'left' as const };
+		actDropTarget = null;
+		dragActId = null;
+		if (!movedId) return;
+		const movedFromIdx = acts.findIndex((a) => a.id === movedId);
+		if (movedFromIdx < 0) return;
+		// Convert (idx, side) into a target position. When moving rightward,
+		// removal of the moved item from the front shifts indices by one.
+		let targetPos = target.side === 'left' ? target.idx : target.idx + 1;
+		if (movedFromIdx < targetPos) targetPos -= 1;
+		if (targetPos === movedFromIdx) return; // no-op
+		try {
+			const res = await fetch(`/api/entities/${movedId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ position: targetPos })
+			});
+			if (!res.ok) throw new Error(await res.text());
+			await Promise.all([entities.load(), intervalsStore.load()]);
+		} catch (err) {
+			reorderError = (err as Error).message;
+			setTimeout(() => (reorderError = null), 4000);
+		}
+	}
+
+	// ── Scene drag-reorder + cross-act move ──────────────────────────────────
+	let dragSceneId: string | null = $state(null);
+	let sceneDropTarget: { actId: string; idx: number } | null = $state(null);
+
+	function sceneDragStart(e: DragEvent, sceneId: string) {
+		if (!e.dataTransfer) return;
+		e.dataTransfer.effectAllowed = 'move';
+		e.dataTransfer.setData(SCENE_MIME, sceneId);
+		e.dataTransfer.setData('text/plain', sceneId);
+		dragSceneId = sceneId;
+	}
+	function sceneDragEnd() {
+		dragSceneId = null;
+		sceneDropTarget = null;
+	}
+	function sceneActDragOver(e: DragEvent, actId: string) {
+		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === SCENE_MIME)) return;
+		e.preventDefault();
+		e.dataTransfer.dropEffect = 'move';
+		const list = scenesByActId.get(actId) ?? [];
+		const container = e.currentTarget as HTMLElement;
+		const rect = container.getBoundingClientRect();
+		const relX = e.clientX - rect.left;
+		const cellWidth = list.length > 0 ? rect.width / list.length : rect.width;
+		const idx = Math.max(0, Math.min(Math.floor(relX / cellWidth + 0.5), list.length));
+		sceneDropTarget = { actId, idx };
+	}
+	async function sceneActDrop(e: DragEvent, actId: string) {
+		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === SCENE_MIME)) return;
+		e.preventDefault();
+		const movedId = e.dataTransfer.getData(SCENE_MIME);
+		const target = sceneDropTarget ?? { actId, idx: scenesByActId.get(actId)?.length ?? 0 };
+		sceneDropTarget = null;
+		dragSceneId = null;
+		if (!movedId) return;
+		const moved = $entities.find((x) => x.id === movedId);
+		if (!moved) return;
+		let targetPos = target.idx;
+		if (moved.parentId === target.actId) {
+			// Same-act reorder: account for the moved scene being removed
+			// from its current position before reinsertion.
+			const fromIdx = (scenesByActId.get(target.actId) ?? []).findIndex(
+				(s) => s.id === movedId
+			);
+			if (fromIdx >= 0 && fromIdx < targetPos) targetPos -= 1;
+			if (targetPos === fromIdx) return;
+		}
+		try {
+			const res = await fetch(`/api/entities/${movedId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ parentId: target.actId, position: targetPos })
+			});
+			if (!res.ok) throw new Error(await res.text());
+			await Promise.all([entities.load(), intervalsStore.load()]);
+		} catch (err) {
+			reorderError = (err as Error).message;
+			setTimeout(() => (reorderError = null), 4000);
+		}
+	}
 </script>
 
 <!-- Acts header -->
@@ -276,15 +393,31 @@
 		<div
 			class="act-col-header"
 			class:act-col-header--selected={selectedEntityId === act.id}
+			class:act-col-header--dragging={dragActId === act.id}
+			class:act-drop-left={actDropTarget?.idx === actIdx && actDropTarget?.side === 'left' && dragActId !== act.id}
+			class:act-drop-right={actDropTarget?.idx === actIdx && actDropTarget?.side === 'right' && dragActId !== act.id}
 			style="flex: 1;"
+			ondragover={(e) => actDragOver(e, actIdx)}
+			ondrop={(e) => actDrop(e, actIdx)}
+			ondragleave={() => { if (actDropTarget?.idx === actIdx) actDropTarget = null; }}
 			onclick={(e) => {
-				// Don't hijack clicks on inner buttons / inputs / textareas.
+				// Don't hijack clicks on inner buttons / inputs / textareas
+				// or the drag grip.
 				const t = e.target as HTMLElement;
-				if (t.closest('button, input, textarea')) return;
+				if (t.closest('button, input, textarea, .act-grip')) return;
 				onSelectAct?.(act.id);
 			}}
 		>
 			<div class="act-name-row">
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<span
+					class="act-grip"
+					aria-label="Drag to reorder {act.name}"
+					title="Drag to reorder"
+					draggable="true"
+					ondragstart={(e) => actDragStart(e, act.id)}
+					ondragend={actDragEnd}
+				>⋮⋮</span>
 				<div class="act-name">{act.name}</div>
 				<button
 					class="act-delete-btn"
@@ -408,7 +541,14 @@
 		{#each acts as act (act.id)}
 			<!-- Spacer matching the .insert-sliver in the header so columns align -->
 			<div class="scenes-insert-spacer"></div>
-			<div class="scenes-act">
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				class="scenes-act"
+				class:scenes-act--drop={sceneDropTarget?.actId === act.id}
+				ondragover={(e) => sceneActDragOver(e, act.id)}
+				ondrop={(e) => sceneActDrop(e, act.id)}
+				ondragleave={() => { if (sceneDropTarget?.actId === act.id) sceneDropTarget = null; }}
+			>
 				{#if (scenesByActId.get(act.id)?.length ?? 0) > 0}
 					{#each scenesByActId.get(act.id)! as scene, k (scene.id)}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -416,7 +556,11 @@
 						<div
 							class="scene-cell"
 							class:scene-cell--selected={selectedEntityId === scene.id}
+							class:scene-cell--dragging={dragSceneId === scene.id}
 							title={scene.name}
+							draggable="true"
+							ondragstart={(e) => sceneDragStart(e, scene.id)}
+							ondragend={sceneDragEnd}
 							onclick={() => onSelectScene?.(scene.id)}
 						>s{k}</div>
 					{/each}
@@ -428,6 +572,10 @@
 		<!-- Spacer column to align with the trailing + Act tile -->
 		<div class="scenes-act-spacer"></div>
 	</div>
+{/if}
+
+{#if reorderError}
+	<div class="reorder-error" role="alert">{reorderError}</div>
 {/if}
 
 <style>
@@ -518,6 +666,36 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 6px;
+	}
+	.act-grip {
+		opacity: 0;
+		cursor: grab;
+		color: var(--color-text-muted, #6b7280);
+		font-size: 11px;
+		letter-spacing: -1px;
+		user-select: none;
+		padding: 2px 1px;
+		flex-shrink: 0;
+		transition: opacity 0.15s, color 0.15s;
+	}
+	.act-col-header:hover .act-grip {
+		opacity: 0.7;
+	}
+	.act-grip:hover {
+		opacity: 1 !important;
+		color: var(--color-text, #e8e0d0);
+	}
+	.act-grip:active {
+		cursor: grabbing;
+	}
+	.act-col-header--dragging {
+		opacity: 0.5;
+	}
+	.act-col-header.act-drop-left {
+		box-shadow: inset 3px 0 0 var(--color-accent, #c8942a);
+	}
+	.act-col-header.act-drop-right {
+		box-shadow: inset -3px 0 0 var(--color-accent, #c8942a);
 	}
 	.act-name {
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);
@@ -723,6 +901,14 @@
 		color: var(--color-accent, #c8942a);
 		background: rgba(200, 148, 42, 0.06);
 	}
+	.scene-cell--dragging {
+		opacity: 0.4;
+	}
+	.scenes-act--drop {
+		background: rgba(200, 148, 42, 0.1);
+		outline: 1px dashed var(--color-accent, #c8942a);
+		outline-offset: -1px;
+	}
 	.scene-cell:last-child {
 		border-right: none;
 	}
@@ -782,5 +968,18 @@
 	.scenes-act-spacer {
 		flex: 0 0 100px;
 		border-left: 1px dashed var(--color-border, #2a2d35);
+	}
+	.reorder-error {
+		position: fixed;
+		bottom: 16px;
+		left: 50%;
+		transform: translateX(-50%);
+		background: #ef4444;
+		color: #fff;
+		font-size: 11px;
+		padding: 6px 12px;
+		border-radius: 4px;
+		z-index: 100;
+		pointer-events: none;
 	}
 </style>
