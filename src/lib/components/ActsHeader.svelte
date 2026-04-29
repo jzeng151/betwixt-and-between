@@ -108,6 +108,51 @@
 			deletingInProgress = false;
 		}
 	}
+
+	// ── Add-act state (trailing tile) ─────────────────────────────────────────
+	let addingAct = $state(false);
+	let newActName = $state('');
+	let savingAct = $state(false);
+	let addActError: string | null = $state(null);
+
+	function openAddAct() {
+		addingAct = true;
+		newActName = '';
+		addActError = null;
+	}
+	function cancelAddAct() {
+		addingAct = false;
+		newActName = '';
+		addActError = null;
+	}
+	async function commitAddAct() {
+		const name = newActName.trim();
+		if (!name || savingAct) return;
+		savingAct = true;
+		addActError = null;
+		try {
+			// Position = current count so the new act sorts last. Same raw-fetch
+			// pattern as break-into-scenes — entities.createEntity doesn't expose
+			// `position` (see CONSIDERATIONS.md → entities store gap).
+			const res = await fetch('/api/entities', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ type: 'Act', name, position: acts.length })
+			});
+			if (!res.ok) throw new Error(await res.text());
+			await entities.load();
+			addingAct = false;
+			newActName = '';
+		} catch (err) {
+			addActError = (err as Error).message;
+		} finally {
+			savingAct = false;
+		}
+	}
+	function handleAddActKey(e: KeyboardEvent) {
+		if (e.key === 'Enter') commitAddAct();
+		if (e.key === 'Escape') cancelAddAct();
+	}
 </script>
 
 <!-- Acts header -->
@@ -172,8 +217,34 @@
 			{/if}
 		</div>
 	{/each}
+
+	<!-- Trailing "+ Act" tile -->
+	<div class="act-add-tile">
+		{#if addingAct}
+			<!-- svelte-ignore a11y_autofocus -->
+			<input
+				class="act-add-input"
+				type="text"
+				placeholder="Act name"
+				bind:value={newActName}
+				onkeydown={handleAddActKey}
+				onblur={() => { if (!savingAct && !newActName.trim()) cancelAddAct(); }}
+				disabled={savingAct}
+				autofocus
+				aria-label="New act name"
+			/>
+			{#if addActError}<div class="act-add-error">{addActError}</div>{/if}
+		{:else}
+			<button
+				class="act-add-btn"
+				aria-label="Add act"
+				onclick={openAddAct}
+			>+ Act</button>
+		{/if}
+	</div>
+
 	{#if acts.length === 0}
-		<div class="acts-empty">No acts yet. Add an Act to begin your story.</div>
+		<div class="acts-empty">No acts yet. Click + Act to begin your story.</div>
 	{/if}
 </div>
 
@@ -191,6 +262,8 @@
 				{/if}
 			</div>
 		{/each}
+		<!-- Spacer column to align with the trailing + Act tile -->
+		<div class="scenes-act-spacer"></div>
 	</div>
 {/if}
 
@@ -402,5 +475,52 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+	}
+
+	/* Trailing add-act tile and matching scenes-row spacer */
+	.act-add-tile {
+		flex: 0 0 100px;
+		border-left: 1px dashed var(--color-border, #2a2d35);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 6px;
+	}
+	.act-add-btn {
+		background: transparent;
+		border: 1px dashed var(--color-text-muted, #6b7280);
+		color: var(--color-text-muted, #6b7280);
+		border-radius: 4px;
+		padding: 6px 10px;
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		font-size: 11px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: color 0.12s, border-color 0.12s, background 0.12s;
+	}
+	.act-add-btn:hover {
+		color: var(--color-accent, #c8942a);
+		border-color: var(--color-accent, #c8942a);
+		background: rgba(200, 148, 42, 0.06);
+	}
+	.act-add-input {
+		width: 100%;
+		background: var(--color-surface, #161920);
+		color: var(--color-text, #e8e0d0);
+		border: 1px solid var(--color-accent, #c8942a);
+		border-radius: 4px;
+		padding: 5px 8px;
+		font-family: var(--font-display, 'Fraunces', Georgia, serif);
+		font-size: 13px;
+		outline: none;
+	}
+	.act-add-error {
+		font-size: 9px;
+		color: #ef4444;
+		margin-top: 4px;
+	}
+	.scenes-act-spacer {
+		flex: 0 0 100px;
+		border-left: 1px dashed var(--color-border, #2a2d35);
 	}
 </style>

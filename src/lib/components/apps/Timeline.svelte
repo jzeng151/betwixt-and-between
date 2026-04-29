@@ -223,7 +223,15 @@
 </script>
 
 <div class="tl2">
-	<Palette {characters} {events} {placedEntityIds} {colorFor} />
+	<Palette
+		{characters}
+		{events}
+		{placedEntityIds}
+		{colorFor}
+		onCreateEvent={async (name) => {
+			await entities.createEntity('Event', name);
+		}}
+	/>
 
 	<!-- ── Main timeline ──────────────────────────────────────────────── -->
 	<div class="timeline">
