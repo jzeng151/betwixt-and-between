@@ -10,6 +10,17 @@
   (widthClassForBar, internalActBoundaryFractions).
 -->
 
+<script lang="ts" module>
+  // Module-scoped counter — shared across all IntervalBar instances so that
+  // server- and client-rendered clipPath ids stay aligned across hydration.
+  // Math.random / crypto.randomUUID would produce different ids on each side.
+  let clipCounter = 0;
+  function nextClipId(): string {
+    clipCounter += 1;
+    return `ib-clip-${clipCounter}`;
+  }
+</script>
+
 <script lang="ts">
   import { widthClassForBar, type WidthClass } from '$lib/timeline-v2-helpers.js';
 
@@ -53,7 +64,7 @@
   const PAD_X = $derived(widthClass === 'tiny' ? 0 : widthClass === 'narrow' ? 6 : 10);
 
   // Unique clipPath id so multiple instances don't collide.
-  const clipId = `ib-clip-${Math.random().toString(36).slice(2, 9)}`;
+  const clipId = nextClipId();
 
   const textColor = $derived(isEvent ? 'var(--color-text, #e8e0d0)' : color);
   const nameY = $derived(showNote ? BODY_Y + 12 : BODY_Y + BODY_H / 2);

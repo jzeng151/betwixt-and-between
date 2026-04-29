@@ -267,21 +267,21 @@ Schema is the load-bearing piece. Ship first, derisk everything else.
 
 **Note:** PR 2 details are deliberately exploratory — final scope locked at its own /plan-eng-review pass before implementation begins.
 
-- [ ] V2 timeline component at `src/lib/components/apps/TimelineV2.svelte`. SVG rendering, intervals as `<rect>` elements positioned via `start_position` / `end_position`. Visual reference: `~/.gstack/projects/jzeng151-betwixt-and-between/designs/v2-timeline-20260428/v2-timeline-mockup-v2.html`.
-- [ ] **No row-label column.** Bars carry entity name (Fraunces 13px) on first line, optional notes snippet (Inter 10px, opacity 0.75) on second line. Width breakpoints: `>=100px` shows name+note, `40-100px` shows name only, `<40px` is a colored sliver with tooltip-only identification.
-- [ ] **`IntervalBar.svelte`** component encapsulating: rendering, width-breakpoint text logic, drag-edge resize handles, hover tooltip with full presence info (`{name} · {presence range}`), keyboard focus + screen-reader `aria-label` parity.
-- [ ] **`data.timelineLabel` JSON field** on entities for configuring bar-text source. Default: `null` (use first line of `data.notes` truncated to ~30 chars). User can pick a different field via a "Show on timeline" control in entity editors. No schema migration needed (additive optional JSON path).
-- [ ] **Entity editor UI updates:** CharacterEditor and event editor get a "Show on timeline" control with three options: name only / name + note snippet (default) / custom field.
-- [ ] Sidebar palette listing characters and events. Drag from palette onto timeline → creates interval via `POST /api/intervals`. Events render in their own section, neutral gray dot.
-- [ ] **Events on the timeline:** events appear as bars alongside character bars, using `--color-event: #94a3b8` for neutral differentiation. Same drag-drop, same resize, same tooltip rules.
-- [ ] Drag-edge-to-resize handles on each interval bar. Reuse pattern from existing column-resize / row-resize handles where it transfers cleanly.
-- [ ] Smart snap: snap to act boundaries by default; snap to scene boundaries when scenes exist; Alt to bypass for free-fraction positioning. Cross-act drag updates snap target immediately.
-- [ ] Multi-act spans render as one continuous SVG element with subtle vertical hairlines at act boundaries the bar crosses.
-- [ ] Drag same entity from palette twice → second interval row → renders as visible gap.
-- [ ] "Break into scenes" affordance per act for opt-in scene-level granularity.
-- [ ] Confirmation dialog on Act delete listing affected intervals.
-- [ ] Replace V1 timeline behind feature flag, then become default. Delete `timeline-compat.ts` and the `appears_in` hijack handler.
-- [ ] New E2E tests: drag/resize/gap behavior, cross-act snap, scene opt-in flow, tooltip on bar hover/focus, narrow-bar text truncation behavior.
+- [x] V2 timeline component at `src/lib/components/apps/Timeline.svelte` (V2 became THE timeline on 2026-04-28; original file was `TimelineV2.svelte` until V1 retirement). SVG rendering, intervals as `<rect>` elements positioned via `start_position` / `end_position`. Visual reference: `~/.gstack/projects/jzeng151-betwixt-and-between/designs/v2-timeline-20260428/v2-timeline-mockup-v2.html`.
+- [x] **No row-label column.** Bars carry entity name (Fraunces 13px) on first line, optional notes snippet (Inter 10px, opacity 0.75) on second line. Width breakpoints: `>=100px` shows name+note, `40-100px` shows name only, `<40px` is a colored sliver with tooltip-only identification.
+- [x] **`IntervalBar.svelte`** component encapsulating: rendering, width-breakpoint text logic, drag-edge resize handles, hover tooltip with full presence info (`{name} · {presence range}`), keyboard focus + screen-reader `aria-label` parity.
+- [x] **`data.timelineLabel` JSON field** on entities for configuring bar-text source. Default: `null` (use first line of `data.notes` truncated to ~30 chars). User can pick a different field via a "Show on timeline" control in entity editors. No schema migration needed (additive optional JSON path).
+- [x] **Entity editor UI updates:** CharacterEditor gets a "Show on timeline" control with three options: name only / name + note snippet (default) / custom field. (Deferred: dedicated Event editor.)
+- [x] Sidebar palette listing characters and events. Drag from palette onto timeline → creates interval via `POST /api/intervals`. Events render in their own section, neutral gray dot.
+- [x] **Events on the timeline:** events appear as bars alongside character bars, using `--color-event: #94a3b8` for neutral differentiation. Same drag-drop, same resize, same tooltip rules.
+- [x] Drag-edge-to-resize handles on each interval bar.
+- [x] Smart snap: hold **Alt** to snap to act/scene boundaries; default is free-fraction (inverted from spec per user feedback 2026-04-28 — precision-first feels better for sketching). Cross-act drag updates snap target immediately. Free-fraction commits via explicit position override on FK with null scene anchor.
+- [x] Multi-act spans render as one continuous SVG element with subtle vertical hairlines at act boundaries the bar crosses.
+- [x] Drag same entity from palette twice → second interval → renders as visible gap on the same row.
+- [x] "Break into scenes" inline form per act header (textarea, one scene name per line) for opt-in scene-level granularity.
+- [x] Inline delete-act confirmation listing the cascade interval count.
+- [x] V1 timeline retired in a single hard cutover (2026-04-28). Deleted `timeline-compat.ts`, the `appears_in` POST hijack and synthetic-row GET synth, and CharacterEditor's Story Arcs section. AppId `'timeline-v2'` removed.
+- [x] New E2E tests at `tests/e2e/v2-timeline-{palette,resize,acts}.spec.ts` covering: drag-from-palette + gap-on-redrop + empty-state hint; resize boundaries + cross-act + Alt-snap (act and scene grids) + free-fraction position assertion; break-into-scenes flow + act-delete cascade + multi-act hairlines + tooltip on hover/focus + width-breakpoint truncation.
 
 ### 12. Phase 1.5 — Scrubber stretch (optional follow-on)
 

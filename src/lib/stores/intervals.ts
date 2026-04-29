@@ -95,10 +95,17 @@ function createIntervalStore() {
 
 	async function deleteInterval(id: string): Promise<void> {
 		update((all) => all.filter((i) => i.id !== id));
-		const res = await fetch(`/api/intervals/${id}`, { method: 'DELETE' });
-		if (!res.ok) {
+		try {
+			const res = await fetch(`/api/intervals/${id}`, { method: 'DELETE' });
+			if (!res.ok) {
+				await load();
+				throw new Error(await errorMessage(res));
+			}
+		} catch (err) {
+			// Network error before any response — the optimistic remove would
+			// otherwise hide the row forever. Re-sync from the server and rethrow.
 			await load();
-			throw new Error(await errorMessage(res));
+			throw err;
 		}
 	}
 
