@@ -60,31 +60,31 @@ describe('openEntity', () => {
 		expect(wins[0].id).toBe('world-map-loc1');
 	});
 
-	it('routes Event → timeline window', () => {
+	it('routes Event → entity-detail window (post D10-extension/19A)', () => {
 		entitiesWritable.set([makeEntity('ev1', 'Event', 'Battle')]);
 		openEntity('ev1');
 		const wins = get(windowStore);
 		expect(wins).toHaveLength(1);
-		expect(wins[0].appId).toBe('timeline');
-		expect(wins[0].id).toBe('timeline-ev1');
+		expect(wins[0].appId).toBe('entity-detail');
+		expect(wins[0].id).toBe('entity-detail-ev1');
 	});
 
-	it('routes Act → timeline window', () => {
+	it('routes Act → entity-detail window (post D10-extension/19A)', () => {
 		entitiesWritable.set([makeEntity('act1', 'Act', 'Act One')]);
 		openEntity('act1');
 		const wins = get(windowStore);
 		expect(wins).toHaveLength(1);
-		expect(wins[0].appId).toBe('timeline');
-		expect(wins[0].id).toBe('timeline-act1');
+		expect(wins[0].appId).toBe('entity-detail');
+		expect(wins[0].id).toBe('entity-detail-act1');
 	});
 
-	it('routes Scene → timeline window', () => {
+	it('routes Scene → entity-detail window (post D10-extension/19A)', () => {
 		entitiesWritable.set([makeEntity('sc1', 'Scene', 'Opening')]);
 		openEntity('sc1');
 		const wins = get(windowStore);
 		expect(wins).toHaveLength(1);
-		expect(wins[0].appId).toBe('timeline');
-		expect(wins[0].id).toBe('timeline-sc1');
+		expect(wins[0].appId).toBe('entity-detail');
+		expect(wins[0].id).toBe('entity-detail-sc1');
 	});
 
 	it('routes Note → wiki window', () => {

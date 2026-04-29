@@ -103,13 +103,13 @@ describe('windowStore.openForEntity', () => {
 		expect(id).toBe('world-map-loc1');
 	});
 
-	it('routes Event/Act/Scene → timeline', () => {
+	it('routes Event/Act/Scene → entity-detail (post D10-extension/19A)', () => {
 		const a = windowStore.openForEntity('act1', 'Act');
 		const s = windowStore.openForEntity('s1', 'Scene');
 		const e = windowStore.openForEntity('ev1', 'Event');
-		expect(a).toBe('timeline-act1');
-		expect(s).toBe('timeline-s1');
-		expect(e).toBe('timeline-ev1');
+		expect(a).toBe('entity-detail-act1');
+		expect(s).toBe('entity-detail-s1');
+		expect(e).toBe('entity-detail-ev1');
 	});
 
 	it('routes Note → wiki', () => {
