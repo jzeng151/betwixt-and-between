@@ -42,8 +42,10 @@
 		 *  No-op for popout-window hosts (they have their own close). */
 		onClose?: () => void;
 		/** Called when the entity is deleted from the store while this
-		 *  surface is mounted. Host shows the draft-preview toast. */
-		onEntityVanished?: () => void;
+		 *  surface is mounted. Host shows the draft-preview toast. The
+		 *  callback receives the last-known name so the toast can include
+		 *  it (the store row is already gone by the time we fire). */
+		onEntityVanished?: (lastName: string) => void;
 		/** True when hosted inside a popout Window (hides the move-button +
 		 *  close-button chrome since the Window itself provides them). */
 		isPopout?: boolean;
@@ -63,13 +65,15 @@
 
 	// Track entity disappearance for the draft-preview toast (D16/14A).
 	let lastSeenId = $state<string | null>(null);
+	let lastSeenName = $state<string>('Entity');
 	$effect(() => {
 		if (entity) {
 			lastSeenId = entity.id;
+			lastSeenName = entity.name;
 		} else if (lastSeenId === entityId && entityId != null && onEntityVanished) {
 			// Entity we were just rendering is now gone from the store. Likely
 			// confirmed-delete from another window or via the act-header `×`.
-			onEntityVanished();
+			onEntityVanished(lastSeenName);
 			lastSeenId = null;
 		}
 	});

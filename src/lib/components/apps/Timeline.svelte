@@ -21,8 +21,10 @@
 	import IntervalRow from '$lib/components/IntervalRow.svelte';
 	import PlayheadOverlay from '$lib/components/PlayheadOverlay.svelte';
 	import EntityDetail from '$lib/components/EntityDetail.svelte';
+	import Toast from '$lib/components/Toast.svelte';
 	import { playhead } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
+	import { getDraftPreview, clearAllDraftsFor } from '$lib/stores/editable-drafts.js';
 	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
 
 	interface Props {
@@ -229,6 +231,26 @@
 		selectedEntityId = null;
 	}
 
+	// Draft-preview toast (D16/14A) — fires when EntityDetail's currently
+	// rendered entity disappears from $entities (e.g. confirmed-delete from
+	// another window). We capture both the entity name (looked up before
+	// nulling out the selection) and any in-flight EditableField draft from
+	// the module-level drafts bus.
+	type DraftToast = { name: string; draft: string | null };
+	let draftToast: DraftToast | null = $state(null);
+
+	function handleEntityVanished(lastName: string) {
+		if (!selectedEntityId) return;
+		const id = selectedEntityId;
+		const draftInfo = getDraftPreview(id);
+		clearAllDraftsFor(id);
+		draftToast = {
+			name: lastName,
+			draft: draftInfo?.text ?? null
+		};
+		selectedEntityId = null;
+	}
+
 	// If the host window opens with an entity prop pointed at an Act/Event/Scene,
 	// preselect it. Other types fall through (no-op — Wiki/etc handle them).
 	$effect(() => {
@@ -353,9 +375,20 @@
 				entityId={selectedEntityId}
 				onMoveToWindow={moveSelectedToWindow}
 				onClose={() => (selectedEntityId = null)}
-				onEntityVanished={() => (selectedEntityId = null)}
+				onEntityVanished={handleEntityVanished}
 			/>
 		</aside>
+	{/if}
+
+	{#if draftToast}
+		<Toast
+			kind={draftToast.draft ? 'draft-preview' : 'info'}
+			message={draftToast.draft
+				? `${draftToast.name} was deleted while you were editing.`
+				: `${draftToast.name} was deleted.`}
+			draft={draftToast.draft}
+			onDismiss={() => (draftToast = null)}
+		/>
 	{/if}
 </div>
 

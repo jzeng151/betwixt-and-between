@@ -28,6 +28,7 @@
 	import { relationships } from '$lib/stores/relationships.js';
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
+	import { setDraft, clearDraft } from '$lib/stores/editable-drafts.js';
 
 	type Kind =
 		| 'single-line'
@@ -104,6 +105,18 @@
 
 	$effect(() => {
 		if (!focused) draft = currentValue;
+	});
+
+	// Track in-flight drafts so the EntityDetail draft-preview toast
+	// (D16/14A) can recover the user's last-typed text if the entity is
+	// deleted from another window mid-edit.
+	$effect(() => {
+		if (focused && draft && draft !== currentValue) {
+			setDraft(entityId, field, draft);
+		} else {
+			clearDraft(entityId, field);
+		}
+		return () => clearDraft(entityId, field);
 	});
 
 	async function commitText() {
