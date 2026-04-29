@@ -29,3 +29,4 @@ vite.config.ts.timestamp-*
 
 # Generated vitest examples
 src/lib/vitest-examples/
+test-results/
