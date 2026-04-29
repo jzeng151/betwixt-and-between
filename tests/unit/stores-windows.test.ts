@@ -73,7 +73,7 @@ describe('windowStore.open', () => {
 	it('uses timeline-specific width for timeline', () => {
 		windowStore.open('timeline');
 		const w = get(windowStore).find((x) => x.appId === 'timeline')!;
-		expect(w.width).toBe(640);
+		expect(w.width).toBe(960);
 		expect(w.height).toBe(480);
 	});
 

@@ -75,16 +75,32 @@ describe('writeInterval — chokepoint', () => {
 		).rejects.toThrow(/Polymorphic FK violation/);
 	});
 
-	it('rejects when supplied positions disagree with FK derivation', async () => {
+	it('honors explicit fractional position when scene FK is null (free-fraction)', async () => {
+		// New contract: scene FK null + explicit position → position is authoritative.
+		// FK is a coarse "this boundary is in act N" hint; REAL column carries precision.
+		const row = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act1,
+			endActId: acts.act1,
+			startPosition: 1.0,
+			endPosition: 1.5
+		});
+		expect(row.startPosition).toBeCloseTo(1.0, 9);
+		expect(row.endPosition).toBeCloseTo(1.5, 9);
+		expect(row.startSceneId).toBeNull();
+		expect(row.endSceneId).toBeNull();
+	});
+
+	it('rejects explicit position outside the act range', async () => {
 		await expect(
 			writeInterval(db, {
 				entityId: ellie,
 				startActId: acts.act1,
 				endActId: acts.act1,
 				startPosition: 1.0,
-				endPosition: 1.5 // wrong; full Act 1 ends at 2.0
+				endPosition: 2.5 // outside [1, 2] for Act 1
 			})
-		).rejects.toThrow(/does not match derived/);
+		).rejects.toThrow(/outside act range/);
 	});
 
 	it('accepts supplied positions when they match FK derivation (within epsilon)', async () => {
@@ -183,6 +199,107 @@ describe('updateInterval', () => {
 
 		const updated = await updateInterval(db, row.id, { endActId: acts.act2 });
 		expect(updated.endPosition).toBeCloseTo(3.0, 9);
+	});
+
+	it('rejects new range that would overlap an existing interval', async () => {
+		// Ellie present in Act 0 → [0, 1) and Act 2 → [2, 3).
+		await writeInterval(db, { entityId: ellie, startActId: acts.act0, endActId: acts.act0 });
+		const second = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act2,
+			endActId: acts.act2
+		});
+
+		// Try to extend the Act-2 interval back to start at Act 0 → would overlap
+		// [0, 1) with the first interval.
+		await expect(
+			updateInterval(db, second.id, { startActId: acts.act0 })
+		).rejects.toThrow(/Overlap with existing interval/);
+	});
+
+	it('allows updating to a non-overlapping range, even if it shrinks', async () => {
+		// Ellie covers Act 0–Act 2 → [0, 3).
+		const row = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act0,
+			endActId: acts.act2
+		});
+
+		// Shrink to just Act 1 → [1, 2). No other rows for Ellie, so no overlap.
+		const updated = await updateInterval(db, row.id, {
+			startActId: acts.act1,
+			endActId: acts.act1
+		});
+		expect(updated.startPosition).toBeCloseTo(1.0, 9);
+		expect(updated.endPosition).toBeCloseTo(2.0, 9);
+	});
+});
+
+describe('writeInterval — same-entity overlap rejection', () => {
+	let db: Db;
+	let acts: { act0: string; act1: string; act2: string };
+	let ellie: string;
+
+	beforeEach(async () => {
+		db = createTestDb();
+		acts = await seedActs(db);
+		const [c] = await db
+			.insert(entities)
+			.values({ type: 'Character', name: 'Ellie' })
+			.returning();
+		ellie = c.id;
+	});
+
+	it('rejects same-entity overlapping interval', async () => {
+		// Ellie [0, 2): spans Acts 0 and 1.
+		await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act0,
+			endActId: acts.act1
+		});
+		// Now try Ellie [1, 2): overlaps with Act 1 portion of the first row.
+		await expect(
+			writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 })
+		).rejects.toThrow(/Overlap with existing interval/);
+	});
+
+	it('allows same-entity adjacent intervals (touching at boundary)', async () => {
+		// Ellie [0, 1) — Act 0 only.
+		await writeInterval(db, { entityId: ellie, startActId: acts.act0, endActId: acts.act0 });
+		// Ellie [1, 2) — Act 1 only. Touches [0, 1) at 1.0 but does not overlap
+		// under half-open semantics.
+		const row2 = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act1,
+			endActId: acts.act1
+		});
+		expect(row2.startPosition).toBeCloseTo(1.0, 9);
+		expect(row2.endPosition).toBeCloseTo(2.0, 9);
+	});
+
+	it('allows different-entity overlapping intervals', async () => {
+		const [j] = await db
+			.insert(entities)
+			.values({ type: 'Character', name: 'Joel' })
+			.returning();
+
+		await writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 });
+		// Joel covers the same range — fine, different entity.
+		const joelRow = await writeInterval(db, {
+			entityId: j.id,
+			startActId: acts.act1,
+			endActId: acts.act1
+		});
+		expect(joelRow.startPosition).toBeCloseTo(1.0, 9);
+		expect(joelRow.endPosition).toBeCloseTo(2.0, 9);
+	});
+
+	it('rejects same-entity duplicate range', async () => {
+		await writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 });
+		// Identical range — total overlap.
+		await expect(
+			writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 })
+		).rejects.toThrow(/Overlap with existing interval/);
 	});
 });
 

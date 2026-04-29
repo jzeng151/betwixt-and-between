@@ -245,9 +245,16 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 		await writeInterval(db, { entityId: ellie.id, startActId: acts.act1, endActId: acts.act1 });
 		// (2) Battle multi-act, Act 0 → Act 2 (no scene FKs, full extent)
 		await writeInterval(db, { entityId: battle.id, startActId: acts.act0, endActId: acts.act2 });
-		// (3) Ellie scenes 1-3 of Act 1
+		// (3) Scout-like — scene-anchored sub-range in Act 1.
+		// Use a distinct entity so this doesn't overlap with row (1)'s Ellie
+		// [1, 2); same-entity overlap is rejected by writeInterval per
+		// /plan-eng-review resolutions item 1.2 (locked 2026-04-28).
+		const [eve] = await db
+			.insert(entities)
+			.values({ type: 'Character', name: 'Eve' })
+			.returning();
 		await writeInterval(db, {
-			entityId: ellie.id,
+			entityId: eve.id,
 			startActId: acts.act1,
 			startSceneId: a1scenes[1].id,
 			endActId: acts.act1,

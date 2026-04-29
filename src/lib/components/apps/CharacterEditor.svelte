@@ -6,6 +6,7 @@
   import InlineEdit from '$lib/components/InlineEdit.svelte';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
+  import { CHARACTER_COLORS, HEX_COLOR_RE, type TimelineLabelMode } from '$lib/timeline-v2-helpers.js';
 
   interface Props { winId: string; entityId: string | null; }
   let { entityId }: Props = $props();
@@ -66,6 +67,11 @@
   let motivation = $state('');
   let notes = $state('');
   let avatar = $state('');
+  // Timeline display config
+  let color = $state<string | null>(null);
+  let customHex = $state('');
+  let customHexError = $state('');
+  let timelineLabel = $state<TimelineLabelMode>({ mode: 'name-and-note' });
 
   // Edit-mode state for role, affiliation, motivation & notes
   let editingRole = $state(false);
@@ -88,6 +94,22 @@
       motivation = d.motivation ?? '';
       notes = d.notes ?? '';
       avatar = d.avatar ?? '';
+      const rawColor = (d as Record<string, unknown>).color;
+      color = typeof rawColor === 'string' && HEX_COLOR_RE.test(rawColor) ? rawColor : null;
+      customHex = '';
+      customHexError = '';
+      const rawLabel = (d as Record<string, unknown>).timelineLabel as TimelineLabelMode | undefined;
+      if (rawLabel && typeof rawLabel === 'object' && 'mode' in rawLabel) {
+        if (rawLabel.mode === 'name-only' || rawLabel.mode === 'name-and-note') {
+          timelineLabel = { mode: rawLabel.mode };
+        } else if (rawLabel.mode === 'custom') {
+          timelineLabel = { mode: 'custom', field: typeof rawLabel.field === 'string' ? rawLabel.field : '' };
+        } else {
+          timelineLabel = { mode: 'name-and-note' };
+        }
+      } else {
+        timelineLabel = { mode: 'name-and-note' };
+      }
       editingRole = false;
       editingAffiliation = false;
       editingMotivation = false;
@@ -105,11 +127,74 @@
   async function saveAll() {
     if (!entityId) return;
     saveError = '';
+    // Preserve any unknown keys in the existing data blob so we don't drop
+    // fields we don't manage here (e.g. custom user fields used for
+    // timelineLabel.mode === 'custom').
+    const existing = entity ? parseData(entity.data) : {};
+    const data: Record<string, unknown> = {
+      ...existing,
+      role,
+      affiliation,
+      motivation,
+      notes,
+      avatar,
+      timelineLabel
+    };
+    if (color) {
+      data.color = color;
+    } else {
+      delete data.color;
+    }
     try {
-      await entities.updateEntity(entityId, { data: { role, affiliation, motivation, notes, avatar } });
+      await entities.updateEntity(entityId, { data });
     } catch {
       saveError = "Couldn't save.";
     }
+  }
+
+  // ── Color picker ──────────────────────────────────────────────────────────
+  async function chooseColor(hex: string) {
+    color = hex;
+    customHex = '';
+    customHexError = '';
+    await saveAll();
+  }
+  async function resetColor() {
+    color = null;
+    customHex = '';
+    customHexError = '';
+    await saveAll();
+  }
+  async function commitCustomHex() {
+    const val = customHex.trim();
+    if (!val) { customHexError = ''; return; }
+    if (!HEX_COLOR_RE.test(val)) {
+      customHexError = 'Use #rrggbb (e.g. #c8942a)';
+      return;
+    }
+    customHexError = '';
+    color = val.toLowerCase();
+    customHex = '';
+    await saveAll();
+  }
+  function handleHexKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') commitCustomHex();
+    if (e.key === 'Escape') { customHex = ''; customHexError = ''; }
+  }
+
+  // ── Timeline label config ─────────────────────────────────────────────────
+  async function setTimelineMode(mode: 'name-only' | 'name-and-note' | 'custom') {
+    if (mode === 'custom') {
+      const field = timelineLabel.mode === 'custom' ? timelineLabel.field : '';
+      timelineLabel = { mode: 'custom', field };
+    } else {
+      timelineLabel = { mode };
+    }
+    await saveAll();
+  }
+  async function commitCustomField(field: string) {
+    timelineLabel = { mode: 'custom', field: field.trim() };
+    await saveAll();
   }
 
   // Role edit
@@ -176,8 +261,9 @@
     reader.readAsDataURL(file);
   }
 
+  // Story-arc presence (appears_in) is now owned by the Timeline app — drag a
+  // character chip from the palette onto a track to create an interval.
   const REL_GROUPS: { label: string; type: RelationshipType }[] = [
-    { label: 'Story Arcs',  type: 'appears_in' },
     { label: 'Allies',      type: 'allied_with' },
     { label: 'Rivals',      type: 'rivals' },
     { label: 'Mentors',     type: 'mentor_of' },
@@ -197,8 +283,7 @@
   }
 
   // ── Entity picker ──────────────────────────────────────────────────────────
-  const PICKER_TYPES: Record<RelationshipType, EntityType[]> = {
-    appears_in:    ['Act', 'Scene', 'Event'],
+  const PICKER_TYPES: Partial<Record<RelationshipType, EntityType[]>> = {
     allied_with:   ['Character'],
     rivals:        ['Character'],
     mentor_of:     ['Character'],
@@ -415,6 +500,92 @@
     <hr class="divider" />
 
     <div class="details">
+
+      <!-- Timeline color picker -->
+      <div class="field-header">
+        <span class="field-label">Timeline color</span>
+        {#if color}
+          <button class="field-edit-btn" onclick={resetColor} data-testid="char-color-reset">Reset to default</button>
+        {/if}
+      </div>
+      <div class="swatch-row" role="group" aria-label="Timeline color">
+        {#each CHARACTER_COLORS as hex}
+          <button
+            type="button"
+            class="swatch"
+            class:swatch-selected={color === hex}
+            style="--sw:{hex}"
+            aria-label={hex}
+            aria-pressed={color === hex}
+            data-testid="char-color-{hex}"
+            onclick={() => chooseColor(hex)}
+          ></button>
+        {/each}
+        <input
+          class="hex-input"
+          type="text"
+          placeholder="#rrggbb"
+          maxlength="7"
+          bind:value={customHex}
+          onblur={commitCustomHex}
+          onkeydown={handleHexKeydown}
+          data-testid="char-color-custom-input"
+        />
+      </div>
+      {#if customHexError}
+        <p class="hex-error" data-testid="char-color-custom-error">{customHexError}</p>
+      {/if}
+
+      <!-- Show on timeline -->
+      <div class="field-header">
+        <span class="field-label">Show on timeline</span>
+      </div>
+      <div class="radio-group" role="radiogroup" aria-label="Show on timeline">
+        <label class="radio-row">
+          <input
+            type="radio"
+            name="timelineLabelMode"
+            value="name-only"
+            checked={timelineLabel.mode === 'name-only'}
+            onchange={() => setTimelineMode('name-only')}
+            data-testid="char-tl-name-only"
+          />
+          <span class="radio-text">Name only</span>
+        </label>
+        <label class="radio-row">
+          <input
+            type="radio"
+            name="timelineLabelMode"
+            value="name-and-note"
+            checked={timelineLabel.mode === 'name-and-note'}
+            onchange={() => setTimelineMode('name-and-note')}
+            data-testid="char-tl-name-and-note"
+          />
+          <span class="radio-text">Name + note snippet (default)</span>
+        </label>
+        <label class="radio-row">
+          <input
+            type="radio"
+            name="timelineLabelMode"
+            value="custom"
+            checked={timelineLabel.mode === 'custom'}
+            onchange={() => setTimelineMode('custom')}
+            data-testid="char-tl-custom"
+          />
+          <span class="radio-text">Custom field</span>
+        </label>
+        {#if timelineLabel.mode === 'custom'}
+          <input
+            class="custom-field-input"
+            type="text"
+            placeholder="field name (e.g. motivation)"
+            value={timelineLabel.field}
+            onblur={(e) => commitCustomField((e.currentTarget as HTMLInputElement).value)}
+            onkeydown={(e) => { if (e.key === 'Enter') commitCustomField((e.currentTarget as HTMLInputElement).value); }}
+            data-testid="char-tl-custom-field"
+          />
+        {/if}
+      </div>
 
       <div class="field-header">
         <label class="field-label" for="char-motivation">Motivation</label>
@@ -989,4 +1160,81 @@
   .save-error { color: var(--color-rel-rival); font-size: 11px; }
   .muted { color: var(--color-text-muted); font-size: 12px; }
   .center { text-align: center; padding: 40px 0; }
+
+  /* Timeline color picker */
+  .swatch-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+  .swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--sw);
+    border: 2px solid var(--color-border);
+    padding: 0;
+    cursor: pointer;
+    transition: border-color 0.1s, transform 0.1s;
+  }
+  .swatch:hover { border-color: var(--color-text-muted); }
+  .swatch-selected {
+    border-color: var(--color-text);
+    transform: scale(1.1);
+  }
+  .hex-input {
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 5px;
+    color: var(--color-text);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    padding: 3px 6px;
+    width: 80px;
+    outline: none;
+  }
+  .hex-input:focus { border-color: var(--color-accent); }
+  .hex-error {
+    color: var(--color-rel-rival);
+    font-size: 10px;
+    font-family: var(--font-ui);
+    margin: 0;
+  }
+
+  /* Timeline label radio group */
+  .radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .radio-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .radio-row input[type='radio'] {
+    accent-color: var(--color-accent);
+    margin: 0;
+  }
+  .radio-text {
+    font-size: 11px;
+    color: var(--color-text);
+    font-family: var(--font-ui);
+  }
+  .custom-field-input {
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 5px;
+    color: var(--color-text);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    padding: 3px 8px;
+    margin-left: 22px;
+    margin-top: 2px;
+    outline: none;
+    width: 200px;
+  }
+  .custom-field-input:focus { border-color: var(--color-accent); }
 </style>

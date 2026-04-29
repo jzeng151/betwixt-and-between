@@ -42,6 +42,10 @@ import { sql, eq, and, isNull, inArray } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from './db/schema.js';
 import { entities, intervals } from './db/schema.js';
+// Pure math (actRange, sceneRange, smartSnap) lives in
+// $lib/timeline-v2-helpers so non-server code (drag-preview snap) can import it
+// without violating SvelteKit's $lib/server/* boundary.
+import { actRange, sceneRange } from '$lib/timeline-v2-helpers.js';
 
 type DB = BetterSQLite3Database<typeof schema>;
 
@@ -66,6 +70,13 @@ export interface ComputeIntervalPositionsInput {
 	startSceneId?: string | null;
 	endActId: string;
 	endSceneId?: string | null;
+	/**
+	 * Optional explicit position overrides. Honored only when the matching
+	 * scene FK is null (free-fraction case). Must fall within the act's
+	 * range [actIdx, actIdx + 1] — out-of-range overrides throw.
+	 */
+	startPosition?: number;
+	endPosition?: number;
 }
 
 export interface ComputeIntervalPositionsResult {
@@ -75,80 +86,6 @@ export interface ComputeIntervalPositionsResult {
 
 /** Float epsilon for position equality. SQLite REAL is IEEE 754 double; 1e-9 is safe. */
 export const POSITION_EPSILON = 1e-9;
-
-// =============================================================================
-// Pure math
-// =============================================================================
-
-/**
- * Returns the position-axis range [start, end) for an Act with given index.
- *
- *   actIndex (i) → [i, i + 1)
- */
-export function actRange(actIndex: number): { start: number; end: number } {
-	return { start: actIndex, end: actIndex + 1 };
-}
-
-/**
- * Returns the position-axis range [start, end) for Scene k of m within Act i.
- *
- *   sceneIndex (k), sceneCount (m), actIndex (i) →
- *     [i + k/m, i + (k+1)/m)
- *
- * @param sceneIndex   k = 0-based index of the scene within its parent act
- * @param sceneCount   m = total number of scenes in the parent act (m > 0)
- * @param actIndex     i = 0-based index of the parent act on the global axis
- */
-export function sceneRange(
-	sceneIndex: number,
-	sceneCount: number,
-	actIndex: number
-): { start: number; end: number } {
-	if (sceneCount <= 0) {
-		throw new Error(`sceneCount must be positive (got ${sceneCount})`);
-	}
-	if (sceneIndex < 0 || sceneIndex >= sceneCount) {
-		throw new Error(
-			`sceneIndex out of range: ${sceneIndex} not in [0, ${sceneCount})`
-		);
-	}
-	return {
-		start: actIndex + sceneIndex / sceneCount,
-		end: actIndex + (sceneIndex + 1) / sceneCount
-	};
-}
-
-/**
- * Smart-snap a raw cursor position to the nearest act/scene boundary.
- *
- *   1. actIndex = floor(position)
- *   2. m = scene count for that act
- *   3. if m > 0: snap to nearest scene boundary inside the act
- *      fractionInAct  = position - actIndex
- *      snappedFraction = round(fractionInAct * m) / m
- *      snappedPosition = actIndex + snappedFraction
- *   4. if m == 0: snap to nearest act boundary
- *      snappedPosition = round(position)
- *
- * Caller controls Alt-bypass by skipping this function entirely.
- *
- * @param position  raw cursor position on the global axis
- * @param sceneCountFor function returning m for a given act index. Implementations:
- *                     in tests: a Map. In production: looks up scenes via DB.
- */
-export function smartSnap(
-	position: number,
-	sceneCountFor: (actIndex: number) => number
-): number {
-	const actIndex = Math.floor(position);
-	const m = sceneCountFor(actIndex);
-	if (m > 0) {
-		const fractionInAct = position - actIndex;
-		const snappedFraction = Math.round(fractionInAct * m) / m;
-		return actIndex + snappedFraction;
-	}
-	return Math.round(position);
-}
 
 // =============================================================================
 // FK-derivation: looks up Act/Scene entities and computes positions.
@@ -222,11 +159,16 @@ export async function sceneIndexOf(
  *
  * Branches:
  *   start_scene_id NOT NULL → use sceneRange(k, m, actIndex_of_parent_act)
- *   start_scene_id IS NULL  → use actRange(actIndex_of_start_act_id) — start of act
- *   same logic for end side, where end uses .end of the range (exclusive)
+ *   start_scene_id IS NULL  → use input.startPosition if provided AND in
+ *                              [actIdx, actIdx + 1]; otherwise actRange(i).start
+ *   same logic for end side: explicit position honored when scene FK is null,
+ *                              else end-of-act. Must lie in [actIdx, actIdx + 1].
  *
- * If start has no scene FK and end has no scene FK, the interval covers the
- * full range from start of start_act to end of end_act (inclusive of end_act).
+ * Free-fraction support: when the caller wants a sub-act position without a
+ * scene anchor (e.g., dragged the resize handle to 1.37 in an act with no
+ * scenes), they pass startSceneId=null AND startPosition=1.37. The FK acts
+ * as a coarse "this boundary lives in act N" hint; the REAL column carries
+ * the exact value.
  */
 export async function computeIntervalPositions(
 	db: DB,
@@ -246,7 +188,17 @@ export async function computeIntervalPositions(
 		startPosition = sceneRange(sceneIndex, sceneCount, i).start;
 	} else {
 		const i = await actIndexOf(db, input.startActId);
-		startPosition = actRange(i).start;
+		const range = actRange(i);
+		if (input.startPosition !== undefined) {
+			if (input.startPosition < range.start - POSITION_EPSILON || input.startPosition > range.end + POSITION_EPSILON) {
+				throw new Error(
+					`start_position ${input.startPosition} outside act range [${range.start}, ${range.end}] for start_act_id ${input.startActId}`
+				);
+			}
+			startPosition = input.startPosition;
+		} else {
+			startPosition = range.start;
+		}
 	}
 
 	if (input.endSceneId) {
@@ -260,7 +212,17 @@ export async function computeIntervalPositions(
 		endPosition = sceneRange(sceneIndex, sceneCount, i).end;
 	} else {
 		const i = await actIndexOf(db, input.endActId);
-		endPosition = actRange(i).end;
+		const range = actRange(i);
+		if (input.endPosition !== undefined) {
+			if (input.endPosition < range.start - POSITION_EPSILON || input.endPosition > range.end + POSITION_EPSILON) {
+				throw new Error(
+					`end_position ${input.endPosition} outside act range [${range.start}, ${range.end}] for end_act_id ${input.endActId}`
+				);
+			}
+			endPosition = input.endPosition;
+		} else {
+			endPosition = range.end;
+		}
 	}
 
 	if (startPosition >= endPosition) {
@@ -285,6 +247,46 @@ async function assertEntityType(db: DB, id: string, expected: schema.EntityType)
 		throw new Error(
 			`Polymorphic FK violation: entity ${id} has type='${row.type}', expected '${expected}'`
 		);
+	}
+}
+
+/**
+ * Reject an insert/update whose [start, end) intersects any existing interval
+ * for the SAME entity. Per /plan-eng-review resolutions item 1.2 (locked
+ * 2026-04-28): one entity cannot be in two places at once on the story-time
+ * axis. Adjacent intervals (touching at the boundary) are fine — the half-open
+ * convention `[a1, a2)` and `[b1, b2)` overlaps iff `a1 < b2 AND b1 < a2`,
+ * so e.g. [1, 2) and [2, 3) do NOT overlap.
+ *
+ * `excludeId` lets `updateInterval` skip the row being patched (otherwise it
+ * would always overlap with itself).
+ *
+ * **Read-modify-write window:** like `validateFKTypes` and
+ * `computeIntervalPositions`, this read+check happens outside a DB
+ * transaction. Safe under better-sqlite3's connection-level write
+ * serialization. Under future Turso replica lag, wrap the whole
+ * write/update body in `db.transaction()` — see `writeInterval` docstring.
+ */
+async function assertNoOverlap(
+	db: DB,
+	entityId: string,
+	startPosition: number,
+	endPosition: number,
+	excludeId?: string
+): Promise<void> {
+	const existing = await db
+		.select()
+		.from(intervals)
+		.where(eq(intervals.entityId, entityId));
+
+	for (const row of existing) {
+		if (excludeId && row.id === excludeId) continue;
+		// Half-open overlap: [a1, a2) ∩ [b1, b2) ≠ ∅  iff  a1 < b2 AND b1 < a2.
+		if (startPosition < row.endPosition && row.startPosition < endPosition) {
+			throw new Error(
+				`Overlap with existing interval ${row.id} [${row.startPosition}, ${row.endPosition}) for this entity. Existing interval covers ${row.startPosition}–${row.endPosition} on the story-time axis.`
+			);
+		}
 	}
 }
 
@@ -313,7 +315,27 @@ async function validateFKTypes(db: DB, input: WriteIntervalInput): Promise<void>
  *   - Validates FK types (start_act_id → Act, scene_id → Scene, etc.)
  *   - Derives positions from FKs unless caller supplied them
  *   - If caller supplied positions AND FKs, validates they match (within epsilon)
- *   - Writes the row in a transaction
+ *   - Performs the INSERT
+ *
+ * **Atomicity note (PR 1):** the validate / compute / insert sequence is NOT
+ * wrapped in `db.transaction()`. better-sqlite3 transactions are synchronous
+ * and our helpers use `async`/`await` for type compatibility with Drizzle's
+ * Promise-returning query API. Refactoring to a sync transaction means
+ * either duplicating the helper chain inside the callback or making every
+ * helper sync — both are out of scope for PR 1.
+ *
+ * In practice this is safe under the current stack: better-sqlite3 serializes
+ * ALL writes at the connection level (every `.insert()` is atomic), and
+ * during PR 1's life there is exactly one connection per process. The
+ * read-modify-write window for `validateFKTypes` and `computeIntervalPositions`
+ * is open to concurrent *write* races only if a parallel writer modifies
+ * `entities` between the validation reads and the insert — better-sqlite3
+ * makes that impossible.
+ *
+ * **Future-Turso flag:** under the Turso adapter swap, transactions become
+ * async-friendly AND replica lag opens a real read-modify-write window.
+ * Wrap this body in `db.transaction()` at that point. Same applies to
+ * `updateInterval` and to any overlap-rejection check added in PR 2.
  *
  * Throws on any validation failure.
  */
@@ -338,6 +360,11 @@ export async function writeInterval(
 			);
 		}
 	}
+
+	// Same-entity overlap rejection (CONSIDERATIONS.md → /plan-eng-review
+	// resolutions item 1.2, locked 2026-04-28). Must run AFTER position
+	// derivation but BEFORE the insert.
+	await assertNoOverlap(db, input.entityId, derived.startPosition, derived.endPosition);
 
 	const [created] = await db
 		.insert(intervals)
@@ -366,13 +393,37 @@ export async function updateInterval(
 	const [existing] = await db.select().from(intervals).where(eq(intervals.id, id));
 	if (!existing) throw new Error(`Interval not found: ${id}`);
 
+	const mergedStartActId = patch.startActId ?? existing.startActId;
+	const mergedStartSceneId =
+		patch.startSceneId !== undefined ? patch.startSceneId : existing.startSceneId;
+	const mergedEndActId = patch.endActId ?? existing.endActId;
+	const mergedEndSceneId =
+		patch.endSceneId !== undefined ? patch.endSceneId : existing.endSceneId;
+
+	// Position overrides: explicit patch wins. If scene FK stays null and the
+	// start act didn't change, preserve the existing frozen fraction. Otherwise
+	// let computeIntervalPositions fall back to act-range defaults.
+	const startPosOverride =
+		patch.startPosition !== undefined
+			? patch.startPosition
+			: mergedStartSceneId === null && mergedStartActId === existing.startActId
+				? existing.startPosition
+				: undefined;
+	const endPosOverride =
+		patch.endPosition !== undefined
+			? patch.endPosition
+			: mergedEndSceneId === null && mergedEndActId === existing.endActId
+				? existing.endPosition
+				: undefined;
+
 	const merged: WriteIntervalInput = {
 		entityId: patch.entityId ?? existing.entityId,
-		startActId: patch.startActId ?? existing.startActId,
-		startSceneId:
-			patch.startSceneId !== undefined ? patch.startSceneId : existing.startSceneId,
-		endActId: patch.endActId ?? existing.endActId,
-		endSceneId: patch.endSceneId !== undefined ? patch.endSceneId : existing.endSceneId
+		startActId: mergedStartActId,
+		startSceneId: mergedStartSceneId,
+		endActId: mergedEndActId,
+		endSceneId: mergedEndSceneId,
+		startPosition: startPosOverride,
+		endPosition: endPosOverride
 	};
 
 	await validateFKTypes(db, merged);
@@ -392,6 +443,11 @@ export async function updateInterval(
 			);
 		}
 	}
+
+	// Same-entity overlap rejection (CONSIDERATIONS.md → /plan-eng-review
+	// resolutions item 1.2, locked 2026-04-28). Pass `id` so we don't compare
+	// the row against itself.
+	await assertNoOverlap(db, merged.entityId, derived.startPosition, derived.endPosition, id);
 
 	const [updated] = await db
 		.update(intervals)

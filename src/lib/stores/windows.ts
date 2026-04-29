@@ -65,7 +65,12 @@ function createWindowStore() {
 				entityId,
 				x,
 				y,
-				width: isGraph ? 640 : appId === 'timeline' ? 640 : 320,
+				width:
+					isGraph
+						? 640
+						: appId === 'timeline'
+							? 960
+							: 320,
 				height: isGraph ? 500 : 480,
 				minimized: false,
 				maximized: false,

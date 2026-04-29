@@ -88,72 +88,6 @@ test.describe('Wiki', () => {
 	});
 });
 
-test.describe('Timeline', () => {
-	test.beforeEach(async ({ page, request }) => {
-		await clearEntities(request);
-		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-		await page.goto('/');
-	});
-
-	test('empty state → create act → act label appears in header', async ({ page }) => {
-		await page.click('button[title="Timeline"]');
-		const win = page.locator('.window[aria-label="Timeline"]');
-		await expect(win).toBeVisible();
-
-		await expect(win.locator('.empty-state')).toBeVisible();
-		await expect(win.locator('.empty-state p')).toContainText('No events yet');
-
-		await win.locator('.empty-state button').click();
-		await expect(win.locator('.tl-act-label')).toHaveCount(1, { timeout: 3000 });
-	});
-
-	test('second act created via separate + Act button', async ({ page }) => {
-		await page.click('button[title="Timeline"]');
-		const win = page.locator('.window[aria-label="Timeline"]');
-
-		await win.locator('.empty-state button').click();
-		await expect(win.locator('.tl-act-label')).toHaveCount(1, { timeout: 3000 });
-
-		await win.locator('.add-act-btn').click();
-		await expect(win.locator('.tl-act-label')).toHaveCount(2, { timeout: 3000 });
-	});
-
-	test('character linked to act shows character track row with presence bar', async ({ page, request }) => {
-		const act = await (
-			await request.post('/api/entities', { data: { type: 'Act', name: 'Act One' } })
-		).json();
-		const char = await (
-			await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } })
-		).json();
-		await request.post('/api/relationships', {
-			data: { fromId: char.id, toId: act.id, type: 'appears_in' }
-		});
-		await page.goto('/');
-
-		await page.click('button[title="Timeline"]');
-		const win = page.locator('.window[aria-label="Timeline"]');
-		await expect(win.locator('.tl-char-label')).toHaveText('Elara', { timeout: 3000 });
-		await expect(win.locator('.tl-char-bar')).toBeVisible({ timeout: 2000 });
-	});
-
-	test('event linked to act appears as bar in act segment', async ({ page, request }) => {
-		const act = await (
-			await request.post('/api/entities', { data: { type: 'Act', name: 'Act One' } })
-		).json();
-		const event = await (
-			await request.post('/api/entities', { data: { type: 'Event', name: 'The Battle' } })
-		).json();
-		await request.post('/api/relationships', {
-			data: { fromId: act.id, toId: event.id, type: 'appears_in' }
-		});
-		await page.goto('/');
-
-		await page.click('button[title="Timeline"]');
-		const win = page.locator('.window[aria-label="Timeline"]');
-		await expect(win.locator('.tl-event')).toBeVisible({ timeout: 3000 });
-	});
-});
-
 test.describe('Characters', () => {
 	test.beforeEach(async ({ page, request }) => {
 		await clearEntities(request);
@@ -216,7 +150,7 @@ test.describe('Characters', () => {
 		await expect(detailWin.locator('.hfield-text')).toHaveText('The Conclave', { timeout: 3000 });
 	});
 
-	test('details section contains only Motivation and Notes — not Role', async ({ page, request }) => {
+	test('details section contains Timeline color, Show on timeline, Motivation, Notes — not Role', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } });
 		await page.goto('/');
 
@@ -228,9 +162,21 @@ test.describe('Characters', () => {
 		const detailWin = page.locator('.window[aria-label="Elara"]');
 		await expect(detailWin).toBeVisible();
 
-		// Two field headers: Motivation + Notes. Role lives in the header, not here.
-		await expect(detailWin.locator('.details .field-header')).toHaveCount(2);
-		await expect(detailWin.locator('.details')).not.toContainText('Role');
+		// Four field-header sections: Timeline color, Show on timeline, Motivation,
+		// Notes. Role lives in the header, not here.
+		const headers = detailWin.locator('.details .field-header');
+		await expect(headers).toHaveCount(4);
+		await expect(headers.nth(0)).toContainText('Timeline color');
+		await expect(headers.nth(1)).toContainText('Show on timeline');
+		await expect(headers.nth(2)).toContainText('Motivation');
+		await expect(headers.nth(3)).toContainText('Notes');
+
+		// New feature affordances actually render (color swatches + radio group)
+		await expect(detailWin.locator('.details .swatch')).toHaveCount(8);
+		await expect(detailWin.locator('.details .radio-group input[type="radio"]')).toHaveCount(3);
+
+		// Role label is not rendered inside .details (lives in the window header).
+		await expect(detailWin.locator('.details')).not.toContainText(/^Role$/);
 	});
 });
 

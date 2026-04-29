@@ -29,7 +29,7 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq, and } from 'drizzle-orm';
-import { writeFileSync, appendFileSync, existsSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as schema from '../../src/lib/server/db/schema.js';
 import { entities, relationships } from '../../src/lib/server/db/schema.js';
@@ -164,12 +164,16 @@ async function migrate(dbPath: string, warningsPath: string): Promise<MigrationS
 			(w) =>
 				`${w.relId}\tfrom=${w.fromId}\tto=${w.toId}\treason=${w.reason}`
 		);
-		writeFileSync(
+		// Append rather than overwrite — re-runs of the migration that surface
+		// the same skipped rows (orphan FK, type mismatch, duplicate) preserve
+		// the original timestamps and context. The header gets re-emitted on
+		// each run so a single warnings file documents the full history.
+		appendFileSync(
 			warningsPath,
 			`# Migration warnings (intervals-migration)\n# ${new Date().toISOString()}\n# format: rel_id<TAB>from=...<TAB>to=...<TAB>reason=...\n${lines.join('\n')}\n`,
 			'utf-8'
 		);
-		console.log(`[migrate] Wrote ${warnings.length} warnings to ${warningsPath}`);
+		console.log(`[migrate] Appended ${warnings.length} warnings to ${warningsPath}`);
 	} else if (existsSync(warningsPath)) {
 		// Append a fresh "no warnings on this run" marker rather than nuking the file.
 		appendFileSync(
