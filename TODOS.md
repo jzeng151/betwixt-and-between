@@ -294,7 +294,73 @@ Falls out of the intervals schema for free. Ship as its own focused branch.
 - [ ] **Wiki sidebar subscriber — DEFERRED** until the Wiki app gets refined. Notes don't currently carry parentId or a mention graph, so "in-scope" semantics for a Note isn't well-defined. Revisit after the Wiki rework.
 - [x] E2E coverage at `tests/e2e/playhead-scrubber.spec.ts`: toggle + dismiss, click-to-scrub, Story Graph dim-on-scope-change, World Map dim-on-scope-change.
 
-### 13. Phase 1B — Graph features (separate branch)
+### 13. Phase 1.6 — Act / Event / Scene editor + structural moves (this branch)
+
+Locked by `/plan-design-review` + `/plan-eng-review` on 2026-04-29. Decision log: `CONSIDERATIONS.md` → "[2026-04-29] /plan-design-review + /plan-eng-review resolutions" section. Design plan: `~/.gstack/projects/jzeng151-betwixt-and-between/designs/act-event-editor-20260429/plan.md`. Approved mockup: `variant-A-sidepanel.html`.
+
+**Surface:** Side panel inside the Timeline window (Variant A from design review) + pop-out window via "↗ Move to window" with inline confirmation.
+
+#### Lane A — Server (parallelizable with Lane B)
+
+- [ ] **Polymorphic `tx | db` refactor** in `src/lib/server/intervals.ts` — `actIndexOf`, `sceneIndexOf`, `assertEntityType`, `assertNoOverlap`, `validateFKTypes`, `computeIntervalPositions`, `recomputeIntervalsForAct`, `recomputeAllIntervals`. All callers thread `tx`. Closes the PR 1 tech-debt note at `intervals.ts:289`. (D17/17A)
+- [ ] **N+1 fix in `recomputeAllIntervals` and `recomputeIntervalsForAct`** — cache act-index map per-call. Reduces queries from O(intervals × acts) to O(intervals + acts). Per-call only, no cross-call sharing. (D20/16A)
+- [ ] **Generalized cascade primitive** for sibling reorder, parameterized by sibling-set predicate `(parentId IS NULL AND type='Act')` for Acts vs `(parent_id = X AND type='Scene')` for Scenes. Single helper, no duplicate logic. (D18/12A + Closing-observation)
+- [ ] **`splitInterval(tx, intervalId, atPosition)` helper** — validates split point in (start, end), updates original to `[start, P)`, inserts new `[P, end)` with FKs resolved via existing `positionToStart/EndFKs`. Wrapped in transaction. (D7/5b A)
+- [ ] **`moveSceneToAct(tx, sceneId, newActId, newPosition)` helper** — UPDATE scene's parent_id+position, UPDATE intervals' start_act_id/end_act_id for any interval anchored to that scene, recompute both old and new parent acts. Wrapped in transaction. (T3-pulled-in)
+- [ ] **`POST /api/entities` extension** — when type='Act' and position N is given, bump siblings >= N by +1, insert at N, recompute. All in one transaction. (D1/1A)
+- [ ] **`PATCH /api/entities/[id]` extension** — accept `position` (cascades siblings server-side via generalized primitive) and `parentId`. For Acts/Scenes, position changes trigger recompute. All in one transaction. (D1/1A + D18/12A)
+- [ ] **`DELETE /api/entities/[id]` extension** — accept optional `?moveScenesTo=<actId>` query param. Reparent flow updates scene parent_id, updates intervals' start_act_id/end_act_id for affected scene-anchored rows, then cascade-deletes the act, then recomputes. All in one transaction. (D9/7B + D9-P2-3 fix)
+- [ ] **`POST /api/entities/batch` endpoint** (new) — atomic multi-entity creation. Validates all payloads, inserts all in one transaction, calls recomputeIntervalsForAct once per affected parent. Returns array of created entities. Used by ActsHeader's break-into-scenes (replaces N sequential POSTs). (D21/20A)
+- [ ] **Migration `migrations/000X_relationships_dedup.sql`** — DELETE duplicate relationship rows (keep MIN(id) per `(from_id, to_id, type)` group), then `CREATE UNIQUE INDEX relationships_dedup_all ON relationships(from_id, to_id, type)`. Includes `'pov_of'` in `RelationshipType` enum + directional convention docstring for all types. (D4/4C + D4-extension/18B)
+- [ ] **Server integration tests** — `tests/integration/api-entities-position.test.ts` (POST insert-between cascade, PATCH position cascade, transaction rollback), `tests/integration/api-entities-delete-reparent.test.ts` (DELETE with moveScenesTo + interval start/end_act_id update, error cases), `tests/integration/api-entities-batch.test.ts` (atomic batch insert, partial-failure rollback), `tests/integration/intervals-split.test.ts` (splitInterval primitive), `tests/integration/intervals-move-scene.test.ts` (moveSceneToAct), `tests/integration/intervals-tx-threading.test.ts` (verify polymorphic tx threading), `tests/integration/intervals-cascade.test.ts` (TIGHTEN line 135's "preserved (recompute would clear them)" comment to active assertion — REGRESSION RULE).
+
+#### Lane B — Editor components (parallelizable with Lane A)
+
+- [ ] **`EditableField.svelte`** atom — props: `entityId`, `field`, `label`, `kind` ('single-line' | 'textarea' | 'picklist' | 'swatches' | 'multi-entity-picker'), `placeholder?`, `rows?`, `picklistOptions?`, `swatchOptions?`. Reads from `$entities.find(id).data[field]`, commits via `entities.updateEntity`. Commit timing: textarea/single-line on blur; picklist/swatches/multi-entity-picker on change. Esc cancels. (D13/10A + D14 + P2-5)
+- [ ] **`ActEditor.svelte`** — declarative shell using EditableField for: Title (header inline-edit), Synopsis (textarea ~6 lines), Goal, Stakes, Turning point, Color. (D5)
+- [ ] **`EventEditor.svelte`** — Title (header), Description (textarea), POV (multi-entity-picker for Characters via `'pov_of'` relationship), Outcome (picklist: yes / yes-but / no / no-and / mixed), Mood, Color. (D5)
+- [ ] **`SceneEditor.svelte`** — Title (header), Description (textarea), POV (multi-entity-picker), Goal, Outcome, Sensory anchor, Word-count target (numeric), Color. (T3-pulled-in)
+- [ ] **`EntityDetail.svelte`** — host-agnostic router by entity type. Routes Act → ActEditor, Event → EventEditor, Scene → SceneEditor. Other types fall through to existing app routing. Mounts inside side panel (in Timeline) or pop-out window. Watches `$entities.find(id)` to detect external deletion + fires confirmed-delete toast with last-typed preview. (D10/9A + D12 + D16/14A + P2-1)
+- [ ] **`entities.ts` store helpers** — `createEntity(type, name, options?)` where options accepts `{data, parentId, position}`; `updateEntity` patch type accepts `parentId` and `position`. New `createEntities(items)` plural variant calling the batch endpoint. Migrate 3 existing raw-fetch sites in `ActsHeader` to use the helpers. (D19/13A)
+- [ ] **`navigation.js`** — add `openEntityDetail(entityId)` helper. Sibling to existing `openEntity()`. (D10/9A)
+- [ ] **Component unit tests** — `tests/unit/editable-field.test.ts` (edit/blur/save/cancel/error/retry across all kind values), `tests/unit/stores-entities-options.test.ts` (new createEntity options + updateEntity parentId/position), `tests/unit/navigation-entity-detail.test.ts` (openEntityDetail focus-existing behavior).
+
+#### Lane C — Timeline integration (depends on A + B)
+
+- [ ] **`Timeline.svelte`** — manage `selectedEntityId` state; render side panel slot hosting `<EntityDetail>`; click-to-select wiring on bars and act headers; mutex check via `findOpenEditorFor(entityId)` (matches by entityId across all appIds, focuses existing window if found before opening side panel); selected act gets thin amber top-border on its column header. (D2/2B-i + D3/3A-i)
+- [ ] **`ActsHeader.svelte`** — hover-revealed `+` between act headers (insert-between flow with inline name input); hover-revealed `⋮⋮` grip on act header (drag-reorder via single PATCH per drop); delete-with-reparent dialog ("Move scenes to: [picker]" radio); scene drag-reorder grip on scene cells; cross-act drag detection on scenes-row drop zones. Uses generalized cascade primitive for both Acts and Scenes. (D6/5A + D9/7B + D18/12A + T3-scene-reorder + T3-cross-act-move)
+- [ ] **`IntervalRow.svelte`** — click-on-bar (not on resize handles) emits select event; bar's click target becomes "open editor" while edge-resize handles continue to take precedence. (D2/2B-i)
+- [ ] **`IntervalBar.svelte`** — internal hairlines on multi-act bars become clickable (cursor: pointer on hover); click splits into adjacent intervals via `splitInterval` primitive. (D7/5b A)
+- [ ] **`WindowManager.svelte`** — register `'entity-detail'` app id branch rendering `<EntityDetail entityId={win.entityId} />`. (D10/9A + P3-5)
+- [ ] **`windows.ts` store** — add `'entity-detail'` to `AppId` union; migrate `ENTITY_APP[Act]`, `ENTITY_APP[Event]`, `ENTITY_APP[Scene]` from `'timeline'` → `'entity-detail'` (Character/Location/Note unchanged); add `findOpenEditorFor(entityId)` helper for the mutex check. (D10-extension/19A)
+- [ ] **Inline confirmation row in side panel header** — "↗ Move to window" click transforms button to "Move to standalone window? [Cancel] [Move]" (mirrors `ActsHeader` delete-confirm pattern). On Move: close side panel, open pop-out window. (D2/2B-i)
+- [ ] **Toast component update** — `Toast.svelte` (or equivalent) gains "draft preview" mode showing truncated text (~80 chars) + "Copy to clipboard" button + 8s dismiss timer. Fired by EntityDetail on confirmed-delete-while-editing. (D16/14A)
+- [ ] **E2E specs** (Lane C completes the suite):
+  - `tests/e2e/v2-act-editor.spec.ts` — open editor, type, blur saves, retry on save error
+  - `tests/e2e/v2-event-editor.spec.ts` — POV multi-picker selects multiple characters; outcome picklist
+  - `tests/e2e/v2-scene-editor.spec.ts` — open scene editor, edit fields, autosave (T3-pulled-in)
+  - `tests/e2e/v2-act-insert.spec.ts` — hover-+, type name, Enter, verify position; verify intervals stretch (5A)
+  - `tests/e2e/v2-act-reorder.spec.ts` — grip-drag, drop, position cascades, intervals recompute; error rollback
+  - `tests/e2e/v2-scene-reorder-within-act.spec.ts` — drag scene cells within scenes-row (T3-pulled-in)
+  - `tests/e2e/v2-scene-cross-act-move.spec.ts` — drag scene to different act; verify parent_id update + interval recompute (T3-pulled-in)
+  - `tests/e2e/v2-bar-split.spec.ts` — click hairline, verify two adjacent intervals; click again for three
+  - `tests/e2e/v2-act-delete-reparent.spec.ts` — confirm dialog with move target picker, verify scene reparenting
+  - `tests/e2e/v2-scene-rename.spec.ts` — InlineEdit on scene cell label
+  - `tests/e2e/v2-editor-popout.spec.ts` — ↗ Move to window confirm flow, multiple pop-outs, mutex
+  - `tests/e2e/v2-edit-during-delete.spec.ts` — type, delete, verify toast preview + clipboard copy
+  - `tests/e2e/v2-act-routing.spec.ts` — Story Graph click on Act → entity-detail window opens; same act clicked in Timeline → focuses existing
+  - `tests/e2e/v2-act-reorder-playhead.spec.ts` — playhead T unchanged after reorder
+
+### 14. Phase 1.6 follow-ups (deferred to future PRs)
+
+- [ ] **T1 — Drizzle sync-mode refactor** — convert helper chain in `intervals.ts` to sync-by-default using better-sqlite3's native sync API. Closes the sync-vs-async impedance footnote permanently; reduces async overhead in tight recompute loops. Complementary to D17's polymorphic-tx work shipped in Phase 1.6.
+- [ ] **T2 — Window snapping in `Window.svelte`** — drag-to-edge zones (left half, right half, top half, bottom half, quarters). Pure UX additive on existing `windowStore.move`/`resize`. No data-model change.
+- [ ] **T4 — Status field** for Acts/Events/Scenes (`Drafted` / `In progress` / `Done` / `Needs revision`). Top-of-panel pill in editors; optional timeline filter. Stored in `entity.data` — no schema migration. Add when workflow signal is needed.
+- [ ] **T5 — Bar translation** — drag whole bar to shift temporally without changing duration. Currently bars only support edge-resize.
+- [ ] **T6 — Wiki rework** — alphabetical entity browser app; fill `EntityDetail` branches for Character/Location/Note; migrate `ENTITY_APP[Character]` / `ENTITY_APP[Location]` / `ENTITY_APP[Note]` to `'entity-detail'`. Cross-entity hyperlinks in synopses. Designed to land additively on the EntityDetail abstraction shipped in Phase 1.6.
+- [ ] **T7 — Bulk paste / import UI** — multi-entity import flow from external story-craft tools (Plottr CSV, Aeon export, etc.). Uses the `/api/entities/batch` endpoint shipped in Phase 1.6. UI surface: drag-drop file or paste structured text → preview → commit.
+
+### 14. Phase 1B — Graph features (separate branch)
 
 **Note:** Phase 1B specifics are exploratory; locked at its own /plan-eng-review.
 
