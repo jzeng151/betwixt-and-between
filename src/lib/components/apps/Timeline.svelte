@@ -1,830 +1,329 @@
+<!--
+  Timeline — V1 retired 2026-04-28 (was apps/TimelineV2.svelte)
+
+  Reads $entities + $intervals and renders the locked layout:
+    - 240px palette sidebar (characters + events, draggable chips)
+    - main timeline area: acts header → optional scenes row → entity rows of bars
+
+  Interactions:
+    - Drag chip from palette → drop on track → creates interval spanning the act
+    - Drag left/right edge of a bar → edge-resize (default = free-fraction;
+      hold Alt to snap to act/scene grid)
+    - interactionLock blocks palette drops while edge-resize is in progress
+-->
+
 <script lang="ts">
-  import { entities } from '$lib/stores/entities.js';
-  import { relationships } from '$lib/stores/relationships.js';
-  import InlineEdit from '$lib/components/InlineEdit.svelte';
+	import { onMount } from 'svelte';
+	import { entities, type Entity } from '$lib/stores/entities.js';
+	import { intervals as intervalsStore, type Interval } from '$lib/stores/intervals.js';
+	import Palette from '$lib/components/Palette.svelte';
+	import ActsHeader from '$lib/components/ActsHeader.svelte';
+	import IntervalRow from '$lib/components/IntervalRow.svelte';
+	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
 
-  interface Props { entityId: string | null; }
-  let { entityId }: Props = $props();
+	interface Props {
+		entityId: string | null;
+	}
+	let { entityId }: Props = $props();
 
-  const acts = $derived(
-    $entities
-      .filter((e) => e.type === 'Act')
-      .sort((a, b) => Number(a.createdAt) - Number(b.createdAt))
-  );
+	// ── Data load ────────────────────────────────────────────────────────────
+	let loaded = $state(false);
+	onMount(async () => {
+		try {
+			await Promise.all([entities.load(), intervalsStore.load()]);
+		} catch (err) {
+			console.error('[TimelineV2] failed to load:', err);
+		} finally {
+			loaded = true;
+		}
+	});
 
-  const characters = $derived(
-    $entities
-      .filter((e) => e.type === 'Character')
-      .sort((a, b) => Number(a.createdAt) - Number(b.createdAt))
-  );
+	// ── Interaction lock — blocks palette drops while edge-resize is active ──
+	let interactionLock = $state(false);
 
-  const timelineItems = $derived(
-    $entities.filter((e) => e.type === 'Event' || e.type === 'Scene')
-  );
+	// ── Error toast ───────────────────────────────────────────────────────────
+	let errorMsg: string | null = $state(null);
+	let errorTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function eventsOnTrack(actId: string, track: 'plot' | 'world') {
-    return $relationships
-      .filter(
-        (r) =>
-          r.type === 'appears_in' &&
-          (r.label === track || (track === 'plot' && r.label == null)) &&
-          (r.fromId === actId || r.toId === actId)
-      )
-      .map((r) => {
-        const itemId = r.fromId === actId ? r.toId : r.fromId;
-        const item = timelineItems.find((e) => e.id === itemId);
-        return item ? { item, relId: r.id } : null;
-      })
-      .filter(Boolean) as { item: (typeof timelineItems)[number]; relId: string }[];
-  }
+	function showError(msg: string) {
+		errorMsg = msg;
+		if (errorTimer != null) clearTimeout(errorTimer);
+		errorTimer = setTimeout(() => {
+			errorMsg = null;
+			errorTimer = null;
+		}, 4000);
+	}
 
-  function charInAct(charId: string, actId: string) {
-    return $relationships.some(
-      (r) =>
-        r.type === 'appears_in' &&
-        ((r.fromId === charId && r.toId === actId) ||
-          (r.fromId === actId && r.toId === charId))
-    );
-  }
+	// ── Derived data ─────────────────────────────────────────────────────────
 
-  function eventActs(itemId: string) {
-    return $relationships
-      .filter(
-        (r) =>
-          r.type === 'appears_in' &&
-          (r.label === 'plot' || r.label === 'world') &&
-          (r.fromId === itemId || r.toId === itemId)
-      )
-      .map((r) => ({
-        rel: r,
-        act: acts.find((a) => a.id === r.fromId || a.id === r.toId)!,
-        track: r.label as 'plot' | 'world'
-      }))
-      .filter((x) => x.act);
-  }
+	// Root-level Acts ordered by position (with createdAt as tiebreaker — matches
+	// server-side actIndexOf).
+	const acts = $derived(
+		$entities
+			.filter((e) => e.type === 'Act' && e.parentId == null)
+			.sort((a, b) => {
+				const ap = a.position ?? Number.MAX_SAFE_INTEGER;
+				const bp = b.position ?? Number.MAX_SAFE_INTEGER;
+				if (ap !== bp) return ap - bp;
+				return Number(a.createdAt) - Number(b.createdAt);
+			})
+	);
 
-  let saveError = $state('');
+	// Scenes grouped by parent Act id.
+	const scenesByActId = $derived(
+		(() => {
+			const m = new Map<string, Entity[]>();
+			for (const e of $entities) {
+				if (e.type !== 'Scene') continue;
+				if (!e.parentId) continue;
+				if (!m.has(e.parentId)) m.set(e.parentId, []);
+				m.get(e.parentId)!.push(e);
+			}
+			for (const list of m.values()) {
+				list.sort((a, b) => {
+					const ap = a.position ?? Number.MAX_SAFE_INTEGER;
+					const bp = b.position ?? Number.MAX_SAFE_INTEGER;
+					if (ap !== bp) return ap - bp;
+					return Number(a.createdAt) - Number(b.createdAt);
+				});
+			}
+			return m;
+		})()
+	);
 
-  const CHAR_COLORS = [
-    { bg: 'rgba(200,100,150,0.25)', border: 'rgba(200,100,150,0.5)',  text: '#faa' },
-    { bg: 'rgba(100,200,130,0.2)',  border: 'rgba(100,200,130,0.45)', text: '#afa' },
-    { bg: 'rgba(200,160,80,0.2)',   border: 'rgba(200,160,80,0.45)',  text: '#fda' },
-    { bg: 'rgba(130,100,220,0.2)',  border: 'rgba(130,100,220,0.45)', text: '#c8a0f0' },
-    { bg: 'rgba(80,180,210,0.2)',   border: 'rgba(80,180,210,0.45)',  text: '#80d0f0' },
-  ] as const;
+	const characters = $derived($entities.filter((e) => e.type === 'Character'));
+	const events = $derived($entities.filter((e) => e.type === 'Event'));
 
-  const SLOT_H = 26; // px per event slot (min-height + gap)
+	// entityId → all its intervals, ordered by start_position
+	const intervalsByEntityId = $derived(
+		(() => {
+			const m = new Map<string, Interval[]>();
+			for (const i of $intervalsStore) {
+				if (!m.has(i.entityId)) m.set(i.entityId, []);
+				m.get(i.entityId)!.push(i);
+			}
+			for (const list of m.values()) {
+				list.sort((a, b) => a.startPosition - b.startPosition);
+			}
+			return m;
+		})()
+	);
 
-  const plotAutoH = $derived.by(() => {
-    const max = Math.max(0, ...acts.map((a) => eventsOnTrack(a.id, 'plot').length));
-    return (max + 1) * SLOT_H + 8;
-  });
+	// Rows: characters + events that have at least one interval
+	const rowEntities = $derived(
+		[...characters, ...events].filter((e) => (intervalsByEntityId.get(e.id)?.length ?? 0) > 0)
+	);
 
-  const worldAutoH = $derived.by(() => {
-    const max = Math.max(0, ...acts.map((a) => eventsOnTrack(a.id, 'world').length));
-    return (max + 1) * SLOT_H + 8;
-  });
+	// Set of entity ids with ≥1 interval — Palette greys out placed items so
+	// the writer can see who's still missing from the timeline at a glance.
+	const placedEntityIds = $derived(
+		new Set(rowEntities.map((e) => e.id))
+	);
 
-  let colWidths   = $state<Record<string, number>>({});
-  let plotHeight  = $state<number | null>(null);
-  let worldHeight = $state<number | null>(null);
-  let charHeights = $state<Record<string, number | null>>({});
+	// ── Track measurement ────────────────────────────────────────────────────
+	let trackEl: HTMLDivElement | null = $state(null);
+	let trackWidthPx = $state(0);
 
-  let draggingId = $state<string | null>(null);
-  let dragOver   = $state<{ actId: string; track: 'plot' | 'world' } | null>(null);
+	$effect(() => {
+		if (!trackEl) return;
+		const ro = new ResizeObserver(() => {
+			trackWidthPx = trackEl?.clientWidth ?? 0;
+		});
+		ro.observe(trackEl);
+		trackWidthPx = trackEl.clientWidth;
+		return () => ro.disconnect();
+	});
 
-  function startColResize(e: PointerEvent, actId: string) {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = (e.currentTarget as HTMLElement).parentElement!.getBoundingClientRect().width;
-    const onMove = (ev: PointerEvent) => { colWidths[actId] = Math.max(60, startW + ev.clientX - startX); };
-    const onUp   = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  }
+	const N = $derived(acts.length);
+	function pxForFractionalSpan(span: number): number {
+		if (N === 0 || trackWidthPx === 0) return 0;
+		return (span / N) * trackWidthPx;
+	}
 
-  function startRowResize(e: PointerEvent, rowKey: string) {
-    e.preventDefault();
-    const trackLine = (e.currentTarget as HTMLElement).previousElementSibling as HTMLElement;
-    const startY = e.clientY;
-    const startH = trackLine.getBoundingClientRect().height;
-    const onMove = (ev: PointerEvent) => {
-      const h = Math.max(28, startH + ev.clientY - startY);
-      if (rowKey === 'plot') plotHeight = h;
-      else if (rowKey === 'world') worldHeight = h;
-      else charHeights[rowKey] = h;
-    };
-    const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  }
+	// ── Per-bar render state ─────────────────────────────────────────────────
+	function tooltipFor(entity: Entity, interval: Interval): string {
+		const range = presenceLabel(interval.startPosition, interval.endPosition);
+		return `${entity.name} · ${range}`;
+	}
 
-  function onDragStart(e: DragEvent, itemId: string) {
-    draggingId = itemId;
-    e.dataTransfer!.setData('text/plain', itemId);
-    e.dataTransfer!.effectAllowed = 'link';
-  }
-  function onDragEnd() { draggingId = null; }
-  // V2 Timeline drags carry an `application/x-betwixt-v2-entity` MIME marker.
-  // Ignore those here — they belong to the V2 timeline window's own drop
-  // targets. Without this check, V1 misinterprets V2's text/plain payload and
-  // surfaces "Could not assign character" toasts even when V2's drop succeeded.
-  function isV2Drag(e: DragEvent): boolean {
-    return !!e.dataTransfer?.types.some(
-      (t) => t.toLowerCase() === 'application/x-betwixt-v2-entity'
-    );
-  }
+	// ── Drag-from-palette drop handler ───────────────────────────────────────
+	let dragOver = $state(false);
 
-  function onDragOver(e: DragEvent) {
-    if (isV2Drag(e)) return; // do NOT preventDefault → rejects the drop here
-    e.preventDefault();
-  }
+	// MIME types: V2 uses a custom application type so V1 Timeline (which
+	// reads text/plain) doesn't misinterpret our drags. V2 still sets
+	// text/plain on the source for browser-DnD compat but the drop handler
+	// reads from the custom type to confirm the drag belongs to V2.
+	const V2_MIME = 'application/x-betwixt-v2-entity';
 
-  async function onDropOnTrack(e: DragEvent, actId: string, track: 'plot' | 'world') {
-    if (isV2Drag(e)) return;
-    e.preventDefault();
-    dragOver = null;
-    const itemId = e.dataTransfer!.getData('text/plain');
-    if (!itemId) return;
-    const existingOnTrack = $relationships.filter(
-      (r) =>
-        r.type === 'appears_in' &&
-        r.label === track &&
-        (r.fromId === itemId || r.toId === itemId)
-    );
-    // Already in this exact act — no-op
-    if (existingOnTrack.some((r) => r.fromId === actId || r.toId === actId)) {
-      draggingId = null;
-      return;
-    }
-    // Remove from any other act on this track (move semantics)
-    for (const r of existingOnTrack) {
-      try { await relationships.deleteRelationship(r.id); } catch { /* ignore */ }
-    }
-    try {
-      await relationships.createRelationship(actId, itemId, 'appears_in', track);
-    } catch { saveError = 'Could not assign event.'; }
-    draggingId = null;
-  }
+	function handleDragover(e: DragEvent) {
+		if (interactionLock || N === 0) return;
+		// Only react to drags that carry our marker. dataTransfer.types is
+		// the only field readable during dragover (the actual data is hidden
+		// until drop). Match case-insensitively per the spec.
+		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === V2_MIME)) return;
+		e.preventDefault();
+		dragOver = true;
+	}
 
-  async function removeFromAct(relId: string) {
-    try {
-      await relationships.deleteRelationship(relId);
-    } catch { saveError = 'Could not remove.'; }
-  }
+	function handleDragleave() {
+		dragOver = false;
+	}
 
-  function charActLinks(charId: string) {
-    return $relationships
-      .filter(
-        (r) =>
-          r.type === 'appears_in' &&
-          r.label == null &&
-          (r.fromId === charId || r.toId === charId) &&
-          acts.some((a) => a.id === r.fromId || a.id === r.toId)
-      )
-      .map((r) => ({
-        rel: r,
-        act: acts.find((a) => a.id === r.fromId || a.id === r.toId)!
-      }))
-      .filter((x) => x.act);
-  }
+	async function handleDrop(e: DragEvent) {
+		e.preventDefault();
+		dragOver = false;
+		if (interactionLock || N === 0 || !trackEl) return;
 
-  async function onDropToCharAct(e: DragEvent, charId: string, actId: string) {
-    if (isV2Drag(e)) return;
-    e.preventDefault();
-    if (e.dataTransfer!.getData('text/plain') !== charId || charInAct(charId, actId)) return;
-    try {
-      await relationships.createRelationship(actId, charId, 'appears_in');
-    } catch { saveError = 'Could not assign character.'; }
-    draggingId = null;
-  }
+		// Read from the V2-specific MIME first; fall back to text/plain only
+		// if the custom type is present (defensive — should always be set).
+		const entityId =
+			e.dataTransfer?.getData(V2_MIME) || e.dataTransfer?.getData('text/plain');
+		if (!entityId) return;
+		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === V2_MIME)) return;
 
-  async function createAct() {
-    saveError = '';
-    try {
-      await entities.createEntity('Act', 'New Act');
-    } catch { saveError = 'Could not create act.'; }
-  }
+		// Map drop x-coord to act index
+		const rect = trackEl.getBoundingClientRect();
+		const relX = e.clientX - rect.left;
+		const rawPos = (relX / trackWidthPx) * N;
+		const actIdx = Math.max(0, Math.min(Math.floor(rawPos), N - 1));
+		const act = acts[actIdx];
+		if (!act) return;
 
-  async function deleteAct(id: string) {
-    saveError = '';
-    try {
-      await entities.deleteEntity(id);
-    } catch { saveError = 'Could not delete act.'; }
-  }
+		try {
+			// Create an interval spanning the entire act (user can resize afterward).
+			await intervalsStore.createInterval({
+				entityId,
+				startActId: act.id,
+				endActId: act.id
+			});
+		} catch (err) {
+			showError((err as Error).message);
+		}
+	}
 
-  async function createEvent() {
-    saveError = '';
-    try {
-      await entities.createEntity('Event', 'New Event');
-    } catch { saveError = 'Could not create event.'; }
-  }
-
-  async function rename(id: string, name: string) {
-    try {
-      await entities.updateEntity(id, { name });
-    } catch { saveError = "Couldn't rename."; }
-  }
+	// Touch entityId so prop is "used" (PR 2 will use it to scroll/highlight).
+	$effect(() => {
+		void entityId;
+	});
 </script>
 
-<div class="timeline-root">
-  {#if acts.length === 0 && timelineItems.length === 0}
-    <div class="empty-state">
-      <p>No events yet. Add an Act to begin your story.</p>
-      <button class="action-btn" onclick={createAct}>+ Add Act</button>
-      {#if saveError}<p class="save-error">{saveError}</p>{/if}
-    </div>
+<div class="tl2">
+	<Palette {characters} {events} {placedEntityIds} {colorFor} />
 
-  {:else}
-    <div class="tl-wrap">
+	<!-- ── Main timeline ──────────────────────────────────────────────── -->
+	<div class="timeline">
+		<ActsHeader {acts} {scenesByActId} />
 
-      <div class="tl-toolbar">
-        <button class="add-act-btn" onclick={createAct}>+ Act</button>
-        {#if saveError}<span class="save-error">{saveError}</span>{/if}
-      </div>
+		<!-- Rows of intervals — also the palette drop target -->
+		<div
+			class="rows"
+			class:drag-over={dragOver}
+			role="region"
+			aria-label="Timeline track"
+			bind:this={trackEl}
+			ondragover={handleDragover}
+			ondragleave={handleDragleave}
+			ondrop={handleDrop}
+		>
+			{#if !loaded}
+				<div class="row-empty">Loading…</div>
+			{:else if rowEntities.length === 0 && acts.length > 0}
+				<div class="row-empty drop-hint">
+					{#if N > 0}
+						Drag a character or event from the palette onto the timeline to begin.
+					{:else}
+						No presences yet. Add acts to begin your story.
+					{/if}
+				</div>
+			{/if}
 
-      <div class="tl-scroll">
+			{#each rowEntities as entity, idx (entity.id)}
+				<IntervalRow
+					{entity}
+					intervals={intervalsByEntityId.get(entity.id) ?? []}
+					{idx}
+					{trackWidthPx}
+					actCount={N}
+					{acts}
+					{scenesByActId}
+					{colorFor}
+					{dataNoteSnippet}
+					{tooltipFor}
+					{pxForFractionalSpan}
+					onLockAcquire={() => { interactionLock = true; }}
+					onLockRelease={() => { interactionLock = false; }}
+					onError={showError}
+				/>
+			{/each}
+		</div>
 
-        <!-- Act labels header -->
-        <div class="tl-header">
-          <div class="tl-gutter"></div>
-          <div class="tl-acts-bar">
-            {#each acts as act, i}
-              <div
-                class="tl-act-label"
-                class:focused={act.id === entityId}
-                style={colWidths[act.id] != null ? `flex:none;width:${colWidths[act.id]}px` : ''}
-              >
-                <span class="act-num">ACT {i + 1}</span>
-                <InlineEdit value={act.name} onSave={(n) => rename(act.id, n)} class="act-name-edit" />
-                <button class="act-delete" onclick={() => deleteAct(act.id)} title="Delete act">×</button>
-                <div class="col-resize-handle" onpointerdown={(e) => startColResize(e, act.id)} role="separator" aria-label="Resize act column"></div>
-              </div>
-            {/each}
-          </div>
-        </div>
-
-        <!-- Plot row -->
-        <div class="tl-row" style="flex:none;height:{plotHeight ?? plotAutoH}px">
-          <div class="tl-row-label">Plot</div>
-          <div class="tl-track-line">
-            {#each acts as act}
-              <div
-                class="tl-seg"
-                class:drop-over={dragOver?.actId === act.id && dragOver?.track === 'plot'}
-                class:focused={act.id === entityId}
-                style={colWidths[act.id] != null ? `flex:none;width:${colWidths[act.id]}px` : ''}
-                role="region"
-                aria-label="Plot act segment"
-                ondragover={onDragOver}
-                ondragenter={(e) => { if (!isV2Drag(e)) dragOver = { actId: act.id, track: 'plot' }; }}
-                ondragleave={(e) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dragOver = null; }}
-                ondrop={(e) => onDropOnTrack(e, act.id, 'plot')}
-              >
-                {#each eventsOnTrack(act.id, 'plot') as { item, relId }}
-                  <div
-                    class="tl-event"
-                    class:highlight={item.id === entityId}
-                    class:dragging={draggingId === item.id}
-                    role="listitem"
-                    draggable="true"
-                    ondragstart={(e) => onDragStart(e, item.id)}
-                    ondragend={onDragEnd}
-                  >
-                    <InlineEdit value={item.name} onSave={(n) => rename(item.id, n)} class="event-name-edit" />
-                    <button class="event-remove" onclick={() => removeFromAct(relId)}>×</button>
-                  </div>
-                {/each}
-              </div>
-            {/each}
-          </div>
-          <div class="row-resize-handle" onpointerdown={(e) => startRowResize(e, 'plot')} role="separator" aria-label="Resize plot row"></div>
-        </div>
-
-        <!-- One track row per character -->
-        {#each characters as char, ci}
-          {@const cc = CHAR_COLORS[ci % CHAR_COLORS.length]}
-          {@const charH = charHeights[char.id]}
-          <div class="tl-row char-row" style="--char-bg:{cc.bg};--char-border:{cc.border};--char-color:{cc.text}{charH != null ? `;flex:none;height:${charH}px` : ''}">
-            <div class="tl-row-label tl-char-label" class:focused={char.id === entityId}>
-              {char.name}
-            </div>
-            <div class="tl-track-line" style={charH != null ? `height:${charH}px` : ''}>
-              {#each acts as act}
-                <div
-                  class="tl-seg"
-                  class:focused={act.id === entityId}
-                  style={colWidths[act.id] != null ? `flex:none;width:${colWidths[act.id]}px` : ''}
-                  role="region"
-                  aria-label="Character act segment"
-                  ondragover={onDragOver}
-                  ondrop={(e) => onDropToCharAct(e, char.id, act.id)}
-                >
-                  {#if charInAct(char.id, act.id)}
-                    <div class="tl-char-bar" class:highlight={char.id === entityId}>
-                      {char.name}
-                    </div>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-            <div class="row-resize-handle" onpointerdown={(e) => startRowResize(e, char.id)} role="separator" aria-label="Resize character row"></div>
-          </div>
-        {/each}
-
-        <!-- World row -->
-        <div class="tl-row" style="flex:none;height:{worldHeight ?? worldAutoH}px">
-          <div class="tl-row-label">World</div>
-          <div class="tl-track-line">
-            {#each acts as act}
-              <div
-                class="tl-seg"
-                class:drop-over={dragOver?.actId === act.id && dragOver?.track === 'world'}
-                class:focused={act.id === entityId}
-                style={colWidths[act.id] != null ? `flex:none;width:${colWidths[act.id]}px` : ''}
-                role="region"
-                aria-label="World act segment"
-                ondragover={onDragOver}
-                ondragenter={(e) => { if (!isV2Drag(e)) dragOver = { actId: act.id, track: 'world' }; }}
-                ondragleave={(e) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dragOver = null; }}
-                ondrop={(e) => onDropOnTrack(e, act.id, 'world')}
-              >
-                {#each eventsOnTrack(act.id, 'world') as { item, relId }}
-                  <div
-                    class="tl-event ev-world"
-                    class:highlight={item.id === entityId}
-                    class:dragging={draggingId === item.id}
-                    role="listitem"
-                    draggable="true"
-                    ondragstart={(e) => onDragStart(e, item.id)}
-                    ondragend={onDragEnd}
-                  >
-                    <InlineEdit value={item.name} onSave={(n) => rename(item.id, n)} class="event-name-edit" />
-                    <button class="event-remove" onclick={() => removeFromAct(relId)}>×</button>
-                  </div>
-                {/each}
-              </div>
-            {/each}
-          </div>
-          <div class="row-resize-handle" onpointerdown={(e) => startRowResize(e, 'world')} role="separator" aria-label="Resize world row"></div>
-        </div>
-
-      </div>
-
-      <!-- Events pool: drag chips onto Plot or World act segments above to place them -->
-      <div class="tl-events-pool">
-        <div class="pool-header">
-          <span class="pool-label">Events</span>
-          <button class="add-event-btn" onclick={createEvent}>+ Event</button>
-        </div>
-        <div class="pool-chips">
-          {#each timelineItems.filter((item) => eventActs(item.id).length === 0) as item}
-            <div
-              class="pool-chip"
-              class:dragging={draggingId === item.id}
-              class:highlight={item.id === entityId}
-              role="listitem"
-              draggable="true"
-              ondragstart={(e) => onDragStart(e, item.id)}
-              ondragend={onDragEnd}
-            >
-              <InlineEdit value={item.name} onSave={(n) => rename(item.id, n)} class="event-name-edit" />
-            </div>
-          {/each}
-          {#if timelineItems.length === 0}
-            <span class="pool-empty">No events yet</span>
-          {:else if timelineItems.every((item) => eventActs(item.id).length > 0)}
-            <span class="pool-empty">All events placed</span>
-          {/if}
-        </div>
-      </div>
-
-      <!-- Characters pool: drag chips onto character row act segments above to assign presence -->
-      <div class="tl-events-pool">
-        <div class="pool-header">
-          <span class="pool-label">Characters</span>
-        </div>
-        <div class="pool-chips">
-          {#each characters as char, ci}
-            {@const cc = CHAR_COLORS[ci % CHAR_COLORS.length]}
-            {@const links = charActLinks(char.id)}
-            <div
-              class="pool-chip char-chip"
-              role="listitem"
-              style="--char-bg:{cc.bg};--char-border:{cc.border};--char-color:{cc.text}"
-              draggable="true"
-              ondragstart={(e) => onDragStart(e, char.id)}
-              ondragend={onDragEnd}
-            >
-              <span>{char.name}</span>
-              {#each links as { rel, act }}
-                <span class="char-act-badge">{act.name}
-                  <button class="badge-remove" onclick={() => removeFromAct(rel.id)}>×</button>
-                </span>
-              {/each}
-              {#if links.length === 0}<span class="pool-unplaced">unplaced</span>{/if}
-            </div>
-          {/each}
-          {#if characters.length === 0}
-            <span class="pool-empty">No characters yet</span>
-          {/if}
-        </div>
-      </div>
-
-    </div>
-  {/if}
+		<!-- Error toast -->
+		{#if errorMsg}
+			<div class="error-toast" role="alert">{errorMsg}</div>
+		{/if}
+	</div>
 </div>
 
 <style>
-  .timeline-root {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
+	.tl2 {
+		display: flex;
+		height: 100%;
+		background: var(--color-surface, #161920);
+		color: var(--color-text, #e8e0d0);
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		overflow: hidden;
+	}
 
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    padding: 40px 0;
-    color: var(--color-text-muted);
-    font-size: 12px;
-    text-align: center;
-  }
+	/* ── Main timeline ───────────────────────────────────────────────── */
+	.timeline {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		position: relative;
+	}
 
-  .action-btn {
-    background: var(--color-surface-2);
-    border: 1px solid var(--color-border);
-    color: var(--color-text);
-    border-radius: 6px;
-    padding: 7px 14px;
-    font-size: 11px;
-    font-family: var(--font-ui);
-    cursor: pointer;
-  }
-  .action-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
+	.rows {
+		flex: 1;
+		position: relative;
+		overflow-y: auto;
+		transition: background 0.1s ease;
+	}
+	.rows.drag-over {
+		background: rgba(200, 148, 42, 0.04);
+	}
 
-  .tl-wrap {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
+	.row-empty {
+		padding: 24px;
+		color: var(--color-text-muted, #6b7280);
+		font-size: 11px;
+		text-align: center;
+		font-style: italic;
+	}
+	.drop-hint {
+		border: 1px dashed rgba(200, 148, 42, 0.2);
+		margin: 16px;
+		border-radius: 6px;
+		padding: 32px 24px;
+	}
+	.rows.drag-over .drop-hint {
+		border-color: rgba(200, 148, 42, 0.5);
+		color: var(--color-accent, #c8942a);
+	}
 
-  .tl-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    flex-shrink: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .add-act-btn {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #778;
-    border-radius: 3px;
-    padding: 3px 10px;
-    font-size: 10px;
-    font-family: var(--font-ui);
-    cursor: pointer;
-  }
-  .add-act-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
-
-  .add-event-btn {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #778;
-    border-radius: 3px;
-    padding: 3px 10px;
-    font-size: 10px;
-    font-family: var(--font-ui);
-    cursor: pointer;
-  }
-  .add-event-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
-
-  .tl-scroll {
-    flex: 1;
-    overflow-x: auto;
-    overflow-y: hidden;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px 8px 8px 8px;
-  }
-
-  /* Act labels header */
-  .tl-header {
-    display: flex;
-    flex-shrink: 0;
-    margin-bottom: 2px;
-  }
-
-  .tl-gutter {
-    width: 80px;
-    flex-shrink: 0;
-  }
-
-  .tl-acts-bar {
-    flex: 1;
-    display: flex;
-  }
-
-  .tl-act-label {
-    flex: 1;
-    min-width: 60px;
-    position: relative;
-    font-size: 9px;
-    color: #556;
-    text-align: center;
-    border-left: 1px solid rgba(255, 255, 255, 0.06);
-    padding: 0 10px 4px 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    align-items: center;
-    box-sizing: border-box;
-  }
-  .tl-act-label:first-child { border-left: none; }
-  .tl-act-label.focused { color: var(--color-accent); }
-
-  .act-delete {
-    position: absolute;
-    top: 2px;
-    right: 8px;
-    background: none;
-    border: none;
-    color: #445;
-    font-size: 11px;
-    line-height: 1;
-    padding: 1px 3px;
-    border-radius: 2px;
-    cursor: pointer;
-  }
-  .act-delete:hover { opacity: 1; color: #ef4444; background: rgba(239, 68, 68, 0.12); }
-
-  .col-resize-handle {
-    position: absolute;
-    right: -3px;
-    top: 0;
-    bottom: 0;
-    width: 6px;
-    cursor: col-resize;
-    z-index: 2;
-  }
-  .col-resize-handle:hover,
-  .col-resize-handle:active {
-    background: var(--color-accent);
-    opacity: 0.4;
-  }
-
-  .act-num {
-    font-size: 7px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--color-accent);
-    opacity: 0.7;
-  }
-
-  :global(.act-name-edit) {
-    font-family: var(--font-display);
-    font-size: 11px;
-    color: var(--color-text);
-    text-align: center;
-  }
-
-  /* Track rows */
-  .tl-row {
-    flex: 1;
-    min-height: 32px;
-    display: flex;
-    align-items: stretch;
-    position: relative;
-    padding-bottom: 4px;
-  }
-
-  .row-resize-handle {
-    position: absolute;
-    bottom: 0;
-    left: 80px;
-    right: 0;
-    height: 4px;
-    cursor: row-resize;
-    z-index: 2;
-  }
-  .row-resize-handle:hover,
-  .row-resize-handle:active {
-    background: var(--color-accent);
-    opacity: 0.3;
-  }
-
-  .tl-row-label {
-    width: 80px;
-    flex-shrink: 0;
-    font-size: 10px;
-    color: #778;
-    font-family: var(--font-ui);
-    padding: 5px 8px 0 0;
-  }
-  .tl-char-label {
-    font-size: 9px;
-    color: var(--char-color, #778);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .tl-row-label.focused { color: var(--color-accent); }
-
-  /* Track line */
-  .tl-track-line {
-    flex: 1;
-    display: flex;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-
-  /* Act segment within a track line */
-  .tl-seg {
-    flex: 1;
-    min-width: 60px;
-    border-left: 1px solid rgba(255, 255, 255, 0.06);
-    padding: 3px 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    overflow-y: auto;
-  }
-  .tl-seg:first-child { border-left: none; }
-  .tl-seg.focused { background: color-mix(in srgb, var(--color-accent) 4%, transparent); }
-  .tl-seg.drop-over { background: rgba(100, 150, 255, 0.1); }
-
-  /* Plot event bar (blue) */
-  .tl-event {
-    background: rgba(100, 150, 255, 0.25);
-    border: 1px solid rgba(100, 150, 255, 0.5);
-    border-radius: 2px;
-    padding: 2px 22px 2px 6px;
-    position: relative;
-    display: flex;
-    align-items: center;
-    min-height: 20px;
-    color: #adf;
-    cursor: grab;
-  }
-  .tl-event:active { cursor: grabbing; }
-  .tl-event.dragging { opacity: 0.35; }
-  .tl-event.highlight {
-    border-color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
-    color: var(--color-accent);
-  }
-
-  .event-remove {
-    position: absolute;
-    right: 4px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: none;
-    border: none;
-    color: inherit;
-    font-size: 11px;
-    line-height: 1;
-    padding: 0;
-    cursor: pointer;
-    opacity: 0.4;
-  }
-  .event-remove:hover { opacity: 1; }
-
-  /* World event bar (green) */
-  .tl-event.ev-world {
-    background: rgba(100, 200, 130, 0.2);
-    border: 1px solid rgba(100, 200, 130, 0.45);
-    color: #afa;
-  }
-
-  :global(.event-name-edit) {
-    font-family: var(--font-ui);
-    font-size: 10px;
-    color: inherit;
-    flex: 1;
-    min-width: 0;
-  }
-
-  /* Character presence bar */
-  .tl-char-bar {
-    background: var(--char-bg, rgba(200, 100, 150, 0.25));
-    border: 1px solid var(--char-border, rgba(200, 100, 150, 0.5));
-    border-radius: 2px;
-    padding: 2px 6px;
-    font-size: 9px;
-    color: var(--char-color, #faa);
-    font-family: var(--font-ui);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    width: 100%;
-    min-height: 20px;
-    display: flex;
-    align-items: center;
-  }
-  .tl-char-bar.highlight {
-    border-color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
-    color: var(--color-accent);
-  }
-
-  /* Events pool */
-  .tl-events-pool {
-    flex-shrink: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-    padding: 6px 8px 8px;
-  }
-
-  .pool-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 6px;
-  }
-
-  .pool-label {
-    font-size: 8px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: #556;
-  }
-
-  .pool-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    min-height: 28px;
-  }
-
-  .pool-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 3px 8px;
-    background: rgba(100, 150, 255, 0.15);
-    border: 1px solid rgba(100, 150, 255, 0.4);
-    border-radius: 20px;
-    color: #adf;
-    cursor: grab;
-    user-select: none;
-    transition: opacity 0.1s;
-  }
-  .pool-chip:active { cursor: grabbing; }
-  .pool-chip.dragging { opacity: 0.35; }
-  .pool-chip.highlight { border-color: var(--color-accent); background: rgba(200, 148, 42, 0.12); color: var(--color-accent); }
-
-  .char-chip {
-    background: var(--char-bg);
-    border-color: var(--char-border);
-    color: var(--char-color);
-  }
-
-  .char-act-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 10px;
-    padding: 1px 5px;
-    font-size: 8px;
-    color: inherit;
-  }
-
-  .badge-remove {
-    background: none;
-    border: none;
-    color: inherit;
-    font-size: 11px;
-    line-height: 1;
-    padding: 0;
-    cursor: pointer;
-    opacity: 0.6;
-  }
-  .badge-remove:hover { opacity: 1; }
-
-  .pool-unplaced {
-    font-size: 8px;
-    color: #445;
-    font-style: italic;
-  }
-
-  .pool-empty {
-    font-size: 10px;
-    color: #445;
-  }
-
-  .save-error { color: #ef4444; font-size: 11px; }
+	.error-toast {
+		position: absolute;
+		bottom: 12px;
+		left: 50%;
+		transform: translateX(-50%);
+		background: #ef4444;
+		color: #fff;
+		font-size: 12px;
+		padding: 8px 16px;
+		border-radius: 6px;
+		max-width: 80%;
+		text-align: center;
+		pointer-events: none;
+		z-index: 10;
+	}
 </style>

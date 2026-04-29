@@ -126,23 +126,17 @@ describe('/api/relationships GET', () => {
 		expect(body).toEqual([]);
 	});
 
-	it('includes synthetic appears_in rows from intervals (compat layer)', async () => {
+	it('rejects appears_in writes (route is intervals API now)', async () => {
 		const acts = await seedActs(currentDb);
 		const [ellie] = await currentDb
 			.insert(entities)
 			.values({ type: 'Character', name: 'Ellie' })
 			.returning();
-		// Use the hijack to write an interval-backed appears_in
-		await relRoute.POST(
-			mkEvent({ body: { fromId: ellie.id, toId: acts.act1, type: 'appears_in' } })
-		);
-
-		const res = await relRoute.GET(mkEvent());
-		const body = await readJson(res);
-		expect(body).toHaveLength(1);
-		expect(body[0].type).toBe('appears_in');
-		expect(body[0].fromId).toBe(ellie.id);
-		expect(body[0].toId).toBe(acts.act1);
+		await expect(
+			relRoute.POST(
+				mkEvent({ body: { fromId: ellie.id, toId: acts.act1, type: 'appears_in' } })
+			)
+		).rejects.toMatchObject({ status: 400 });
 	});
 
 	it('filters by fromId query param', async () => {
@@ -201,55 +195,4 @@ describe('/api/relationships/[id] DELETE', () => {
 		).rejects.toMatchObject({ status: 404 });
 	});
 
-	it('handles interval-prefixed ids by deleting the interval', async () => {
-		const acts = await seedActs(currentDb);
-		const [ellie] = await currentDb
-			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
-			.returning();
-		const created = await readJson(
-			await relRoute.POST(
-				mkEvent({ body: { fromId: ellie.id, toId: acts.act1, type: 'appears_in' } })
-			)
-		);
-		expect(created.id.startsWith('interval:')).toBe(true);
-
-		const res = await relIdRoute.DELETE(mkEvent({ params: { id: created.id } }));
-		expect(res.status).toBe(204);
-
-		const ints = await currentDb.select().from(intervals);
-		expect(ints).toHaveLength(0);
-	});
-
-	it('returns 404 for interval-prefixed id pointing at missing interval', async () => {
-		await expect(
-			relIdRoute.DELETE(mkEvent({ params: { id: 'interval:nope' } }))
-		).rejects.toMatchObject({ status: 404 });
-	});
-
-	it('handles synthetic compat ids by deleting matching single-act interval', async () => {
-		const acts = await seedActs(currentDb);
-		const [ellie] = await currentDb
-			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
-			.returning();
-		// Create interval through hijack
-		await relRoute.POST(
-			mkEvent({ body: { fromId: ellie.id, toId: acts.act1, type: 'appears_in' } })
-		);
-
-		const synthId = `compat:${ellie.id}:${acts.act1}`;
-		const res = await relIdRoute.DELETE(mkEvent({ params: { id: synthId } }));
-		expect(res.status).toBe(204);
-
-		const ints = await currentDb.select().from(intervals);
-		expect(ints).toHaveLength(0);
-	});
-
-	it('returns 404 for synthetic compat id with no matching interval', async () => {
-		const synthId = 'compat:no-such-entity:no-such-act';
-		await expect(
-			relIdRoute.DELETE(mkEvent({ params: { id: synthId } }))
-		).rejects.toMatchObject({ status: 404 });
-	});
 });

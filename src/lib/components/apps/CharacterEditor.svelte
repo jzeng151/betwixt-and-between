@@ -261,8 +261,9 @@
     reader.readAsDataURL(file);
   }
 
+  // Story-arc presence (appears_in) is now owned by the Timeline app — drag a
+  // character chip from the palette onto a track to create an interval.
   const REL_GROUPS: { label: string; type: RelationshipType }[] = [
-    { label: 'Story Arcs',  type: 'appears_in' },
     { label: 'Allies',      type: 'allied_with' },
     { label: 'Rivals',      type: 'rivals' },
     { label: 'Mentors',     type: 'mentor_of' },
@@ -282,8 +283,7 @@
   }
 
   // ── Entity picker ──────────────────────────────────────────────────────────
-  const PICKER_TYPES: Record<RelationshipType, EntityType[]> = {
-    appears_in:    ['Act', 'Scene', 'Event'],
+  const PICKER_TYPES: Partial<Record<RelationshipType, EntityType[]>> = {
     allied_with:   ['Character'],
     rivals:        ['Character'],
     mentor_of:     ['Character'],

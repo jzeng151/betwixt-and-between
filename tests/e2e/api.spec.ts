@@ -174,9 +174,9 @@ test.describe('Relationships API', () => {
 		expect((await res.json()).label).toBe('home base');
 	});
 
-	test('POST accepts all valid relationship types', async ({ request }) => {
+	test('POST accepts all valid relationship types except appears_in', async ({ request }) => {
+		// appears_in is owned by /api/intervals after V1 retirement (2026-04-28).
 		const types = [
-			'appears_in',
 			'takes_place_at',
 			'caused_by',
 			'allied_with',
@@ -190,6 +190,13 @@ test.describe('Relationships API', () => {
 			});
 			expect(res.status()).toBe(201);
 		}
+	});
+
+	test('POST rejects appears_in (now owned by intervals API)', async ({ request }) => {
+		const res = await request.post('/api/relationships', {
+			data: { fromId: charId, toId: locId, type: 'appears_in' }
+		});
+		expect(res.status()).toBe(400);
 	});
 
 	test('POST rejects invalid relationship type', async ({ request }) => {

@@ -5,7 +5,6 @@
   import CharacterEditor from './apps/CharacterEditor.svelte';
   import Wiki from './apps/Wiki.svelte';
   import Timeline from './apps/Timeline.svelte';
-  import TimelineV2 from './apps/TimelineV2.svelte';
   import WorldMap from './apps/WorldMap.svelte';
   import StoryGraph from './apps/StoryGraph.svelte';
 
@@ -13,7 +12,6 @@
     'character-editor': 'Characters',
     'world-map': 'World Map',
     'timeline': 'Timeline',
-    'timeline-v2': 'Timeline (V2 preview)',
     'wiki': 'Wiki',
     'story-graph': 'Story Graph',
   };
@@ -63,8 +61,6 @@
       <Wiki entityId={win.entityId} />
     {:else if win.appId === 'timeline'}
       <Timeline entityId={win.entityId} />
-    {:else if win.appId === 'timeline-v2'}
-      <TimelineV2 entityId={win.entityId} />
     {:else if win.appId === 'world-map'}
       <WorldMap entityId={win.entityId} />
     {:else if win.appId === 'story-graph'}
