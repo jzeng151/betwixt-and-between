@@ -20,7 +20,9 @@
 	import ActsHeader from '$lib/components/ActsHeader.svelte';
 	import IntervalRow from '$lib/components/IntervalRow.svelte';
 	import PlayheadOverlay from '$lib/components/PlayheadOverlay.svelte';
+	import EntityDetail from '$lib/components/EntityDetail.svelte';
 	import { playhead } from '$lib/stores/playhead.js';
+	import { windowStore } from '$lib/stores/windows.js';
 	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
 
 	interface Props {
@@ -203,9 +205,39 @@
 		}
 	}
 
-	// Touch entityId so prop is "used" (PR 2 will use it to scroll/highlight).
+	// ── Side panel selection (Phase 1.6 / Lane C) ───────────────────────────
+	// selectedEntityId drives the right-hand EntityDetail side panel. Only
+	// one editor is open at a time per D10/9A — clicking a bar/act/scene
+	// either opens the side panel or, if a popout window already exists for
+	// that entity, focuses the existing window instead. (D10/9A + D10-ext/19A)
+	let selectedEntityId: string | null = $state(null);
+
+	function selectFromTimeline(id: string) {
+		const existing = windowStore.findOpenEditorFor(id);
+		if (existing) {
+			windowStore.focus(existing.id);
+			selectedEntityId = null;
+			return;
+		}
+		selectedEntityId = id;
+	}
+
+	function moveSelectedToWindow() {
+		if (!selectedEntityId) return;
+		const id = selectedEntityId;
+		windowStore.open('entity-detail', id);
+		selectedEntityId = null;
+	}
+
+	// If the host window opens with an entity prop pointed at an Act/Event/Scene,
+	// preselect it. Other types fall through (no-op — Wiki/etc handle them).
 	$effect(() => {
-		void entityId;
+		if (entityId && entityId !== selectedEntityId) {
+			const e = $entities.find((x) => x.id === entityId);
+			if (e && (e.type === 'Act' || e.type === 'Event' || e.type === 'Scene')) {
+				selectedEntityId = entityId;
+			}
+		}
 	});
 
 	// ── Playhead (Phase 1.5 scrubber) ────────────────────────────────────────
@@ -251,7 +283,13 @@
 			</button>
 		</div>
 
-		<ActsHeader {acts} {scenesByActId} />
+		<ActsHeader
+			{acts}
+			{scenesByActId}
+			{selectedEntityId}
+			onSelectAct={selectFromTimeline}
+			onSelectScene={selectFromTimeline}
+		/>
 
 		<!-- Rows of intervals — also the palette drop target -->
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -296,6 +334,7 @@
 					onLockAcquire={() => { interactionLock = true; }}
 					onLockRelease={() => { interactionLock = false; }}
 					onError={showError}
+					onSelect={(id) => selectFromTimeline(id)}
 				/>
 			{/each}
 
@@ -307,6 +346,17 @@
 			<div class="error-toast" role="alert">{errorMsg}</div>
 		{/if}
 	</div>
+
+	{#if selectedEntityId}
+		<aside class="side-panel">
+			<EntityDetail
+				entityId={selectedEntityId}
+				onMoveToWindow={moveSelectedToWindow}
+				onClose={() => (selectedEntityId = null)}
+				onEntityVanished={() => (selectedEntityId = null)}
+			/>
+		</aside>
+	{/if}
 </div>
 
 <style>
@@ -326,6 +376,18 @@
 		flex-direction: column;
 		overflow: hidden;
 		position: relative;
+	}
+
+	/* ── Side panel (Variant A from plan-design-review) ──────────────── */
+	.side-panel {
+		flex: 0 0 360px;
+		min-width: 360px;
+		max-width: 480px;
+		border-left: 1px solid var(--color-border, #2a2d35);
+		background: var(--color-surface-2, #1c1f28);
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
 	}
 
 	.timeline-controls {

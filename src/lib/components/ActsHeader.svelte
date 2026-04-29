@@ -15,8 +15,21 @@
 	interface Props {
 		acts: Entity[];
 		scenesByActId: Map<string, Entity[]>;
+		/** Currently selected entity id (Act or Scene). Used to render the
+		 *  amber top-border on the selected act column header. (D2/2B-i) */
+		selectedEntityId?: string | null;
+		/** Click on an act header (not on a button) selects the act. */
+		onSelectAct?: (actId: string) => void;
+		/** Click on a scene cell selects the scene. */
+		onSelectScene?: (sceneId: string) => void;
 	}
-	let { acts, scenesByActId }: Props = $props();
+	let {
+		acts,
+		scenesByActId,
+		selectedEntityId = null,
+		onSelectAct,
+		onSelectScene
+	}: Props = $props();
 
 	// ── Break into scenes state ───────────────────────────────────────────────
 	let expandingActId: string | null = $state(null);
@@ -159,7 +172,19 @@
 <div class="acts-header">
 	{#each acts as act (act.id)}
 		{@const sceneCount = scenesByActId.get(act.id)?.length ?? 0}
-		<div class="act-col-header" style="flex: 1;">
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="act-col-header"
+			class:act-col-header--selected={selectedEntityId === act.id}
+			style="flex: 1;"
+			onclick={(e) => {
+				// Don't hijack clicks on inner buttons / inputs / textareas.
+				const t = e.target as HTMLElement;
+				if (t.closest('button, input, textarea')) return;
+				onSelectAct?.(act.id);
+			}}
+		>
 			<div class="act-name-row">
 				<div class="act-name">{act.name}</div>
 				<button
@@ -255,7 +280,14 @@
 			<div class="scenes-act">
 				{#if (scenesByActId.get(act.id)?.length ?? 0) > 0}
 					{#each scenesByActId.get(act.id)! as scene, k (scene.id)}
-						<div class="scene-cell" title={scene.name}>s{k}</div>
+						<!-- svelte-ignore a11y_click_events_have_key_events -->
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div
+							class="scene-cell"
+							class:scene-cell--selected={selectedEntityId === scene.id}
+							title={scene.name}
+							onclick={() => onSelectScene?.(scene.id)}
+						>s{k}</div>
 					{/each}
 				{:else}
 					<div class="scenes-act-empty">· · · · ·</div>
@@ -277,11 +309,17 @@
 	}
 	.act-col-header {
 		border-right: 1px solid var(--color-border, #2a2d35);
+		border-top: 2px solid transparent;
 		padding: 8px 14px;
 		display: flex;
 		flex-direction: column;
 		justify-content: center;
 		gap: 4px;
+		cursor: pointer;
+	}
+	.act-col-header--selected {
+		border-top-color: var(--color-accent, #c8942a);
+		background: rgba(200, 148, 42, 0.04);
 	}
 	.act-col-header:last-child {
 		border-right: none;
@@ -462,6 +500,14 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		cursor: pointer;
+	}
+	.scene-cell:hover {
+		color: var(--color-text, #e8e0d0);
+	}
+	.scene-cell--selected {
+		color: var(--color-accent, #c8942a);
+		background: rgba(200, 148, 42, 0.06);
 	}
 	.scene-cell:last-child {
 		border-right: none;

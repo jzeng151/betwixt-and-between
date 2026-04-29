@@ -34,6 +34,9 @@
 		onLockAcquire: () => void;
 		onLockRelease: () => void;
 		onError: (msg: string) => void;
+		/** Click on a bar (not on a resize handle) selects the interval's
+		 *  entity for the Timeline side panel. (D2/2B-i) */
+		onSelect?: (entityId: string, intervalId: string) => void;
 	}
 	let {
 		entity,
@@ -49,7 +52,8 @@
 		pxForFractionalSpan,
 		onLockAcquire,
 		onLockRelease,
-		onError
+		onError,
+		onSelect
 	}: Props = $props();
 
 	let rowEl: HTMLDivElement | null = $state(null);
@@ -159,11 +163,20 @@
 		{@const leftPct = (previewStart / Math.max(actCount, 1)) * 100}
 		{@const widthPct = (span / Math.max(actCount, 1)) * 100}
 		{@const widthPx = pxForFractionalSpan(span)}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="bar-wrapper"
 			class:resizing={resizing?.intervalId === iv.id}
 			data-tooltip={tooltipFor(entity, iv)}
 			style="left: {leftPct}%; width: {widthPct}%;"
+			onclick={(e) => {
+				// Resize handles still bubble a click on mouse-up after a
+				// drag. Guard so resize doesn't open the editor.
+				const t = e.target as HTMLElement;
+				if (t.closest('.resize-handle')) return;
+				onSelect?.(entity.id, iv.id);
+			}}
 		>
 			<IntervalBar
 				name={entity.name}
