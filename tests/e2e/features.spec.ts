@@ -150,7 +150,7 @@ test.describe('Characters', () => {
 		await expect(detailWin.locator('.hfield-text')).toHaveText('The Conclave', { timeout: 3000 });
 	});
 
-	test('details section contains only Motivation and Notes — not Role', async ({ page, request }) => {
+	test('details section contains Timeline color, Show on timeline, Motivation, Notes — not Role', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } });
 		await page.goto('/');
 
@@ -162,9 +162,21 @@ test.describe('Characters', () => {
 		const detailWin = page.locator('.window[aria-label="Elara"]');
 		await expect(detailWin).toBeVisible();
 
-		// Two field headers: Motivation + Notes. Role lives in the header, not here.
-		await expect(detailWin.locator('.details .field-header')).toHaveCount(2);
-		await expect(detailWin.locator('.details')).not.toContainText('Role');
+		// Four field-header sections: Timeline color, Show on timeline, Motivation,
+		// Notes. Role lives in the header, not here.
+		const headers = detailWin.locator('.details .field-header');
+		await expect(headers).toHaveCount(4);
+		await expect(headers.nth(0)).toContainText('Timeline color');
+		await expect(headers.nth(1)).toContainText('Show on timeline');
+		await expect(headers.nth(2)).toContainText('Motivation');
+		await expect(headers.nth(3)).toContainText('Notes');
+
+		// New feature affordances actually render (color swatches + radio group)
+		await expect(detailWin.locator('.details .swatch')).toHaveCount(8);
+		await expect(detailWin.locator('.details .radio-group input[type="radio"]')).toHaveCount(3);
+
+		// Role label is not rendered inside .details (lives in the window header).
+		await expect(detailWin.locator('.details')).not.toContainText(/^Role$/);
 	});
 });
 
