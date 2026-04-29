@@ -90,10 +90,32 @@
 	let deletingAct: Entity | null = $state(null);
 	let deleteCount = $state(0);
 	let deletingInProgress = $state(false);
+	let deleteError: string | null = $state(null);
+	// Reparent target — '__delete__' = cascade-delete scenes; otherwise an actId.
+	let reparentTarget: string = $state('__delete__');
+
+	const deletingSceneCount = $derived(
+		deletingActId ? scenesByActId.get(deletingActId)?.length ?? 0 : 0
+	);
+	// Other root acts the user could move scenes into.
+	const reparentCandidates = $derived(
+		deletingActId ? acts.filter((a) => a.id !== deletingActId) : []
+	);
 
 	function openDeleteConfirm(act: Entity) {
 		deletingAct = act;
 		deletingActId = act.id;
+		deleteError = null;
+		// Default: if scenes exist and there are other acts, prefer the next
+		// sibling as the reparent target. Otherwise default to delete.
+		const sceneCount = scenesByActId.get(act.id)?.length ?? 0;
+		const others = acts.filter((a) => a.id !== act.id);
+		if (sceneCount > 0 && others.length > 0) {
+			const idx = acts.findIndex((a) => a.id === act.id);
+			reparentTarget = (acts[idx + 1] ?? acts[idx - 1] ?? others[0]).id;
+		} else {
+			reparentTarget = '__delete__';
+		}
 		// Count intervals that reference this act (either endpoint).
 		deleteCount = $intervalsStore.filter(
 			(iv) => iv.startActId === act.id || iv.endActId === act.id
@@ -103,23 +125,74 @@
 	function cancelDelete() {
 		deletingActId = null;
 		deletingAct = null;
+		deleteError = null;
 	}
 
 	async function confirmDelete() {
 		if (!deletingActId) return;
 		deletingInProgress = true;
+		deleteError = null;
 		try {
-			const res = await fetch(`/api/entities/${deletingActId}`, { method: 'DELETE' });
+			const url =
+				deletingSceneCount > 0 && reparentTarget !== '__delete__'
+					? `/api/entities/${deletingActId}?moveScenesTo=${reparentTarget}`
+					: `/api/entities/${deletingActId}`;
+			const res = await fetch(url, { method: 'DELETE' });
 			if (!res.ok) throw new Error(await res.text());
 			// Reload both stores; interval CASCADE happens server-side.
 			await Promise.all([entities.load(), intervalsStore.load()]);
 			deletingActId = null;
 			deletingAct = null;
 		} catch (err) {
-			console.error('[ActsHeader] delete act failed:', err);
+			deleteError = (err as Error).message;
 		} finally {
 			deletingInProgress = false;
 		}
+	}
+
+	// ── Insert-between state ──────────────────────────────────────────────────
+	// `insertingAtIdx` is the position the new Act will get. Server-side
+	// PATCH/POST cascades siblings >= position by +1. (D1/1A + D6/5A)
+	let insertingAtIdx: number | null = $state(null);
+	let insertName = $state('');
+	let savingInsert = $state(false);
+	let insertError: string | null = $state(null);
+
+	function openInsertAt(idx: number) {
+		insertingAtIdx = idx;
+		insertName = '';
+		insertError = null;
+	}
+	function cancelInsert() {
+		insertingAtIdx = null;
+		insertName = '';
+		insertError = null;
+	}
+	async function commitInsert() {
+		if (insertingAtIdx == null) return;
+		const name = insertName.trim();
+		if (!name || savingInsert) return;
+		savingInsert = true;
+		insertError = null;
+		try {
+			const res = await fetch('/api/entities', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ type: 'Act', name, position: insertingAtIdx })
+			});
+			if (!res.ok) throw new Error(await res.text());
+			await Promise.all([entities.load(), intervalsStore.load()]);
+			insertingAtIdx = null;
+			insertName = '';
+		} catch (err) {
+			insertError = (err as Error).message;
+		} finally {
+			savingInsert = false;
+		}
+	}
+	function handleInsertKey(e: KeyboardEvent) {
+		if (e.key === 'Enter') commitInsert();
+		if (e.key === 'Escape') cancelInsert();
 	}
 
 	// ── Add-act state (trailing tile) ─────────────────────────────────────────
@@ -170,8 +243,34 @@
 
 <!-- Acts header -->
 <div class="acts-header">
-	{#each acts as act (act.id)}
+	{#each acts as act, actIdx (act.id)}
 		{@const sceneCount = scenesByActId.get(act.id)?.length ?? 0}
+		<!-- Insert-between sliver before each act. Click reveals inline name input. -->
+		<div class="insert-sliver" class:active={insertingAtIdx === actIdx}>
+			{#if insertingAtIdx === actIdx}
+				<!-- svelte-ignore a11y_autofocus -->
+				<input
+					class="insert-input"
+					type="text"
+					placeholder="Act name"
+					bind:value={insertName}
+					onkeydown={handleInsertKey}
+					onblur={() => { if (!savingInsert && !insertName.trim()) cancelInsert(); }}
+					disabled={savingInsert}
+					autofocus
+					aria-label="Insert act before {act.name}"
+				/>
+				{#if insertError}<div class="insert-error">{insertError}</div>{/if}
+			{:else}
+				<button
+					class="insert-btn"
+					aria-label="Insert act before {act.name}"
+					title="Insert act before {act.name}"
+					onclick={() => openInsertAt(actIdx)}
+				>+</button>
+			{/if}
+		</div>
+
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
@@ -203,6 +302,35 @@
 							This removes {deleteCount} interval{deleteCount === 1 ? '' : 's'}.
 						{/if}
 					</span>
+					{#if deletingSceneCount > 0 && reparentCandidates.length > 0}
+						<div class="reparent-picker">
+							<div class="reparent-label">
+								Move {deletingSceneCount} scene{deletingSceneCount === 1 ? '' : 's'} to:
+							</div>
+							{#each reparentCandidates as cand (cand.id)}
+								<label class="reparent-opt">
+									<input
+										type="radio"
+										name="reparent-{act.id}"
+										value={cand.id}
+										bind:group={reparentTarget}
+										disabled={deletingInProgress}
+									/>
+									<span>{cand.name}</span>
+								</label>
+							{/each}
+							<label class="reparent-opt reparent-opt--danger">
+								<input
+									type="radio"
+									name="reparent-{act.id}"
+									value="__delete__"
+									bind:group={reparentTarget}
+									disabled={deletingInProgress}
+								/>
+								<span>Delete scenes too</span>
+							</label>
+						</div>
+					{/if}
 					<div class="delete-confirm-btns">
 						<button
 							class="btn-danger"
@@ -211,6 +339,7 @@
 						>{deletingInProgress ? '…' : 'Delete'}</button>
 						<button class="btn-cancel" onclick={cancelDelete} disabled={deletingInProgress}>Cancel</button>
 					</div>
+					{#if deleteError}<div class="scene-error">{deleteError}</div>{/if}
 				</div>
 			{:else if expandingActId === act.id}
 				<div class="scene-form">
@@ -277,6 +406,8 @@
 {#if acts.length > 0}
 	<div class="scenes-row">
 		{#each acts as act (act.id)}
+			<!-- Spacer matching the .insert-sliver in the header so columns align -->
+			<div class="scenes-insert-spacer"></div>
 			<div class="scenes-act">
 				{#if (scenesByActId.get(act.id)?.length ?? 0) > 0}
 					{#each scenesByActId.get(act.id)! as scene, k (scene.id)}
@@ -306,6 +437,63 @@
 		background: var(--color-surface-2, #1c1f28);
 		border-bottom: 1px solid var(--color-border, #2a2d35);
 		align-items: stretch;
+	}
+
+	/* Insert-between sliver — collapsed by default, expands on hover or
+	   when the input is active. Sits in the flex row between act headers. */
+	.insert-sliver {
+		flex: 0 0 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		position: relative;
+		transition: flex-basis 0.12s ease;
+	}
+	.insert-sliver:hover,
+	.insert-sliver.active {
+		flex: 0 0 140px;
+	}
+	.insert-btn {
+		opacity: 0;
+		background: transparent;
+		border: 1px dashed var(--color-text-muted, #6b7280);
+		color: var(--color-text-muted, #6b7280);
+		border-radius: 4px;
+		font-size: 13px;
+		line-height: 1;
+		padding: 2px 8px;
+		cursor: pointer;
+		transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+	}
+	.insert-sliver:hover .insert-btn {
+		opacity: 1;
+	}
+	.insert-btn:hover {
+		color: var(--color-accent, #c8942a);
+		border-color: var(--color-accent, #c8942a);
+	}
+	.insert-input {
+		width: 100%;
+		background: var(--color-surface, #161920);
+		color: var(--color-text, #e8e0d0);
+		border: 1px solid var(--color-accent, #c8942a);
+		border-radius: 4px;
+		padding: 4px 6px;
+		font-family: var(--font-display, 'Fraunces', Georgia, serif);
+		font-size: 12px;
+		outline: none;
+	}
+	.insert-error {
+		position: absolute;
+		bottom: -14px;
+		left: 0;
+		right: 0;
+		font-size: 9px;
+		color: #ef4444;
+		text-align: center;
+	}
+	.scenes-insert-spacer {
+		flex: 0 0 6px;
 	}
 	.act-col-header {
 		border-right: 1px solid var(--color-border, #2a2d35);
@@ -426,6 +614,32 @@
 	.delete-confirm-btns {
 		display: flex;
 		gap: 6px;
+	}
+	.reparent-picker {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		padding: 4px 0;
+	}
+	.reparent-label {
+		font-size: 10px;
+		color: var(--color-text-muted, #6b7280);
+		margin-bottom: 2px;
+	}
+	.reparent-opt {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 10px;
+		color: var(--color-text, #e8e0d0);
+		cursor: pointer;
+	}
+	.reparent-opt input[type='radio'] {
+		margin: 0;
+		accent-color: var(--color-accent, #c8942a);
+	}
+	.reparent-opt--danger {
+		color: #ef4444;
 	}
 
 	/* Shared button styles */
