@@ -197,7 +197,7 @@ describe('updateInterval', () => {
 		});
 		expect(row.endPosition).toBeCloseTo(1.0, 9);
 
-		const updated = await updateInterval(db, row.id, { endActId: acts.act2 });
+		const { updated } = await updateInterval(db, row.id, { endActId: acts.act2 });
 		expect(updated.endPosition).toBeCloseTo(3.0, 9);
 	});
 
@@ -218,7 +218,7 @@ describe('updateInterval', () => {
 		// [0, 1) and [0, 3). Per the merge-on-overlap rule (UX request),
 		// these should fold into one [0, 3) row anchored to the dragged
 		// interval's id; the absorbed sibling row disappears.
-		const merged = await updateInterval(db, second.id, { startActId: acts.act0 });
+		const { updated: merged } = await updateInterval(db, second.id, { startActId: acts.act0 });
 		expect(merged.id).toBe(second.id);
 		expect(merged.startPosition).toBeCloseTo(0, 9);
 		expect(merged.endPosition).toBeCloseTo(3, 9);
@@ -226,6 +226,34 @@ describe('updateInterval', () => {
 		expect(remaining.map((r) => r.id).sort()).toEqual([second.id]);
 		// The first row was absorbed into the merge — it should be gone.
 		expect(remaining.find((r) => r.id === first.id)).toBeUndefined();
+	});
+
+	it('returns the absorbed sibling ids so the client can prune its store', async () => {
+		const a = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act0,
+			endActId: acts.act0
+		});
+		const b = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act2,
+			endActId: acts.act2
+		});
+		const result = await updateInterval(db, b.id, {
+			startActId: acts.act0
+		});
+		expect(result.absorbed).toEqual([a.id]);
+		expect(result.updated.id).toBe(b.id);
+	});
+
+	it('returns empty absorbed array when no merge happens', async () => {
+		const a = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act0,
+			endActId: acts.act0
+		});
+		const result = await updateInterval(db, a.id, { endActId: acts.act1 });
+		expect(result.absorbed).toEqual([]);
 	});
 
 	it('merges multiple absorbed siblings into a single union range', async () => {
@@ -251,7 +279,7 @@ describe('updateInterval', () => {
 		// also absorb a since it now overlaps via the union with c.
 		// Actually b becomes [1, 3) which doesn't overlap a — only c. So
 		// stretch b further: [0, 3). Use startActId AND endActId update.
-		const merged = await updateInterval(db, b.id, {
+		const { updated: merged } = await updateInterval(db, b.id, {
 			startActId: acts.act0,
 			endActId: acts.act2
 		});
@@ -278,7 +306,7 @@ describe('updateInterval', () => {
 			startActId: acts.act2,
 			endActId: acts.act2
 		});
-		const updated = await updateInterval(db, second.id, { startActId: acts.act1 });
+		const { updated } = await updateInterval(db, second.id, { startActId: acts.act1 });
 		expect(updated.startPosition).toBeCloseTo(1, 9);
 		expect(updated.endPosition).toBeCloseTo(3, 9);
 		// Both rows survive.
@@ -296,7 +324,7 @@ describe('updateInterval', () => {
 		});
 
 		// Shrink to just Act 1 → [1, 2). No other rows for Ellie, so no overlap.
-		const updated = await updateInterval(db, row.id, {
+		const { updated } = await updateInterval(db, row.id, {
 			startActId: acts.act1,
 			endActId: acts.act1
 		});

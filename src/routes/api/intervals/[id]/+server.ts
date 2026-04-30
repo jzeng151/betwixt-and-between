@@ -34,7 +34,7 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	} = body;
 
 	try {
-		const updated = await updateInterval(db, params.id, {
+		const { updated, absorbed } = await updateInterval(db, params.id, {
 			entityId: entityId ?? entity_id,
 			startActId: startActId ?? start_act_id,
 			startSceneId: startSceneId !== undefined ? startSceneId : start_scene_id,
@@ -43,7 +43,10 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 			startPosition: startPosition ?? start_position,
 			endPosition: endPosition ?? end_position
 		});
-		return json(updated);
+		// Embed absorbed IDs in the response so the client can prune any
+		// merged-away rows from its store. `absorbed` is empty in the
+		// non-merge happy path.
+		return json({ ...updated, absorbed });
 	} catch (err) {
 		error(400, (err as Error).message);
 	}

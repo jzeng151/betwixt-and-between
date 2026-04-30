@@ -88,8 +88,19 @@ function createIntervalStore() {
 			await load();
 			throw new Error(await errorMessage(res));
 		}
-		const updated: Interval = await res.json();
-		update((all) => all.map((i) => (i.id === id ? updated : i)));
+		// API returns `{ ...updatedRow, absorbed: string[] }` where `absorbed`
+		// is the list of sibling rows the server merged into this update.
+		// We need to drop those from the store so stale bars stop rendering.
+		const body: Interval & { absorbed?: string[] } = await res.json();
+		const absorbed = new Set(body.absorbed ?? []);
+		const updated: Interval = { ...body };
+		// strip the helper field so the store entries match the Interval type
+		delete (updated as Interval & { absorbed?: string[] }).absorbed;
+		update((all) =>
+			all
+				.filter((i) => !absorbed.has(i.id))
+				.map((i) => (i.id === id ? updated : i))
+		);
 		return updated;
 	}
 

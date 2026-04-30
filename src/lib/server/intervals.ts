@@ -406,11 +406,19 @@ export async function writeInterval(
  * Patch an existing interval. Caller can change any combination of FKs;
  * positions always recompute from the resulting FK state.
  */
+export interface UpdateIntervalResult {
+	updated: typeof intervals.$inferSelect;
+	/** IDs of sibling rows of the same entity whose ranges overlapped the
+	 *  patched range and were merged into the result. The caller's client
+	 *  store needs to remove these from its copy. */
+	absorbed: string[];
+}
+
 export async function updateInterval(
 	db: DB,
 	id: string,
 	patch: Partial<WriteIntervalInput>
-): Promise<typeof intervals.$inferSelect> {
+): Promise<UpdateIntervalResult> {
 	const [existing] = await db.select().from(intervals).where(eq(intervals.id, id));
 	if (!existing) throw new Error(`Interval not found: ${id}`);
 
@@ -487,6 +495,7 @@ export async function updateInterval(
 	let unionStartSceneId = merged.startSceneId ?? null;
 	let unionEndActId = merged.endActId;
 	let unionEndSceneId = merged.endSceneId ?? null;
+	const absorbed: string[] = [];
 
 	if (overlappers.length > 0) {
 		// Compute the union range and pick FKs from whichever interval owns
@@ -529,6 +538,7 @@ export async function updateInterval(
 		// row-per-entity-position invariant holds.
 		for (const row of overlappers) {
 			await db.delete(intervals).where(eq(intervals.id, row.id));
+			absorbed.push(row.id);
 		}
 	}
 
@@ -546,7 +556,7 @@ export async function updateInterval(
 		})
 		.where(eq(intervals.id, id))
 		.returning();
-	return updated;
+	return { updated, absorbed };
 }
 
 // =============================================================================
