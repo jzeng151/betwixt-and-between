@@ -445,44 +445,49 @@
 	<!-- ── Main timeline ──────────────────────────────────────────────── -->
 	<div class="timeline" style="--tl-gutter: {gutterPx}px">
 		<div class="timeline-controls">
-			<button
-				class="act-add-btn"
-				aria-label="Add act"
-				disabled={savingAct}
-				onclick={addAct}
-			>+ Act</button>
-			<button
-				class="scrub-toggle"
-				class:active={$playhead != null}
-				onclick={() => playhead.toggle(0)}
-				title={$playhead == null
-					? 'Spotlight a moment in story-time'
-					: 'Hide the spotlight'}
-			>
-				{#if $playhead == null}
-					▶ Spotlight
-				{:else}
-					◼ Hide spotlight
-					<span class="scrub-pos">T = {$playhead.toFixed(2)}</span>
-				{/if}
-			</button>
-			<div class="spotlight-help-wrap">
+			<span class="ctrl-spacer"></span>
+			<div class="ctrl-center">
 				<button
-					type="button"
-					class="spotlight-help"
-					class:open={spotlightHelpOpen}
-					aria-label="What is Spotlight?"
-					aria-expanded={spotlightHelpOpen}
-					onclick={() => (spotlightHelpOpen = !spotlightHelpOpen)}
-				>?</button>
-				{#if spotlightHelpOpen}
-					<div class="spotlight-help-popover" role="dialog" aria-label="Spotlight help">
-						<p class="spotlight-help-title">Spotlight a moment in story-time.</p>
-						<p>Story Graph dims characters and events not present at this moment.</p>
-						<p>World Map dims locations no one is at.</p>
-						<p>Drag the amber line on the timeline to move.</p>
-					</div>
-				{/if}
+					class="scrub-toggle"
+					class:active={$playhead != null}
+					onclick={() => playhead.toggle(0)}
+					title={$playhead == null
+						? 'Spotlight a moment in story-time'
+						: 'Hide the spotlight'}
+				>
+					{#if $playhead == null}
+						▶ Spotlight
+					{:else}
+						◼ Hide spotlight
+						<span class="scrub-pos">T = {$playhead.toFixed(2)}</span>
+					{/if}
+				</button>
+				<div class="spotlight-help-wrap">
+					<button
+						type="button"
+						class="spotlight-help"
+						class:open={spotlightHelpOpen}
+						aria-label="What is Spotlight?"
+						aria-expanded={spotlightHelpOpen}
+						onclick={() => (spotlightHelpOpen = !spotlightHelpOpen)}
+					>?</button>
+					{#if spotlightHelpOpen}
+						<div class="spotlight-help-popover" role="dialog" aria-label="Spotlight help">
+							<p class="spotlight-help-title">Spotlight a moment in story-time.</p>
+							<p>Story Graph dims characters and events not present at this moment.</p>
+							<p>World Map dims locations no one is at.</p>
+							<p>Drag the amber line on the timeline to move.</p>
+						</div>
+					{/if}
+				</div>
+			</div>
+			<div class="ctrl-right">
+				<button
+					class="act-add-btn"
+					aria-label="Add act"
+					disabled={savingAct}
+					onclick={addAct}
+				>+ Act</button>
 			</div>
 		</div>
 
@@ -619,13 +624,25 @@
 	}
 
 	.timeline-controls {
-		display: flex;
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
-		justify-content: flex-end;
 		padding: 8px 14px;
 		border-bottom: 1px solid var(--color-border, #2a2d35);
 		background: var(--color-surface-2, #1c1f28);
 		gap: 8px;
+	}
+	.ctrl-spacer {
+		display: block;
+	}
+	.ctrl-center {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.ctrl-right {
+		display: flex;
+		justify-content: flex-end;
 	}
 	.act-add-btn {
 		background: transparent;
