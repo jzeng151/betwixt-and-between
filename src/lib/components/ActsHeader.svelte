@@ -362,32 +362,6 @@
 <div class="acts-header">
 	{#each acts as act, actIdx (act.id)}
 		{@const sceneCount = scenesByActId.get(act.id)?.length ?? 0}
-		<!-- Insert-between sliver before each act. Click reveals inline name input. -->
-		<div class="insert-sliver" class:active={insertingAtIdx === actIdx}>
-			{#if insertingAtIdx === actIdx}
-				<!-- svelte-ignore a11y_autofocus -->
-				<input
-					class="insert-input"
-					type="text"
-					placeholder="Act name"
-					bind:value={insertName}
-					onkeydown={handleInsertKey}
-					onblur={() => { if (!savingInsert && !insertName.trim()) cancelInsert(); }}
-					disabled={savingInsert}
-					autofocus
-					aria-label="Insert act before {act.name}"
-				/>
-				{#if insertError}<div class="insert-error">{insertError}</div>{/if}
-			{:else}
-				<button
-					class="insert-btn"
-					aria-label="Insert act before {act.name}"
-					title="Insert act before {act.name}"
-					onclick={() => openInsertAt(actIdx)}
-				>+</button>
-			{/if}
-		</div>
-
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
@@ -404,10 +378,38 @@
 				// Don't hijack clicks on inner buttons / inputs / textareas
 				// or the drag grip.
 				const t = e.target as HTMLElement;
-				if (t.closest('button, input, textarea, .act-grip')) return;
+				if (t.closest('button, input, textarea, .act-grip, .insert-overlay')) return;
 				onSelectAct?.(act.id);
 			}}
 		>
+			<!-- Insert-between overlay on the act's LEFT boundary. Hover reveals
+			     the + button; clicking expands an inline name input. Absolute
+			     so it doesn't take flex space (D6/5A + alignment fix). -->
+			<div class="insert-overlay" class:active={insertingAtIdx === actIdx}>
+				{#if insertingAtIdx === actIdx}
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						class="insert-input"
+						type="text"
+						placeholder="Act name"
+						bind:value={insertName}
+						onkeydown={handleInsertKey}
+						onblur={() => { if (!savingInsert && !insertName.trim()) cancelInsert(); }}
+						disabled={savingInsert}
+						autofocus
+						aria-label="Insert act before {act.name}"
+					/>
+					{#if insertError}<div class="insert-error">{insertError}</div>{/if}
+				{:else}
+					<button
+						class="insert-btn"
+						aria-label="Insert act before {act.name}"
+						title="Insert act before {act.name}"
+						onclick={(e) => { e.stopPropagation(); openInsertAt(actIdx); }}
+					>+</button>
+				{/if}
+			</div>
+
 			<div class="act-name-row">
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<span
@@ -505,33 +507,35 @@
 		</div>
 	{/each}
 
-	<!-- Trailing "+ Act" tile -->
-	<div class="act-add-tile">
-		{#if addingAct}
-			<!-- svelte-ignore a11y_autofocus -->
-			<input
-				class="act-add-input"
-				type="text"
-				placeholder="Act name"
-				bind:value={newActName}
-				onkeydown={handleAddActKey}
-				onblur={() => { if (!savingAct && !newActName.trim()) cancelAddAct(); }}
-				disabled={savingAct}
-				autofocus
-				aria-label="New act name"
-			/>
-			{#if addActError}<div class="act-add-error">{addActError}</div>{/if}
-		{:else}
-			<button
-				class="act-add-btn"
-				aria-label="Add act"
-				onclick={openAddAct}
-			>+ Act</button>
-		{/if}
-	</div>
-
 	{#if acts.length === 0}
 		<div class="acts-empty">No acts yet. Click + Act to begin your story.</div>
+	{/if}
+</div>
+
+<!-- Append-act control rendered ABOVE the acts-header in the controls bar
+     by Timeline.svelte. Kept as a separate row so the acts-header itself
+     contains only flex:1 act columns — bars in the .rows track align. -->
+<div class="append-act-row">
+	{#if addingAct}
+		<!-- svelte-ignore a11y_autofocus -->
+		<input
+			class="act-add-input"
+			type="text"
+			placeholder="New act name"
+			bind:value={newActName}
+			onkeydown={handleAddActKey}
+			onblur={() => { if (!savingAct && !newActName.trim()) cancelAddAct(); }}
+			disabled={savingAct}
+			autofocus
+			aria-label="New act name"
+		/>
+		{#if addActError}<div class="act-add-error">{addActError}</div>{/if}
+	{:else}
+		<button
+			class="act-add-btn"
+			aria-label="Add act"
+			onclick={openAddAct}
+		>+ Act</button>
 	{/if}
 </div>
 
@@ -539,8 +543,6 @@
 {#if acts.length > 0}
 	<div class="scenes-row">
 		{#each acts as act (act.id)}
-			<!-- Spacer matching the .insert-sliver in the header so columns align -->
-			<div class="scenes-insert-spacer"></div>
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				class="scenes-act"
@@ -569,8 +571,6 @@
 				{/if}
 			</div>
 		{/each}
-		<!-- Spacer column to align with the trailing + Act tile -->
-		<div class="scenes-act-spacer"></div>
 	</div>
 {/if}
 
@@ -587,33 +587,40 @@
 		align-items: stretch;
 	}
 
-	/* Insert-between sliver — collapsed by default, expands on hover or
-	   when the input is active. Sits in the flex row between act headers. */
-	.insert-sliver {
-		flex: 0 0 6px;
+	/* Insert-between overlay — absolute child of each act-col-header,
+	   positioned over the LEFT boundary so it doesn't take flex space.
+	   Hover reveals the + button; activation expands to an inline name input. */
+	.insert-overlay {
+		position: absolute;
+		top: 0;
+		left: -8px;
+		bottom: 0;
+		width: 16px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		position: relative;
-		transition: flex-basis 0.12s ease;
+		z-index: 5;
+		pointer-events: auto;
 	}
-	.insert-sliver:hover,
-	.insert-sliver.active {
-		flex: 0 0 140px;
+	.insert-overlay.active {
+		width: 160px;
+		left: -80px;
+		background: var(--color-surface-2, #1c1f28);
 	}
 	.insert-btn {
 		opacity: 0;
-		background: transparent;
+		background: var(--color-surface, #161920);
 		border: 1px dashed var(--color-text-muted, #6b7280);
 		color: var(--color-text-muted, #6b7280);
 		border-radius: 4px;
 		font-size: 13px;
 		line-height: 1;
-		padding: 2px 8px;
+		padding: 0 6px;
+		height: 22px;
 		cursor: pointer;
 		transition: opacity 0.12s, color 0.12s, border-color 0.12s;
 	}
-	.insert-sliver:hover .insert-btn {
+	.insert-overlay:hover .insert-btn {
 		opacity: 1;
 	}
 	.insert-btn:hover {
@@ -640,8 +647,8 @@
 		color: #ef4444;
 		text-align: center;
 	}
-	.scenes-insert-spacer {
-		flex: 0 0 6px;
+	.act-col-header {
+		position: relative;
 	}
 	.act-col-header {
 		border-right: 1px solid var(--color-border, #2a2d35);
@@ -923,14 +930,15 @@
 		justify-content: center;
 	}
 
-	/* Trailing add-act tile and matching scenes-row spacer */
-	.act-add-tile {
-		flex: 0 0 100px;
-		border-left: 1px dashed var(--color-border, #2a2d35);
+	/* Append-act row — sits ABOVE the acts-header so the header stays as
+	   N pure flex:1 act columns (bars in .rows align to act-col edges). */
+	.append-act-row {
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		padding: 6px;
+		justify-content: flex-end;
+		padding: 4px 12px;
+		border-bottom: 1px solid var(--color-border, #2a2d35);
+		background: var(--color-surface-2, #1c1f28);
 	}
 	.act-add-btn {
 		background: transparent;
@@ -950,7 +958,7 @@
 		background: rgba(200, 148, 42, 0.06);
 	}
 	.act-add-input {
-		width: 100%;
+		width: 200px;
 		background: var(--color-surface, #161920);
 		color: var(--color-text, #e8e0d0);
 		border: 1px solid var(--color-accent, #c8942a);
@@ -963,11 +971,7 @@
 	.act-add-error {
 		font-size: 9px;
 		color: #ef4444;
-		margin-top: 4px;
-	}
-	.scenes-act-spacer {
-		flex: 0 0 100px;
-		border-left: 1px dashed var(--color-border, #2a2d35);
+		margin-left: 8px;
 	}
 	.reorder-error {
 		position: fixed;
