@@ -3,7 +3,7 @@ import { db } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { recomputeAllIntervals, recomputeIntervalsForAct } from '$lib/server/intervals.js';
 import { intervals as intervalsTable } from '$lib/server/db/schema.js';
-import { and, eq, gt, gte, isNull, lt, ne, sql } from 'drizzle-orm';
+import { and, eq, gt, gte, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ params }) => {
@@ -210,7 +210,85 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 		}
 	}
 
-	// Now delete the entity. FK CASCADE handles intervals + remaining scenes.
+	// Pre-rescope intervals touching this act before the cascade deletes them.
+	// FK is onDelete: 'cascade', so any interval with startActId or endActId
+	// pointing here would otherwise be removed entirely. Instead, reassign
+	// the boundary to the adjacent surviving act so the character/event
+	// scope shrinks rather than disappearing. Intervals fully contained in
+	// this act (both ends here) cannot be salvaged and still get deleted.
+	if (entity.type === 'Act') {
+		const allActs = await db
+			.select({ id: entities.id, position: entities.position, createdAt: entities.createdAt })
+			.from(entities)
+			.where(and(eq(entities.type, 'Act'), isNull(entities.parentId)))
+			.orderBy(entities.position, entities.createdAt);
+		const deletedIdx = allActs.findIndex((a) => a.id === params.id);
+		if (deletedIdx >= 0 && allActs.length > 1) {
+			const prevAct = deletedIdx > 0 ? allActs[deletedIdx - 1] : null;
+			const nextAct = deletedIdx < allActs.length - 1 ? allActs[deletedIdx + 1] : null;
+
+			const touched = await db
+				.select()
+				.from(intervalsTable)
+				.where(
+					or(
+						eq(intervalsTable.startActId, params.id),
+						eq(intervalsTable.endActId, params.id)
+					)
+				);
+
+			for (const iv of touched) {
+				const startInDeleted = iv.startActId === params.id;
+				const endInDeleted = iv.endActId === params.id;
+
+				// Both endpoints in the deleted act → no salvageable scope.
+				if (startInDeleted && endInDeleted) {
+					await db.delete(intervalsTable).where(eq(intervalsTable.id, iv.id));
+					continue;
+				}
+
+				if (endInDeleted) {
+					// Clamp end to end-of-prev-act. If no prev, no salvage.
+					if (!prevAct) {
+						await db.delete(intervalsTable).where(eq(intervalsTable.id, iv.id));
+						continue;
+					}
+					const newEndPos = (prevAct.position ?? deletedIdx - 1) + 1;
+					await db
+						.update(intervalsTable)
+						.set({
+							endActId: prevAct.id,
+							endSceneId: null,
+							endPosition: newEndPos,
+							updatedAt: sql`(unixepoch())` as unknown as Date
+						})
+						.where(eq(intervalsTable.id, iv.id));
+				}
+
+				if (startInDeleted) {
+					// Clamp start to start-of-next-act. If no next, no salvage.
+					if (!nextAct) {
+						await db.delete(intervalsTable).where(eq(intervalsTable.id, iv.id));
+						continue;
+					}
+					const newStartPos = nextAct.position ?? deletedIdx + 1;
+					await db
+						.update(intervalsTable)
+						.set({
+							startActId: nextAct.id,
+							startSceneId: null,
+							startPosition: newStartPos,
+							updatedAt: sql`(unixepoch())` as unknown as Date
+						})
+						.where(eq(intervalsTable.id, iv.id));
+				}
+			}
+		}
+	}
+
+	// Now delete the entity. FK CASCADE handles remaining scenes (and any
+	// intervals still anchored to this act, which by now should only be
+	// the unsalvageable fully-contained ones we already deleted above).
 	await db.delete(entities).where(eq(entities.id, params.id));
 
 	// Recompute survivors. Act delete shifts every act's index; recompute all.
