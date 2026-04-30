@@ -20,6 +20,10 @@
 		selectedEntityId?: string | null;
 		/** Per-act flex weights (parallel to `acts`). Drives column widths. */
 		weights?: number[];
+		/** Per-act pixel widths (parallel to `acts`). Used directly as
+		 *  flex-basis on both .acts-header and .scenes-row so the two rows
+		 *  end at identical x. Avoids Firefox flex auto-min-size quirks. */
+		actPxWidths?: number[];
 		/** Track width in pixels — used to convert drag-dx to weight delta. */
 		trackWidthPx?: number;
 		/** Click on an act header (not on a button) selects the act. */
@@ -37,6 +41,7 @@
 		scenesByActId,
 		selectedEntityId = null,
 		weights,
+		actPxWidths,
 		trackWidthPx = 0,
 		onSelectAct,
 		onSelectScene,
@@ -403,7 +408,9 @@
 			class:act-col-header--dragging={dragActId === act.id}
 			class:act-drop-left={actDropTarget?.idx === actIdx && actDropTarget?.side === 'left' && dragActId !== act.id}
 			class:act-drop-right={actDropTarget?.idx === actIdx && actDropTarget?.side === 'right' && dragActId !== act.id}
-			style="flex: {weights?.[actIdx] ?? 1};"
+			style={actPxWidths?.[actIdx] != null
+				? `flex: 0 0 ${actPxWidths[actIdx]}px;`
+				: `flex: ${weights?.[actIdx] ?? 1};`}
 			ondragover={(e) => actDragOver(e, actIdx)}
 			ondrop={(e) => actDrop(e, actIdx)}
 			ondragleave={() => { if (actDropTarget?.idx === actIdx) actDropTarget = null; }}
@@ -567,7 +574,9 @@
 			<div
 				class="scenes-act"
 				class:scenes-act--drop={sceneDropTarget?.actId === act.id}
-				style="flex: {weights?.[sceneActIdx] ?? 1};"
+				style={actPxWidths?.[sceneActIdx] != null
+					? `flex: 0 0 ${actPxWidths[sceneActIdx]}px;`
+					: `flex: ${weights?.[sceneActIdx] ?? 1};`}
 				ondragover={(e) => sceneActDragOver(e, act.id)}
 				ondrop={(e) => sceneActDrop(e, act.id)}
 				ondragleave={() => { if (sceneDropTarget?.actId === act.id) sceneDropTarget = null; }}
@@ -684,12 +693,15 @@
 		justify-content: center;
 		gap: 4px;
 		cursor: pointer;
-		/* Floor that pairs with the JS MIN_ACT_PX clamp. box-sizing:
-		   border-box makes min-width count the 28px horizontal padding +
-		   1px right border, so the act column and the .scenes-act below
-		   it (also min-width: 60px border-box) bottom out at the SAME
-		   total pixel width. Without border-box they'd disagree by 29px. */
-		min-width: 60px;
+		/* Override flex's default min-width: auto so the column actually
+		   shrinks to its flex-allocated width. Without this, intrinsic
+		   min-content (~87px from the Fraunces title + grip + delete +
+		   "Break into scenes" link) pins the column wider than its flex
+		   share, while .scenes-act below it (no padding, just s0/s1 text)
+		   shrinks to the lower flex share. The two rows desync by exactly
+		   that gap. The visual minimum is now enforced by the JS
+		   MIN_ACT_PX clamp in moveWidthDrag instead. */
+		min-width: 0;
 		box-sizing: border-box;
 		overflow: hidden;
 	}
@@ -706,6 +718,9 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 6px;
+		/* Break the min-content propagation chain so the parent
+		   .act-col-header can actually shrink to its flex allocation. */
+		min-width: 0;
 	}
 	.act-grip {
 		opacity: 0;
@@ -789,10 +804,17 @@
 	.act-meta {
 		font-size: 10px;
 		color: var(--color-text-muted, #6b7280);
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	/* Break-into-scenes button */
 	.break-btn {
+		display: block;
+		width: 100%;
+		text-align: left;
 		background: none;
 		border: none;
 		color: var(--color-text-muted, #6b7280);
@@ -802,6 +824,15 @@
 		font-family: inherit;
 		text-decoration: underline dotted;
 		transition: color 0.15s;
+		/* display: block + width: 100% makes the button flow with parent
+		   width instead of using its content's intrinsic width. min-width: 0
+		   removes the flex automatic-min-size floor; overflow + ellipsis
+		   handle the visual truncation when the column is narrower than
+		   the label. */
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.break-btn:hover {
 		color: var(--color-accent, #c8942a);
@@ -939,10 +970,8 @@
 		flex: 1;
 		border-right: 1px solid var(--color-border, #2a2d35);
 		display: flex;
-		/* Mirror the act-col-header floor so scenes can't shrink past it.
-		   box-sizing: border-box keeps the 60px floor consistent with
-		   .act-col-header's padded total width. */
-		min-width: 60px;
+		/* Match .act-col-header's min-width: 0 + JS-enforced floor. */
+		min-width: 0;
 		box-sizing: border-box;
 	}
 	.scenes-act:last-child {

@@ -229,6 +229,17 @@
 		return (posToFrac(end) - posToFrac(start)) * trackWidthPx;
 	}
 
+	// Pixel widths for each act, parallel to acts/weights. Used to pin both
+	// the .acts-header and .scenes-row columns to identical pixel widths
+	// instead of relying on flex auto-sizing, which Firefox refuses to
+	// shrink below the act header's min-content even with min-width: 0
+	// declared. By writing the width inline as flex-basis on both rows,
+	// we get pixel-exact alignment regardless of inner content min-size.
+	const actPxWidths = $derived.by(() => {
+		if (totalWeight === 0 || trackWidthPx === 0) return [] as number[];
+		return weights.map((w) => (w / totalWeight) * trackWidthPx);
+	});
+
 	// ── Per-bar render state ─────────────────────────────────────────────────
 	function tooltipFor(entity: Entity, interval: Interval): string {
 		const range = presenceLabel(interval.startPosition, interval.endPosition);
@@ -456,6 +467,7 @@
 			{scenesByActId}
 			{selectedEntityId}
 			{weights}
+			{actPxWidths}
 			{trackWidthPx}
 			onSelectAct={selectFromTimeline}
 			onSelectScene={selectFromTimeline}
