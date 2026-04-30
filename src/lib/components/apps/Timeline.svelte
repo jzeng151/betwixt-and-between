@@ -392,6 +392,22 @@
 
 	// ── Spotlight help popover ──────────────────────────────────────────────
 	let spotlightHelpOpen = $state(false);
+	let spotlightHelpWrapEl: HTMLDivElement | null = $state(null);
+	// Position the popover via fixed coords derived from the (?) wrap
+	// rect so it escapes any overflow:hidden ancestor (e.g. .timeline)
+	// and clamps inside the viewport at narrow widths.
+	const spotlightHelpStyle = $derived.by(() => {
+		if (!spotlightHelpOpen || !spotlightHelpWrapEl) return '';
+		const r = spotlightHelpWrapEl.getBoundingClientRect();
+		const W = 260;
+		const PAD = 8;
+		const top = r.bottom + 6;
+		let left = r.right - W;
+		if (left < PAD) left = PAD;
+		const maxLeft = window.innerWidth - W - PAD;
+		if (left > maxLeft) left = maxLeft;
+		return `position: fixed; top: ${top}px; left: ${left}px; right: auto;`;
+	});
 	$effect(() => {
 		if (!spotlightHelpOpen) return;
 		// Close on outside click / Escape so a second toggle of the (?) is
@@ -459,10 +475,10 @@
 						▶ Spotlight
 					{:else}
 						◼ Hide spotlight
-						<span class="scrub-pos">T = {$playhead.toFixed(2)}</span>
+						<span class="scrub-pos">Time = {$playhead.toFixed(2)}</span>
 					{/if}
 				</button>
-				<div class="spotlight-help-wrap">
+				<div class="spotlight-help-wrap" bind:this={spotlightHelpWrapEl}>
 					<button
 						type="button"
 						class="spotlight-help"
@@ -472,7 +488,12 @@
 						onclick={() => (spotlightHelpOpen = !spotlightHelpOpen)}
 					>?</button>
 					{#if spotlightHelpOpen}
-						<div class="spotlight-help-popover" role="dialog" aria-label="Spotlight help">
+						<div
+							class="spotlight-help-popover"
+							role="dialog"
+							aria-label="Spotlight help"
+							style={spotlightHelpStyle}
+						>
 							<p class="spotlight-help-title">Spotlight a moment in story-time.</p>
 							<p>Story Graph dims characters and events not present at this moment.</p>
 							<p>World Map dims locations no one is at.</p>
@@ -725,9 +746,9 @@
 		border-color: var(--color-accent, #c8942a);
 	}
 	.spotlight-help-popover {
-		position: absolute;
-		top: calc(100% + 6px);
-		right: 0;
+		/* Position is set inline via spotlightHelpStyle (fixed coords
+		   derived from the (?) bounding rect). Inline style escapes
+		   .timeline's overflow: hidden and clamps inside the viewport. */
 		z-index: 20;
 		width: 260px;
 		background: var(--color-surface-2, #1c1f28);

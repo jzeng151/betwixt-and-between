@@ -67,7 +67,7 @@ test.describe('Playhead scrubber', () => {
 
 		await win.locator('.scrub-toggle').click();
 		await expect(win.locator('.playhead')).toBeVisible();
-		await expect(win.locator('.scrub-toggle')).toContainText(/Hide spotlight|T = 0\.00/);
+		await expect(win.locator('.scrub-toggle')).toContainText(/Hide spotlight|Time = 0\.00/);
 
 		await win.locator('.scrub-toggle').click();
 		await expect(win.locator('.playhead')).toHaveCount(0);
@@ -86,7 +86,7 @@ test.describe('Playhead scrubber', () => {
 		await page.waitForTimeout(100);
 
 		// Toolbar shows updated T
-		await expect(win.locator('.scrub-toggle')).toContainText('T = 1.5');
+		await expect(win.locator('.scrub-toggle')).toContainText("Time = 1.5");
 		// Overlay positioned in right half of the track
 		const overlayBox = await win.locator('.playhead').boundingBox();
 		if (!overlayBox) throw new Error('overlay');
