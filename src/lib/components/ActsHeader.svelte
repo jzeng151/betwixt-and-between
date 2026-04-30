@@ -195,51 +195,6 @@
 		if (e.key === 'Escape') cancelInsert();
 	}
 
-	// ── Add-act state (trailing tile) ─────────────────────────────────────────
-	let addingAct = $state(false);
-	let newActName = $state('');
-	let savingAct = $state(false);
-	let addActError: string | null = $state(null);
-
-	function openAddAct() {
-		addingAct = true;
-		newActName = '';
-		addActError = null;
-	}
-	function cancelAddAct() {
-		addingAct = false;
-		newActName = '';
-		addActError = null;
-	}
-	async function commitAddAct() {
-		const name = newActName.trim();
-		if (!name || savingAct) return;
-		savingAct = true;
-		addActError = null;
-		try {
-			// Position = current count so the new act sorts last. Same raw-fetch
-			// pattern as break-into-scenes — entities.createEntity doesn't expose
-			// `position` (see CONSIDERATIONS.md → entities store gap).
-			const res = await fetch('/api/entities', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ type: 'Act', name, position: acts.length })
-			});
-			if (!res.ok) throw new Error(await res.text());
-			await entities.load();
-			addingAct = false;
-			newActName = '';
-		} catch (err) {
-			addActError = (err as Error).message;
-		} finally {
-			savingAct = false;
-		}
-	}
-	function handleAddActKey(e: KeyboardEvent) {
-		if (e.key === 'Enter') commitAddAct();
-		if (e.key === 'Escape') cancelAddAct();
-	}
-
 	// ── Act drag-reorder ──────────────────────────────────────────────────────
 	const ACT_MIME = 'application/x-betwixt-act-reorder';
 	const SCENE_MIME = 'application/x-betwixt-scene-move';
@@ -512,32 +467,6 @@
 	{/if}
 </div>
 
-<!-- Append-act control rendered ABOVE the acts-header in the controls bar
-     by Timeline.svelte. Kept as a separate row so the acts-header itself
-     contains only flex:1 act columns — bars in the .rows track align. -->
-<div class="append-act-row">
-	{#if addingAct}
-		<!-- svelte-ignore a11y_autofocus -->
-		<input
-			class="act-add-input"
-			type="text"
-			placeholder="New act name"
-			bind:value={newActName}
-			onkeydown={handleAddActKey}
-			onblur={() => { if (!savingAct && !newActName.trim()) cancelAddAct(); }}
-			disabled={savingAct}
-			autofocus
-			aria-label="New act name"
-		/>
-		{#if addActError}<div class="act-add-error">{addActError}</div>{/if}
-	{:else}
-		<button
-			class="act-add-btn"
-			aria-label="Add act"
-			onclick={openAddAct}
-		>+ Act</button>
-	{/if}
-</div>
 
 <!-- Scenes row -->
 {#if acts.length > 0}
@@ -930,49 +859,6 @@
 		justify-content: center;
 	}
 
-	/* Append-act row — sits ABOVE the acts-header so the header stays as
-	   N pure flex:1 act columns (bars in .rows align to act-col edges). */
-	.append-act-row {
-		display: flex;
-		align-items: center;
-		justify-content: flex-end;
-		padding: 4px 12px;
-		border-bottom: 1px solid var(--color-border, #2a2d35);
-		background: var(--color-surface-2, #1c1f28);
-	}
-	.act-add-btn {
-		background: transparent;
-		border: 1px dashed var(--color-text-muted, #6b7280);
-		color: var(--color-text-muted, #6b7280);
-		border-radius: 4px;
-		padding: 6px 10px;
-		font-family: var(--font-ui, 'Inter', sans-serif);
-		font-size: 11px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: color 0.12s, border-color 0.12s, background 0.12s;
-	}
-	.act-add-btn:hover {
-		color: var(--color-accent, #c8942a);
-		border-color: var(--color-accent, #c8942a);
-		background: rgba(200, 148, 42, 0.06);
-	}
-	.act-add-input {
-		width: 200px;
-		background: var(--color-surface, #161920);
-		color: var(--color-text, #e8e0d0);
-		border: 1px solid var(--color-accent, #c8942a);
-		border-radius: 4px;
-		padding: 5px 8px;
-		font-family: var(--font-display, 'Fraunces', Georgia, serif);
-		font-size: 13px;
-		outline: none;
-	}
-	.act-add-error {
-		font-size: 9px;
-		color: #ef4444;
-		margin-left: 8px;
-	}
 	.reorder-error {
 		position: fixed;
 		bottom: 16px;
