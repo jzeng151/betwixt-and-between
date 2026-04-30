@@ -203,18 +203,88 @@ describe('updateInterval', () => {
 
 	it('rejects new range that would overlap an existing interval', async () => {
 		// Ellie present in Act 0 → [0, 1) and Act 2 → [2, 3).
-		await writeInterval(db, { entityId: ellie, startActId: acts.act0, endActId: acts.act0 });
+		const first = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act0,
+			endActId: acts.act0
+		});
 		const second = await writeInterval(db, {
 			entityId: ellie,
 			startActId: acts.act2,
 			endActId: acts.act2
 		});
 
-		// Try to extend the Act-2 interval back to start at Act 0 → would overlap
-		// [0, 1) with the first interval.
-		await expect(
-			updateInterval(db, second.id, { startActId: acts.act0 })
-		).rejects.toThrow(/Overlap with existing interval/);
+		// Drag the Act-2 interval back to start at Act 0 → ranges become
+		// [0, 1) and [0, 3). Per the merge-on-overlap rule (UX request),
+		// these should fold into one [0, 3) row anchored to the dragged
+		// interval's id; the absorbed sibling row disappears.
+		const merged = await updateInterval(db, second.id, { startActId: acts.act0 });
+		expect(merged.id).toBe(second.id);
+		expect(merged.startPosition).toBeCloseTo(0, 9);
+		expect(merged.endPosition).toBeCloseTo(3, 9);
+		const remaining = await db.select().from(intervals);
+		expect(remaining.map((r) => r.id).sort()).toEqual([second.id]);
+		// The first row was absorbed into the merge — it should be gone.
+		expect(remaining.find((r) => r.id === first.id)).toBeUndefined();
+	});
+
+	it('merges multiple absorbed siblings into a single union range', async () => {
+		// Three split intervals for Ellie: [0,1), [1,2), [2,3) — wait, those
+		// are adjacent, so create non-adjacent ones to test the multi-merge:
+		// [0,1) and [2,3). Then drag a [1,2) bar that bridges them.
+		const a = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act0,
+			endActId: acts.act0
+		});
+		const c = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act2,
+			endActId: acts.act2
+		});
+		const b = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act1,
+			endActId: acts.act1
+		});
+		// Drag b's right edge to absorb c (extending into Act 2). It should
+		// also absorb a since it now overlaps via the union with c.
+		// Actually b becomes [1, 3) which doesn't overlap a — only c. So
+		// stretch b further: [0, 3). Use startActId AND endActId update.
+		const merged = await updateInterval(db, b.id, {
+			startActId: acts.act0,
+			endActId: acts.act2
+		});
+		expect(merged.id).toBe(b.id);
+		expect(merged.startPosition).toBeCloseTo(0, 9);
+		expect(merged.endPosition).toBeCloseTo(3, 9);
+		const all = await db.select().from(intervals);
+		expect(all.map((r) => r.id).sort()).toEqual([b.id]);
+		expect(all.find((r) => r.id === a.id)).toBeUndefined();
+		expect(all.find((r) => r.id === c.id)).toBeUndefined();
+	});
+
+	it('keeps adjacent (touching, non-overlapping) intervals separate', async () => {
+		// Ellie [0, 1) and Ellie [2, 3). Drag the right one's start to
+		// position 1.0 → [1, 3). Touches the first at 1.0 but does not
+		// overlap (half-open). Should NOT merge.
+		const first = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act0,
+			endActId: acts.act0
+		});
+		const second = await writeInterval(db, {
+			entityId: ellie,
+			startActId: acts.act2,
+			endActId: acts.act2
+		});
+		const updated = await updateInterval(db, second.id, { startActId: acts.act1 });
+		expect(updated.startPosition).toBeCloseTo(1, 9);
+		expect(updated.endPosition).toBeCloseTo(3, 9);
+		// Both rows survive.
+		const all = await db.select().from(intervals);
+		expect(all.length).toBe(2);
+		expect(all.map((r) => r.id).sort()).toEqual([first.id, second.id].sort());
 	});
 
 	it('allows updating to a non-overlapping range, even if it shrinks', async () => {

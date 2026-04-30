@@ -465,21 +465,83 @@ export async function updateInterval(
 		}
 	}
 
-	// Same-entity overlap rejection. See atomicity note on writeInterval —
-	// transaction wrapping is blocked on TODO T1 (sync refactor). Pass `id`
-	// so we don't compare the row against itself.
-	await assertNoOverlap(db, merged.entityId, derived.startPosition, derived.endPosition, id);
+	// Same-entity overlap → merge into the union range (UX request: dragging
+	// the right edge of one bar past the left edge of another for the same
+	// character/event should join them rather than throwing). Adjacent
+	// intervals (touching at a boundary) do NOT trigger merge; the half-open
+	// `[a1, a2) ∩ [b1, b2) ≠ ∅` rule keeps boundary touch as no-overlap.
+	const sameEntity = await db
+		.select()
+		.from(intervals)
+		.where(eq(intervals.entityId, merged.entityId));
+	const overlappers = sameEntity.filter(
+		(row) =>
+			row.id !== id &&
+			derived.startPosition < row.endPosition &&
+			row.startPosition < derived.endPosition
+	);
+
+	let unionStart = derived.startPosition;
+	let unionEnd = derived.endPosition;
+	let unionStartActId = merged.startActId;
+	let unionStartSceneId = merged.startSceneId ?? null;
+	let unionEndActId = merged.endActId;
+	let unionEndSceneId = merged.endSceneId ?? null;
+
+	if (overlappers.length > 0) {
+		// Compute the union range and pick FKs from whichever interval owns
+		// each end (the leftmost start, the rightmost end). This preserves
+		// scene anchoring on whichever side wasn't moved.
+		let leftmost = {
+			pos: derived.startPosition,
+			actId: merged.startActId,
+			sceneId: merged.startSceneId ?? null
+		};
+		let rightmost = {
+			pos: derived.endPosition,
+			actId: merged.endActId,
+			sceneId: merged.endSceneId ?? null
+		};
+		for (const row of overlappers) {
+			if (row.startPosition < leftmost.pos) {
+				leftmost = {
+					pos: row.startPosition,
+					actId: row.startActId,
+					sceneId: row.startSceneId ?? null
+				};
+			}
+			if (row.endPosition > rightmost.pos) {
+				rightmost = {
+					pos: row.endPosition,
+					actId: row.endActId,
+					sceneId: row.endSceneId ?? null
+				};
+			}
+		}
+		unionStart = leftmost.pos;
+		unionStartActId = leftmost.actId;
+		unionStartSceneId = leftmost.sceneId;
+		unionEnd = rightmost.pos;
+		unionEndActId = rightmost.actId;
+		unionEndSceneId = rightmost.sceneId;
+
+		// Delete the absorbed siblings before the update so the unique-
+		// row-per-entity-position invariant holds.
+		for (const row of overlappers) {
+			await db.delete(intervals).where(eq(intervals.id, row.id));
+		}
+	}
 
 	const [updated] = await db
 		.update(intervals)
 		.set({
 			entityId: merged.entityId,
-			startActId: merged.startActId,
-			startSceneId: merged.startSceneId ?? null,
-			endActId: merged.endActId,
-			endSceneId: merged.endSceneId ?? null,
-			startPosition: derived.startPosition,
-			endPosition: derived.endPosition,
+			startActId: unionStartActId,
+			startSceneId: unionStartSceneId,
+			endActId: unionEndActId,
+			endSceneId: unionEndSceneId,
+			startPosition: unionStart,
+			endPosition: unionEnd,
 			updatedAt: sql`(unixepoch())` as unknown as Date
 		})
 		.where(eq(intervals.id, id))
