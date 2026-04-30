@@ -11,6 +11,7 @@
 	import IntervalBar from '$lib/components/IntervalBar.svelte';
 	import {
 		internalActBoundaryFractions,
+		internalSceneBoundaryFractions,
 		smartSnap,
 		positionToStartFKs,
 		positionToEndFKs
@@ -184,7 +185,10 @@
 				tooltipText={tooltipFor(entity, iv)}
 				color={colorFor(entity, idx)}
 				{widthPx}
-				internalBoundaries={internalActBoundaryFractions(previewStart, previewEnd)}
+				internalBoundaries={[
+					...internalActBoundaryFractions(previewStart, previewEnd),
+					...internalSceneBoundaryFractions(previewStart, previewEnd, sceneCountFor)
+				].sort((a, b) => a - b)}
 				isEvent={entity.type === 'Event'}
 				onSplit={async (fraction) => {
 					const atPosition = iv.startPosition + fraction * (iv.endPosition - iv.startPosition);

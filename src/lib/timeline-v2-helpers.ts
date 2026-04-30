@@ -408,3 +408,34 @@ export function internalActBoundaryFractions(
 	}
 	return fractions;
 }
+
+/**
+ * Internal scene-boundary fractions within a bar's [start, end) span.
+ * Scenes inside act i partition the act into m equal slices at positions
+ * i + k/m for k in 1..m-1. Returns the fractions strictly inside (start, end).
+ *
+ * Used so single-act bars (and multi-act bars) expose split points at
+ * scene boundaries, not just act boundaries.
+ */
+export function internalSceneBoundaryFractions(
+	startPosition: number,
+	endPosition: number,
+	sceneCountFor: (actIndex: number) => number
+): number[] {
+	const span = endPosition - startPosition;
+	if (span <= 0) return [];
+	const startActIdx = Math.floor(startPosition);
+	const endActIdx = Math.floor(endPosition - 1e-12);
+	const fractions: number[] = [];
+	for (let i = startActIdx; i <= endActIdx; i++) {
+		const m = sceneCountFor(i);
+		if (m <= 1) continue;
+		for (let k = 1; k < m; k++) {
+			const pos = i + k / m;
+			if (pos > startPosition + 1e-12 && pos < endPosition - 1e-12) {
+				fractions.push((pos - startPosition) / span);
+			}
+		}
+	}
+	return fractions;
+}
