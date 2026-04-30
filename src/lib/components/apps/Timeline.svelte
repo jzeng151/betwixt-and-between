@@ -362,50 +362,32 @@
 	});
 
 	// ── Playhead (Phase 1.5 scrubber) ────────────────────────────────────────
-	// ── + Act inline control (next to the scrub-toggle) ──────────────────
-	let addingAct = $state(false);
-	let newActName = $state('');
+	// ── + Act control (creates immediately, opens editor) ───────────────
 	let savingAct = $state(false);
-	let addActError: string | null = $state(null);
 
-	function openAddAct() {
-		addingAct = true;
-		newActName = '';
-		addActError = null;
-	}
-	function cancelAddAct() {
-		addingAct = false;
-		newActName = '';
-		addActError = null;
-	}
-	async function commitAddAct() {
-		const name = newActName.trim();
-		if (!name || savingAct) return;
+	async function addAct() {
+		if (savingAct) return;
 		savingAct = true;
-		addActError = null;
 		try {
 			const res = await fetch('/api/entities', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ type: 'Act', name, position: acts.length })
+				body: JSON.stringify({
+					type: 'Act',
+					name: `Act ${acts.length + 1}`,
+					position: acts.length
+				})
 			});
 			if (!res.ok) throw new Error(await res.text());
 			const created = (await res.json()) as { id: string };
 			await entities.load();
-			addingAct = false;
-			newActName = '';
-			// Open the new act in the side panel directly in edit mode
-			// so the user can fill in the description / goal / etc.
+			// Land in the editor — name is editable in the title bar.
 			selectFromTimeline(created.id, 'edit');
 		} catch (err) {
-			addActError = (err as Error).message;
+			showError((err as Error).message);
 		} finally {
 			savingAct = false;
 		}
-	}
-	function handleAddActKey(e: KeyboardEvent) {
-		if (e.key === 'Enter') commitAddAct();
-		if (e.key === 'Escape') cancelAddAct();
 	}
 
 	function clickTrackToScrub(e: MouseEvent) {
@@ -427,8 +409,11 @@
 		{events}
 		{placedEntityIds}
 		{colorFor}
-		onCreateEvent={async (name) => {
-			const created = await entities.createEntity('Event', name);
+		onCreateEvent={async () => {
+			const created = await entities.createEntity(
+				'Event',
+				`Event ${events.length + 1}`
+			);
 			// Open the new event in the side panel in edit mode so the
 			// user can fill in description / POV / outcome / etc.
 			selectFromTimeline(created.id, 'edit');
@@ -438,27 +423,12 @@
 	<!-- ── Main timeline ──────────────────────────────────────────────── -->
 	<div class="timeline" style="--tl-gutter: {gutterPx}px">
 		<div class="timeline-controls">
-			{#if addingAct}
-				<!-- svelte-ignore a11y_autofocus -->
-				<input
-					class="act-add-input"
-					type="text"
-					placeholder="New act name"
-					bind:value={newActName}
-					onkeydown={handleAddActKey}
-					onblur={() => { if (!savingAct && !newActName.trim()) cancelAddAct(); }}
-					disabled={savingAct}
-					autofocus
-					aria-label="New act name"
-				/>
-				{#if addActError}<span class="act-add-error">{addActError}</span>{/if}
-			{:else}
-				<button
-					class="act-add-btn"
-					aria-label="Add act"
-					onclick={openAddAct}
-				>+ Act</button>
-			{/if}
+			<button
+				class="act-add-btn"
+				aria-label="Add act"
+				disabled={savingAct}
+				onclick={addAct}
+			>+ Act</button>
 			<button
 				class="scrub-toggle"
 				class:active={$playhead != null}
@@ -632,20 +602,9 @@
 		border-color: var(--color-accent, #c8942a);
 		background: rgba(200, 148, 42, 0.06);
 	}
-	.act-add-input {
-		width: 200px;
-		background: var(--color-surface, #161920);
-		color: var(--color-text, #e8e0d0);
-		border: 1px solid var(--color-accent, #c8942a);
-		border-radius: 4px;
-		padding: 4px 8px;
-		font-family: var(--font-display, 'Fraunces', Georgia, serif);
-		font-size: 13px;
-		outline: none;
-	}
-	.act-add-error {
-		font-size: 9px;
-		color: #ef4444;
+	.act-add-btn:disabled {
+		opacity: 0.5;
+		cursor: default;
 	}
 	.scrub-toggle {
 		font-family: var(--font-ui, 'Inter', sans-serif);

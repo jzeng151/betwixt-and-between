@@ -17,8 +17,9 @@
     /** Set of entity ids that already have ≥1 interval on the timeline. */
     placedEntityIds: Set<string>;
     colorFor: (entity: Entity, idx: number) => string;
-    /** Create handler — parent owns the API + error surface. */
-    onCreateEvent: (name: string) => Promise<void>;
+    /** Create handler — parent creates the event with a default name and
+     *  opens the editor. Returns when the create round-trip completes. */
+    onCreateEvent: () => Promise<void>;
   }
   let { characters, events, placedEntityIds, colorFor, onCreateEvent }: Props = $props();
 
@@ -30,35 +31,15 @@
     e.dataTransfer!.effectAllowed = 'copy';
   }
 
-  // Inline "+ Event" form — Characters are added via the Characters window.
-  let addingEvent = $state(false);
-  let eventName = $state('');
   let savingEvent = $state(false);
-  let eventError = $state('');
-
-  async function commitEvent() {
-    const name = eventName.trim();
-    if (!name || savingEvent) return;
+  async function addEventClick() {
+    if (savingEvent) return;
     savingEvent = true;
-    eventError = '';
     try {
-      await onCreateEvent(name);
-      eventName = '';
-      addingEvent = false;
-    } catch (err) {
-      eventError = (err as Error).message || "Couldn't create event.";
+      await onCreateEvent();
     } finally {
       savingEvent = false;
     }
-  }
-  function cancelEvent() {
-    addingEvent = false;
-    eventName = '';
-    eventError = '';
-  }
-  function handleEventKey(e: KeyboardEvent) {
-    if (e.key === 'Enter') commitEvent();
-    if (e.key === 'Escape') cancelEvent();
   }
 </script>
 
@@ -96,28 +77,10 @@
         class="palette-add-btn"
         aria-label="Add event"
         title="Add event"
-        onclick={() => { addingEvent = true; }}
+        disabled={savingEvent}
+        onclick={addEventClick}
       >+</button>
     </header>
-    {#if addingEvent}
-      <div class="palette-add-form">
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          class="palette-add-input"
-          type="text"
-          placeholder="Event name"
-          bind:value={eventName}
-          onkeydown={handleEventKey}
-          onblur={() => { if (!savingEvent && !eventName.trim()) cancelEvent(); }}
-          disabled={savingEvent}
-          autofocus
-          aria-label="New event name"
-        />
-        {#if eventError}
-          <p class="palette-add-error">{eventError}</p>
-        {/if}
-      </div>
-    {/if}
     {#each events as ev, i (ev.id)}
       <div
         class="palette-item"
@@ -134,7 +97,7 @@
         <span class="palette-grip" aria-hidden="true">⋮⋮</span>
       </div>
     {/each}
-    {#if events.length === 0 && !addingEvent}
+    {#if events.length === 0}
       <div class="palette-empty">No events yet.</div>
     {/if}
   </section>
@@ -247,24 +210,8 @@
     border-color: var(--color-accent, #c8942a);
     background: rgba(200, 148, 42, 0.08);
   }
-  .palette-add-form {
-    margin-bottom: 6px;
-  }
-  .palette-add-input {
-    width: 100%;
-    background: var(--color-surface, #161920);
-    color: var(--color-text, #e8e0d0);
-    border: 1px solid var(--color-accent, #c8942a);
-    border-radius: 4px;
-    padding: 6px 8px;
-    font-family: var(--font-display, 'Fraunces', Georgia, serif);
-    font-size: 13px;
-    outline: none;
-  }
-  .palette-add-error {
-    font-size: 10px;
-    color: #ef4444;
-    margin-top: 4px;
-    padding: 0 4px;
+  .palette-add-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 </style>
