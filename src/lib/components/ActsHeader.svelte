@@ -684,12 +684,13 @@
 		justify-content: center;
 		gap: 4px;
 		cursor: pointer;
-		/* min-width enforces the visual floor that pairs with the JS
-		   MIN_ACT_PX clamp above. Without it the act header's natural
-		   min-content (padding + Fraunces title + + delete + grip) stops
-		   the column ~80-100px while .scenes-act, with its near-zero
-		   min-content, continues shrinking past — visible misalignment. */
+		/* Floor that pairs with the JS MIN_ACT_PX clamp. box-sizing:
+		   border-box makes min-width count the 28px horizontal padding +
+		   1px right border, so the act column and the .scenes-act below
+		   it (also min-width: 60px border-box) bottom out at the SAME
+		   total pixel width. Without border-box they'd disagree by 29px. */
 		min-width: 60px;
+		box-sizing: border-box;
 		overflow: hidden;
 	}
 	.act-col-header--selected {
@@ -938,8 +939,11 @@
 		flex: 1;
 		border-right: 1px solid var(--color-border, #2a2d35);
 		display: flex;
-		/* Mirror the act-col-header floor so scenes can't shrink past it. */
+		/* Mirror the act-col-header floor so scenes can't shrink past it.
+		   box-sizing: border-box keeps the 60px floor consistent with
+		   .act-col-header's padded total width. */
 		min-width: 60px;
+		box-sizing: border-box;
 	}
 	.scenes-act:last-child {
 		border-right: none;
