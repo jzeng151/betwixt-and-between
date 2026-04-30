@@ -410,7 +410,7 @@
       <div class="header-info">
         <h1 class="entity-name">
           {#if mode === 'edit'}
-            <InlineEdit value={entity.name} onSave={rename} />
+            <InlineEdit value={entity.name} onSave={rename} forceEditing />
           {:else}
             <span>{entity.name}</span>
           {/if}

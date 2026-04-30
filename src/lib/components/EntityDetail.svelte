@@ -190,7 +190,7 @@
 			</div>
 			<div class="entity-detail-title">
 				{#if mode === 'edit'}
-					<InlineEdit value={entity.name} onSave={rename} />
+					<InlineEdit value={entity.name} onSave={rename} forceEditing />
 				{:else}
 					<span class="entity-detail-title-text">{entity.name}</span>
 				{/if}
