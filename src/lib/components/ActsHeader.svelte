@@ -808,13 +808,14 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		text-align: center;
 	}
 
 	/* Break-into-scenes button */
 	.break-btn {
 		display: block;
 		width: 100%;
-		text-align: left;
+		text-align: center;
 		background: none;
 		border: none;
 		color: var(--color-text-muted, #6b7280);
