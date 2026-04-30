@@ -464,24 +464,25 @@
 				{/if}
 			</div>
 
-			<div class="act-name-row">
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<span
-					class="act-grip"
-					aria-label="Drag to reorder {act.name}"
-					title="Drag to reorder"
-					draggable="true"
-					ondragstart={(e) => actDragStart(e, act.id)}
-					ondragend={actDragEnd}
-				>⋮⋮</span>
-				<div class="act-name">{act.name}</div>
-				<button
-					class="act-delete-btn"
-					aria-label="Delete {act.name}"
-					title="Delete act"
-					onclick={() => openDeleteConfirm(act)}
-				>×</button>
-			</div>
+			<div class="act-col-content">
+				<div class="act-name-row">
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<span
+						class="act-grip"
+						aria-label="Drag to reorder {act.name}"
+						title="Drag to reorder"
+						draggable="true"
+						ondragstart={(e) => actDragStart(e, act.id)}
+						ondragend={actDragEnd}
+					>⋮⋮</span>
+					<div class="act-name">{act.name}</div>
+					<button
+						class="act-delete-btn"
+						aria-label="Delete {act.name}"
+						title="Delete act"
+						onclick={() => openDeleteConfirm(act)}
+					>×</button>
+				</div>
 
 			{#if deletingActId === act.id && deletingAct}
 				<div class="delete-confirm">
@@ -558,6 +559,7 @@
 					{/if}
 				</div>
 			{/if}
+			</div>
 		</div>
 	{/each}
 
@@ -636,7 +638,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		z-index: 5;
+		/* Sits above .width-handle (z-index: 6) on the previous column so
+		   the + isn't covered when the two affordances meet at a boundary. */
+		z-index: 10;
 		pointer-events: auto;
 	}
 	.insert-overlay.active {
@@ -706,6 +710,17 @@
 		   MIN_ACT_PX clamp in moveWidthDrag instead. */
 		min-width: 0;
 		box-sizing: border-box;
+		/* overflow stays visible so the absolute .insert-overlay can
+		   straddle the left edge into the previous column. The inner
+		   .act-col-content (added below) clips the flow content. */
+	}
+	.act-col-content {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: 4px;
+		min-width: 0;
 		overflow: hidden;
 	}
 	.act-col-header--selected {
