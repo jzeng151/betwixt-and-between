@@ -347,6 +347,13 @@
 		(e.target as HTMLElement).setPointerCapture(e.pointerId);
 	}
 
+	// Pixel floor that matches the CSS min-width on .act-col-header and
+	// .scenes-act below. Keeping JS + CSS in sync prevents the scenes row
+	// from shrinking past where the act header stops (scenes have lower
+	// natural min-content than the padded act header, so without an
+	// explicit floor on both the rows desync visually).
+	const MIN_ACT_PX = 60;
+
 	function moveWidthDrag(e: PointerEvent) {
 		if (!widthDrag || !weights || trackWidthPx === 0) return;
 		const dx = e.clientX - widthDrag.startX;
@@ -356,8 +363,10 @@
 		const i = widthDrag.idx;
 		const wi = widthDrag.startWeights[i] + deltaWeight;
 		const wj = widthDrag.startWeights[i + 1] - deltaWeight;
-		const MIN_W = 0.05 * totalWeight; // each act stays ≥ 5% of total
-		if (wi < MIN_W || wj < MIN_W) return;
+		// Floor in weight units = floor in pixels mapped back via
+		// totalWeight/trackWidthPx. Stays consistent with the CSS min-width.
+		const minWeight = (MIN_ACT_PX / trackWidthPx) * totalWeight;
+		if (wi < minWeight || wj < minWeight) return;
 		onWeightPreview?.({
 			[acts[i].id]: wi,
 			[acts[i + 1].id]: wj
@@ -675,6 +684,13 @@
 		justify-content: center;
 		gap: 4px;
 		cursor: pointer;
+		/* min-width enforces the visual floor that pairs with the JS
+		   MIN_ACT_PX clamp above. Without it the act header's natural
+		   min-content (padding + Fraunces title + + delete + grip) stops
+		   the column ~80-100px while .scenes-act, with its near-zero
+		   min-content, continues shrinking past — visible misalignment. */
+		min-width: 60px;
+		overflow: hidden;
 	}
 	.act-col-header--selected {
 		border-top-color: var(--color-accent, #c8942a);
@@ -922,6 +938,8 @@
 		flex: 1;
 		border-right: 1px solid var(--color-border, #2a2d35);
 		display: flex;
+		/* Mirror the act-col-header floor so scenes can't shrink past it. */
+		min-width: 60px;
 	}
 	.scenes-act:last-child {
 		border-right: none;
