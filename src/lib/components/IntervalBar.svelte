@@ -121,9 +121,12 @@
     stroke-width="1"
   />
 
-  <!-- Internal act boundaries — clickable to split the interval (D7/5b A) -->
+  <!-- Internal act boundaries — clickable to split the interval (D7/5b A).
+       Hairlines hidden until the bar is hovered to keep the resting state
+       calm. CSS gates visibility via .interval-bar:hover. -->
   {#each internalBoundaries as fraction (fraction)}
     <line
+      class="hairline"
       x1={fraction * widthPx}
       x2={fraction * widthPx}
       y1={BODY_Y + 4}
@@ -217,6 +220,15 @@
     font-size: 13px;
     font-weight: 500;
     pointer-events: none;
+  }
+  .hairline,
+  .hairline-hit {
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .interval-bar:hover .hairline,
+  .interval-bar:hover .hairline-hit {
+    opacity: 1;
   }
   .hairline-hit {
     cursor: col-resize;
