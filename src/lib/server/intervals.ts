@@ -787,10 +787,13 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
  *   - Updates original to [start, atPosition); inserts new row [atPosition, end)
  *     with the same entityId.
  *
- * The two writes are NOT wrapped in a transaction (D17 deferred to T1's sync
- * refactor). Connection-level serialization in better-sqlite3 keeps each
- * individual write atomic; partial failure between the UPDATE and INSERT is
- * possible but rare in practice (single-process app). T1 closes that gap.
+ * The UPDATE (left half) and INSERT (right half) are wrapped in a raw
+ * BEGIN / COMMIT block on the underlying better-sqlite3 client so a crash
+ * between the two writes can't leave a permanently shortened interval
+ * with no right half. better-sqlite3 is single-threaded and synchronous
+ * so the awaits inside don't introduce concurrent connections; the manual
+ * BEGIN/COMMIT is a short-term mitigation that survives the T1 sync
+ * refactor (which would replace this with a proper drizzle transaction).
  */
 export async function splitInterval(
 	db: DB,
@@ -841,31 +844,47 @@ export async function splitInterval(
 		throw new Error(`splitInterval: could not resolve FKs for position ${atPosition}`);
 	}
 
-	// Update original (left half).
-	const [left] = await db
-		.update(intervals)
-		.set({
-			endActId: leftEndFKs.endActId,
-			endSceneId: leftEndFKs.endSceneId,
-			endPosition: leftEndFKs.endPosition,
-			updatedAt: sql`(unixepoch())` as unknown as Date
-		})
-		.where(eq(intervals.id, intervalId))
-		.returning();
+	// Wrap the two writes in a raw BEGIN/COMMIT so a crash between UPDATE
+	// (left half) and INSERT (right half) can't leave the interval
+	// permanently shortened. drizzle exposes the underlying better-sqlite3
+	// Database via the `$client` property at runtime; the type doesn't
+	// declare it so we cast through a structural check. splitInterval is
+	// only called with the top-level db (never a tx).
+	const client = (db as unknown as { $client: import('better-sqlite3').Database }).$client;
+	client.exec('BEGIN');
+	let left: typeof intervals.$inferSelect;
+	let right: typeof intervals.$inferSelect;
+	try {
+		// Update original (left half).
+		[left] = await db
+			.update(intervals)
+			.set({
+				endActId: leftEndFKs.endActId,
+				endSceneId: leftEndFKs.endSceneId,
+				endPosition: leftEndFKs.endPosition,
+				updatedAt: sql`(unixepoch())` as unknown as Date
+			})
+			.where(eq(intervals.id, intervalId))
+			.returning();
 
-	// Insert new (right half).
-	const [right] = await db
-		.insert(intervals)
-		.values({
-			entityId: existing.entityId,
-			startActId: rightStartFKs.startActId,
-			startSceneId: rightStartFKs.startSceneId,
-			endActId: existing.endActId,
-			endSceneId: existing.endSceneId,
-			startPosition: rightStartFKs.startPosition,
-			endPosition: existing.endPosition
-		})
-		.returning();
+		// Insert new (right half).
+		[right] = await db
+			.insert(intervals)
+			.values({
+				entityId: existing.entityId,
+				startActId: rightStartFKs.startActId,
+				startSceneId: rightStartFKs.startSceneId,
+				endActId: existing.endActId,
+				endSceneId: existing.endSceneId,
+				startPosition: rightStartFKs.startPosition,
+				endPosition: existing.endPosition
+			})
+			.returning();
+		client.exec('COMMIT');
+	} catch (err) {
+		client.exec('ROLLBACK');
+		throw err;
+	}
 
 	return { left, right };
 }
