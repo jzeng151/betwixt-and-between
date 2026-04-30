@@ -32,3 +32,4 @@ src/lib/vitest-examples/
 test-results/
 .claude/
 desync-bug.png
+tooltip-bug.png
