@@ -15,6 +15,7 @@
 		positionToEndFKs
 	} from '$lib/timeline-v2-helpers.js';
 	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+	import { playhead } from '$lib/stores/playhead.js';
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { Interval } from '$lib/stores/intervals.js';
 
@@ -72,6 +73,22 @@
 		previewEnd: number;
 	};
 	let resizing: ResizeState | null = $state(null);
+
+	// Local translate state — drag the body of a bar to shift it
+	// temporally without changing its duration (T5). Distinguished from a
+	// click by the `moved` flag (4 px threshold) so a small click still
+	// fires onSelect.
+	type TranslateState = {
+		intervalId: string;
+		startX: number;
+		originalStart: number;
+		originalEnd: number;
+		previewStart: number;
+		previewEnd: number;
+		moved: boolean;
+	};
+	let translating: TranslateState | null = $state(null);
+	const TRANSLATE_THRESHOLD = 4;
 
 	// Scene count lookup for smartSnap — reads current acts/scenesByActId.
 	function sceneCountFor(actIdx: number): number {
@@ -155,6 +172,83 @@
 		window.addEventListener('pointerup', onUp);
 	}
 
+	// ── Bar translation (T5) ──────────────────────────────────────────────
+	function startTranslate(e: PointerEvent, iv: Interval) {
+		// Left button only; bail if scrubbing (scrub mode is exclusive) or
+		// the click started on a resize / hairline-split target.
+		if (e.button !== 0) return;
+		if ($playhead != null) return;
+		const target = e.target as HTMLElement;
+		if (target.closest('.resize-handle, .hairline-hit')) return;
+		e.preventDefault();
+		translating = {
+			intervalId: iv.id,
+			startX: e.clientX,
+			originalStart: iv.startPosition,
+			originalEnd: iv.endPosition,
+			previewStart: iv.startPosition,
+			previewEnd: iv.endPosition,
+			moved: false
+		};
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		onLockAcquire();
+	}
+
+	function moveTranslate(e: PointerEvent) {
+		if (!translating || trackWidthPx === 0) return;
+		const dx = e.clientX - translating.startX;
+		if (!translating.moved && Math.abs(dx) > TRANSLATE_THRESHOLD) {
+			translating.moved = true;
+		}
+		if (!translating.moved) return;
+		// Convert pixel dx → story-time delta via the cumulative-fraction
+		// mapping so per-act widths are honored.
+		const startFrac = posToFrac(translating.originalStart);
+		const targetFrac = startFrac + dx / trackWidthPx;
+		let newStart = fracToPos(Math.max(0, Math.min(1, targetFrac)));
+		const span = translating.originalEnd - translating.originalStart;
+		let newEnd = newStart + span;
+		// Clamp into [0, actCount].
+		if (newEnd > actCount) {
+			newEnd = actCount;
+			newStart = newEnd - span;
+		}
+		if (newStart < 0) {
+			newStart = 0;
+			newEnd = span;
+		}
+		translating = { ...translating, previewStart: newStart, previewEnd: newEnd };
+	}
+
+	async function endTranslate(e: PointerEvent) {
+		const t = translating;
+		translating = null;
+		(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+		if (!t) return;
+		onLockRelease();
+		if (!t.moved) {
+			// Treat as click — selection.
+			onSelect?.(entity.id, t.intervalId);
+			return;
+		}
+		// Resolve the new FKs from the dragged positions and PATCH.
+		const startFKs = positionToStartFKs(t.previewStart, acts, scenesByActId);
+		const endFKs = positionToEndFKs(t.previewEnd, acts, scenesByActId);
+		if (!startFKs || !endFKs) return;
+		try {
+			await intervalsStore.updateInterval(t.intervalId, {
+				startActId: startFKs.startActId,
+				startSceneId: startFKs.startSceneId,
+				endActId: endFKs.endActId,
+				endSceneId: endFKs.endSceneId,
+				startPosition: startFKs.startPosition,
+				endPosition: endFKs.endPosition
+			});
+		} catch (err) {
+			onError((err as Error).message);
+		}
+	}
+
 	// Re-render when track width changes (pxForFractionalSpan closes over it).
 	$effect(() => {
 		void trackWidthPx;
@@ -163,8 +257,18 @@
 
 <div class="row" data-entity-id={entity.id} bind:this={rowEl}>
 	{#each intervals as iv (iv.id)}
-		{@const previewStart = resizing?.intervalId === iv.id ? resizing.previewStart : iv.startPosition}
-		{@const previewEnd = resizing?.intervalId === iv.id ? resizing.previewEnd : iv.endPosition}
+		{@const previewStart =
+			resizing?.intervalId === iv.id
+				? resizing.previewStart
+				: translating?.intervalId === iv.id && translating.moved
+					? translating.previewStart
+					: iv.startPosition}
+		{@const previewEnd =
+			resizing?.intervalId === iv.id
+				? resizing.previewEnd
+				: translating?.intervalId === iv.id && translating.moved
+					? translating.previewEnd
+					: iv.endPosition}
 		{@const span = previewEnd - previewStart}
 		{@const leftFrac = posToFrac(previewStart)}
 		{@const rightFrac = posToFrac(previewEnd)}
@@ -176,15 +280,13 @@
 		<div
 			class="bar-wrapper"
 			class:resizing={resizing?.intervalId === iv.id}
+			class:translating={translating?.intervalId === iv.id && translating.moved}
 			data-tooltip={tooltipFor(entity, iv)}
 			style="left: {leftPct}%; width: {widthPct}%;"
-			onclick={(e) => {
-				// Resize handles still bubble a click on mouse-up after a
-				// drag. Guard so resize doesn't open the editor.
-				const t = e.target as HTMLElement;
-				if (t.closest('.resize-handle')) return;
-				onSelect?.(entity.id, iv.id);
-			}}
+			onpointerdown={(e) => startTranslate(e, iv)}
+			onpointermove={moveTranslate}
+			onpointerup={endTranslate}
+			onpointercancel={endTranslate}
 		>
 			<IntervalBar
 				name={entity.name}
@@ -258,9 +360,13 @@
 		position: absolute;
 		top: 0;
 		bottom: 0;
+		cursor: grab;
 		/* Focus glow on the bar when it's being resized — matches the locked
 		   v2 mockup's `.interval.with-handles` box-shadow rule. The glow lives
 		   on the wrapper so it survives the SVG bar's clipping. */
+	}
+	.bar-wrapper.translating {
+		cursor: grabbing;
 	}
 	/* Styled tooltip on bar hover — matches the locked v2 mockup
 	   (mockup CSS lines 311-349). Reads from the wrapper's

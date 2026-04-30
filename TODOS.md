@@ -303,7 +303,7 @@ Locked by `/plan-design-review` + `/plan-eng-review` on 2026-04-29. Decision log
 #### Lane A — Server (parallelizable with Lane B)
 
 - [ ] **Polymorphic `tx | db` refactor** in `src/lib/server/intervals.ts` — `actIndexOf`, `sceneIndexOf`, `assertEntityType`, `assertNoOverlap`, `validateFKTypes`, `computeIntervalPositions`, `recomputeIntervalsForAct`, `recomputeAllIntervals`. All callers thread `tx`. Closes the PR 1 tech-debt note at `intervals.ts:289`. (D17/17A) — **DEFERRED to T1** (better-sqlite3 sync constraint blocks `db.transaction(async tx => …)`; `Db` type alias added as forward-compat)
-- [ ] **N+1 fix in `recomputeAllIntervals` and `recomputeIntervalsForAct`** — cache act-index map per-call. Reduces queries from O(intervals × acts) to O(intervals + acts). Per-call only, no cross-call sharing. (D20/16A)
+- [x] **N+1 fix in `recomputeAllIntervals` and `recomputeIntervalsForAct`** — cache act-index map per-call. Reduces queries from O(intervals × acts) to O(intervals + acts). Per-call only, no cross-call sharing. (D20/16A) — shipped as `buildRecomputeCache` in commit `72e7037`
 - [x] **Generalized cascade primitive** for sibling reorder, parameterized by sibling-set predicate `(parentId IS NULL AND type='Act')` for Acts vs `(parent_id = X AND type='Scene')` for Scenes. Single helper, no duplicate logic. (D18/12A + Closing-observation)
 - [x] **`splitInterval(tx, intervalId, atPosition)` helper** — validates split point in (start, end), updates original to `[start, P)`, inserts new `[P, end)` with FKs resolved via existing `positionToStart/EndFKs`. Wrapped in transaction. (D7/5b A)
 - [x] **`moveSceneToAct(tx, sceneId, newActId, newPosition)` helper** — UPDATE scene's parent_id+position, UPDATE intervals' start_act_id/end_act_id for any interval anchored to that scene, recompute both old and new parent acts. Wrapped in transaction. (T3-pulled-in)
@@ -356,16 +356,58 @@ Locked by `/plan-design-review` + `/plan-eng-review` on 2026-04-29. Decision log
 - [ ] **T1 — Drizzle sync-mode refactor** — convert helper chain in `intervals.ts` to sync-by-default using better-sqlite3's native sync API. Closes the sync-vs-async impedance footnote permanently; reduces async overhead in tight recompute loops. Complementary to D17's polymorphic-tx work shipped in Phase 1.6.
 - [ ] **T2 — Window snapping in `Window.svelte`** — drag-to-edge zones (left half, right half, top half, bottom half, quarters). Pure UX additive on existing `windowStore.move`/`resize`. No data-model change.
 - [ ] **T4 — Status field** for Acts/Events/Scenes (`Drafted` / `In progress` / `Done` / `Needs revision`). Top-of-panel pill in editors; optional timeline filter. Stored in `entity.data` — no schema migration. Add when workflow signal is needed.
-- [ ] **T5 — Bar translation** — drag whole bar to shift temporally without changing duration. Currently bars only support edge-resize.
+- [x] **T5 — Bar translation** — drag whole bar to shift temporally without changing duration. Currently bars only support edge-resize. — pointer-down on bar body sets `translating` state with a 4 px move threshold; pointer move recomputes start/end via `posToFrac`/`fracToPos` (per-act-weight aware), clamps to [0, N], commits via `updateInterval` on pointerup. Click-without-drag still selects. Scrub mode is exclusive (translation no-ops). Cursor: grab → grabbing. e2e at `tests/e2e/v2-bar-translate.spec.ts` (3/3 green).
 - [ ] **T6 — Wiki rework** — alphabetical entity browser app; fill `EntityDetail` branches for Character/Location/Note; migrate `ENTITY_APP[Character]` / `ENTITY_APP[Location]` / `ENTITY_APP[Note]` to `'entity-detail'`. Cross-entity hyperlinks in synopses. Designed to land additively on the EntityDetail abstraction shipped in Phase 1.6.
 - [ ] **T7 — Bulk paste / import UI** — multi-entity import flow from external story-craft tools (Plottr CSV, Aeon export, etc.). Uses the `/api/entities/batch` endpoint shipped in Phase 1.6. UI surface: drag-drop file or paste structured text → preview → commit.
 
-### 14. Phase 1B — Graph features (separate branch)
+### 15. Phase 1B — Graph features (separate branch: `phase-1b/graph`)
 
-**Note:** Phase 1B specifics are exploratory; locked at its own /plan-eng-review.
+Locked at /plan-eng-review 2026-04-30. 13 decisions captured.
 
-- [ ] Focused Graph: new app type, double-click in main StoryGraph opens a Focused Graph window with composable focal set.
-- [ ] Three view modes (working names): Shared (intersection), Their Worlds (1-hop union), Reachable (transitive closure).
-- [ ] Relationship legend: wire `--color-rel-*` CSS tokens through StoryGraph edge rendering. Click-to-highlight matching edges.
-- [ ] Layered/hierarchical layout: integrate `dagre` or `elkjs`. "Layout by type" button computes positions, writes to `canvas_positions`.
-- [ ] Base right-click menu: Open in window, View connections, Open Focused Graph, Edit, Delete, Pin to canvas. Custom action configurability deferred.
+**Prerequisite cleanup (Lane Z, lands first as own commits):**
+- [ ] Z1. chore(StoryGraph): typecheck-clean baseline (fix 2 known TS errors, remove duplicate-onMount remnants).
+- [ ] Z2. chore: drop unused `tldraw` / `react` / `react-dom` from `package.json`.
+- [ ] Z3. refactor: extract `REL_COLOR` / `NODE_COLOR` maps to `src/lib/relationship-colors.ts` with `Record<RelationshipType, string>` exhaustiveness check (covers `pov_of` which `StoryGraph.svelte` currently misses).
+- [ ] Z4. refactor: extract `<GraphCanvas>` primitive from `StoryGraph.svelte` (~250 LOC: pan/zoom/drag/connect/edge-render). Existing StoryGraph e2e + scrubber-dimming behavior must regress-test clean.
+
+**Lane A — Server (parallelizable with Lane B after Z lands):**
+- [ ] A1. Migration 0002: `pinned INTEGER NOT NULL DEFAULT 0` on `canvas_positions`. Idempotent; default 0; existing rows unaffected.
+- [ ] A2. PUT `/api/canvas-positions` accepts `pinned` in payload; persists.
+- [ ] A3. POST `/api/canvas-positions/batch` — single-transaction multi-row upsert. Body: `Array<{ entityId, x, y, width, height, pinned }>`. Partial failure rolls back (atomicity required by C5 dagre layout).
+
+**Lane B — Pure logic + reusable atoms (parallelizable with Lane A):**
+- [ ] B1. `src/lib/graph/edge-policy.ts` — `DIRECTION: Record<RelationshipType, 'directed' | 'symmetric'>` with exhaustiveness check. Symmetric: `allied_with`, `rivals`. Directed: everything else (per `schema.ts` docstring).
+- [ ] B2. `src/lib/graph/traversal.ts` — pure functions:
+       - `sharedNeighbors(focalSet, edges, policy): Set<id>` (intersection)
+       - `oneHopUnion(focalSet, edges, policy): Set<id>` (1-hop union)
+       - `reachable(focalSet, edges, policy): Set<id>` (cycle-safe BFS)
+       Hand-written unit cases per the test plan (no fast-check).
+- [ ] B3. `<ContextMenu items={...} x y onClose={...} />` reusable component: keyboard nav (Esc / arrow keys), click-outside, viewport-edge clamping. Used by StoryGraph + FocusedGraph + future Timeline/WorldMap.
+
+**Lane C — Feature integration (depends on Z + A + B):**
+- [ ] C1. Add `'FocusedGraph'` to `AppId` enum + extend `windows.ts` window state shape: `{ focalSet: string[]; viewMode: 'shared' | 'their_worlds' | 'reachable' }`. Multi-window per Phase 1B by design.
+- [ ] C2. `<FocusedGraph>` component consuming `<GraphCanvas>` + traversal helpers. Visible-set is `$derived` from focalSet + mode + entities + relationships. **Append behavior:** existing nodes do NOT move; new nodes use stored `canvas_positions` or grid fallback (B1 — "stay where you were").
+- [ ] C3. Right-click menu wired into StoryGraph + FocusedGraph nodes: Open in window, View connections, Open Focused Graph, Edit, Delete, Pin to canvas. Custom action configurability deferred.
+- [ ] C4. Legend UI panel (corner of viewport) with toggleable entries per `RelationshipType`. Visible-edge set = union of toggled-on types (default: all on). Layers WITH scrubber dimming, not against it.
+- [ ] C5. "Layout by type" right-click action: dynamic-import `dagre`, run on visible non-pinned nodes, persist via `/api/canvas-positions/batch` (A3). Pinned nodes left in place. Bundle cost paid on first click only (~80KB).
+- [ ] C6. **Soft-filter rule** (locked invariant): scrubber dimming layers on top of FocusedGraph view-mode visibility; does NOT alter the traversal result set. Layout-by-type uses full visibleSet, never the in-scope-at-T subset.
+
+**Worktree parallelization:**
+
+| Lane | Touches | Depends on |
+|---|---|---|
+| Z (cleanup) | `StoryGraph.svelte`, `package.json`, `src/lib/relationship-colors.ts`, new `<GraphCanvas>` | — (lands first) |
+| A (server) | `drizzle/`, `src/routes/api/canvas-positions/`, `src/lib/server/db/schema.ts` | Z |
+| B (logic + atoms) | `src/lib/graph/`, new `<ContextMenu>` | Z |
+| C (integration) | new `<FocusedGraph>`, `StoryGraph.svelte` (right-click wire-up), `windows.ts`, `navigation.ts` | Z + A + B |
+
+Lanes A and B run in parallel worktrees after Z merges. Lane C waits for both. Conflict surface between A and B is zero (disjoint dirs). C imports from both but doesn't modify their files.
+
+**NOT in scope:**
+- Custom right-click action configurability (deferred per original bullet).
+- Compound/collapse layout (Timeline + scrubber owns the temporal dimension).
+- Force-directed / radial layouts beyond `dagre`'s layered (`elkjs` rejected; ~600KB for unused features).
+- Property-based testing (hand-written cases sufficient at this scale).
+- Cross-window highlight sync (selecting in StoryGraph → highlight in FocusedGraph). Defer until requested.
+- Server-side traversal endpoint (graph fits in client; round-trip wasteful).
+- Hard-filter view modes (scrubber changes traversal set). Soft-filter is the locked semantic.
