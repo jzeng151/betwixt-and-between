@@ -313,6 +313,11 @@
 	let selectedInitialMode: 'view' | 'edit' = $state('view');
 
 	function selectFromTimeline(id: string, mode: 'view' | 'edit' = 'view') {
+		// Scrub mode is exclusive — clicks on bars / act headers / scene
+		// cells should scrub the playhead, not open the side panel. The
+		// rows-level click handler (clickTrackToScrub) does the scrub
+		// once the bubbling reaches .rows.
+		if ($playhead != null) return;
 		const existing = windowStore.findOpenEditorFor(id);
 		if (existing) {
 			windowStore.focus(existing.id);
