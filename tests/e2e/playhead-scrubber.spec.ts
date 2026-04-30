@@ -67,7 +67,7 @@ test.describe('Playhead scrubber', () => {
 
 		await win.locator('.scrub-toggle').click();
 		await expect(win.locator('.playhead')).toBeVisible();
-		await expect(win.locator('.scrub-toggle')).toContainText(/Stop scrubbing|T = 0\.00/);
+		await expect(win.locator('.scrub-toggle')).toContainText(/Hide spotlight|T = 0\.00/);
 
 		await win.locator('.scrub-toggle').click();
 		await expect(win.locator('.playhead')).toHaveCount(0);

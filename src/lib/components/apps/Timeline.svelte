@@ -390,6 +390,28 @@
 		}
 	}
 
+	// ── Spotlight help popover ──────────────────────────────────────────────
+	let spotlightHelpOpen = $state(false);
+	$effect(() => {
+		if (!spotlightHelpOpen) return;
+		// Close on outside click / Escape so a second toggle of the (?) is
+		// the only persistent way to dismiss.
+		function handleDocClick(ev: MouseEvent) {
+			const t = ev.target as HTMLElement;
+			if (t.closest('.spotlight-help, .spotlight-help-popover')) return;
+			spotlightHelpOpen = false;
+		}
+		function handleKey(ev: KeyboardEvent) {
+			if (ev.key === 'Escape') spotlightHelpOpen = false;
+		}
+		document.addEventListener('mousedown', handleDocClick);
+		document.addEventListener('keydown', handleKey);
+		return () => {
+			document.removeEventListener('mousedown', handleDocClick);
+			document.removeEventListener('keydown', handleKey);
+		};
+	});
+
 	function clickTrackToScrub(e: MouseEvent) {
 		// Only scrub when the playhead is active. Idle = let drag handlers run.
 		if ($playhead == null) return;
@@ -433,15 +455,35 @@
 				class="scrub-toggle"
 				class:active={$playhead != null}
 				onclick={() => playhead.toggle(0)}
-				title={$playhead == null ? 'Activate the scrubber' : 'Deactivate the scrubber'}
+				title={$playhead == null
+					? 'Spotlight a moment in story-time'
+					: 'Hide the spotlight'}
 			>
 				{#if $playhead == null}
-					▶ Scrub
+					▶ Spotlight
 				{:else}
-					◼ Stop scrubbing
+					◼ Hide spotlight
 					<span class="scrub-pos">T = {$playhead.toFixed(2)}</span>
 				{/if}
 			</button>
+			<div class="spotlight-help-wrap">
+				<button
+					type="button"
+					class="spotlight-help"
+					class:open={spotlightHelpOpen}
+					aria-label="What is Spotlight?"
+					aria-expanded={spotlightHelpOpen}
+					onclick={() => (spotlightHelpOpen = !spotlightHelpOpen)}
+				>?</button>
+				{#if spotlightHelpOpen}
+					<div class="spotlight-help-popover" role="dialog" aria-label="Spotlight help">
+						<p class="spotlight-help-title">Spotlight a moment in story-time.</p>
+						<p>Story Graph dims characters and events not present at this moment.</p>
+						<p>World Map dims locations no one is at.</p>
+						<p>Drag the amber line on the timeline to move.</p>
+					</div>
+				{/if}
+			</div>
 		</div>
 
 		<ActsHeader
@@ -633,6 +675,63 @@
 	.scrub-pos {
 		font-variant-numeric: tabular-nums;
 		opacity: 0.8;
+	}
+
+	/* Spotlight help (?) icon + popover. The popover anchors to the wrap
+	   so it stays positioned when the controls bar reflows. */
+	.spotlight-help-wrap {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+	}
+	.spotlight-help {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: transparent;
+		border: 1px solid var(--color-border, #2a2d35);
+		color: var(--color-text-muted, #6b7280);
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		font-size: 11px;
+		font-weight: 600;
+		line-height: 1;
+		cursor: pointer;
+		padding: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		transition: color 0.12s, border-color 0.12s;
+	}
+	.spotlight-help:hover,
+	.spotlight-help.open {
+		color: var(--color-accent, #c8942a);
+		border-color: var(--color-accent, #c8942a);
+	}
+	.spotlight-help-popover {
+		position: absolute;
+		top: calc(100% + 6px);
+		right: 0;
+		z-index: 20;
+		width: 260px;
+		background: var(--color-surface-2, #1c1f28);
+		border: 1px solid var(--color-border, #2a2d35);
+		border-radius: 6px;
+		padding: 10px 12px;
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		font-size: 11px;
+		line-height: 1.45;
+		color: var(--color-text-muted, #6b7280);
+		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+	}
+	.spotlight-help-popover p {
+		margin: 0 0 6px;
+	}
+	.spotlight-help-popover p:last-child {
+		margin-bottom: 0;
+	}
+	.spotlight-help-title {
+		color: var(--color-text, #e8e0d0);
+		font-weight: 600;
 	}
 
 	.rows {

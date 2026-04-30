@@ -68,7 +68,7 @@
 	<div
 		class="playhead"
 		role="slider"
-		aria-label="Story-time playhead"
+		aria-label="Spotlight position"
 		aria-valuemin="0"
 		aria-valuemax={actCount}
 		aria-valuenow={$playhead ?? 0}
