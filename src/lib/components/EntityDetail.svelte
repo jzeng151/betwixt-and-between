@@ -189,10 +189,11 @@
 				</div>
 			</div>
 			<div class="entity-detail-title">
-				<!-- Title stays inline-editable in both view and edit mode —
-				     a rename is metadata about the entity, not a content
-				     edit, and shouldn't require the Edit-mode toggle. -->
-				<InlineEdit value={entity.name} onSave={rename} />
+				{#if mode === 'edit'}
+					<InlineEdit value={entity.name} onSave={rename} />
+				{:else}
+					<span class="entity-detail-title-text">{entity.name}</span>
+				{/if}
 			</div>
 		</div>
 
@@ -293,6 +294,10 @@
 	}
 	.mode-toggle:hover {
 		filter: brightness(1.1);
+	}
+	.entity-detail-title-text {
+		display: inline-block;
+		padding: 2px 0;
 	}
 	.popout-btn,
 	.entity-detail-close {

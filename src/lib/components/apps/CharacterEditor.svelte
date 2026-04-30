@@ -409,8 +409,11 @@
 
       <div class="header-info">
         <h1 class="entity-name">
-          <!-- Always inline-editable. Rename is metadata, not a content edit. -->
-          <InlineEdit value={entity.name} onSave={rename} />
+          {#if mode === 'edit'}
+            <InlineEdit value={entity.name} onSave={rename} />
+          {:else}
+            <span>{entity.name}</span>
+          {/if}
         </h1>
         <div class="header-meta">
           <!-- Role -->
