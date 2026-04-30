@@ -49,6 +49,11 @@
 		/** True when hosted inside a popout Window (hides the move-button +
 		 *  close-button chrome since the Window itself provides them). */
 		isPopout?: boolean;
+		/** Initial mode when (re)mounting for a new entityId. Defaults to
+		 *  'view'; the Timeline passes 'edit' right after creating an Act
+		 *  or Event so the user lands directly in the editor. Resets each
+		 *  time entityId changes so view is the default for plain selects. */
+		initialMode?: 'view' | 'edit';
 	}
 
 	const {
@@ -56,7 +61,8 @@
 		onMoveToWindow,
 		onClose,
 		onEntityVanished,
-		isPopout = false
+		isPopout = false,
+		initialMode = 'view'
 	}: Props = $props();
 
 	const entity = $derived(
@@ -79,8 +85,16 @@
 	});
 
 	// View/edit mode (Block 5). Default 'view' so opening an entity is a
-	// read-first flow; click Edit to switch to the editable form.
+	// read-first flow; click Edit to switch to the editable form. Resets
+	// to `initialMode` whenever entityId changes so freshly-created
+	// entities can land directly in 'edit'.
 	let mode = $state<'view' | 'edit'>('view');
+	$effect(() => {
+		// Reset on entityId or initialMode change. Reading both props here
+		// (vs. destructured-at-mount) keeps the effect reactive in Svelte 5.
+		void entityId;
+		mode = initialMode;
+	});
 
 	// Move-to-window confirmation (2B-i inline confirm pattern).
 	let confirmingMove = $state(false);

@@ -307,14 +307,19 @@
 	// either opens the side panel or, if a popout window already exists for
 	// that entity, focuses the existing window instead. (D10/9A + D10-ext/19A)
 	let selectedEntityId: string | null = $state(null);
+	// Mode to pass to EntityDetail when the side panel opens. Reset to
+	// 'view' on plain selects; set to 'edit' after creating a new act or
+	// event so the user lands in the editor for the empty fields.
+	let selectedInitialMode: 'view' | 'edit' = $state('view');
 
-	function selectFromTimeline(id: string) {
+	function selectFromTimeline(id: string, mode: 'view' | 'edit' = 'view') {
 		const existing = windowStore.findOpenEditorFor(id);
 		if (existing) {
 			windowStore.focus(existing.id);
 			selectedEntityId = null;
 			return;
 		}
+		selectedInitialMode = mode;
 		selectedEntityId = id;
 	}
 
@@ -385,9 +390,13 @@
 				body: JSON.stringify({ type: 'Act', name, position: acts.length })
 			});
 			if (!res.ok) throw new Error(await res.text());
+			const created = (await res.json()) as { id: string };
 			await entities.load();
 			addingAct = false;
 			newActName = '';
+			// Open the new act in the side panel directly in edit mode
+			// so the user can fill in the description / goal / etc.
+			selectFromTimeline(created.id, 'edit');
 		} catch (err) {
 			addActError = (err as Error).message;
 		} finally {
@@ -419,7 +428,10 @@
 		{placedEntityIds}
 		{colorFor}
 		onCreateEvent={async (name) => {
-			await entities.createEntity('Event', name);
+			const created = await entities.createEntity('Event', name);
+			// Open the new event in the side panel in edit mode so the
+			// user can fill in description / POV / outcome / etc.
+			selectFromTimeline(created.id, 'edit');
 		}}
 	/>
 
@@ -543,6 +555,7 @@
 		<aside class="side-panel">
 			<EntityDetail
 				entityId={selectedEntityId}
+				initialMode={selectedInitialMode}
 				onMoveToWindow={moveSelectedToWindow}
 				onClose={() => (selectedEntityId = null)}
 				onEntityVanished={handleEntityVanished}
