@@ -17,8 +17,9 @@
 
 	interface Props {
 		entityId: string;
+		readOnly?: boolean;
 	}
-	const { entityId }: Props = $props();
+	const { entityId, readOnly = false }: Props = $props();
 
 	const outcomeOptions = [
 		{ value: 'yes', label: 'Yes — they got what they wanted' },
@@ -37,6 +38,7 @@
 
 <div class="entity-detail event-editor" data-editor-type="Event">
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="description"
 		label="Description"
@@ -45,6 +47,7 @@
 		placeholder="A few sentences describing what happens in this event…"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="pov"
 		label="POV characters"
@@ -53,6 +56,7 @@
 		targetEntityType="Character"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="outcome"
 		label="Outcome"
@@ -61,6 +65,7 @@
 		placeholder="Pick an outcome…"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="mood"
 		label="Mood"
@@ -68,6 +73,7 @@
 		placeholder="One word or phrase — tense, melancholic, jubilant…"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="color"
 		label="Color"

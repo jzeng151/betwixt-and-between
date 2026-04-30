@@ -19,8 +19,9 @@
 
 	interface Props {
 		entityId: string;
+		readOnly?: boolean;
 	}
-	const { entityId }: Props = $props();
+	const { entityId, readOnly = false }: Props = $props();
 
 	const outcomeOptions = [
 		{ value: 'yes', label: 'Yes — POV got what they wanted' },
@@ -39,6 +40,7 @@
 
 <div class="entity-detail scene-editor" data-editor-type="Scene">
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="description"
 		label="Description"
@@ -47,6 +49,7 @@
 		placeholder="A few sentences describing this scene…"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="pov"
 		label="POV characters"
@@ -55,6 +58,7 @@
 		targetEntityType="Character"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="goal"
 		label="Goal"
@@ -62,6 +66,7 @@
 		placeholder="What does the POV character want in this scene?"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="outcome"
 		label="Outcome"
@@ -70,6 +75,7 @@
 		placeholder="Pick an outcome…"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="sensoryAnchor"
 		label="Sensory anchor"
@@ -77,6 +83,7 @@
 		placeholder="One specific sense detail to ground this scene"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="wordCountTarget"
 		label="Word-count target"
@@ -84,6 +91,7 @@
 		placeholder="e.g. 1500"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="color"
 		label="Color"

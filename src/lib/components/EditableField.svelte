@@ -62,6 +62,9 @@
 		/** Optional explicit list of currently-linked entity ids (for tests
 		 *  or pre-seeded state). If omitted, derives from $relationships. */
 		currentIds?: string[];
+		/** When true, render the field as read-only text instead of inputs.
+		 *  Used by EntityDetail's view mode. */
+		readOnly?: boolean;
 	}
 
 	const {
@@ -75,7 +78,8 @@
 		swatchOptions = [],
 		relationshipType,
 		targetEntityType,
-		currentIds = undefined
+		currentIds = undefined,
+		readOnly = false
 	}: Props = $props();
 
 	// Current entity from store.
@@ -234,12 +238,43 @@
 	}
 </script>
 
-<div class="field-row" data-field={field}>
+<div class="field-row" data-field={field} class:readonly={readOnly}>
 	<div class="field-header">
 		<span class="field-label">{label}</span>
 	</div>
 
-	{#if kind === 'textarea'}
+	{#if readOnly}
+		{#if kind === 'multi-entity-picker'}
+			<div class="readonly-chips">
+				{#if linkedEntities.length === 0}
+					<span class="readonly-empty">{placeholder || 'None'}</span>
+				{:else}
+					{#each linkedEntities as ent}
+						<span class="chip">{ent.name}</span>
+					{/each}
+				{/if}
+			</div>
+		{:else if kind === 'swatches'}
+			{#if currentValue}
+				<span class="swatch readonly-swatch" style:background={currentValue}></span>
+			{:else}
+				<span class="readonly-empty">{placeholder || 'None'}</span>
+			{/if}
+		{:else if kind === 'picklist'}
+			{@const matchedOpt = picklistOptions.find((o) => o.value === currentValue)}
+			<span class="readonly-text">
+				{matchedOpt?.label ?? (currentValue || placeholder || '—')}
+			</span>
+		{:else if kind === 'textarea'}
+			<div class="readonly-textarea">
+				{currentValue || placeholder || '—'}
+			</div>
+		{:else}
+			<span class="readonly-text">
+				{currentValue || placeholder || '—'}
+			</span>
+		{/if}
+	{:else if kind === 'textarea'}
 		<textarea
 			class="field-textarea"
 			placeholder={placeholder}
@@ -328,6 +363,42 @@
 		flex-direction: column;
 		gap: 4px;
 		margin-bottom: 14px;
+	}
+	/* View-mode (readOnly) styling — render values as plain text rather than
+	   inputs. Layout matches the editor so toggling between view/edit doesn't
+	   shift the page. */
+	.readonly-text {
+		font-size: 13px;
+		color: var(--color-text, #e8e0d0);
+		min-height: 22px;
+		padding: 4px 0;
+	}
+	.readonly-textarea {
+		font-size: 13px;
+		line-height: 1.45;
+		color: var(--color-text, #e8e0d0);
+		white-space: pre-wrap;
+		padding: 4px 0;
+		min-height: 22px;
+	}
+	.readonly-empty {
+		font-size: 13px;
+		color: var(--color-text-muted, #6b7280);
+		font-style: italic;
+		padding: 4px 0;
+	}
+	.readonly-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		padding: 4px 0;
+	}
+	.readonly-swatch {
+		display: inline-block;
+		width: 18px;
+		height: 18px;
+		border-radius: 4px;
+		border: 1px solid var(--color-border, #2a2d35);
 	}
 	.field-header {
 		display: flex;

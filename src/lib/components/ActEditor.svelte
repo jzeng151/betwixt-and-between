@@ -19,8 +19,9 @@
 
 	interface Props {
 		entityId: string;
+		readOnly?: boolean;
 	}
-	const { entityId }: Props = $props();
+	const { entityId, readOnly = false }: Props = $props();
 
 	const colorSwatches = CHARACTER_COLORS.map((hex) => ({
 		value: hex,
@@ -31,6 +32,7 @@
 
 <div class="entity-detail act-editor" data-editor-type="Act">
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="synopsis"
 		label="Synopsis"
@@ -39,6 +41,7 @@
 		placeholder="A few sentences describing what happens in this act…"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="goal"
 		label="Goal"
@@ -46,6 +49,7 @@
 		placeholder="What does the protagonist want by the end of this act?"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="stakes"
 		label="Stakes"
@@ -53,6 +57,7 @@
 		placeholder="What happens if they fail?"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="turningPoint"
 		label="Turning point"
@@ -60,6 +65,7 @@
 		placeholder="One sentence — the moment that ends this act"
 	/>
 	<EditableField
+		{readOnly}
 		{entityId}
 		field="color"
 		label="Color"

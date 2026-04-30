@@ -78,6 +78,10 @@
 		}
 	});
 
+	// View/edit mode (Block 5). Default 'view' so opening an entity is a
+	// read-first flow; click Edit to switch to the editable form.
+	let mode = $state<'view' | 'edit'>('view');
+
 	// Move-to-window confirmation (2B-i inline confirm pattern).
 	let confirmingMove = $state(false);
 
@@ -123,6 +127,15 @@
 			<div class="entity-detail-eyebrow-row">
 				<span class="entity-detail-eyebrow">{eyebrowFor(entity)}</span>
 				<div class="entity-detail-actions">
+					<button
+						type="button"
+						class="mode-toggle"
+						aria-label={mode === 'view' ? 'Edit' : 'Done editing'}
+						title={mode === 'view' ? 'Edit' : 'Done editing'}
+						onclick={() => (mode = mode === 'view' ? 'edit' : 'view')}
+					>
+						{mode === 'view' ? 'Edit' : 'Done'}
+					</button>
 					{#if !isPopout && onMoveToWindow}
 						{#if confirmingMove}
 							<span class="popout-confirm">
@@ -162,16 +175,20 @@
 				</div>
 			</div>
 			<div class="entity-detail-title">
-				<InlineEdit value={entity.name} onSave={rename} />
+				{#if mode === 'edit'}
+					<InlineEdit value={entity.name} onSave={rename} />
+				{:else}
+					<span class="entity-detail-title-text">{entity.name}</span>
+				{/if}
 			</div>
 		</div>
 
 		{#if entity.type === 'Act'}
-			<ActEditor entityId={entity.id} />
+			<ActEditor entityId={entity.id} readOnly={mode === 'view'} />
 		{:else if entity.type === 'Event'}
-			<EventEditor entityId={entity.id} />
+			<EventEditor entityId={entity.id} readOnly={mode === 'view'} />
 		{:else if entity.type === 'Scene'}
-			<SceneEditor entityId={entity.id} />
+			<SceneEditor entityId={entity.id} readOnly={mode === 'view'} />
 		{:else}
 			<!-- Other types fall through to existing app routing per D12.
 			     Future Wiki PR replaces this branch with full Character /
@@ -182,7 +199,10 @@
 		{/if}
 
 		<div class="entity-detail-footer">
-			{#if confirmingDelete}
+			{#if mode === 'view'}
+				<!-- Empty footer in view mode — destructive actions live in edit mode. -->
+				<span class="view-footer-hint">Click Edit to modify.</span>
+			{:else if confirmingDelete}
 				<div class="delete-confirm">
 					<span class="delete-confirm-msg">
 						Delete <strong>{entity.name}</strong>?
@@ -245,6 +265,26 @@
 		align-items: center;
 		gap: 6px;
 	}
+	.mode-toggle {
+		background: var(--color-accent, #c8942a);
+		color: var(--color-surface, #161920);
+		border: none;
+		border-radius: 4px;
+		padding: 3px 10px;
+		font-size: 10px;
+		font-weight: 600;
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		cursor: pointer;
+	}
+	.mode-toggle:hover {
+		filter: brightness(1.1);
+	}
+	.entity-detail-title-text {
+		display: inline-block;
+		padding: 2px 0;
+	}
 	.popout-btn,
 	.entity-detail-close {
 		background: transparent;
@@ -305,6 +345,11 @@
 	}
 	.btn-delete:hover {
 		border-color: #ef4444;
+	}
+	.view-footer-hint {
+		font-size: 10px;
+		color: var(--color-text-muted, #6b7280);
+		font-style: italic;
 	}
 	.save-status {
 		font-size: 10px;
