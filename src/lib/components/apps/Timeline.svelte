@@ -141,9 +141,85 @@
 	});
 
 	const N = $derived(acts.length);
-	function pxForFractionalSpan(span: number): number {
-		if (N === 0 || trackWidthPx === 0) return 0;
-		return (span / N) * trackWidthPx;
+
+	// ── Per-act weights for variable-width acts ──────────────────────────────
+	// Each Act's data.timelineWeight (default 1) controls its share of the
+	// timeline track. posToFrac/fracToPos translate story-time positions
+	// (0..N) to/from cumulative track fractions (0..1) accounting for the
+	// per-act weights. With all weights = 1 these reduce to pos/N and frac*N
+	// (the original uniform-width behavior).
+	// Override map populated by ActsHeader during a live act-resize drag so
+	// bars and act columns stay in lockstep. Cleared on mouseup; persisted
+	// values come back through the entity store.
+	let weightOverride = $state<Record<string, number>>({});
+
+	function actBaseWeight(a: Entity): number {
+		try {
+			const d = JSON.parse(a.data) as Record<string, unknown>;
+			const raw = d?.timelineWeight;
+			if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw;
+		} catch {
+			// fall through
+		}
+		return 1;
+	}
+
+	const weights = $derived.by(() => {
+		return acts.map((a) => weightOverride[a.id] ?? actBaseWeight(a));
+	});
+
+	async function commitActWeights(updates: { id: string; weight: number }[]) {
+		try {
+			await Promise.all(
+				updates.map(async ({ id, weight }) => {
+					const e = $entities.find((x) => x.id === id);
+					if (!e) return;
+					let existing: Record<string, unknown> = {};
+					try {
+						const v = JSON.parse(e.data);
+						if (v && typeof v === 'object' && !Array.isArray(v)) existing = v;
+					} catch {
+						// keep existing = {}
+					}
+					await entities.updateEntity(id, {
+						data: { ...existing, timelineWeight: weight }
+					});
+				})
+			);
+		} catch (err) {
+			showError((err as Error).message);
+		} finally {
+			weightOverride = {};
+		}
+	}
+	const totalWeight = $derived(weights.reduce((a, b) => a + b, 0));
+
+	function posToFrac(p: number): number {
+		if (totalWeight === 0 || N === 0) return 0;
+		const i = Math.floor(p);
+		let cum = 0;
+		for (let k = 0; k < Math.min(i, weights.length); k++) cum += weights[k];
+		if (i < weights.length) cum += (p - i) * weights[i];
+		else cum = totalWeight; // p >= N → end of track
+		return cum / totalWeight;
+	}
+
+	function fracToPos(f: number): number {
+		if (totalWeight === 0 || N === 0) return 0;
+		const target = f * totalWeight;
+		let cum = 0;
+		for (let i = 0; i < weights.length; i++) {
+			const next = cum + weights[i];
+			if (next >= target) {
+				return i + (target - cum) / weights[i];
+			}
+			cum = next;
+		}
+		return N;
+	}
+
+	function pxForRange(start: number, end: number): number {
+		return (posToFrac(end) - posToFrac(start)) * trackWidthPx;
 	}
 
 	// ── Per-bar render state ─────────────────────────────────────────────────
@@ -187,10 +263,10 @@
 		if (!entityId) return;
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === V2_MIME)) return;
 
-		// Map drop x-coord to act index
+		// Map drop x-coord to act index using cumulative weights.
 		const rect = trackEl.getBoundingClientRect();
 		const relX = e.clientX - rect.left;
-		const rawPos = (relX / trackWidthPx) * N;
+		const rawPos = fracToPos(relX / trackWidthPx);
 		const actIdx = Math.max(0, Math.min(Math.floor(rawPos), N - 1));
 		const act = acts[actIdx];
 		if (!act) return;
@@ -313,7 +389,7 @@
 		if (target.closest('.playhead')) return;
 		if (!trackEl || trackWidthPx === 0 || N === 0) return;
 		const rect = trackEl.getBoundingClientRect();
-		const t = ((e.clientX - rect.left) / trackWidthPx) * N;
+		const t = fracToPos((e.clientX - rect.left) / trackWidthPx);
 		playhead.scrubTo(Math.max(0, Math.min(t, N)));
 	}
 </script>
@@ -372,8 +448,18 @@
 			{acts}
 			{scenesByActId}
 			{selectedEntityId}
+			{weights}
+			{trackWidthPx}
 			onSelectAct={selectFromTimeline}
 			onSelectScene={selectFromTimeline}
+			onWeightPreview={(updates) => {
+				weightOverride = { ...weightOverride, ...updates };
+			}}
+			onWeightCommit={(updates) => {
+				commitActWeights(
+					Object.entries(updates).map(([id, weight]) => ({ id, weight }))
+				);
+			}}
 		/>
 
 		<!-- Rows of intervals — also the palette drop target -->
@@ -415,7 +501,9 @@
 					{colorFor}
 					{dataNoteSnippet}
 					{tooltipFor}
-					{pxForFractionalSpan}
+					{posToFrac}
+					{fracToPos}
+					{pxForRange}
 					onLockAcquire={() => { interactionLock = true; }}
 					onLockRelease={() => { interactionLock = false; }}
 					onError={showError}
@@ -423,7 +511,7 @@
 				/>
 			{/each}
 
-			<PlayheadOverlay {trackWidthPx} actCount={N} />
+			<PlayheadOverlay {trackWidthPx} actCount={N} {posToFrac} />
 		</div>
 
 		<!-- Error toast -->

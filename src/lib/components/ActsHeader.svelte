@@ -18,17 +18,30 @@
 		/** Currently selected entity id (Act or Scene). Used to render the
 		 *  amber top-border on the selected act column header. (D2/2B-i) */
 		selectedEntityId?: string | null;
+		/** Per-act flex weights (parallel to `acts`). Drives column widths. */
+		weights?: number[];
+		/** Track width in pixels — used to convert drag-dx to weight delta. */
+		trackWidthPx?: number;
 		/** Click on an act header (not on a button) selects the act. */
 		onSelectAct?: (actId: string) => void;
 		/** Click on a scene cell selects the scene. */
 		onSelectScene?: (sceneId: string) => void;
+		/** Live preview during act-resize drag. Map of actId → new weight. */
+		onWeightPreview?: (updates: Record<string, number>) => void;
+		/** Final commit on mouseup. Map of actId → final weight (only the
+		 *  acts whose weight changed). */
+		onWeightCommit?: (updates: Record<string, number>) => void;
 	}
 	let {
 		acts,
 		scenesByActId,
 		selectedEntityId = null,
+		weights,
+		trackWidthPx = 0,
 		onSelectAct,
-		onSelectScene
+		onSelectScene,
+		onWeightPreview,
+		onWeightCommit
 	}: Props = $props();
 
 	// ── Break into scenes state ───────────────────────────────────────────────
@@ -311,6 +324,62 @@
 			setTimeout(() => (reorderError = null), 4000);
 		}
 	}
+
+	// ── Act-width resize ─────────────────────────────────────────────────────
+	// Drag handle on the right edge of each act header (except last) shifts
+	// flex weight from the right neighbor to this act (or vice versa).
+	// Total weight is preserved so other acts don't reflow.
+	let widthDrag: {
+		idx: number;
+		startX: number;
+		startWeights: number[];
+	} | null = $state(null);
+
+	function startWidthDrag(e: PointerEvent, idx: number) {
+		if (!weights || idx >= weights.length - 1) return;
+		e.preventDefault();
+		e.stopPropagation();
+		widthDrag = {
+			idx,
+			startX: e.clientX,
+			startWeights: [...weights]
+		};
+		(e.target as HTMLElement).setPointerCapture(e.pointerId);
+	}
+
+	function moveWidthDrag(e: PointerEvent) {
+		if (!widthDrag || !weights || trackWidthPx === 0) return;
+		const dx = e.clientX - widthDrag.startX;
+		const totalWeight = widthDrag.startWeights.reduce((a, b) => a + b, 0);
+		// One pixel of drag = totalWeight / trackWidthPx in weight units.
+		const deltaWeight = (dx / trackWidthPx) * totalWeight;
+		const i = widthDrag.idx;
+		const wi = widthDrag.startWeights[i] + deltaWeight;
+		const wj = widthDrag.startWeights[i + 1] - deltaWeight;
+		const MIN_W = 0.05 * totalWeight; // each act stays ≥ 5% of total
+		if (wi < MIN_W || wj < MIN_W) return;
+		onWeightPreview?.({
+			[acts[i].id]: wi,
+			[acts[i + 1].id]: wj
+		});
+	}
+
+	function endWidthDrag(e: PointerEvent) {
+		if (!widthDrag || !weights) return;
+		const i = widthDrag.idx;
+		const updates: Record<string, number> = {};
+		if (Math.abs(weights[i] - widthDrag.startWeights[i]) > 1e-6) {
+			updates[acts[i].id] = weights[i];
+		}
+		if (Math.abs(weights[i + 1] - widthDrag.startWeights[i + 1]) > 1e-6) {
+			updates[acts[i + 1].id] = weights[i + 1];
+		}
+		widthDrag = null;
+		(e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
+		if (Object.keys(updates).length > 0) {
+			onWeightCommit?.(updates);
+		}
+	}
 </script>
 
 <!-- Acts header -->
@@ -325,18 +394,31 @@
 			class:act-col-header--dragging={dragActId === act.id}
 			class:act-drop-left={actDropTarget?.idx === actIdx && actDropTarget?.side === 'left' && dragActId !== act.id}
 			class:act-drop-right={actDropTarget?.idx === actIdx && actDropTarget?.side === 'right' && dragActId !== act.id}
-			style="flex: 1;"
+			style="flex: {weights?.[actIdx] ?? 1};"
 			ondragover={(e) => actDragOver(e, actIdx)}
 			ondrop={(e) => actDrop(e, actIdx)}
 			ondragleave={() => { if (actDropTarget?.idx === actIdx) actDropTarget = null; }}
 			onclick={(e) => {
 				// Don't hijack clicks on inner buttons / inputs / textareas
-				// or the drag grip.
+				// or the drag grip / width-resize handle.
 				const t = e.target as HTMLElement;
-				if (t.closest('button, input, textarea, .act-grip, .insert-overlay')) return;
+				if (t.closest('button, input, textarea, .act-grip, .insert-overlay, .width-handle')) return;
 				onSelectAct?.(act.id);
 			}}
 		>
+			{#if actIdx < acts.length - 1}
+				<!-- Right-edge handle for resizing this act vs. its neighbor.
+				     Hidden until act-col-header hovered. -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					class="width-handle"
+					class:dragging={widthDrag?.idx === actIdx}
+					title="Drag to resize {act.name}"
+					onpointerdown={(e) => startWidthDrag(e, actIdx)}
+					onpointermove={moveWidthDrag}
+					onpointerup={endWidthDrag}
+				></div>
+			{/if}
 			<!-- Insert-between overlay on the act's LEFT boundary. Hover reveals
 			     the + button; clicking expands an inline name input. Absolute
 			     so it doesn't take flex space (D6/5A + alignment fix). -->
@@ -471,11 +553,12 @@
 <!-- Scenes row -->
 {#if acts.length > 0}
 	<div class="scenes-row">
-		{#each acts as act (act.id)}
+		{#each acts as act, sceneActIdx (act.id)}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				class="scenes-act"
 				class:scenes-act--drop={sceneDropTarget?.actId === act.id}
+				style="flex: {weights?.[sceneActIdx] ?? 1};"
 				ondragover={(e) => sceneActDragOver(e, act.id)}
 				ondrop={(e) => sceneActDrop(e, act.id)}
 				ondragleave={() => { if (sceneDropTarget?.actId === act.id) sceneDropTarget = null; }}
@@ -632,6 +715,25 @@
 	}
 	.act-col-header.act-drop-right {
 		box-shadow: inset -3px 0 0 var(--color-accent, #c8942a);
+	}
+
+	/* Right-edge width-resize handle. Hidden by default; revealed on
+	   act-col-header hover. Sits above the inset border so the cursor wins. */
+	.width-handle {
+		position: absolute;
+		top: 0;
+		right: -3px;
+		bottom: 0;
+		width: 6px;
+		cursor: ew-resize;
+		z-index: 6;
+		opacity: 0;
+		transition: opacity 0.12s ease;
+	}
+	.act-col-header:hover .width-handle,
+	.width-handle.dragging {
+		opacity: 1;
+		background: rgba(200, 148, 42, 0.35);
 	}
 	.act-name {
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);

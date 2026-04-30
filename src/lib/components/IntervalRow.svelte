@@ -10,8 +10,6 @@
 <script lang="ts">
 	import IntervalBar from '$lib/components/IntervalBar.svelte';
 	import {
-		internalActBoundaryFractions,
-		internalSceneBoundaryFractions,
 		smartSnap,
 		positionToStartFKs,
 		positionToEndFKs
@@ -31,7 +29,12 @@
 		colorFor: (entity: Entity, idx: number) => string;
 		dataNoteSnippet: (entity: Entity) => string | null;
 		tooltipFor: (entity: Entity, interval: Interval) => string;
-		pxForFractionalSpan: (span: number) => number;
+		/** Story-time → cumulative track fraction (accounts for per-act weights). */
+		posToFrac: (pos: number) => number;
+		/** Inverse of posToFrac, for converting drag pixels back to story-time. */
+		fracToPos: (frac: number) => number;
+		/** Pixel width spanning [start, end) at the current track width. */
+		pxForRange: (start: number, end: number) => number;
 		onLockAcquire: () => void;
 		onLockRelease: () => void;
 		onError: (msg: string) => void;
@@ -50,7 +53,9 @@
 		colorFor,
 		dataNoteSnippet,
 		tooltipFor,
-		pxForFractionalSpan,
+		posToFrac,
+		fracToPos,
+		pxForRange,
 		onLockAcquire,
 		onLockRelease,
 		onError,
@@ -92,7 +97,7 @@
 
 		function onMove(ev: PointerEvent) {
 			if (!resizing) return;
-			const rawPos = ((ev.clientX - trackLeft) / trackWidthPx) * actCount;
+			const rawPos = fracToPos((ev.clientX - trackLeft) / trackWidthPx);
 			const clamped = Math.max(0, Math.min(rawPos, actCount));
 			// Default: free-fraction. Hold Alt to snap to act/scene grid.
 			const next = ev.altKey ? smartSnap(clamped, sceneCountFor) : clamped;
@@ -161,9 +166,11 @@
 		{@const previewStart = resizing?.intervalId === iv.id ? resizing.previewStart : iv.startPosition}
 		{@const previewEnd = resizing?.intervalId === iv.id ? resizing.previewEnd : iv.endPosition}
 		{@const span = previewEnd - previewStart}
-		{@const leftPct = (previewStart / Math.max(actCount, 1)) * 100}
-		{@const widthPct = (span / Math.max(actCount, 1)) * 100}
-		{@const widthPx = pxForFractionalSpan(span)}
+		{@const leftFrac = posToFrac(previewStart)}
+		{@const rightFrac = posToFrac(previewEnd)}
+		{@const leftPct = leftFrac * 100}
+		{@const widthPct = (rightFrac - leftFrac) * 100}
+		{@const widthPx = pxForRange(previewStart, previewEnd)}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
@@ -185,10 +192,31 @@
 				tooltipText={tooltipFor(entity, iv)}
 				color={colorFor(entity, idx)}
 				{widthPx}
-				internalBoundaries={[
-					...internalActBoundaryFractions(previewStart, previewEnd),
-					...internalSceneBoundaryFractions(previewStart, previewEnd, sceneCountFor)
-				].sort((a, b) => a - b)}
+				internalBoundaries={(() => {
+					// Collect boundary positions in story-time, then map them
+					// through posToFrac so they land at the correct spot within
+					// a possibly-non-uniformly-stretched bar.
+					const boundaryPositions: number[] = [];
+					const sa = Math.floor(previewStart);
+					const ea = Math.floor(previewEnd - 1e-12);
+					for (let i = sa + 1; i <= ea; i++) boundaryPositions.push(i);
+					for (let i = sa; i <= ea; i++) {
+						const m = sceneCountFor(i);
+						if (m <= 1) continue;
+						for (let k = 1; k < m; k++) {
+							const p = i + k / m;
+							if (p > previewStart + 1e-12 && p < previewEnd - 1e-12) {
+								boundaryPositions.push(p);
+							}
+						}
+					}
+					boundaryPositions.sort((a, b) => a - b);
+					const sf = posToFrac(previewStart);
+					const ef = posToFrac(previewEnd);
+					const span = ef - sf;
+					if (span <= 0) return [];
+					return boundaryPositions.map((p) => (posToFrac(p) - sf) / span);
+				})()}
 				isEvent={entity.type === 'Event'}
 				onSplit={async (fraction) => {
 					const atPosition = iv.startPosition + fraction * (iv.endPosition - iv.startPosition);
