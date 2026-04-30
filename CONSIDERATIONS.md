@@ -415,6 +415,65 @@ Per-character colors are visually distinct for ~5 characters today (amber, teal,
 
 ---
 
+### [2026-04-30] Cloud deployment lock-in — Neon Postgres + Auth.js (supersedes prior Turso direction)
+
+Two research passes during /plan-eng-review on `refactor/intervals-sync-t1` reframed the cloud migration. The prior 2026-04-22 design memo (memory: `project_cloud_migration.md`) had locked Turso + Auth.js with a per-user-DB registry pattern. That direction is **superseded** by this entry.
+
+**Why the pivot:**
+
+1. **Auth.js + async libSQL is broken in 2026.** [next-auth#9276](https://github.com/nextauthjs/next-auth/issues/9276) confirms `@auth/drizzle-adapter` doesn't compose cleanly with async libSQL clients. The Turso + Auth.js stack the prior memo assumed has a real compatibility blocker. Choosing Turso would force either a workaround in Auth.js, a self-rolled session layer, or staying on the (sync) better-sqlite3 driver locally and switching only at the cloud edge — none of which were costed in the original design.
+2. **T1 (sync conversion of `intervals.ts`) is rendered unnecessary by a Postgres port.** Drizzle's pg adapter (`drizzle-orm/postgres-js` or `node-postgres`) supports `db.transaction(async (tx) => ...)` natively. The polymorphic-tx work D17 deferred to T1 falls out of the port for free; the helper chain stays async. T1 was ~1 day; the Postgres port is ~3-4 days but absorbs T1's intent.
+3. **Test-infra cost evaporates with PGlite.** Postgres compiled to WebAssembly, runs in-process. `tests/helpers/test-db.ts` swaps `better-sqlite3 :memory:` for `@electric-sql/pglite` + `drizzle-orm/pglite` with identical zero-overhead semantics. The 215 integration tests stay <5s, no Docker, no Testcontainers, no Neon-API-in-CI. This was the largest concrete cost in the "skip Postgres" case from the first research pass; it disappears.
+4. **Stack modernization.** `entity.data` moves from `text` (JSON-stringified) to `jsonb` (queryable, indexable) — useful for future Wiki filter/search features. CHECK constraints, FK cascades, indexes carry over identically.
+
+**What we're locking:**
+
+- **Database:** Neon Postgres. Free tier (0.5 GB / 100 CU-h / scale-to-zero) covers single-user comfortably; ~$5/mo if cold-start latency on free tier becomes annoying. Storage cost is essentially zero at this app's scale (~1-3 MB per user with 1000 entities). Acquired by Databricks May 2025; brand stable but verify pricing before any multi-year commitment.
+- **Auth:** Auth.js v5 + `@auth/drizzle-adapter` against Postgres. Standard 4-table schema (users / accounts / sessions / verificationTokens). Single-user-now-but-multi-user-ready: gate writes by `session.user.id` in handlers without adding `userId` columns to existing tables yet.
+- **ORM:** stay on Drizzle 0.45+. Schema migrates `sqliteTable` → `pgTable` (mechanical rewrite, ~150 LOC). Two existing migration files (`0000_amusing_argent.sql`, `0001_mature_stepford_cuckoos.sql`) regenerated from scratch in PG dialect via `drizzle-kit generate` — cleaner than dialect-aware preservation given the short history.
+- **Test runtime:** PGlite in-process. Same SQL/types/planner/transaction semantics as full Postgres; differences (no concurrency, subset of extensions, no replication) are irrelevant to this app's tests.
+- **Local dev:** Neon dev branch via `.env.local` as primary path. Fallback: 6-line `docker-compose.yml` running `postgres:17-alpine` for offline dev.
+- **Hosting (SvelteKit Node app):** Fly.io with `adapter-node` is the assumed deploy target (matches existing tooling, supports Auth.js cleanly). Vercel works equally well; Cloudflare Workers/Pages would force a separate re-architect and is not on the table.
+
+**Self-host alternative (retained, not chosen):**
+
+If the app's destiny is "single-user forever, run on a Pi in the closet," the better answer is **stay on better-sqlite3, skip Auth.js, expose via Tailscale**. Total cost ~$1-3/month (electricity + B2 backups). Better-sqlite3 is faster than Postgres for single-process single-writer; the entire migration burden is wasted in that scenario. Decision to lock in Neon + Auth.js commits to a multi-user-capable foundation; if the app stays single-user, the cost is ~3-4 days of porting work for benefits never realized. Accepted as the right bet given the cloud-deploy intent in the original design memo.
+
+**What this means for `intervals.ts` / T1 / D17:**
+
+- **T1 (sync-mode refactor)** in TODOS line 356 is **superseded** — not deferred, not blocked, replaced. The branch `refactor/intervals-sync-t1` should be repurposed (or closed) in favor of a `refactor/sqlite-to-postgres` branch.
+- **D17 / Issue 11A**'s "TODO T1 is now blocking for Turso migration" assertion is **outdated**. The Postgres port closes the same read-modify-write window without the sync conversion. Polymorphic `Db` type alias added in Phase 1.6 carries over (just changes what types it unions over: `PgDatabase | PgTransaction` instead of `BetterSQLite3Database | SQLiteTransaction`).
+- The raw `client.exec('BEGIN')`/`'COMMIT')` workaround in `splitInterval` (added 2026-04-30 as Greptile P1 fix) is **dropped during the port** — replaced by a proper `db.transaction(async (tx) => ...)` wrap. The defensive shape is correct for the current sqlite world; the port retires the whole pattern.
+- All async/await in `intervals.ts` **stays async**. The polymorphic-tx work D17 deferred is done as part of the port, not as a separate refactor.
+
+**Time estimate (with Claude Code):**
+
+- ~1 day: schema port + migration regen + PGlite swap in tests + intervals.ts cleanup. Skip Auth.js. (Ships local dev only.)
+- **~3-4 days (target):** above + Auth.js scaffold + Neon signup + deploy config + smoke tests against real Neon. This is the lock-in scope.
+- ~1.5-2 weeks: above + `userId` columns on existing tables + RLS + production hardening + dev-data migration script.
+
+**Migration sketch (concrete, for the next plan-eng-review):**
+
+| Concern | Change |
+|---|---|
+| `sqliteTable` → `pgTable` | Mechanical, ~150 LOC schema rewrite |
+| `integer({mode:'timestamp'}).default(sql\`(unixepoch())\`)` | → `timestamp({withTimezone:true}).notNull().defaultNow()` |
+| `text('data').notNull().default('{}')` (JSON-stringified) | → `jsonb('data').notNull().default(sql\`'{}'::jsonb\`).$type<EntityData>()`. Drop `JSON.parse`/`JSON.stringify` calls at boundaries |
+| Migrations | `rm -rf drizzle/` → flip `dialect: 'postgresql'` → `drizzle-kit generate` for clean PG baseline |
+| Tests | `tests/helpers/test-db.ts` swaps better-sqlite3 → `@electric-sql/pglite` + `drizzle-orm/pglite` |
+| `intervals.ts` | Drop `$client` cast + raw BEGIN/COMMIT in `splitInterval`. Wrap callers in `db.transaction(async tx => ...)`. Thread `Db | Tx` (already typed). Helpers stay async |
+| Auth.js | Standard 4 tables added via `auth-schema.ts`. `SvelteKitAuth` wired in `src/hooks.server.ts` with `DrizzleAdapter(db, { usersTable, ... })`. `AUTH_SECRET` + provider OAuth env vars |
+| Local dev | Neon dev branch via `.env.local`; docker-compose fallback for offline |
+
+**What this entry does NOT lock:**
+
+- OAuth provider list (GitHub vs Google vs both) — defer to deploy time; trivial to add either.
+- Whether to add `userId` columns to existing tables in v1, or gate by session in handler code only — defer until the multi-user UX is actually being designed. Same-process pragma: don't migrate data we don't need to migrate.
+- Account deletion / GDPR machinery — flagged in prior memo as v1 scope; carry forward but don't block initial deploy on it.
+- Per-user DB registry pattern from prior Turso memo — **abandoned**. Single Postgres database, multi-tenant via `userId` rows, is the simpler default and matches Auth.js conventions.
+
+---
+
 ## Open Decisions (not yet locked)
 
 - Drag-and-drop palette behavior: always show all entities vs filter to "unplaced only." *Defer; ship simplest version first.*
