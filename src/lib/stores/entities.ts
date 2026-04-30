@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
+import { intervals as intervalsStore } from './intervals.js';
 
 export type Entity = {
 	id: string;
@@ -113,6 +114,15 @@ function createEntityStore() {
 		}
 		const updated: Entity = await res.json();
 		update((all) => all.map((e) => (e.id === id ? updated : e)));
+		// Position/parentId changes on Act/Scene cascade to intervals on the
+		// server (sibling reorder + recompute, or scene cross-act move). Keep
+		// the intervals store in sync.
+		if (
+			(patch.position !== undefined || patch.parentId !== undefined) &&
+			(updated.type === 'Act' || updated.type === 'Scene')
+		) {
+			await intervalsStore.load();
+		}
 		return updated;
 	}
 
@@ -130,6 +140,12 @@ function createEntityStore() {
 			await load();
 			throw new Error(await res.text());
 		}
+		// Server-side delete cascades to intervals (entity_id / start_act_id /
+		// end_act_id are all CASCADE) and recomputes survivor positions for
+		// Act/Scene deletes. The intervals store is a separate writable so
+		// reload it here — otherwise survivor bars render at pre-delete
+		// positions and overflow when N (act count) decreased.
+		await intervalsStore.load();
 	}
 
 	return { subscribe, load, createEntity, createEntities, updateEntity, deleteEntity };
