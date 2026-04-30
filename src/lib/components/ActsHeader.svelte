@@ -594,7 +594,7 @@
 							ondragstart={(e) => sceneDragStart(e, scene.id)}
 							ondragend={sceneDragEnd}
 							onclick={() => onSelectScene?.(scene.id)}
-						>s{k}</div>
+						>s{k + 1}</div>
 					{/each}
 				{:else}
 					<div class="scenes-act-empty">· · · · ·</div>
