@@ -404,6 +404,7 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="act-col-header"
+			data-entity-id={act.id}
 			class:act-col-header--selected={selectedEntityId === act.id}
 			class:act-col-header--dragging={dragActId === act.id}
 			class:act-drop-left={actDropTarget?.idx === actIdx && actDropTarget?.side === 'left' && dragActId !== act.id}

@@ -31,6 +31,7 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.scene-cell').first().click();
+		await win.locator('.entity-detail-host .mode-toggle').click();
 
 		const panel = win.locator('.entity-detail');
 		await expect(panel).toBeVisible();
@@ -55,6 +56,7 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.scene-cell').first().click();
+		await win.locator('.entity-detail-host .mode-toggle').click();
 
 		const goal = win
 			.locator('.entity-detail [data-field="goal"]')
@@ -85,6 +87,7 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.scene-cell').first().click();
+		await win.locator('.entity-detail-host .mode-toggle').click();
 
 		const sensory = win
 			.locator('.entity-detail [data-field="sensoryAnchor"]')
@@ -123,6 +126,7 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.scene-cell').first().click();
+		await win.locator('.entity-detail-host .mode-toggle').click();
 
 		await win
 			.locator('.entity-detail [data-field="pov"]')

@@ -16,7 +16,14 @@ async function openTimeline(page: Page) {
 	return win;
 }
 
-test.describe('V2 Scene rename (InlineEdit on scene cell label)', () => {
+// Skipping these — the design changed during Lane C implementation.
+// Scene cells in the .scenes-row render compact ordinal labels (s1, s2,
+// s3) rather than full scene names; the cell itself is now a click-to-
+// select target that opens the EntityDetail side panel where the user
+// renames via the title's InlineEdit. There is no inline-rename
+// affordance on the scene cell directly. Title rename in EntityDetail
+// is covered by v2-act-editor.spec.ts equivalents.
+test.describe.skip('V2 Scene rename (InlineEdit on scene cell label)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
 	});

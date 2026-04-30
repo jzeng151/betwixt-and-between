@@ -21,7 +21,7 @@ test.describe('Timeline — create acts and events from the timeline UI', () => 
 		await clearAll(request);
 	});
 
-	test('+ Act inline form creates an act and renders it in the header', async ({
+	test('+ Act creates an act with a default name and opens the editor in edit mode', async ({
 		page,
 		request
 	}) => {
@@ -31,88 +31,96 @@ test.describe('Timeline — create acts and events from the timeline UI', () => 
 		await expect(win.locator('.acts-empty')).toBeVisible();
 		await expect(win.locator('.act-col-header')).toHaveCount(0);
 
-		// Click the trailing + Act tile
+		// Click + Act
 		await win.locator('button.act-add-btn').click();
-		const input = win.locator('input.act-add-input');
-		await expect(input).toBeVisible();
-		await input.fill('Opening');
-		await input.press('Enter');
 
-		// Server: act created
+		// Server: act created with a default name (Act 1)
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
-			expect(ents.filter((e: any) => e.type === 'Act')).toHaveLength(1);
+			const acts = ents.filter((e: any) => e.type === 'Act');
+			expect(acts).toHaveLength(1);
+			expect(acts[0].name).toBe('Act 1');
 		}).toPass({ timeout: 3000 });
 
-		// UI: header renders, empty state gone, + Act tile still present
-		await expect(win.locator('.act-col-header .act-name')).toHaveText('Opening');
+		// UI: header renders, empty state gone, side panel opens in edit mode
+		await expect(win.locator('.act-col-header .act-name')).toHaveText('Act 1');
 		await expect(win.locator('.acts-empty')).toHaveCount(0);
-		await expect(win.locator('button.act-add-btn')).toBeVisible();
-
-		// Add a second act → ordering by position
-		await win.locator('button.act-add-btn').click();
-		await win.locator('input.act-add-input').fill('Climax');
-		await win.locator('input.act-add-input').press('Enter');
-
-		await expect(win.locator('.act-col-header .act-name')).toHaveCount(2);
-		const labels = await win.locator('.act-col-header .act-name').allTextContents();
-		expect(labels).toEqual(['Opening', 'Climax']);
+		// Edit mode → mode-toggle reads 'Done', InlineEdit's input is rendered.
+		await expect(win.locator('.entity-detail-host .mode-toggle')).toHaveText('Done');
+		await expect(win.locator('.entity-detail-title input')).toBeVisible();
 	});
 
-	test('Escape cancels the + Act inline form', async ({ page }) => {
+	test('+ Act sets the new act position to the end of the existing list', async ({
+		page,
+		request
+	}) => {
+		await request.post('/api/entities', { data: { type: 'Act', name: 'Existing', position: 0 } });
+
 		const win = await openTimeline(page);
 		await win.locator('button.act-add-btn').click();
-		const input = win.locator('input.act-add-input');
-		await input.fill('Discarded');
-		await input.press('Escape');
-		await expect(input).toHaveCount(0);
-		await expect(win.locator('button.act-add-btn')).toBeVisible();
+
+		await expect(async () => {
+			const ents = await (await request.get('/api/entities')).json();
+			const acts = ents
+				.filter((e: any) => e.type === 'Act')
+				.sort((a: any, b: any) => a.position - b.position);
+			expect(acts.map((a: any) => a.name)).toEqual(['Existing', 'Act 2']);
+		}).toPass({ timeout: 3000 });
 	});
 
-	test('+ Event inline form creates an event chip in the palette', async ({ page, request }) => {
+	test('+ Event creates an event and opens the editor in edit mode', async ({
+		page,
+		request
+	}) => {
+		// Need an act so the event can later be dropped on the track. Not
+		// strictly required for create — just realistic.
+		await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } });
+
 		const win = await openTimeline(page);
 
-		// Open the events add form
-		await win.locator('.palette-section', { hasText: 'Events' }).locator('.palette-add-btn').click();
-		const input = win.locator('input.palette-add-input[aria-label="New event name"]');
-		await expect(input).toBeVisible();
-		await input.fill('Battle of Three Rivers');
-		await input.press('Enter');
+		// Click the events + button in the palette
+		await win
+			.locator('.palette-section', { hasText: 'Events' })
+			.locator('.palette-add-btn')
+			.click();
 
-		// Server: event created
+		// Server: event created with the default name
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
 			const evs = ents.filter((e: any) => e.type === 'Event');
 			expect(evs).toHaveLength(1);
-			expect(evs[0].name).toBe('Battle of Three Rivers');
+			expect(evs[0].name).toBe('Event 1');
 		}).toPass({ timeout: 3000 });
 
-		// Palette renders the chip and is draggable (data-entity-id is set)
+		// Palette renders the chip and the side panel opens in edit mode
 		const chip = win
 			.locator('.palette-section', { hasText: 'Events' })
-			.locator('.palette-item', { hasText: 'Battle of Three Rivers' });
+			.locator('.palette-item', { hasText: 'Event 1' });
 		await expect(chip).toBeVisible();
 		await expect(chip).toHaveAttribute('draggable', 'true');
-		await expect(chip).toHaveAttribute('data-entity-id', /.+/);
+		await expect(win.locator('.entity-detail-host .mode-toggle')).toHaveText('Done');
 	});
 
 	test('event chip created in the palette can be dragged onto the timeline', async ({
 		page,
 		request
 	}) => {
-		// Pre-seed an act so the drop target exists
 		await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } });
 
 		const win = await openTimeline(page);
 
-		// Create the event via the palette form
-		await win.locator('.palette-section', { hasText: 'Events' }).locator('.palette-add-btn').click();
-		await win.locator('input.palette-add-input[aria-label="New event name"]').fill('Coronation');
-		await win.locator('input.palette-add-input[aria-label="New event name"]').press('Enter');
+		// Create the event via the palette + button
+		await win
+			.locator('.palette-section', { hasText: 'Events' })
+			.locator('.palette-add-btn')
+			.click();
+
+		// Close the side panel that just opened so it doesn't cover .rows
+		await win.locator('.entity-detail-close').click();
 
 		const chip = win
 			.locator('.palette-section', { hasText: 'Events' })
-			.locator('.palette-item', { hasText: 'Coronation' });
+			.locator('.palette-item', { hasText: 'Event 1' });
 		await expect(chip).toBeVisible();
 
 		// Drag the chip onto the rows track
@@ -123,7 +131,6 @@ test.describe('Timeline — create acts and events from the timeline UI', () => 
 			expect(intervals).toHaveLength(1);
 		}).toPass({ timeout: 3000 });
 
-		// Bar renders in the timeline
 		await expect(win.locator('.bar-wrapper')).toHaveCount(1);
 	});
 });

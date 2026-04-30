@@ -37,6 +37,7 @@ test.describe('V2 Event editor (D5 + D4 multi-POV)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.bar-wrapper').first().click();
+		await win.locator('.entity-detail-host .mode-toggle').click();
 
 		const panel = win.locator('.entity-detail');
 		await expect(panel).toBeVisible();
@@ -69,6 +70,7 @@ test.describe('V2 Event editor (D5 + D4 multi-POV)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.bar-wrapper').first().click();
+		await win.locator('.entity-detail-host .mode-toggle').click();
 
 		const povField = win.locator('.entity-detail [data-field="pov"]');
 		// Pick Ellie
@@ -100,6 +102,7 @@ test.describe('V2 Event editor (D5 + D4 multi-POV)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.bar-wrapper').first().click();
+		await win.locator('.entity-detail-host .mode-toggle').click();
 
 		const outcomeSelect = win
 			.locator('.entity-detail [data-field="outcome"]')
@@ -132,6 +135,7 @@ test.describe('V2 Event editor (D5 + D4 multi-POV)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.bar-wrapper').first().click();
+		await win.locator('.entity-detail-host .mode-toggle').click();
 
 		await win
 			.locator('.entity-detail [data-field="pov"]')

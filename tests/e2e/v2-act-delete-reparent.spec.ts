@@ -16,6 +16,13 @@ async function openTimeline(page: Page) {
 	return win;
 }
 
+async function clickDelete(win: ReturnType<Page['locator']>, name: string) {
+	// .act-delete-btn has opacity:0 until the act-col-header is hovered;
+	// force-click works regardless of visual state.
+	const btn = win.locator(`button.act-delete-btn[aria-label="Delete ${name}"]`);
+	await btn.click({ force: true });
+}
+
 test.describe('V2 Delete-act with scene reparent (D9 / 7B)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
@@ -37,12 +44,12 @@ test.describe('V2 Delete-act with scene reparent (D9 / 7B)', () => {
 		});
 
 		const win = await openTimeline(page);
-		await win.locator('button.act-delete-btn[aria-label="Delete A"]').click();
+		await clickDelete(win, 'A');
 
 		const confirm = win.locator('.delete-confirm');
 		await expect(confirm).toBeVisible();
-		await expect(confirm).toContainText(/Move scenes to/i);
-		await expect(confirm.locator('select.move-scenes-target, .move-scenes-picker')).toBeVisible();
+		await expect(confirm).toContainText(/Move .* scene/i);
+		await expect(confirm.locator('.reparent-picker')).toBeVisible();
 	});
 
 	test('picking a target act and confirming reparents scenes (parent_id flips, positions appended)', async ({
@@ -66,16 +73,9 @@ test.describe('V2 Delete-act with scene reparent (D9 / 7B)', () => {
 		});
 
 		const win = await openTimeline(page);
-		await win.locator('button.act-delete-btn[aria-label="Delete A"]').click();
+		await clickDelete(win, 'A');
 		const confirm = win.locator('.delete-confirm');
-		await confirm
-			.locator('select.move-scenes-target, .move-scenes-picker')
-			.first()
-			.selectOption(aB.id)
-			.catch(async () => {
-				// If picker is radio-style, fall back
-				await confirm.locator(`[data-target-act-id="${aB.id}"]`).click();
-			});
+		await confirm.locator(`.reparent-picker input[type="radio"][value="${aB.id}"]`).click();
 		await confirm.locator('button.btn-danger').click();
 
 		await expect(async () => {
@@ -84,7 +84,6 @@ test.describe('V2 Delete-act with scene reparent (D9 / 7B)', () => {
 			const scenes = ents
 				.filter((e: any) => e.type === 'Scene')
 				.sort((x: any, y: any) => x.position - y.position);
-			// All 3 scenes now under aB, positions 0,1,2 with S1/S2 appended after B0
 			expect(scenes).toHaveLength(3);
 			expect(scenes.every((s: any) => s.parentId === aB.id)).toBe(true);
 			expect(scenes.map((s: any) => s.position)).toEqual([0, 1, 2]);
@@ -120,15 +119,9 @@ test.describe('V2 Delete-act with scene reparent (D9 / 7B)', () => {
 		});
 
 		const win = await openTimeline(page);
-		await win.locator('button.act-delete-btn[aria-label="Delete A"]').click();
+		await clickDelete(win, 'A');
 		const confirm = win.locator('.delete-confirm');
-		await confirm
-			.locator('select.move-scenes-target, .move-scenes-picker')
-			.first()
-			.selectOption(aB.id)
-			.catch(async () => {
-				await confirm.locator(`[data-target-act-id="${aB.id}"]`).click();
-			});
+		await confirm.locator(`.reparent-picker input[type="radio"][value="${aB.id}"]`).click();
 		await confirm.locator('button.btn-danger').click();
 
 		await expect(async () => {

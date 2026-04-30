@@ -33,9 +33,9 @@ test.describe('V2 Editor pop-out + mutex (D2 + D3)', () => {
 		await win.locator('.act-col-header').first().click();
 
 		const panel = win.locator('.entity-detail');
-		await panel.locator('button.popout-btn').click();
+		await win.locator(".entity-detail-host button.popout-btn").click();
 
-		const confirm = panel.locator('.popout-confirm');
+		const confirm = win.locator('.entity-detail-host .popout-confirm');
 		await expect(confirm).toBeVisible();
 		await expect(confirm).toContainText(/Move to standalone window/i);
 
@@ -57,8 +57,8 @@ test.describe('V2 Editor pop-out + mutex (D2 + D3)', () => {
 		await win.locator('.act-col-header').first().click();
 
 		const panel = win.locator('.entity-detail');
-		await panel.locator('button.popout-btn').click();
-		await panel.locator('.popout-confirm button', { hasText: /^move$/i }).click();
+		await win.locator(".entity-detail-host button.popout-btn").click();
+		await win.locator('.entity-detail-host .popout-confirm button', { hasText: /^move$/i }).click();
 
 		// Pop-out window opens, side panel closes
 		await expect(page.locator(`.window[aria-label="Act A"]`)).toBeVisible();
@@ -77,17 +77,17 @@ test.describe('V2 Editor pop-out + mutex (D2 + D3)', () => {
 
 		// Pop out Act A
 		await win.locator(`.act-col-header[data-entity-id="${a.id}"]`).click();
-		await win.locator('.entity-detail button.popout-btn').click();
+		await win.locator('.entity-detail-host button.popout-btn').click();
 		await win
-			.locator('.entity-detail .popout-confirm button', { hasText: /^move$/i })
+			.locator('.entity-detail-host .popout-confirm button', { hasText: /^move$/i })
 			.click();
 		await expect(page.locator('.window[aria-label="Act A"]')).toBeVisible();
 
 		// Pop out Act B
 		await win.locator(`.act-col-header[data-entity-id="${b.id}"]`).click();
-		await win.locator('.entity-detail button.popout-btn').click();
+		await win.locator('.entity-detail-host button.popout-btn').click();
 		await win
-			.locator('.entity-detail .popout-confirm button', { hasText: /^move$/i })
+			.locator('.entity-detail-host .popout-confirm button', { hasText: /^move$/i })
 			.click();
 		await expect(page.locator('.window[aria-label="Act B"]')).toBeVisible();
 
@@ -108,9 +108,9 @@ test.describe('V2 Editor pop-out + mutex (D2 + D3)', () => {
 
 		// Open + pop out Act A
 		await win.locator('.act-col-header').first().click();
-		await win.locator('.entity-detail button.popout-btn').click();
+		await win.locator('.entity-detail-host button.popout-btn').click();
 		await win
-			.locator('.entity-detail .popout-confirm button', { hasText: /^move$/i })
+			.locator('.entity-detail-host .popout-confirm button', { hasText: /^move$/i })
 			.click();
 
 		const popout = page.locator('.window[aria-label="Act A"]');
