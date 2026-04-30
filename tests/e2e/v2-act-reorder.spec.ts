@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { html5Drag } from './helpers/html5-drag.js';
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -16,12 +17,7 @@ async function openTimeline(page: Page) {
 	return win;
 }
 
-// Skipped: HTML5 drag-and-drop chains under Playwright (dragstart → dragover → drop with custom MIMEs) are flaky to
-// drive via page.mouse / dragTo. Manual UI verified; the
-// underlying server cascade is covered by integration tests in
-// tests/integration/ (api-entities-position, intervals-cascade,
-// api-entities-delete-rescope, intervals-write).
-test.describe.skip('V2 Act drag-reorder (D18 / 12A)', () => {
+test.describe('V2 Act drag-reorder (D18 / 12A)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
 	});
@@ -33,10 +29,14 @@ test.describe.skip('V2 Act drag-reorder (D18 / 12A)', () => {
 		const win = await openTimeline(page);
 		const header = win.locator('.act-col-header').first();
 		await header.hover();
-		await expect(header.locator('.act-grip')).toBeVisible();
+		const grip = header.locator('.act-grip');
+		await expect(grip).toBeVisible();
+		// CSS opacity is 0.7 on hover, 1 on grip:hover. Either way it's painted.
+		const opacity = await grip.evaluate((el) => Number(getComputedStyle(el).opacity));
+		expect(opacity).toBeGreaterThan(0);
 	});
 
-	test('drag Act 3 to position 0 cascades sibling positions', async ({ page, request }) => {
+	test('drag Act C to position 0 cascades sibling positions', async ({ page, request }) => {
 		const a = await (
 			await request.post('/api/entities', { data: { type: 'Act', name: 'A', position: 0 } })
 		).json();
@@ -50,27 +50,23 @@ test.describe.skip('V2 Act drag-reorder (D18 / 12A)', () => {
 		const win = await openTimeline(page);
 		const headerA = win.locator(`.act-col-header[data-entity-id="${a.id}"]`);
 		const headerC = win.locator(`.act-col-header[data-entity-id="${c.id}"]`);
+		await headerC.hover();
 
-		const fromBox = await headerC.boundingBox();
-		const toBox = await headerA.boundingBox();
-		if (!fromBox || !toBox) throw new Error('header boxes');
-
-		// Use the grip as the drag handle
-		const grip = headerC.locator('.act-grip');
-		const gripBox = await grip.boundingBox();
-		if (!gripBox) throw new Error('grip box');
-
-		await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
-		await page.mouse.down();
-		await page.mouse.move(toBox.x + 5, toBox.y + toBox.height / 2, { steps: 8 });
-		await page.mouse.up();
+		// Drop on the LEFT half of header A so the act-drop-left branch
+		// triggers and C ends up at index 0.
+		const aBox = await headerA.boundingBox();
+		if (!aBox) throw new Error('headerA box');
+		await html5Drag(page, headerC.locator('.act-grip'), {
+			element: headerA,
+			x: aBox.x + aBox.width * 0.2,
+			y: aBox.y + aBox.height / 2
+		});
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
 			const acts = ents
 				.filter((e: any) => e.type === 'Act')
 				.sort((x: any, y: any) => x.position - y.position);
-			// C moved to 0; A and B shift right
 			expect(acts.map((x: any) => x.id)).toEqual([c.id, a.id, b.id]);
 			expect(acts.map((x: any) => x.position)).toEqual([0, 1, 2]);
 		}).toPass({ timeout: 3000 });
@@ -98,27 +94,25 @@ test.describe.skip('V2 Act drag-reorder (D18 / 12A)', () => {
 		});
 
 		const win = await openTimeline(page);
-		const headerC = win.locator(`.act-col-header[data-entity-id="${c.id}"]`);
 		const headerA = win.locator(`.act-col-header[data-entity-id="${a.id}"]`);
-		const grip = headerC.locator('.act-grip');
-		const gripBox = await grip.boundingBox();
-		const toBox = await headerA.boundingBox();
-		if (!gripBox || !toBox) throw new Error('boxes');
-
-		await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
-		await page.mouse.down();
-		await page.mouse.move(toBox.x + 5, toBox.y + toBox.height / 2, { steps: 8 });
-		await page.mouse.up();
+		const headerC = win.locator(`.act-col-header[data-entity-id="${c.id}"]`);
+		await headerC.hover();
+		const aBox = await headerA.boundingBox();
+		if (!aBox) throw new Error('headerA box');
+		await html5Drag(page, headerC.locator('.act-grip'), {
+			element: headerA,
+			x: aBox.x + aBox.width * 0.2,
+			y: aBox.y + aBox.height / 2
+		});
 
 		await expect(async () => {
 			const ints = await (await request.get('/api/intervals')).json();
 			const iv = ints.find((i: any) => i.entityId === ellie.id);
-			// Interval still anchored to Act B (which is now at position 2 instead of 1)
+			// Interval still anchored to Act B (B's act_index shifted from 1 → 2).
 			expect(iv.startActId).toBe(b.id);
 			expect(iv.endActId).toBe(b.id);
-			// Position should have updated to reflect Act B's new position (2)
-			expect(iv.startPosition).toBeGreaterThanOrEqual(2);
-			expect(iv.endPosition).toBeLessThanOrEqual(3);
+			expect(iv.startPosition).toBeCloseTo(2, 9);
+			expect(iv.endPosition).toBeCloseTo(3, 9);
 		}).toPass({ timeout: 3000 });
 	});
 
@@ -135,7 +129,6 @@ test.describe.skip('V2 Act drag-reorder (D18 / 12A)', () => {
 
 		const win = await openTimeline(page);
 
-		// Force the reorder PATCH to fail
 		await page.route(`**/api/entities/${c.id}`, async (route) => {
 			if (route.request().method() === 'PATCH') {
 				const body = route.request().postDataJSON();
@@ -147,19 +140,18 @@ test.describe.skip('V2 Act drag-reorder (D18 / 12A)', () => {
 			await route.continue();
 		});
 
-		const headerC = win.locator(`.act-col-header[data-entity-id="${c.id}"]`);
 		const headerA = win.locator(`.act-col-header[data-entity-id="${a.id}"]`);
-		const grip = headerC.locator('.act-grip');
-		const gripBox = await grip.boundingBox();
-		const toBox = await headerA.boundingBox();
-		if (!gripBox || !toBox) throw new Error('boxes');
+		const headerC = win.locator(`.act-col-header[data-entity-id="${c.id}"]`);
+		await headerC.hover();
+		const aBox = await headerA.boundingBox();
+		if (!aBox) throw new Error('headerA box');
+		await html5Drag(page, headerC.locator('.act-grip'), {
+			element: headerA,
+			x: aBox.x + aBox.width * 0.2,
+			y: aBox.y + aBox.height / 2
+		});
 
-		await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
-		await page.mouse.down();
-		await page.mouse.move(toBox.x + 5, toBox.y + toBox.height / 2, { steps: 8 });
-		await page.mouse.up();
-
-		// After rollback (load() in store), positions should match the original DB state
+		// Server still has [a, b, c]; the failed PATCH triggered store load() to roll back.
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
 			const acts = ents

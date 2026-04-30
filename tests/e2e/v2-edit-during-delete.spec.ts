@@ -16,88 +16,15 @@ async function openTimeline(page: Page) {
 	return win;
 }
 
-// Skipping these in single-tab Playwright: the draft-preview toast (D16/14A)
-// fires when an entity is deleted FROM ANOTHER WINDOW while the current
-// window has an uncommitted draft. In one tab, clicking the delete button
-// blurs the textarea first → EditableField.onTextBlur commits → store
-// saves → no draft left in the bus to recover. Reproducing the
-// "concurrent window" scenario needs a second BrowserContext deleting via
-// the API while the first context's textarea is still focused. The
-// Toast.svelte / editable-drafts.ts / EntityDetail.onEntityVanished
-// integration is exercised by unit tests in tests/unit/ instead.
-test.describe.skip('V2 Edit-during-delete (D16 / 14A)', () => {
+test.describe('V2 Edit-during-delete (D16 / 14A)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
-		// Browser permission needed for navigator.clipboard.readText() in the assertion
 	});
 
-	test('typing into synopsis then deleting the act fires a toast with truncated preview', async ({
+	test('toast does NOT fire on optimistic-then-rolled-back delete', async ({
 		page,
-		request,
-		context
+		request
 	}) => {
-		await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-		const a = await (
-			await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } })
-		).json();
-
-		const win = await openTimeline(page);
-		await win.locator('.act-col-header').first().click();
-		await win.locator('.entity-detail-host .mode-toggle').click();
-
-		const synopsis = win
-			.locator('.entity-detail [data-field="synopsis"] textarea.field-textarea');
-		const longDraft =
-			'In the opening act, Ellie escapes the burning city under cover of darkness while the militia closes the gates and the river floods the lower district.';
-		await synopsis.fill(longDraft);
-		// Do NOT blur — leave draft uncommitted
-
-		// Delete the act via the header X
-		await win.locator('button.act-delete-btn[aria-label="Delete Act A"]').click();
-		await win.locator('.delete-confirm button.btn-danger').click();
-
-		// Toast appears with truncated preview (~80 chars + ellipsis)
-		const toast = page.locator('.toast.draft-preview, .toast').filter({ hasText: longDraft.slice(0, 40) });
-		await expect(toast).toBeVisible({ timeout: 3000 });
-		const toastText = await toast.textContent();
-		expect(toastText).toMatch(/…|\.\.\./);
-	});
-
-	test('Copy-to-clipboard button copies the FULL draft text', async ({
-		page,
-		request,
-		context
-	}) => {
-		await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-		await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } });
-
-		const win = await openTimeline(page);
-		await win.locator('.act-col-header').first().click();
-		await win.locator('.entity-detail-host .mode-toggle').click();
-
-		const synopsis = win
-			.locator('.entity-detail [data-field="synopsis"] textarea.field-textarea');
-		const longDraft =
-			'A long uncommitted draft that needs to survive the destructive delete via clipboard.';
-		await synopsis.fill(longDraft);
-
-		await win.locator('button.act-delete-btn[aria-label="Delete Act A"]').click();
-		await win.locator('.delete-confirm button.btn-danger').click();
-
-		const toast = page.locator('.toast.draft-preview, .toast').first();
-		await expect(toast).toBeVisible({ timeout: 3000 });
-		await toast.locator('button', { hasText: /copy/i }).click();
-
-		const clip = await page.evaluate(() => navigator.clipboard.readText());
-		expect(clip).toBe(longDraft);
-	});
-
-	test('toast does NOT fire on optimistic-then-rolled-back delete (D16 P2-1)', async ({
-		page,
-		request,
-		context
-	}) => {
-		await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 		const a = await (
 			await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } })
 		).json();
@@ -110,8 +37,8 @@ test.describe.skip('V2 Edit-during-delete (D16 / 14A)', () => {
 			.locator('.entity-detail [data-field="synopsis"] textarea.field-textarea');
 		await synopsis.fill('still typing');
 
-		// Force the DELETE to fail; the optimistic remove should be rolled back
-		// via load(), and the toast must NOT fire.
+		// Force the DELETE to fail. The optimistic remove rolls back via
+		// load(), $entities still has the act → no vanish → no toast.
 		await page.route(`**/api/entities/${a.id}`, async (route) => {
 			if (route.request().method() === 'DELETE') {
 				await route.fulfill({ status: 500, body: 'no-op' });
@@ -120,11 +47,35 @@ test.describe.skip('V2 Edit-during-delete (D16 / 14A)', () => {
 			await route.continue();
 		});
 
-		await win.locator('button.act-delete-btn[aria-label="Delete Act A"]').click();
+		await win.locator('.act-col-header').first().hover();
+		await win.locator(`button.act-delete-btn[aria-label="Delete Act A"]`).click({ force: true });
 		await win.locator('.delete-confirm button.btn-danger').click();
 
-		// Wait a beat for any toast to (incorrectly) appear
 		await page.waitForTimeout(500);
-		await expect(page.locator('.toast.draft-preview')).toHaveCount(0);
+		await expect(page.locator('.toast.toast--draft')).toHaveCount(0);
+		await expect(page.locator('.toast')).toHaveCount(0);
 	});
+
+	// The draft-preview toast (D16/14A) and the Copy-to-clipboard variant
+	// fire when an entity is deleted FROM ANOTHER WINDOW while the current
+	// window has an uncommitted draft. Both are untestable end-to-end
+	// without a real cross-tab refresh signal:
+	//
+	// - Single-tab: any UI action that triggers $entities.load() (clicking
+	//   delete, navigating away, etc.) blurs the focused textarea first,
+	//   which commits the draft and clears the editable-drafts bus. The
+	//   entity then vanishes with no draft to recover.
+	// - Cross-context (browser.newContext()): context B can DELETE via the
+	//   API, but context A's store has no listener — the app doesn't ship
+	//   SSE / WebSocket / polling, so context A never knows the act is
+	//   gone unless the user does something that calls load(). That action
+	//   blurs the textarea (see above).
+	//
+	// The functional pieces — Toast.svelte's draft-preview variant, the
+	// editable-drafts module-level bus, and EntityDetail.onEntityVanished —
+	// are unit-tested in tests/component/. A meaningful cross-window e2e
+	// would require either a server push channel or a dedicated
+	// "refresh entities now" UI control that does NOT blur the editor.
+	test.skip('typing into synopsis then deleting the act fires a toast with truncated preview', () => {});
+	test.skip('Copy-to-clipboard button copies the FULL draft text', () => {});
 });

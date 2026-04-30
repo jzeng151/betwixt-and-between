@@ -31,7 +31,7 @@ async function openStoryGraph(page: Page) {
 // underneath — windows.ts ENTITY_APP map for Act/Event/Scene →
 // 'entity-detail' and the findOpenEditorFor mutex — is covered by
 // stores-windows + navigation-entity-detail unit tests.
-test.describe.skip('V2 Act routing (D10-extension / 19A)', () => {
+test.describe.fixme('V2 Act routing (D10-extension / 19A)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
 	});

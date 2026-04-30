@@ -574,6 +574,7 @@
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				class="scenes-act"
+				data-act-id={act.id}
 				class:scenes-act--drop={sceneDropTarget?.actId === act.id}
 				style={actPxWidths?.[sceneActIdx] != null
 					? `flex: 0 0 ${actPxWidths[sceneActIdx]}px;`
@@ -588,6 +589,7 @@
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div
 							class="scene-cell"
+							data-entity-id={scene.id}
 							class:scene-cell--selected={selectedEntityId === scene.id}
 							class:scene-cell--dragging={dragSceneId === scene.id}
 							title={scene.name}

@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { html5Drag } from './helpers/html5-drag.js';
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -16,12 +17,7 @@ async function openTimeline(page: Page) {
 	return win;
 }
 
-// Skipped: HTML5 drag-and-drop chains under Playwright (dragstart → dragover → drop with custom MIMEs) are flaky to
-// drive via page.mouse / dragTo. Manual UI verified; the
-// underlying server cascade is covered by integration tests in
-// tests/integration/ (api-entities-position, intervals-cascade,
-// api-entities-delete-rescope, intervals-write).
-test.describe.skip('V2 Scene reorder within an act (T3-pulled-in + D18)', () => {
+test.describe('V2 Scene reorder within an act (T3-pulled-in + D18)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
 	});
@@ -50,21 +46,19 @@ test.describe.skip('V2 Scene reorder within an act (T3-pulled-in + D18)', () => 
 		).json();
 
 		const win = await openTimeline(page);
-		const cell1 = win.locator(`.scene-cell[data-entity-id="${sc1.id}"]`);
 		const cell3 = win.locator(`.scene-cell[data-entity-id="${sc3.id}"]`);
-		await expect(cell1).toBeVisible();
+		const scenesAct = win.locator(`.scenes-act[data-act-id="${a0.id}"]`);
 		await expect(cell3).toBeVisible();
 
-		const grip = cell3.locator('.scene-grip');
-		await cell3.hover();
-		const gripBox = await grip.boundingBox();
-		const toBox = await cell1.boundingBox();
-		if (!gripBox || !toBox) throw new Error('boxes');
-
-		await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
-		await page.mouse.down();
-		await page.mouse.move(toBox.x + 4, toBox.y + toBox.height / 2, { steps: 8 });
-		await page.mouse.up();
+		// Drop near the LEFT edge of scenes-act so sceneActDragOver
+		// computes idx=0 and the dragged scene lands first.
+		const sBox = await scenesAct.boundingBox();
+		if (!sBox) throw new Error('scenes-act box');
+		await html5Drag(page, cell3, {
+			element: scenesAct,
+			x: sBox.x + 4,
+			y: sBox.y + sBox.height / 2
+		});
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
@@ -92,23 +86,22 @@ test.describe.skip('V2 Scene reorder within an act (T3-pulled-in + D18)', () => 
 		).json();
 
 		const win = await openTimeline(page);
-		const cell1 = win.locator(`.scene-cell[data-entity-id="${sc1.id}"]`);
 		const cell2 = win.locator(`.scene-cell[data-entity-id="${sc2.id}"]`);
-		const grip = cell2.locator('.scene-grip');
-		await cell2.hover();
-		const gripBox = await grip.boundingBox();
-		const toBox = await cell1.boundingBox();
-		if (!gripBox || !toBox) throw new Error('boxes');
-
-		await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
-		await page.mouse.down();
-		await page.mouse.move(toBox.x + 4, toBox.y + toBox.height / 2, { steps: 8 });
-		await page.mouse.up();
+		const scenesAct = win.locator(`.scenes-act[data-act-id="${a0.id}"]`);
+		const sBox = await scenesAct.boundingBox();
+		if (!sBox) throw new Error('scenes-act box');
+		await html5Drag(page, cell2, {
+			element: scenesAct,
+			x: sBox.x + 4,
+			y: sBox.y + sBox.height / 2
+		});
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
 			const scenes = ents.filter((e: any) => e.type === 'Scene');
 			expect(scenes.every((s: any) => s.parentId === a0.id)).toBe(true);
 		}).toPass({ timeout: 3000 });
+		// silence unused lint
+		void sc1;
 	});
 });

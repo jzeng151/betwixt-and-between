@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { html5Drag } from './helpers/html5-drag.js';
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -16,12 +17,7 @@ async function openTimeline(page: Page) {
 	return win;
 }
 
-// Skipped: HTML5 drag-and-drop chains under Playwright (dragstart → dragover → drop with custom MIMEs) are flaky to
-// drive via page.mouse / dragTo. Manual UI verified; the
-// underlying server cascade is covered by integration tests in
-// tests/integration/ (api-entities-position, intervals-cascade,
-// api-entities-delete-rescope, intervals-write).
-test.describe.skip('V2 Scene cross-act move (T3-pulled-in + moveSceneToAct)', () => {
+test.describe('V2 Scene cross-act move (T3-pulled-in + moveSceneToAct)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
 	});
@@ -44,18 +40,16 @@ test.describe.skip('V2 Scene cross-act move (T3-pulled-in + moveSceneToAct)', ()
 
 		const win = await openTimeline(page);
 		const cell = win.locator(`.scene-cell[data-entity-id="${sc.id}"]`);
-		const dropZoneB = win.locator(`.scenes-row-dropzone[data-act-id="${aB.id}"]`);
+		const scenesActB = win.locator(`.scenes-act[data-act-id="${aB.id}"]`);
+		await expect(cell).toBeVisible();
 
-		await cell.hover();
-		const grip = cell.locator('.scene-grip');
-		const gripBox = await grip.boundingBox();
-		const toBox = await dropZoneB.boundingBox();
-		if (!gripBox || !toBox) throw new Error('boxes');
-
-		await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
-		await page.mouse.down();
-		await page.mouse.move(toBox.x + toBox.width / 2, toBox.y + toBox.height / 2, { steps: 10 });
-		await page.mouse.up();
+		const bBox = await scenesActB.boundingBox();
+		if (!bBox) throw new Error('scenes-act B box');
+		await html5Drag(page, cell, {
+			element: scenesActB,
+			x: bBox.x + bBox.width / 2,
+			y: bBox.y + bBox.height / 2
+		});
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
@@ -83,7 +77,6 @@ test.describe.skip('V2 Scene cross-act move (T3-pulled-in + moveSceneToAct)', ()
 		const ellie = await (
 			await request.post('/api/entities', { data: { type: 'Character', name: 'Ellie' } })
 		).json();
-		// Anchor an interval to scene `sc` — start_scene_id and end_scene_id reference it
 		await request.post('/api/intervals', {
 			data: {
 				entity_id: ellie.id,
@@ -96,24 +89,18 @@ test.describe.skip('V2 Scene cross-act move (T3-pulled-in + moveSceneToAct)', ()
 
 		const win = await openTimeline(page);
 		const cell = win.locator(`.scene-cell[data-entity-id="${sc.id}"]`);
-		const dropZoneB = win.locator(`.scenes-row-dropzone[data-act-id="${aB.id}"]`);
-
-		await cell.hover();
-		const grip = cell.locator('.scene-grip');
-		const gripBox = await grip.boundingBox();
-		const toBox = await dropZoneB.boundingBox();
-		if (!gripBox || !toBox) throw new Error('boxes');
-
-		await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
-		await page.mouse.down();
-		await page.mouse.move(toBox.x + toBox.width / 2, toBox.y + toBox.height / 2, { steps: 10 });
-		await page.mouse.up();
+		const scenesActB = win.locator(`.scenes-act[data-act-id="${aB.id}"]`);
+		const bBox = await scenesActB.boundingBox();
+		if (!bBox) throw new Error('scenes-act B box');
+		await html5Drag(page, cell, {
+			element: scenesActB,
+			x: bBox.x + bBox.width / 2,
+			y: bBox.y + bBox.height / 2
+		});
 
 		await expect(async () => {
 			const ints = await (await request.get('/api/intervals')).json();
 			const iv = ints.find((i: any) => i.entityId === ellie.id);
-			// Per D9 P2-3: interval anchored to the moved scene should have its
-			// act FKs updated to the new parent act.
 			expect(iv.startActId).toBe(aB.id);
 			expect(iv.endActId).toBe(aB.id);
 		}).toPass({ timeout: 3000 });
