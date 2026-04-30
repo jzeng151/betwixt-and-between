@@ -87,5 +87,8 @@
 		display: flex;
 		flex-direction: column;
 		padding: 14px 18px;
+		flex: 1 1 0;
+		overflow-y: auto;
+		min-height: 0;
 	}
 </style>
