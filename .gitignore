@@ -31,3 +31,4 @@ vite.config.ts.timestamp-*
 src/lib/vitest-examples/
 test-results/
 .claude/
+desync-bug.png
