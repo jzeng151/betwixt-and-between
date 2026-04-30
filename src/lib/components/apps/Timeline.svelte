@@ -129,14 +129,21 @@
 	// ── Track measurement ────────────────────────────────────────────────────
 	let trackEl: HTMLDivElement | null = $state(null);
 	let trackWidthPx = $state(0);
+	// Scrollbar gutter reserved by .rows when its content overflows
+	// vertically. .acts-header and .scenes-row don't have overflow, so they
+	// extend further right than bars unless we mirror the gutter as
+	// padding-right. Driven via the --tl-gutter CSS variable below.
+	let gutterPx = $state(0);
 
 	$effect(() => {
 		if (!trackEl) return;
-		const ro = new ResizeObserver(() => {
+		const measure = () => {
 			trackWidthPx = trackEl?.clientWidth ?? 0;
-		});
+			gutterPx = (trackEl?.offsetWidth ?? 0) - (trackEl?.clientWidth ?? 0);
+		};
+		const ro = new ResizeObserver(measure);
 		ro.observe(trackEl);
-		trackWidthPx = trackEl.clientWidth;
+		measure();
 		return () => ro.disconnect();
 	});
 
@@ -406,7 +413,7 @@
 	/>
 
 	<!-- ── Main timeline ──────────────────────────────────────────────── -->
-	<div class="timeline">
+	<div class="timeline" style="--tl-gutter: {gutterPx}px">
 		<div class="timeline-controls">
 			{#if addingAct}
 				<!-- svelte-ignore a11y_autofocus -->
@@ -648,6 +655,11 @@
 		flex: 1;
 		position: relative;
 		overflow-y: auto;
+		/* Always reserve the scrollbar gutter so .rows content-box width
+		   doesn't jump when row count crosses the overflow threshold. The
+		   --tl-gutter CSS variable on .timeline mirrors this width to
+		   .acts-header / .scenes-row so bars and act columns stay aligned. */
+		scrollbar-gutter: stable;
 		transition: background 0.1s ease;
 	}
 	.rows.drag-over {

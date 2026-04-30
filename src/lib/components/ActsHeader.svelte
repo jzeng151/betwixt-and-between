@@ -597,6 +597,10 @@
 		background: var(--color-surface-2, #1c1f28);
 		border-bottom: 1px solid var(--color-border, #2a2d35);
 		align-items: stretch;
+		/* Mirror .rows' scrollbar-gutter reservation so act columns end at
+		   the same x as the bars below. --tl-gutter is set by Timeline.svelte. */
+		padding-right: var(--tl-gutter, 0px);
+		box-sizing: border-box;
 	}
 
 	/* Insert-between overlay — absolute child of each act-col-header,
@@ -911,6 +915,8 @@
 		height: 24px;
 		background: var(--color-desktop, #0d0f14);
 		border-bottom: 1px solid var(--color-border, #2a2d35);
+		padding-right: var(--tl-gutter, 0px);
+		box-sizing: border-box;
 	}
 	.scenes-act {
 		flex: 1;
