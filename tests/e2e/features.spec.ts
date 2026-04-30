@@ -121,6 +121,9 @@ test.describe('Characters', () => {
 
 		const detailWin = page.locator('.window[aria-label="Elara"]');
 		await expect(detailWin).toBeVisible();
+		// Block 5: char detail opens in view mode — hfield-pencil is hidden.
+		// Toggle to edit before interacting with the inline pencils.
+		await detailWin.locator('.mode-toggle').click();
 
 		// Hover to reveal the pencil, force-click since opacity:0 until hover
 		await detailWin.locator('.header-meta').hover();
@@ -141,6 +144,7 @@ test.describe('Characters', () => {
 
 		const detailWin = page.locator('.window[aria-label="Elara"]');
 		await expect(detailWin).toBeVisible();
+		await detailWin.locator('.mode-toggle').click();
 
 		await detailWin.locator('.header-meta').hover();
 		await detailWin.locator('button[title="Edit affiliation"]').click({ force: true });

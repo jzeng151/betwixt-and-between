@@ -423,3 +423,96 @@ Per-character colors are visually distinct for ~5 characters today (amber, teal,
 - Drop-target rules (palette → empty area vs palette → existing row vs palette → conflict-color row). *Defer to PR 2's /plan-design-review.*
 - "Break into scenes" interaction (modal / inline / popover). *Defer to PR 2's /plan-design-review.*
 - Events vs characters visual differentiation beyond color (different shape? dashed border?). *Defer.*
+
+---
+
+# [2026-04-29] /plan-design-review + /plan-eng-review resolutions — Act/Event/Scene editor + reorder + structural moves
+
+Branch: `feat/timeline-redesign`. Phase 1.6 in `TODOS.md` Section 13. Design plan source: `~/.gstack/projects/jzeng151-betwixt-and-between/designs/act-event-editor-20260429/plan.md`. Approved mockup: `variant-A-sidepanel.html` in same directory.
+
+**Goal:** Acts, Events, and Scenes get edit / insert-between / drag-reorder / delete affordances. Editor metadata follows story-craft conventions (synopsis, goal, stakes, turning point, POV, outcome). Scenes get full editing in this PR (was deferred under 8C, pulled in per user direction). Sets the unified `EntityDetail` abstraction so the future Wiki rework is additive.
+
+## Locked decisions
+
+### Editor surface
+
+- **D1 / Issue 1A — Extend existing entities API endpoints (not new routes).** `POST /api/entities` for Act type bumps siblings on insert-between. `PATCH /api/entities/[id]` accepts `position` and `parentId`; for Acts/Scenes, position changes cascade siblings server-side (same algorithm as POST insert-between, applied to existing rows). `DELETE /api/entities/[id]` accepts optional `?moveScenesTo=<actId>` query param. All three handler bodies wrapped in `db.transaction(async (tx) => {...})`. Cleans up the standing `intervals-cascade.test.ts:135` "preserved (recompute would clear them; that's a follow-up)" gap as a free side effect.
+
+- **D2 / Issue 2B-i — Single editor surface per entity at a time, with inline confirmation before swap.** When a window already hosts a given entity (matched by entityId across any appId), clicking that entity focuses the existing window. The "↗ Move to window" button shows an inline confirmation row matching `ActsHeader`'s delete-confirm pattern: button transforms to "Move to standalone window? [Cancel] [Move]". On confirm: side panel closes, pop-out window opens. Mutex check is `findOpenEditorFor(entityId)` matching by entityId regardless of appId — covers windows whose appId is in transition (e.g., legacy `'timeline'` windows during the Wiki migration).
+
+- **D3 / Issue 3A-i — Pop-outs are pinned, multiple allowed.** Each pop-out window stays bound to the entity it was opened for. Clicking a different entity in the timeline opens the side panel for that one (pop-out unaffected). Multiple pop-out windows for different entities can coexist; `windowStore`'s `${appId}-${entityId}` keying already supports this. Closing the pop-out doesn't auto-reopen the side panel.
+
+### Field set + storage
+
+- **D4 / Issue 4C — POV stored as `relationships` row with new type `'pov_of'` (not soft pointer in `entity.data`).** Direction: `fromId = event/scene id, toId = character id, type = 'pov_of'`. Reads "Event is from the POV of Character" — matches existing `mentor_of` / `allied_with` directional convention. Story Graph automatically renders POV edges (existing edge-rendering already iterates relationship rows). Schema FK CASCADE handles deleted-character dangling references.
+
+- **D4-extension / Issue 18-revised B — Multi-POV allowed; uniqueness enforced at `(from_id, to_id, type)`.** Real story-craft use case: ensemble events, head-hopping fiction, POV-rotation novels. The constraint prevents *literal duplicates* (same character listed twice as POV for the same event) without preventing *multi-POV semantics*. EventEditor and SceneEditor's POV field is a multi-select chip picker. New `EditableField` `kind` value: `'multi-entity-picker'` for "select 0-to-N entities of a given type for a given relationship type." Migration deduplicates any existing duplicate relationship rows before applying the index.
+
+- **D5 / Field hierarchy + storage** — All editor fields persist under `entity.data` JSON (no schema migration for fields). Acts: Title (header), Synopsis, Goal, Stakes, Turning point, Color. Events: Title, Description, POV (multi via D4-extension), Outcome (Dwight Swain 5-value: yes / yes-but / no / no-and / mixed), Mood, Color. Scenes (added per T3-now): Title, Description, POV (multi), Goal, Outcome, Sensory anchor, Word-count target, Color. Cuts from research: per-field helper text, Status field, Mood for Scenes (covered by Description tone), Conflict for Scenes (subsumed by Goal+Outcome).
+
+### Affordances
+
+- **D6 / Issue 5A — Insert-between act stretches crossing intervals through the new act.** Existing `recomputeAllIntervals` already implements this. An interval that crossed an act boundary at `[0.7, 1.5)` becomes `[0.7, 2.5)` after insert. **Note:** intervals ending exactly at an act boundary (e.g., `[1, 2)` covering all of Act 1) ALSO stretch — the half-open `oldFraction === 0` branch at `intervals.ts:566-568` pushes them to start-of-next-act, which becomes the new act after insertion. To remove an entity from the new act, writer uses the bar-hairline split affordance (D7).
+
+- **D7 / Issue 5b A — Click hairline on multi-act bar to split into adjacent intervals.** Multi-act bar's existing internal hairlines become clickable (cursor changes on hover). Click splits the bar at that act boundary into two adjacent intervals. New helper `splitInterval(db, intervalId, atPosition)` — wraps update + insert in a transaction. Each half is independently editable / resizeable / deletable. Single-act bars don't get a split affordance (no internal hairlines to click).
+
+- **D8 / Issue 6A — Playhead stays at absolute T during act/scene reorder.** Playhead is a story-time value, not "wherever this act is." Reorder shifts acts under the playhead; subscribers (Story Graph, World Map) re-filter naturally based on which intervals overlap the absolute T. No code change — the existing `playhead.scrubTo(t)` semantic is preserved.
+
+- **D9 / Issue 7B — Move-or-delete dialog on act delete with scenes.** Inline confirmation grows a "Move scenes to: [picker]" radio option. Server reparents scenes (UPDATE `parent_id`, `position`) before cascade-deleting the act, all in one `db.transaction`. **P2-3 fix: reparent step also UPDATEs `intervals.start_act_id` / `intervals.end_act_id` for any interval anchored to a reparented scene** (otherwise scene's parent changed but interval still references the soon-to-be-deleted source act).
+
+### Routing + groundwork for Wiki
+
+- **D10 / Issue 9A — `EntityDetail` abstraction; `'entity-detail'` app id; `openEntityDetail()` helper.** Component name is host-agnostic. Side panel and pop-out window both render `<EntityDetail entityId={...} />` inside their own chrome. New `'entity-detail'` app id is the single dispatch path for entity editor windows (current PR: Act+Event+Scene; future Wiki PR: Character+Location+Note). `openEntityDetail(entityId)` helper added to `navigation.js` for explicit "always open entity-detail surface" calls.
+
+- **D10-extension / Issue 19A — Migrate `ENTITY_APP[Act]` and `ENTITY_APP[Event]` from `'timeline'` → `'entity-detail'`.** Plus `ENTITY_APP[Scene] = 'entity-detail'` (collapses the original T8 TODO into this PR since SceneEditor ships here per T3). Existing code that called `windowStore.openForEntity(actId, 'Act')` now opens the entity-detail editor. Story Graph EntityLink clicks on Acts/Events/Scenes go to the editor (intentional behavior change — the Story Graph rework will further refine this surface). `ENTITY_APP[Character/Location/Note]` stay as today; migrate when Wiki rework lands.
+
+- **D11 / Forward-compat note** — Storage format for synopses/descriptions: plain text in `entity.data`. No `[[wiki-link]]` markup, no structured ProseMirror nodes. Future entity-mention parsing or autocomplete can be added as a richer rendering layer over the same plain text without storage migration.
+
+- **D12 / EntityDetail "fall-through" rule (this PR)** — EntityDetail routes Act → ActEditor, Event → EventEditor, Scene → SceneEditor. All other types use existing app routing (Character → CharacterEditor, Location → WorldMap, Note → Wiki). Future Wiki PR fills in those branches.
+
+### Component pattern
+
+- **D13 / Issue 10A — Extract `<EditableField>` atom shared by all editors.** Single component encapsulates the edit/draft/commit cycle. Props: `entityId`, `field`, `label`, `kind` ('single-line' | 'textarea' | 'picklist' | 'swatches' | 'multi-entity-picker' from D4-ext), `placeholder?`, `rows?`, `picklistOptions?`, `swatchOptions?`. Reads current value from `$entities.find(id).data[field]`. Commits via `entities.updateEntity(id, { data: { ...existing, [field]: draft } })`. **Commit timing (P2-5):** textarea/single-line commit on blur; picklist/swatches commit on change. Esc cancels. Forward-compat: future Wiki entry can compose the same atoms with richer chrome (e.g., relationship sidebar) without refactoring this layer.
+
+### Save behavior + state coverage
+
+- **D14 / Autosave on blur per field (textarea/single-line); on change (picklist/swatches/multi-entity-picker).** Footer shows `Saving…` → `Saved · Xs ago` (live-updating timestamp every 30s).
+
+- **D15 / State coverage** — Side panel hidden when no selection. Selected-empty entity: placeholders only, no "Not set yet." labels. Save error: inline red message below the failing field + Retry button. Writer's text preserved client-side, no rollback of the typed value. Optimistic update applies immediately to `$entities`; rollback via `load()` if PATCH fails.
+
+- **D16 / Issue 14A — Toast with last-typed preview + Copy button on entity-deleted-while-editing.** When entity disappears from store while EntityDetail is mounted (and a successful PATCH/DELETE confirmed the disappearance per P2-1, not just optimistic remove), capture all `EditableField` drafts. Toast renders truncated preview (~80 chars + ellipsis) with full draft text on clipboard via Copy button. 8s dismiss timer (longer than standard 4s for read-time). EntityDetail watches `$entities.find(id)` plus a "confirmed deletion" flag to avoid firing on optimistic-then-rolled-back deletes.
+
+### Server-side correctness
+
+- **D17 / Issue 11A + 17A — REVISED 2026-04-29 during implementation.** During the polymorphic-tx refactor, hit a hard constraint: better-sqlite3's `db.transaction()` requires a *synchronous* callback. Passing an async function throws `TypeError: Transaction function cannot return a promise`. Drizzle's better-sqlite3 adapter inherits this. Our entire helper chain (`actIndexOf`, `sceneIndexOf`, `assertEntityType`, `assertNoOverlap`, `validateFKTypes`, `computeIntervalPositions`, `recomputeIntervalsForAct`, `recomputeAllIntervals`) is async/await for Drizzle TS compatibility, so wrapping their bodies in `db.transaction(async (tx) => ...)` is impossible without first converting the chain to sync. The polymorphic `Db` type alias is added in this PR (forward-compat for when T1 lands) but the actual `db.transaction(...)` wrapping is **deferred to T1**. Until T1 ships, the connection-level serialization in better-sqlite3 keeps each individual `.insert()` / `.update()` atomic; the read-modify-write window between FK validation and the final write is open only to concurrent writers in another process — better-sqlite3's single-connection-per-process model makes that impossible today. Future-Turso replica lag is the genuine risk that T1 will close. **TODO T1 is now blocking for Turso migration**, not optional polish.
+
+- **D18 / Issue 12A — PATCH cascades sibling positions server-side.** PATCH on `/api/entities/[id]` with `position` field for an Act/Scene cascades sibling positions inside the same transaction. Algorithm: read old position P, if N < P bump siblings in [N, P) by +1, if N > P bump siblings in (P, N] by -1, set target's position = N, recompute. Drag-reorder UI sends one PATCH per drag; no N-parallel-PATCH race. Same algorithm parameterized by sibling-set predicate ("Closing observation" refinement): `(parent_id IS NULL AND type='Act')` for Acts, `(parent_id = X AND type='Scene')` for Scenes. Reusable single helper instead of duplicate cascade logic.
+
+- **D19 / Issue 13A — Extend `entities.createEntity` and `entities.updateEntity` signatures.** `createEntity(type, name, options?)` where options accepts `{ data, parentId, position }`. `updateEntity(id, patch)` patch type accepts `parentId` and `position`. Migrates 3 existing raw-fetch sites in `ActsHeader` to use the helpers. Optimistic update + rollback works for new mutation paths.
+
+- **D20 / Issue 16A — Cache act-index map in `recomputeAllIntervals` and `recomputeIntervalsForAct`.** Build the map once at the start of recompute, reuse for every interval row. Reduces queries from O(intervals × acts) to O(intervals + acts). **P2-4 caveat:** cache is per-call only, never shared across calls. Each recompute invocation rebuilds from current state. Avoids stale-cache issues when nested-recompute happens (e.g., split during reorder).
+
+- **D21 / Issue 20A — `POST /api/entities/batch` endpoint for atomic multi-entity creation.** Body: `{ entities: [...] }`. Validates and inserts all rows in one transaction; calls `recomputeIntervalsForAct` once per affected parent (deduped). Migrates `ActsHeader`'s break-into-scenes from N sequential POSTs to one batch call. Reusable for future bulk-paste / import flows.
+
+### Test strategy
+
+- **D22 / Issue 15A — Full coverage test suite.** 22 spec files: 5 integration (server), 3 unit (stores / atoms / nav), 14 e2e (user flows). Includes a regression test that tightens the existing `intervals-cascade.test.ts:135` "preserved (recompute would clear them)" comment to actively verify recompute happens after act delete (iron-rule regression case per the skill). E2E specs covering scene editor (T3-pulled-in adds 4 specs).
+
+## Worktree parallelization
+
+| Lane | Modules | Depends on |
+|---|---|---|
+| **A — Server** | `src/lib/server/intervals.ts` (polymorphic-tx refactor, splitInterval, moveSceneToAct, N+1 fix, generalized cascade primitive), `src/routes/api/entities/+server.ts`, `src/routes/api/entities/[id]/+server.ts`, `src/routes/api/entities/batch/+server.ts` (new), migration `000X_relationships_dedup.sql` | — |
+| **B — Editor components** | `src/lib/components/EditableField.svelte`, `ActEditor.svelte`, `EventEditor.svelte`, `SceneEditor.svelte`, `EntityDetail.svelte` (all new); `src/lib/stores/entities.ts` (signature changes), `src/lib/navigation.js` (`openEntityDetail`) | — |
+| **C — Timeline integration** | `src/lib/components/apps/Timeline.svelte` (side panel, click-to-edit, mutex), `ActsHeader.svelte` (insert-between, drag-reorder, delete-with-reparent, scene drag-reorder, scene cross-act move), `IntervalRow.svelte` (click-to-select), `IntervalBar.svelte` (hairline-split), `WindowManager.svelte` (entity-detail branch), `windows.ts` store (ENTITY_APP migration) | A + B |
+
+**Execution order:** Lane A and Lane B parallel; merge into Lane C. E2E specs alongside features in their respective lanes; full suite at Phase 2 merge.
+
+## NOT in scope (deferred to TODOs)
+
+- **T1** — Drizzle sync-mode refactor (deeper PR 1 cleanup; complementary to D17)
+- **T2** — Window snapping (drag-to-edge zones in `Window.svelte`)
+- **T4** — Status field for Acts/Events/Scenes (Drafted / In progress / Done / Needs revision)
+- **T5** — Bar translation (drag whole bar to shift temporally)
+- **T6** — Wiki rework: alphabetical entity browser, fill EntityDetail branches for Character/Location/Note, migrate `ENTITY_APP[Character/Location/Note]` to `'entity-detail'`
+- **T7** — Bulk paste / import UI (uses already-shipped `/api/entities/batch`)

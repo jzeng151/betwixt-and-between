@@ -267,38 +267,147 @@ Schema is the load-bearing piece. Ship first, derisk everything else.
 
 **Note:** PR 2 details are deliberately exploratory — final scope locked at its own /plan-eng-review pass before implementation begins.
 
-- [ ] V2 timeline component at `src/lib/components/apps/TimelineV2.svelte`. SVG rendering, intervals as `<rect>` elements positioned via `start_position` / `end_position`. Visual reference: `~/.gstack/projects/jzeng151-betwixt-and-between/designs/v2-timeline-20260428/v2-timeline-mockup-v2.html`.
-- [ ] **No row-label column.** Bars carry entity name (Fraunces 13px) on first line, optional notes snippet (Inter 10px, opacity 0.75) on second line. Width breakpoints: `>=100px` shows name+note, `40-100px` shows name only, `<40px` is a colored sliver with tooltip-only identification.
-- [ ] **`IntervalBar.svelte`** component encapsulating: rendering, width-breakpoint text logic, drag-edge resize handles, hover tooltip with full presence info (`{name} · {presence range}`), keyboard focus + screen-reader `aria-label` parity.
-- [ ] **`data.timelineLabel` JSON field** on entities for configuring bar-text source. Default: `null` (use first line of `data.notes` truncated to ~30 chars). User can pick a different field via a "Show on timeline" control in entity editors. No schema migration needed (additive optional JSON path).
-- [ ] **Entity editor UI updates:** CharacterEditor and event editor get a "Show on timeline" control with three options: name only / name + note snippet (default) / custom field.
-- [ ] Sidebar palette listing characters and events. Drag from palette onto timeline → creates interval via `POST /api/intervals`. Events render in their own section, neutral gray dot.
-- [ ] **Events on the timeline:** events appear as bars alongside character bars, using `--color-event: #94a3b8` for neutral differentiation. Same drag-drop, same resize, same tooltip rules.
-- [ ] Drag-edge-to-resize handles on each interval bar. Reuse pattern from existing column-resize / row-resize handles where it transfers cleanly.
-- [ ] Smart snap: snap to act boundaries by default; snap to scene boundaries when scenes exist; Alt to bypass for free-fraction positioning. Cross-act drag updates snap target immediately.
-- [ ] Multi-act spans render as one continuous SVG element with subtle vertical hairlines at act boundaries the bar crosses.
-- [ ] Drag same entity from palette twice → second interval row → renders as visible gap.
-- [ ] "Break into scenes" affordance per act for opt-in scene-level granularity.
-- [ ] Confirmation dialog on Act delete listing affected intervals.
-- [ ] Replace V1 timeline behind feature flag, then become default. Delete `timeline-compat.ts` and the `appears_in` hijack handler.
-- [ ] New E2E tests: drag/resize/gap behavior, cross-act snap, scene opt-in flow, tooltip on bar hover/focus, narrow-bar text truncation behavior.
+- [x] V2 timeline component at `src/lib/components/apps/Timeline.svelte` (V2 became THE timeline on 2026-04-28; original file was `TimelineV2.svelte` until V1 retirement). SVG rendering, intervals as `<rect>` elements positioned via `start_position` / `end_position`. Visual reference: `~/.gstack/projects/jzeng151-betwixt-and-between/designs/v2-timeline-20260428/v2-timeline-mockup-v2.html`.
+- [x] **No row-label column.** Bars carry entity name (Fraunces 13px) on first line, optional notes snippet (Inter 10px, opacity 0.75) on second line. Width breakpoints: `>=100px` shows name+note, `40-100px` shows name only, `<40px` is a colored sliver with tooltip-only identification.
+- [x] **`IntervalBar.svelte`** component encapsulating: rendering, width-breakpoint text logic, drag-edge resize handles, hover tooltip with full presence info (`{name} · {presence range}`), keyboard focus + screen-reader `aria-label` parity.
+- [x] **`data.timelineLabel` JSON field** on entities for configuring bar-text source. Default: `null` (use first line of `data.notes` truncated to ~30 chars). User can pick a different field via a "Show on timeline" control in entity editors. No schema migration needed (additive optional JSON path).
+- [x] **Entity editor UI updates:** CharacterEditor gets a "Show on timeline" control with three options: name only / name + note snippet (default) / custom field. (Deferred: dedicated Event editor.)
+- [x] Sidebar palette listing characters and events. Drag from palette onto timeline → creates interval via `POST /api/intervals`. Events render in their own section, neutral gray dot.
+- [x] **Events on the timeline:** events appear as bars alongside character bars, using `--color-event: #94a3b8` for neutral differentiation. Same drag-drop, same resize, same tooltip rules.
+- [x] Drag-edge-to-resize handles on each interval bar.
+- [x] Smart snap: hold **Alt** to snap to act/scene boundaries; default is free-fraction (inverted from spec per user feedback 2026-04-28 — precision-first feels better for sketching). Cross-act drag updates snap target immediately. Free-fraction commits via explicit position override on FK with null scene anchor.
+- [x] Multi-act spans render as one continuous SVG element with subtle vertical hairlines at act boundaries the bar crosses.
+- [x] Drag same entity from palette twice → second interval → renders as visible gap on the same row.
+- [x] "Break into scenes" inline form per act header (textarea, one scene name per line) for opt-in scene-level granularity.
+- [x] Inline delete-act confirmation listing the cascade interval count.
+- [x] V1 timeline retired in a single hard cutover (2026-04-28). Deleted `timeline-compat.ts`, the `appears_in` POST hijack and synthetic-row GET synth, and CharacterEditor's Story Arcs section. AppId `'timeline-v2'` removed.
+- [x] New E2E tests at `tests/e2e/v2-timeline-{palette,resize,acts}.spec.ts` covering: drag-from-palette + gap-on-redrop + empty-state hint; resize boundaries + cross-act + Alt-snap (act and scene grids) + free-fraction position assertion; break-into-scenes flow + act-delete cascade + multi-act hairlines + tooltip on hover/focus + width-breakpoint truncation.
 
 ### 12. Phase 1.5 — Scrubber stretch (optional follow-on)
 
 Falls out of the intervals schema for free. Ship as its own focused branch.
 
-- [ ] Global `currentT` Svelte store.
-- [ ] Vertical playhead overlay on the V2 timeline; click+drag to scrub.
-- [ ] Story Graph subscribes: hides entities where `currentT` is outside `[start_position, end_position)` (half-open).
-- [ ] World Map subscribes: highlights only locations active at T.
-- [ ] Wiki sidebar subscribes: filters notes by in-scope entities.
+- [x] Global `playhead` Svelte store at `src/lib/stores/playhead.ts` (renamed from `currentT` for clarity — matches video-editor mental model). `writable<number | null>` with `null = idle, number = scrubbing`. Helpers: `scrubTo(t)`, `toggle(defaultT)`, `dismiss()`.
+- [x] Vertical playhead overlay (`PlayheadOverlay.svelte`) on the timeline; click on track scrubs, drag the line to scrub. Toggle button in the timeline's controls bar activates/dismisses; idle hides the overlay.
+- [x] Story Graph subscribes: dims (opacity 0.18) entities whose intervals don't contain T, plus edges to/from them. Entities without intervals stay full opacity.
+- [x] World Map subscribes: dims (opacity 0.32) locations whose linked entities (with intervals) are all out of scope at T. Locations with no time-bound links stay visible.
+- [ ] **Wiki sidebar subscriber — DEFERRED** until the Wiki app gets refined. Notes don't currently carry parentId or a mention graph, so "in-scope" semantics for a Note isn't well-defined. Revisit after the Wiki rework.
+- [x] E2E coverage at `tests/e2e/playhead-scrubber.spec.ts`: toggle + dismiss, click-to-scrub, Story Graph dim-on-scope-change, World Map dim-on-scope-change.
 
-### 13. Phase 1B — Graph features (separate branch)
+### 13. Phase 1.6 — Act / Event / Scene editor + structural moves (this branch)
 
-**Note:** Phase 1B specifics are exploratory; locked at its own /plan-eng-review.
+Locked by `/plan-design-review` + `/plan-eng-review` on 2026-04-29. Decision log: `CONSIDERATIONS.md` → "[2026-04-29] /plan-design-review + /plan-eng-review resolutions" section. Design plan: `~/.gstack/projects/jzeng151-betwixt-and-between/designs/act-event-editor-20260429/plan.md`. Approved mockup: `variant-A-sidepanel.html`.
 
-- [ ] Focused Graph: new app type, double-click in main StoryGraph opens a Focused Graph window with composable focal set.
-- [ ] Three view modes (working names): Shared (intersection), Their Worlds (1-hop union), Reachable (transitive closure).
-- [ ] Relationship legend: wire `--color-rel-*` CSS tokens through StoryGraph edge rendering. Click-to-highlight matching edges.
-- [ ] Layered/hierarchical layout: integrate `dagre` or `elkjs`. "Layout by type" button computes positions, writes to `canvas_positions`.
-- [ ] Base right-click menu: Open in window, View connections, Open Focused Graph, Edit, Delete, Pin to canvas. Custom action configurability deferred.
+**Surface:** Side panel inside the Timeline window (Variant A from design review) + pop-out window via "↗ Move to window" with inline confirmation.
+
+#### Lane A — Server (parallelizable with Lane B)
+
+- [ ] **Polymorphic `tx | db` refactor** in `src/lib/server/intervals.ts` — `actIndexOf`, `sceneIndexOf`, `assertEntityType`, `assertNoOverlap`, `validateFKTypes`, `computeIntervalPositions`, `recomputeIntervalsForAct`, `recomputeAllIntervals`. All callers thread `tx`. Closes the PR 1 tech-debt note at `intervals.ts:289`. (D17/17A) — **DEFERRED to T1** (better-sqlite3 sync constraint blocks `db.transaction(async tx => …)`; `Db` type alias added as forward-compat)
+- [x] **N+1 fix in `recomputeAllIntervals` and `recomputeIntervalsForAct`** — cache act-index map per-call. Reduces queries from O(intervals × acts) to O(intervals + acts). Per-call only, no cross-call sharing. (D20/16A) — shipped as `buildRecomputeCache` in commit `72e7037`
+- [x] **Generalized cascade primitive** for sibling reorder, parameterized by sibling-set predicate `(parentId IS NULL AND type='Act')` for Acts vs `(parent_id = X AND type='Scene')` for Scenes. Single helper, no duplicate logic. (D18/12A + Closing-observation)
+- [x] **`splitInterval(tx, intervalId, atPosition)` helper** — validates split point in (start, end), updates original to `[start, P)`, inserts new `[P, end)` with FKs resolved via existing `positionToStart/EndFKs`. Wrapped in transaction. (D7/5b A)
+- [x] **`moveSceneToAct(tx, sceneId, newActId, newPosition)` helper** — UPDATE scene's parent_id+position, UPDATE intervals' start_act_id/end_act_id for any interval anchored to that scene, recompute both old and new parent acts. Wrapped in transaction. (T3-pulled-in)
+- [x] **`POST /api/entities` extension** — when type='Act' and position N is given, bump siblings >= N by +1, insert at N, recompute. All in one transaction. (D1/1A)
+- [x] **`PATCH /api/entities/[id]` extension** — accept `position` (cascades siblings server-side via generalized primitive) and `parentId`. For Acts/Scenes, position changes trigger recompute. All in one transaction. (D1/1A + D18/12A)
+- [x] **`DELETE /api/entities/[id]` extension** — accept optional `?moveScenesTo=<actId>` query param. Reparent flow updates scene parent_id, updates intervals' start_act_id/end_act_id for affected scene-anchored rows, then cascade-deletes the act, then recomputes. All in one transaction. (D9/7B + D9-P2-3 fix)
+- [x] **`POST /api/entities/batch` endpoint** (new) — atomic multi-entity creation. Validates all payloads, inserts all in one transaction, calls recomputeIntervalsForAct once per affected parent. Returns array of created entities. Used by ActsHeader's break-into-scenes (replaces N sequential POSTs). (D21/20A)
+- [x] **Migration `migrations/000X_relationships_dedup.sql`** — DELETE duplicate relationship rows (keep MIN(id) per `(from_id, to_id, type)` group), then `CREATE UNIQUE INDEX relationships_dedup_all ON relationships(from_id, to_id, type)`. Includes `'pov_of'` in `RelationshipType` enum + directional convention docstring for all types. (D4/4C + D4-extension/18B) — shipped as `drizzle/0001_mature_stepford_cuckoos.sql`
+- [x] **Server integration tests** — `tests/integration/api-entities-position.test.ts` (POST insert-between cascade, PATCH position cascade, transaction rollback), `tests/integration/api-entities-delete-reparent.test.ts` (DELETE with moveScenesTo + interval start/end_act_id update, error cases), `tests/integration/api-entities-batch.test.ts` (atomic batch insert, partial-failure rollback), `tests/integration/intervals-split.test.ts` (splitInterval primitive), `tests/integration/intervals-move-scene.test.ts` (moveSceneToAct), `tests/integration/intervals-tx-threading.test.ts` (verify polymorphic tx threading), `tests/integration/intervals-cascade.test.ts` (TIGHTEN line 135's "preserved (recompute would clear them)" comment to active assertion — REGRESSION RULE).
+
+#### Lane B — Editor components (parallelizable with Lane A)
+
+- [x] **`EditableField.svelte`** atom — props: `entityId`, `field`, `label`, `kind` ('single-line' | 'textarea' | 'picklist' | 'swatches' | 'multi-entity-picker'), `placeholder?`, `rows?`, `picklistOptions?`, `swatchOptions?`. Reads from `$entities.find(id).data[field]`, commits via `entities.updateEntity`. Commit timing: textarea/single-line on blur; picklist/swatches/multi-entity-picker on change. Esc cancels. (D13/10A + D14 + P2-5)
+- [x] **`ActEditor.svelte`** — declarative shell using EditableField for: Title (header inline-edit), Synopsis (textarea ~6 lines), Goal, Stakes, Turning point, Color. (D5)
+- [x] **`EventEditor.svelte`** — Title (header), Description (textarea), POV (multi-entity-picker for Characters via `'pov_of'` relationship), Outcome (picklist: yes / yes-but / no / no-and / mixed), Mood, Color. (D5)
+- [x] **`SceneEditor.svelte`** — Title (header), Description (textarea), POV (multi-entity-picker), Goal, Outcome, Sensory anchor, Word-count target (numeric), Color. (T3-pulled-in)
+- [x] **`EntityDetail.svelte`** — host-agnostic router by entity type. Routes Act → ActEditor, Event → EventEditor, Scene → SceneEditor. Other types fall through to existing app routing. Mounts inside side panel (in Timeline) or pop-out window. Watches `$entities.find(id)` to detect external deletion + fires confirmed-delete toast with last-typed preview. (D10/9A + D12 + D16/14A + P2-1)
+- [x] **`entities.ts` store helpers** — `createEntity(type, name, options?)` where options accepts `{data, parentId, position}`; `updateEntity` patch type accepts `parentId` and `position`. New `createEntities(items)` plural variant calling the batch endpoint. Migrate 3 existing raw-fetch sites in `ActsHeader` to use the helpers. (D19/13A)
+- [x] **`navigation.js`** — add `openEntityDetail(entityId)` helper. Sibling to existing `openEntity()`. (D10/9A)
+- [x] **Component unit tests** — `tests/unit/editable-field.test.ts` (edit/blur/save/cancel/error/retry across all kind values), `tests/unit/stores-entities-options.test.ts` (new createEntity options + updateEntity parentId/position), `tests/unit/navigation-entity-detail.test.ts` (openEntityDetail focus-existing behavior).
+
+#### Lane C — Timeline integration (depends on A + B)
+
+- [x] **`Timeline.svelte`** — manage `selectedEntityId` state; render side panel slot hosting `<EntityDetail>`; click-to-select wiring on bars and act headers; mutex check via `findOpenEditorFor(entityId)` (matches by entityId across all appIds, focuses existing window if found before opening side panel); selected act gets thin amber top-border on its column header. (D2/2B-i + D3/3A-i)
+- [x] **`ActsHeader.svelte`** — hover-revealed `+` between act headers (insert-between flow with inline name input); hover-revealed `⋮⋮` grip on act header (drag-reorder via single PATCH per drop); delete-with-reparent dialog ("Move scenes to: [picker]" radio); scene drag-reorder grip on scene cells; cross-act drag detection on scenes-row drop zones. Uses generalized cascade primitive for both Acts and Scenes. (D6/5A + D9/7B + D18/12A + T3-scene-reorder + T3-cross-act-move)
+- [x] **`IntervalRow.svelte`** — click-on-bar (not on resize handles) emits select event; bar's click target becomes "open editor" while edge-resize handles continue to take precedence. (D2/2B-i)
+- [x] **`IntervalBar.svelte`** — internal hairlines on multi-act bars become clickable (cursor: pointer on hover); click splits into adjacent intervals via `splitInterval` primitive. (D7/5b A) — new `POST /api/intervals/[id]/split` endpoint + `intervals.splitIntervalAt` store helper
+- [x] **`WindowManager.svelte`** — register `'entity-detail'` app id branch rendering `<EntityDetail entityId={win.entityId} />`. (D10/9A + P3-5)
+- [x] **`windows.ts` store** — add `'entity-detail'` to `AppId` union; migrate `ENTITY_APP[Act]`, `ENTITY_APP[Event]`, `ENTITY_APP[Scene]` from `'timeline'` → `'entity-detail'` (Character/Location/Note unchanged); add `findOpenEditorFor(entityId)` helper for the mutex check. (D10-extension/19A)
+- [x] **Inline confirmation row in side panel header** — "↗ Move to window" click transforms button to "Move to standalone window? [Cancel] [Move]" (mirrors `ActsHeader` delete-confirm pattern). On Move: close side panel, open pop-out window. (D2/2B-i) — implemented inside EntityDetail's `popout-confirm` UI
+- [x] **Toast component update** — `Toast.svelte` (or equivalent) gains "draft preview" mode showing truncated text (~80 chars) + "Copy to clipboard" button + 8s dismiss timer. Fired by EntityDetail on confirmed-delete-while-editing. (D16/14A) — new `Toast.svelte` + `editable-drafts.ts` drafts bus + Timeline host wiring
+- [ ] **E2E specs** (Lane C completes the suite):
+  - `tests/e2e/v2-act-editor.spec.ts` — open editor, type, blur saves, retry on save error
+  - `tests/e2e/v2-event-editor.spec.ts` — POV multi-picker selects multiple characters; outcome picklist
+  - `tests/e2e/v2-scene-editor.spec.ts` — open scene editor, edit fields, autosave (T3-pulled-in)
+  - `tests/e2e/v2-act-insert.spec.ts` — hover-+, type name, Enter, verify position; verify intervals stretch (5A)
+  - `tests/e2e/v2-act-reorder.spec.ts` — grip-drag, drop, position cascades, intervals recompute; error rollback
+  - `tests/e2e/v2-scene-reorder-within-act.spec.ts` — drag scene cells within scenes-row (T3-pulled-in)
+  - `tests/e2e/v2-scene-cross-act-move.spec.ts` — drag scene to different act; verify parent_id update + interval recompute (T3-pulled-in)
+  - `tests/e2e/v2-bar-split.spec.ts` — click hairline, verify two adjacent intervals; click again for three
+  - `tests/e2e/v2-act-delete-reparent.spec.ts` — confirm dialog with move target picker, verify scene reparenting
+  - `tests/e2e/v2-scene-rename.spec.ts` — InlineEdit on scene cell label
+  - `tests/e2e/v2-editor-popout.spec.ts` — ↗ Move to window confirm flow, multiple pop-outs, mutex
+  - `tests/e2e/v2-edit-during-delete.spec.ts` — type, delete, verify toast preview + clipboard copy
+  - `tests/e2e/v2-act-routing.spec.ts` — Story Graph click on Act → entity-detail window opens; same act clicked in Timeline → focuses existing
+  - `tests/e2e/v2-act-reorder-playhead.spec.ts` — playhead T unchanged after reorder
+
+### 14. Phase 1.6 follow-ups (deferred to future PRs)
+
+- [ ] **T1 — Drizzle sync-mode refactor** — convert helper chain in `intervals.ts` to sync-by-default using better-sqlite3's native sync API. Closes the sync-vs-async impedance footnote permanently; reduces async overhead in tight recompute loops. Complementary to D17's polymorphic-tx work shipped in Phase 1.6.
+- [ ] **T2 — Window snapping in `Window.svelte`** — drag-to-edge zones (left half, right half, top half, bottom half, quarters). Pure UX additive on existing `windowStore.move`/`resize`. No data-model change.
+- [ ] **T4 — Status field** for Acts/Events/Scenes (`Drafted` / `In progress` / `Done` / `Needs revision`). Top-of-panel pill in editors; optional timeline filter. Stored in `entity.data` — no schema migration. Add when workflow signal is needed.
+- [x] **T5 — Bar translation** — drag whole bar to shift temporally without changing duration. Currently bars only support edge-resize. — pointer-down on bar body sets `translating` state with a 4 px move threshold; pointer move recomputes start/end via `posToFrac`/`fracToPos` (per-act-weight aware), clamps to [0, N], commits via `updateInterval` on pointerup. Click-without-drag still selects. Scrub mode is exclusive (translation no-ops). Cursor: grab → grabbing. e2e at `tests/e2e/v2-bar-translate.spec.ts` (3/3 green).
+- [ ] **T6 — Wiki rework** — alphabetical entity browser app; fill `EntityDetail` branches for Character/Location/Note; migrate `ENTITY_APP[Character]` / `ENTITY_APP[Location]` / `ENTITY_APP[Note]` to `'entity-detail'`. Cross-entity hyperlinks in synopses. Designed to land additively on the EntityDetail abstraction shipped in Phase 1.6.
+- [ ] **T7 — Bulk paste / import UI** — multi-entity import flow from external story-craft tools (Plottr CSV, Aeon export, etc.). Uses the `/api/entities/batch` endpoint shipped in Phase 1.6. UI surface: drag-drop file or paste structured text → preview → commit.
+
+### 15. Phase 1B — Graph features (separate branch: `phase-1b/graph`)
+
+Locked at /plan-eng-review 2026-04-30. 13 decisions captured.
+
+**Prerequisite cleanup (Lane Z, lands first as own commits):**
+- [ ] Z1. chore(StoryGraph): typecheck-clean baseline (fix 2 known TS errors, remove duplicate-onMount remnants).
+- [ ] Z2. chore: drop unused `tldraw` / `react` / `react-dom` from `package.json`.
+- [ ] Z3. refactor: extract `REL_COLOR` / `NODE_COLOR` maps to `src/lib/relationship-colors.ts` with `Record<RelationshipType, string>` exhaustiveness check (covers `pov_of` which `StoryGraph.svelte` currently misses).
+- [ ] Z4. refactor: extract `<GraphCanvas>` primitive from `StoryGraph.svelte` (~250 LOC: pan/zoom/drag/connect/edge-render). Existing StoryGraph e2e + scrubber-dimming behavior must regress-test clean.
+
+**Lane A — Server (parallelizable with Lane B after Z lands):**
+- [ ] A1. Migration 0002: `pinned INTEGER NOT NULL DEFAULT 0` on `canvas_positions`. Idempotent; default 0; existing rows unaffected.
+- [ ] A2. PUT `/api/canvas-positions` accepts `pinned` in payload; persists.
+- [ ] A3. POST `/api/canvas-positions/batch` — single-transaction multi-row upsert. Body: `Array<{ entityId, x, y, width, height, pinned }>`. Partial failure rolls back (atomicity required by C5 dagre layout).
+
+**Lane B — Pure logic + reusable atoms (parallelizable with Lane A):**
+- [ ] B1. `src/lib/graph/edge-policy.ts` — `DIRECTION: Record<RelationshipType, 'directed' | 'symmetric'>` with exhaustiveness check. Symmetric: `allied_with`, `rivals`. Directed: everything else (per `schema.ts` docstring).
+- [ ] B2. `src/lib/graph/traversal.ts` — pure functions:
+       - `sharedNeighbors(focalSet, edges, policy): Set<id>` (intersection)
+       - `oneHopUnion(focalSet, edges, policy): Set<id>` (1-hop union)
+       - `reachable(focalSet, edges, policy): Set<id>` (cycle-safe BFS)
+       Hand-written unit cases per the test plan (no fast-check).
+- [ ] B3. `<ContextMenu items={...} x y onClose={...} />` reusable component: keyboard nav (Esc / arrow keys), click-outside, viewport-edge clamping. Used by StoryGraph + FocusedGraph + future Timeline/WorldMap.
+
+**Lane C — Feature integration (depends on Z + A + B):**
+- [ ] C1. Add `'FocusedGraph'` to `AppId` enum + extend `windows.ts` window state shape: `{ focalSet: string[]; viewMode: 'shared' | 'their_worlds' | 'reachable' }`. Multi-window per Phase 1B by design.
+- [ ] C2. `<FocusedGraph>` component consuming `<GraphCanvas>` + traversal helpers. Visible-set is `$derived` from focalSet + mode + entities + relationships. **Append behavior:** existing nodes do NOT move; new nodes use stored `canvas_positions` or grid fallback (B1 — "stay where you were").
+- [ ] C3. Right-click menu wired into StoryGraph + FocusedGraph nodes: Open in window, View connections, Open Focused Graph, Edit, Delete, Pin to canvas. Custom action configurability deferred.
+- [ ] C4. Legend UI panel (corner of viewport) with toggleable entries per `RelationshipType`. Visible-edge set = union of toggled-on types (default: all on). Layers WITH scrubber dimming, not against it.
+- [ ] C5. "Layout by type" right-click action: dynamic-import `dagre`, run on visible non-pinned nodes, persist via `/api/canvas-positions/batch` (A3). Pinned nodes left in place. Bundle cost paid on first click only (~80KB).
+- [ ] C6. **Soft-filter rule** (locked invariant): scrubber dimming layers on top of FocusedGraph view-mode visibility; does NOT alter the traversal result set. Layout-by-type uses full visibleSet, never the in-scope-at-T subset.
+
+**Worktree parallelization:**
+
+| Lane | Touches | Depends on |
+|---|---|---|
+| Z (cleanup) | `StoryGraph.svelte`, `package.json`, `src/lib/relationship-colors.ts`, new `<GraphCanvas>` | — (lands first) |
+| A (server) | `drizzle/`, `src/routes/api/canvas-positions/`, `src/lib/server/db/schema.ts` | Z |
+| B (logic + atoms) | `src/lib/graph/`, new `<ContextMenu>` | Z |
+| C (integration) | new `<FocusedGraph>`, `StoryGraph.svelte` (right-click wire-up), `windows.ts`, `navigation.ts` | Z + A + B |
+
+Lanes A and B run in parallel worktrees after Z merges. Lane C waits for both. Conflict surface between A and B is zero (disjoint dirs). C imports from both but doesn't modify their files.
+
+**NOT in scope:**
+- Custom right-click action configurability (deferred per original bullet).
+- Compound/collapse layout (Timeline + scrubber owns the temporal dimension).
+- Force-directed / radial layouts beyond `dagre`'s layered (`elkjs` rejected; ~600KB for unused features).
+- Property-based testing (hand-written cases sufficient at this scale).
+- Cross-window highlight sync (selecting in StoryGraph → highlight in FocusedGraph). Defer until requested.
+- Server-side traversal endpoint (graph fits in client; round-trip wasteful).
+- Hard-filter view modes (scrubber changes traversal set). Soft-filter is the locked semantic.

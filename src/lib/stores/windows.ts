@@ -5,6 +5,7 @@ export type AppId =
 	| 'character-editor'
 	| 'world-map'
 	| 'timeline'
+	| 'entity-detail'
 	| 'wiki'
 	| 'story-graph';
 
@@ -21,12 +22,19 @@ export type WindowState = {
 	zIndex: number;
 };
 
+/**
+ * Routes an entity type to its default app. Locked 2026-04-29 in
+ * /plan-design-review (D10-extension/Issue 19A): Acts/Events/Scenes route
+ * to the unified `'entity-detail'` window since they have rich editors
+ * (ActEditor, EventEditor, SceneEditor). Characters/Locations/Notes stay
+ * with their existing apps until the Wiki rework migrates them too.
+ */
 const ENTITY_APP: Record<EntityType, AppId> = {
 	Character: 'character-editor',
 	Location: 'world-map',
-	Event: 'timeline',
-	Act: 'timeline',
-	Scene: 'timeline',
+	Event: 'entity-detail',
+	Act: 'entity-detail',
+	Scene: 'entity-detail',
 	Note: 'wiki'
 };
 
@@ -70,7 +78,9 @@ function createWindowStore() {
 						? 640
 						: appId === 'timeline'
 							? 960
-							: 320,
+							: appId === 'entity-detail'
+								? 480
+								: 320,
 				height: isGraph ? 500 : 480,
 				minimized: false,
 				maximized: false,
@@ -151,6 +161,17 @@ function createWindowStore() {
 		focus(next.id);
 	}
 
+	/**
+	 * Find any open editor window for an entity, regardless of which app
+	 * hosts it. Used by the Timeline's mutex check (D2/Issue 2B-i): clicking
+	 * an entity should focus an existing window before opening a new one.
+	 * Matches by `entityId` so the check works even during the Wiki PR's
+	 * phased migration where some types still use legacy app routing.
+	 */
+	function findOpenEditorFor(entityId: string): WindowState | undefined {
+		return get({ subscribe }).find((w) => w.entityId === entityId);
+	}
+
 	return {
 		subscribe,
 		open,
@@ -163,6 +184,7 @@ function createWindowStore() {
 		resize,
 		setEntityId,
 		focusedWindow,
+		findOpenEditorFor,
 		cycleForward,
 		cycleBackward
 	};

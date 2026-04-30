@@ -10,6 +10,17 @@
   (widthClassForBar, internalActBoundaryFractions).
 -->
 
+<script lang="ts" module>
+  // Module-scoped counter — shared across all IntervalBar instances so that
+  // server- and client-rendered clipPath ids stay aligned across hydration.
+  // Math.random / crypto.randomUUID would produce different ids on each side.
+  let clipCounter = 0;
+  function nextClipId(): string {
+    clipCounter += 1;
+    return `ib-clip-${clipCounter}`;
+  }
+</script>
+
 <script lang="ts">
   import { widthClassForBar, type WidthClass } from '$lib/timeline-v2-helpers.js';
 
@@ -31,6 +42,8 @@
     internalBoundaries?: number[];
     /** Used by event bars to pick the neutral-gray treatment. */
     isEvent?: boolean;
+    /** Click on an internal hairline → split the interval at that fraction. */
+    onSplit?: (fraction: number) => void;
   }
 
   let {
@@ -41,6 +54,7 @@
     widthPx,
     internalBoundaries = [],
     isEvent = false,
+    onSplit,
   }: Props = $props();
 
   const widthClass: WidthClass = $derived(widthClassForBar(widthPx));
@@ -53,7 +67,7 @@
   const PAD_X = $derived(widthClass === 'tiny' ? 0 : widthClass === 'narrow' ? 6 : 10);
 
   // Unique clipPath id so multiple instances don't collide.
-  const clipId = `ib-clip-${Math.random().toString(36).slice(2, 9)}`;
+  const clipId = nextClipId();
 
   const textColor = $derived(isEvent ? 'var(--color-text, #e8e0d0)' : color);
   const nameY = $derived(showNote ? BODY_Y + 12 : BODY_Y + BODY_H / 2);
@@ -107,16 +121,41 @@
     stroke-width="1"
   />
 
-  <!-- Internal act boundaries -->
+  <!-- Internal act boundaries — clickable to split the interval (D7/5b A).
+       Hairlines hidden until the bar is hovered to keep the resting state
+       calm. CSS gates visibility via .interval-bar:hover. -->
   {#each internalBoundaries as fraction (fraction)}
     <line
+      class="hairline"
       x1={fraction * widthPx}
       x2={fraction * widthPx}
       y1={BODY_Y + 4}
       y2={BODY_Y + BODY_H - 4}
       stroke="rgba(255, 255, 255, 0.18)"
       stroke-width="1"
+      pointer-events="none"
     />
+    {#if onSplit}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- svelte-ignore a11y_interactive_supports_focus -->
+      <rect
+        class="hairline-hit"
+        role="button"
+        aria-label="Split interval at this act boundary"
+        x={fraction * widthPx - 4}
+        y={BODY_Y}
+        width="8"
+        height={BODY_H}
+        fill="transparent"
+        onclick={(e) => {
+          e.stopPropagation();
+          onSplit?.(fraction);
+        }}
+      >
+        <title>Click to split here</title>
+      </rect>
+    {/if}
   {/each}
 
   <!-- Name -->
@@ -181,6 +220,21 @@
     font-size: 13px;
     font-weight: 500;
     pointer-events: none;
+  }
+  .hairline,
+  .hairline-hit {
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .interval-bar:hover .hairline,
+  .interval-bar:hover .hairline-hit {
+    opacity: 1;
+  }
+  .hairline-hit {
+    cursor: col-resize;
+  }
+  .hairline-hit:hover {
+    fill: rgba(200, 148, 42, 0.15);
   }
   .bar-note {
     font-family: var(--font-ui, 'Inter', sans-serif);

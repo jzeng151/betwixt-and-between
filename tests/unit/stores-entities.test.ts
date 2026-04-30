@@ -60,7 +60,8 @@ describe('entities.createEntity', () => {
 		const fetchMock = vi.fn().mockResolvedValue(makeResponse(created));
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-		const result = await entities.createEntity('Character', 'Ellie', { age: 14 });
+		// D19/Issue 13A: third arg is now an options object {data, parentId, position}
+		const result = await entities.createEntity('Character', 'Ellie', { data: { age: 14 } });
 
 		expect(result.id).toBe('new1');
 		const call = fetchMock.mock.calls[0];

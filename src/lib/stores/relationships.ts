@@ -37,7 +37,14 @@ function createRelationshipStore() {
 
 	async function deleteRelationship(id: string): Promise<void> {
 		update((all) => all.filter((r) => r.id !== id));
-		const res = await fetch(`/api/relationships/${id}`, { method: 'DELETE' });
+		let res: Response;
+		try {
+			res = await fetch(`/api/relationships/${id}`, { method: 'DELETE' });
+		} catch (err) {
+			// Network error before any response — recover the optimistic remove.
+			await load();
+			throw err;
+		}
 		if (!res.ok) {
 			await load();
 			throw new Error(await res.text());

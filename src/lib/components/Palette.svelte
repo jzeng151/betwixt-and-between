@@ -17,8 +17,11 @@
     /** Set of entity ids that already have ≥1 interval on the timeline. */
     placedEntityIds: Set<string>;
     colorFor: (entity: Entity, idx: number) => string;
+    /** Create handler — parent creates the event with a default name and
+     *  opens the editor. Returns when the create round-trip completes. */
+    onCreateEvent: () => Promise<void>;
   }
-  let { characters, events, placedEntityIds, colorFor }: Props = $props();
+  let { characters, events, placedEntityIds, colorFor, onCreateEvent }: Props = $props();
 
   function setDragData(e: DragEvent, id: string) {
     // Custom MIME so V1 Timeline's text/plain drop handlers ignore our drags.
@@ -26,6 +29,17 @@
     e.dataTransfer!.setData('application/x-betwixt-v2-entity', id);
     e.dataTransfer!.setData('text/plain', id);
     e.dataTransfer!.effectAllowed = 'copy';
+  }
+
+  let savingEvent = $state(false);
+  async function addEventClick() {
+    if (savingEvent) return;
+    savingEvent = true;
+    try {
+      await onCreateEvent();
+    } finally {
+      savingEvent = false;
+    }
   }
 </script>
 
@@ -59,7 +73,13 @@
   <section class="palette-section">
     <header class="palette-label">
       <span>Events</span>
-      <span class="palette-filter" aria-hidden="true">unplaced</span>
+      <button
+        class="palette-add-btn"
+        aria-label="Add event"
+        title="Add event"
+        disabled={savingEvent}
+        onclick={addEventClick}
+      >+</button>
     </header>
     {#each events as ev, i (ev.id)}
       <div
@@ -167,5 +187,31 @@
     color: var(--color-text-muted, #6b7280);
     font-style: italic;
     padding: 4px 10px;
+  }
+  .palette-add-btn {
+    background: transparent;
+    border: 1px solid var(--color-border, #2a2d35);
+    color: var(--color-text-muted, #6b7280);
+    border-radius: 4px;
+    width: 18px;
+    height: 18px;
+    line-height: 1;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+  }
+  .palette-add-btn:hover {
+    color: var(--color-accent, #c8942a);
+    border-color: var(--color-accent, #c8942a);
+    background: rgba(200, 148, 42, 0.08);
+  }
+  .palette-add-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 </style>

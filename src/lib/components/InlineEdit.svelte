@@ -4,13 +4,27 @@
     onSave: (value: string) => void;
     class?: string;
     placeholder?: string;
+    /** Always show the input, never the read-only display + pencil.
+     *  Used when the host is already in an explicit edit mode and the
+     *  extra click on the pencil is unnecessary friction. */
+    forceEditing?: boolean;
   }
-  let { value, onSave, class: cls = '', placeholder = 'Untitled' }: Props = $props();
+  let {
+    value,
+    onSave,
+    class: cls = '',
+    placeholder = 'Untitled',
+    forceEditing = false
+  }: Props = $props();
 
   let editing = $state(false);
   let draft = $state('');
 
   $effect(() => { draft = value; });
+
+  // Render the input whenever the host pins us to editing OR the user
+  // clicked the pencil to start a one-off rename.
+  const showInput = $derived(forceEditing || editing);
 
   function commit() {
     editing = false;
@@ -33,7 +47,7 @@
   }
 </script>
 
-{#if editing}
+{#if showInput}
   <!-- svelte-ignore a11y_autofocus -->
   <input
     class="inline-edit-input {cls}"
@@ -41,6 +55,7 @@
     onblur={commit}
     onkeydown={handleKeydown}
     autofocus
+    {placeholder}
   />
 {:else}
   <span class="inline-edit-wrap">

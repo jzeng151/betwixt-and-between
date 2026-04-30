@@ -113,6 +113,34 @@ describe('/api/relationships POST (non-hijack)', () => {
 			)
 		).rejects.toMatchObject({ status: 400 });
 	});
+
+	it('schema enforces unique (from_id, to_id, type) — duplicate insert fails', async () => {
+		// Locked 2026-04-29 in /plan-eng-review (Issue 18-revised B). Prevents
+		// two relationship rows of the same type between the same pair of
+		// entities. Multi-edge of DIFFERENT types between same pair is still
+		// allowed; multi-edge of pov_of from same event to DIFFERENT characters
+		// is also allowed (different to_id).
+		await currentDb.insert(relationships).values({
+			fromId: alice,
+			toId: bob,
+			type: 'allied_with'
+		});
+		await expect(
+			currentDb.insert(relationships).values({
+				fromId: alice,
+				toId: bob,
+				type: 'allied_with'
+			})
+		).rejects.toThrow(/UNIQUE constraint failed/);
+		// But a different type between same pair is allowed.
+		await currentDb.insert(relationships).values({
+			fromId: alice,
+			toId: bob,
+			type: 'rivals'
+		});
+		const all = await currentDb.select().from(relationships);
+		expect(all).toHaveLength(2);
+	});
 });
 
 describe('/api/relationships GET', () => {

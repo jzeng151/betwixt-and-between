@@ -3,6 +3,8 @@
   import { untrack } from 'svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
+  import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+  import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
 
@@ -62,6 +64,27 @@
   const displayEntities = $derived($entities.filter((e) => e.type !== 'Note'));
   const hasEntities = $derived(displayEntities.length > 0);
 
+  // ── Playhead scope ─────────────────────────────────────────────────────────
+  // An entity is "out of scope" at T iff it has at least one interval AND none
+  // of its intervals contain T. Entities without intervals (Locations, Acts,
+  // Scenes, unplaced Characters/Events) are always considered in-scope.
+  const outOfScope = $derived.by(() => {
+    const set = new Set<string>();
+    if ($playhead == null) return set;
+    const t = $playhead;
+    const byEntity = new Map<string, typeof $intervalsStore>();
+    for (const iv of $intervalsStore) {
+      const list = byEntity.get(iv.entityId) ?? [];
+      list.push(iv);
+      byEntity.set(iv.entityId, list);
+    }
+    for (const [entityId, ivs] of byEntity) {
+      const active = ivs.some((iv) => intervalContainsT(iv.startPosition, iv.endPosition, t));
+      if (!active) set.add(entityId);
+    }
+    return set;
+  });
+
   // Edges in viewport (screen) coords — reacts to pan/zoom/nodePos changes
   const screenEdges = $derived(
     $relationships
@@ -75,6 +98,7 @@
         if (!fp || !tp) return null;
         const fw = fp.w || NODE_W, fh = fp.h || NODE_H;
         const tw = tp.w || NODE_W, th = tp.h || NODE_H;
+        const dimmed = outOfScope.has(r.fromId) || outOfScope.has(r.toId);
         return {
           id: r.id,
           x1: panX + (fp.x + fw / 2) * zoom,
@@ -83,11 +107,12 @@
           y2: panY + (tp.y + th / 2) * zoom,
           color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
           label: r.label ?? r.type.replace(/_/g, ' '),
+          dimmed,
         };
       })
       .filter(Boolean) as {
         id: string; x1: number; y1: number; x2: number; y2: number;
-        color: string; label: string;
+        color: string; label: string; dimmed: boolean;
       }[]
   );
 
@@ -335,11 +360,13 @@
       {@const my = (edge.y1 + edge.y2) / 2}
       <line
         x1={edge.x1} y1={edge.y1} x2={edge.x2} y2={edge.y2}
-        stroke={edge.color} stroke-width="1.5" stroke-opacity="0.45"
+        stroke={edge.color} stroke-width="1.5"
+        stroke-opacity={edge.dimmed ? '0.1' : '0.45'}
       />
       <text
         x={mx} y={my - 5}
-        fill={edge.color} font-size="9" text-anchor="middle" opacity="0.75"
+        fill={edge.color} font-size="9" text-anchor="middle"
+        opacity={edge.dimmed ? '0.15' : '0.75'}
         font-family="Inter, Segoe UI, sans-serif"
       >{edge.label}</text>
     {/each}
@@ -366,6 +393,7 @@
         <div
           class="node"
           class:node-active={hoveredNodeId === entity.id || draggingNode?.id === entity.id}
+          class:node-out-of-scope={outOfScope.has(entity.id)}
           style="left:{p.x}px; top:{p.y}px; --nc:{nc}"
           onpointerdown={(e) => onNodePointerDown(e, entity.id)}
           ondblclick={(e) => onNodeDblClick(e, entity.id)}
@@ -483,7 +511,13 @@
     cursor: grab;
     font-family: var(--font-ui);
     white-space: nowrap;
-    transition: border-color 0.12s, box-shadow 0.12s;
+    transition: border-color 0.12s, box-shadow 0.12s, opacity 0.15s ease;
+  }
+  .node-out-of-scope {
+    opacity: 0.18;
+  }
+  .node-out-of-scope:hover {
+    opacity: 0.4;
   }
   .node:hover,
   .node.node-active {

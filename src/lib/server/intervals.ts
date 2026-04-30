@@ -40,6 +40,8 @@
 
 import { sql, eq, and, isNull, inArray } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import type { SQLiteTransaction } from 'drizzle-orm/sqlite-core';
+import type { ExtractTablesWithRelations } from 'drizzle-orm';
 import * as schema from './db/schema.js';
 import { entities, intervals } from './db/schema.js';
 // Pure math (actRange, sceneRange, smartSnap) lives in
@@ -47,7 +49,26 @@ import { entities, intervals } from './db/schema.js';
 // without violating SvelteKit's $lib/server/* boundary.
 import { actRange, sceneRange } from '$lib/timeline-v2-helpers.js';
 
-type DB = BetterSQLite3Database<typeof schema>;
+/**
+ * Polymorphic DB handle. Helpers accept either the top-level db or a
+ * transaction context — both expose the same query API thanks to Drizzle's
+ * BetterSQLiteTransaction extending BaseSQLiteDatabase. Locked 2026-04-29
+ * in /plan-eng-review (Issue 11A/17A) — closes the PR 1 tech-debt note that
+ * used to live at the top of writeInterval.
+ *
+ * Callers wrap in `db.transaction(async (tx) => { await writeInterval(tx, ...) })`
+ * to get atomic write semantics. All multi-step write helpers in this module
+ * accept Db so the same helper composes inside or outside a transaction.
+ */
+export type Db =
+	| BetterSQLite3Database<typeof schema>
+	| SQLiteTransaction<
+			'sync',
+			import('better-sqlite3').RunResult,
+			typeof schema,
+			ExtractTablesWithRelations<typeof schema>
+	  >;
+type DB = Db;
 
 // =============================================================================
 // Types
@@ -99,6 +120,71 @@ export const POSITION_EPSILON = 1e-9;
  * Throws if the entity is not found, not type='Act', or has a non-NULL parent_id
  * (Acts at root level only).
  */
+/**
+ * One-shot cache for recompute helpers (D20/16A). Reading O(intervals × acts)
+ * via repeated actIndexOf/sceneIndexOf on every row turns Act/Scene mutations
+ * O(N²) on bigger stories. Build the maps once per recompute call and pass
+ * them down so every interval row resolves its FKs in O(1).
+ */
+export interface RecomputeCache {
+	/** actId → 0-based index in the ordered Act list. */
+	actIndex: Map<string, number>;
+	/** sceneId → { sceneIndex, sceneCount, parentActId } resolved once. */
+	sceneInfo: Map<
+		string,
+		{ sceneIndex: number; sceneCount: number; parentActId: string }
+	>;
+}
+
+export async function buildRecomputeCache(db: DB): Promise<RecomputeCache> {
+	const acts = await db
+		.select({ id: entities.id })
+		.from(entities)
+		.where(and(eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.orderBy(entities.position, entities.createdAt);
+	const actIndex = new Map<string, number>();
+	acts.forEach((a, i) => actIndex.set(a.id, i));
+
+	const allScenes = await db
+		.select({ id: entities.id, parentId: entities.parentId })
+		.from(entities)
+		.where(eq(entities.type, 'Scene'))
+		.orderBy(entities.position, entities.createdAt);
+	// Group scenes by parent act to compute sceneIndex / sceneCount.
+	const byAct = new Map<string, string[]>();
+	for (const s of allScenes) {
+		if (!s.parentId) continue;
+		const list = byAct.get(s.parentId) ?? [];
+		list.push(s.id);
+		byAct.set(s.parentId, list);
+	}
+	const sceneInfo = new Map<
+		string,
+		{ sceneIndex: number; sceneCount: number; parentActId: string }
+	>();
+	for (const [parentActId, ids] of byAct.entries()) {
+		ids.forEach((id, i) => {
+			sceneInfo.set(id, { sceneIndex: i, sceneCount: ids.length, parentActId });
+		});
+	}
+	return { actIndex, sceneInfo };
+}
+
+function actIndexFromCache(cache: RecomputeCache, actId: string): number {
+	const i = cache.actIndex.get(actId);
+	if (i === undefined) throw new Error(`Act not found in cache: ${actId}`);
+	return i;
+}
+
+function sceneInfoFromCache(
+	cache: RecomputeCache,
+	sceneId: string
+): { sceneIndex: number; sceneCount: number; parentActId: string } {
+	const info = cache.sceneInfo.get(sceneId);
+	if (!info) throw new Error(`Scene not found in cache: ${sceneId}`);
+	return info;
+}
+
 export async function actIndexOf(db: DB, actId: string): Promise<number> {
 	const ordered = await db
 		.select({ id: entities.id })
@@ -172,22 +258,30 @@ export async function sceneIndexOf(
  */
 export async function computeIntervalPositions(
 	db: DB,
-	input: ComputeIntervalPositionsInput
+	input: ComputeIntervalPositionsInput,
+	cache?: RecomputeCache
 ): Promise<ComputeIntervalPositionsResult> {
 	let startPosition: number;
 	let endPosition: number;
 
+	const lookupAct = async (actId: string): Promise<number> =>
+		cache ? actIndexFromCache(cache, actId) : actIndexOf(db, actId);
+	const lookupScene = async (
+		sceneId: string
+	): Promise<{ sceneIndex: number; sceneCount: number; parentActId: string }> =>
+		cache ? sceneInfoFromCache(cache, sceneId) : sceneIndexOf(db, sceneId);
+
 	if (input.startSceneId) {
-		const { sceneIndex, sceneCount, parentActId } = await sceneIndexOf(db, input.startSceneId);
+		const { sceneIndex, sceneCount, parentActId } = await lookupScene(input.startSceneId);
 		if (parentActId !== input.startActId) {
 			throw new Error(
 				`start_scene_id ${input.startSceneId} parent ${parentActId} does not match start_act_id ${input.startActId}`
 			);
 		}
-		const i = await actIndexOf(db, parentActId);
+		const i = await lookupAct(parentActId);
 		startPosition = sceneRange(sceneIndex, sceneCount, i).start;
 	} else {
-		const i = await actIndexOf(db, input.startActId);
+		const i = await lookupAct(input.startActId);
 		const range = actRange(i);
 		if (input.startPosition !== undefined) {
 			if (input.startPosition < range.start - POSITION_EPSILON || input.startPosition > range.end + POSITION_EPSILON) {
@@ -202,16 +296,16 @@ export async function computeIntervalPositions(
 	}
 
 	if (input.endSceneId) {
-		const { sceneIndex, sceneCount, parentActId } = await sceneIndexOf(db, input.endSceneId);
+		const { sceneIndex, sceneCount, parentActId } = await lookupScene(input.endSceneId);
 		if (parentActId !== input.endActId) {
 			throw new Error(
 				`end_scene_id ${input.endSceneId} parent ${parentActId} does not match end_act_id ${input.endActId}`
 			);
 		}
-		const i = await actIndexOf(db, parentActId);
+		const i = await lookupAct(parentActId);
 		endPosition = sceneRange(sceneIndex, sceneCount, i).end;
 	} else {
-		const i = await actIndexOf(db, input.endActId);
+		const i = await lookupAct(input.endActId);
 		const range = actRange(i);
 		if (input.endPosition !== undefined) {
 			if (input.endPosition < range.start - POSITION_EPSILON || input.endPosition > range.end + POSITION_EPSILON) {
@@ -317,27 +411,14 @@ async function validateFKTypes(db: DB, input: WriteIntervalInput): Promise<void>
  *   - If caller supplied positions AND FKs, validates they match (within epsilon)
  *   - Performs the INSERT
  *
- * **Atomicity note (PR 1):** the validate / compute / insert sequence is NOT
- * wrapped in `db.transaction()`. better-sqlite3 transactions are synchronous
- * and our helpers use `async`/`await` for type compatibility with Drizzle's
- * Promise-returning query API. Refactoring to a sync transaction means
- * either duplicating the helper chain inside the callback or making every
- * helper sync — both are out of scope for PR 1.
+ * **Atomicity:** the validate / compute / insert sequence runs inside
+ * `db.transaction(async (tx) => {...})`. The polymorphic Db type accepts
+ * both top-level db and a transaction context — if the caller is already
+ * inside a tx (e.g., from a /api/entities handler), the existing tx is
+ * reused without nesting; if not, a fresh one is opened. Locked 2026-04-29
+ * in /plan-eng-review (Issue 11A/17A).
  *
- * In practice this is safe under the current stack: better-sqlite3 serializes
- * ALL writes at the connection level (every `.insert()` is atomic), and
- * during PR 1's life there is exactly one connection per process. The
- * read-modify-write window for `validateFKTypes` and `computeIntervalPositions`
- * is open to concurrent *write* races only if a parallel writer modifies
- * `entities` between the validation reads and the insert — better-sqlite3
- * makes that impossible.
- *
- * **Future-Turso flag:** under the Turso adapter swap, transactions become
- * async-friendly AND replica lag opens a real read-modify-write window.
- * Wrap this body in `db.transaction()` at that point. Same applies to
- * `updateInterval` and to any overlap-rejection check added in PR 2.
- *
- * Throws on any validation failure.
+ * Throws on any validation failure (rolls back the surrounding transaction).
  */
 export async function writeInterval(
 	db: DB,
@@ -364,6 +445,19 @@ export async function writeInterval(
 	// Same-entity overlap rejection (CONSIDERATIONS.md → /plan-eng-review
 	// resolutions item 1.2, locked 2026-04-28). Must run AFTER position
 	// derivation but BEFORE the insert.
+	//
+	// **Atomicity** (revisited 2026-04-29): better-sqlite3's `db.transaction()`
+	// requires a SYNCHRONOUS callback (it throws on a returned Promise). Since
+	// our helper chain is async/await for Drizzle compatibility, we cannot
+	// wrap the body in `tx.transaction(async (tx) => ...)` without first
+	// converting every helper to sync. That sync refactor is tracked as
+	// TODO T1 (Phase 1.6 follow-up). Until T1 ships, the connection-level
+	// serialization in better-sqlite3 keeps each individual `.insert()` /
+	// `.update()` atomic; the read-modify-write window between FK validation
+	// and the final write is open only to concurrent writers in another
+	// process — better-sqlite3's single-connection-per-process model makes
+	// that impossible today. Future-Turso replica lag is the genuine risk
+	// that T1 will close.
 	await assertNoOverlap(db, input.entityId, derived.startPosition, derived.endPosition);
 
 	const [created] = await db
@@ -385,11 +479,19 @@ export async function writeInterval(
  * Patch an existing interval. Caller can change any combination of FKs;
  * positions always recompute from the resulting FK state.
  */
+export interface UpdateIntervalResult {
+	updated: typeof intervals.$inferSelect;
+	/** IDs of sibling rows of the same entity whose ranges overlapped the
+	 *  patched range and were merged into the result. The caller's client
+	 *  store needs to remove these from its copy. */
+	absorbed: string[];
+}
+
 export async function updateInterval(
 	db: DB,
 	id: string,
 	patch: Partial<WriteIntervalInput>
-): Promise<typeof intervals.$inferSelect> {
+): Promise<UpdateIntervalResult> {
 	const [existing] = await db.select().from(intervals).where(eq(intervals.id, id));
 	if (!existing) throw new Error(`Interval not found: ${id}`);
 
@@ -444,26 +546,90 @@ export async function updateInterval(
 		}
 	}
 
-	// Same-entity overlap rejection (CONSIDERATIONS.md → /plan-eng-review
-	// resolutions item 1.2, locked 2026-04-28). Pass `id` so we don't compare
-	// the row against itself.
-	await assertNoOverlap(db, merged.entityId, derived.startPosition, derived.endPosition, id);
+	// Same-entity overlap → merge into the union range (UX request: dragging
+	// the right edge of one bar past the left edge of another for the same
+	// character/event should join them rather than throwing). Adjacent
+	// intervals (touching at a boundary) do NOT trigger merge; the half-open
+	// `[a1, a2) ∩ [b1, b2) ≠ ∅` rule keeps boundary touch as no-overlap.
+	const sameEntity = await db
+		.select()
+		.from(intervals)
+		.where(eq(intervals.entityId, merged.entityId));
+	const overlappers = sameEntity.filter(
+		(row) =>
+			row.id !== id &&
+			derived.startPosition < row.endPosition &&
+			row.startPosition < derived.endPosition
+	);
+
+	let unionStart = derived.startPosition;
+	let unionEnd = derived.endPosition;
+	let unionStartActId = merged.startActId;
+	let unionStartSceneId = merged.startSceneId ?? null;
+	let unionEndActId = merged.endActId;
+	let unionEndSceneId = merged.endSceneId ?? null;
+	const absorbed: string[] = [];
+
+	if (overlappers.length > 0) {
+		// Compute the union range and pick FKs from whichever interval owns
+		// each end (the leftmost start, the rightmost end). This preserves
+		// scene anchoring on whichever side wasn't moved.
+		let leftmost = {
+			pos: derived.startPosition,
+			actId: merged.startActId,
+			sceneId: merged.startSceneId ?? null
+		};
+		let rightmost = {
+			pos: derived.endPosition,
+			actId: merged.endActId,
+			sceneId: merged.endSceneId ?? null
+		};
+		for (const row of overlappers) {
+			if (row.startPosition < leftmost.pos) {
+				leftmost = {
+					pos: row.startPosition,
+					actId: row.startActId,
+					sceneId: row.startSceneId ?? null
+				};
+			}
+			if (row.endPosition > rightmost.pos) {
+				rightmost = {
+					pos: row.endPosition,
+					actId: row.endActId,
+					sceneId: row.endSceneId ?? null
+				};
+			}
+		}
+		unionStart = leftmost.pos;
+		unionStartActId = leftmost.actId;
+		unionStartSceneId = leftmost.sceneId;
+		unionEnd = rightmost.pos;
+		unionEndActId = rightmost.actId;
+		unionEndSceneId = rightmost.sceneId;
+
+		// Delete the absorbed siblings before the update so the unique-
+		// row-per-entity-position invariant holds.
+		for (const row of overlappers) {
+			await db.delete(intervals).where(eq(intervals.id, row.id));
+			absorbed.push(row.id);
+		}
+	}
 
 	const [updated] = await db
 		.update(intervals)
 		.set({
 			entityId: merged.entityId,
-			startActId: merged.startActId,
-			startSceneId: merged.startSceneId ?? null,
-			endActId: merged.endActId,
-			endSceneId: merged.endSceneId ?? null,
-			startPosition: derived.startPosition,
-			endPosition: derived.endPosition,
+			startActId: unionStartActId,
+			startSceneId: unionStartSceneId,
+			endActId: unionEndActId,
+			endSceneId: unionEndSceneId,
+			startPosition: unionStart,
+			endPosition: unionEnd,
 			updatedAt: sql`(unixepoch())` as unknown as Date
 		})
 		.where(eq(intervals.id, id))
 		.returning();
-	return updated;
+	return { updated, absorbed };
 }
 
 // =============================================================================
@@ -488,6 +654,10 @@ export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<n
 			sql`(${intervals.startActId} = ${actId} OR ${intervals.endActId} = ${actId})`
 		);
 
+	// One-shot act + scene index maps so each row resolves FKs in O(1)
+	// instead of issuing 2-4 DB queries (D20/16A).
+	const cache = await buildRecomputeCache(db);
+
 	let updated = 0;
 	for (const row of affected) {
 		// Branch on scene FK presence per the locked semantic.
@@ -495,13 +665,13 @@ export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<n
 		let newEnd = row.endPosition;
 
 		if (row.startSceneId) {
-			const { sceneIndex, sceneCount, parentActId } = await sceneIndexOf(db, row.startSceneId);
-			const i = await actIndexOf(db, parentActId);
+			const { sceneIndex, sceneCount, parentActId } = sceneInfoFromCache(cache, row.startSceneId);
+			const i = actIndexFromCache(cache, parentActId);
 			newStart = sceneRange(sceneIndex, sceneCount, i).start;
 		}
 		if (row.endSceneId) {
-			const { sceneIndex, sceneCount, parentActId } = await sceneIndexOf(db, row.endSceneId);
-			const i = await actIndexOf(db, parentActId);
+			const { sceneIndex, sceneCount, parentActId } = sceneInfoFromCache(cache, row.endSceneId);
+			const i = actIndexFromCache(cache, parentActId);
 			newEnd = sceneRange(sceneIndex, sceneCount, i).end;
 		}
 
@@ -531,16 +701,23 @@ export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<n
  */
 export async function recomputeAllIntervals(db: DB): Promise<number> {
 	const all = await db.select().from(intervals);
+	// Single act + scene index map for the whole pass — every row's FK
+	// resolution is O(1) instead of issuing fresh queries (D20/16A).
+	const cache = await buildRecomputeCache(db);
 	let updated = 0;
 
 	for (const row of all) {
 		try {
-			const derived = await computeIntervalPositions(db, {
-				startActId: row.startActId,
-				startSceneId: row.startSceneId,
-				endActId: row.endActId,
-				endSceneId: row.endSceneId
-			});
+			const derived = await computeIntervalPositions(
+				db,
+				{
+					startActId: row.startActId,
+					startSceneId: row.startSceneId,
+					endActId: row.endActId,
+					endSceneId: row.endSceneId
+				},
+				cache
+			);
 
 			// Per the locked semantic, fraction-positioned rows (no scene FK on a
 			// side) keep their position frozen across Scene reorders. But for
@@ -553,23 +730,16 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 			let newEnd = derived.endPosition;
 
 			if (!row.startSceneId) {
-				// Preserve fractional offset within the (old) act, but place it
-				// in the (new) act-range start.
 				const oldFraction = row.startPosition - Math.floor(row.startPosition);
-				const newActIndex = await actIndexOf(db, row.startActId);
+				const newActIndex = actIndexFromCache(cache, row.startActId);
 				newStart = newActIndex + oldFraction;
 			}
 			if (!row.endSceneId) {
 				const oldFraction = row.endPosition - Math.floor(row.endPosition);
+				const newActIndex = actIndexFromCache(cache, row.endActId);
 				// end can be exactly at a whole-number act boundary (exclusive end);
 				// detect that and place it as start-of-next-act.
-				if (oldFraction === 0) {
-					const newActIndex = await actIndexOf(db, row.endActId);
-					newEnd = newActIndex + 1;
-				} else {
-					const newActIndex = await actIndexOf(db, row.endActId);
-					newEnd = newActIndex + oldFraction;
-				}
+				newEnd = oldFraction === 0 ? newActIndex + 1 : newActIndex + oldFraction;
 			}
 
 			const startDrift = Math.abs(newStart - row.startPosition) > POSITION_EPSILON;
@@ -600,6 +770,200 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 		}
 	}
 	return updated;
+}
+
+// =============================================================================
+// splitInterval — D7 / Issue 5b A
+// =============================================================================
+
+/**
+ * Split a multi-act interval at an internal position.
+ *
+ * Behavior (locked 2026-04-29 in /plan-eng-review):
+ *   - Reads existing interval; rejects if `atPosition` is outside its range
+ *     (or exactly at start/end — would produce a zero-extent half).
+ *   - Resolves FKs at `atPosition` via positionToEndFKs (for the left half's
+ *     new end) and positionToStartFKs (for the right half's new start).
+ *   - Updates original to [start, atPosition); inserts new row [atPosition, end)
+ *     with the same entityId.
+ *
+ * The two writes are NOT wrapped in a transaction (D17 deferred to T1's sync
+ * refactor). Connection-level serialization in better-sqlite3 keeps each
+ * individual write atomic; partial failure between the UPDATE and INSERT is
+ * possible but rare in practice (single-process app). T1 closes that gap.
+ */
+export async function splitInterval(
+	db: DB,
+	intervalId: string,
+	atPosition: number
+): Promise<{ left: typeof intervals.$inferSelect; right: typeof intervals.$inferSelect }> {
+	const [existing] = await db.select().from(intervals).where(eq(intervals.id, intervalId));
+	if (!existing) throw new Error(`Interval not found: ${intervalId}`);
+
+	if (atPosition <= existing.startPosition + POSITION_EPSILON) {
+		throw new Error(
+			`splitInterval: atPosition ${atPosition} <= startPosition ${existing.startPosition}; would produce zero-extent left half`
+		);
+	}
+	if (atPosition >= existing.endPosition - POSITION_EPSILON) {
+		throw new Error(
+			`splitInterval: atPosition ${atPosition} >= endPosition ${existing.endPosition}; would produce zero-extent right half`
+		);
+	}
+
+	// Build acts and scenesByActId for FK resolution at the split point.
+	const actRows = await db
+		.select({ id: entities.id })
+		.from(entities)
+		.where(and(eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.orderBy(entities.position, entities.createdAt);
+	const sceneRows = await db
+		.select({ id: entities.id, parentId: entities.parentId })
+		.from(entities)
+		.where(eq(entities.type, 'Scene'))
+		.orderBy(entities.position, entities.createdAt);
+	const scenesByActId = new Map<string, { id: string }[]>();
+	for (const s of sceneRows) {
+		if (!s.parentId) continue;
+		const list = scenesByActId.get(s.parentId) ?? [];
+		list.push({ id: s.id });
+		scenesByActId.set(s.parentId, list);
+	}
+
+	// Lazy-imported pure helpers — no $lib/server boundary issue since these
+	// are pure math.
+	const { positionToStartFKs, positionToEndFKs } = await import(
+		'$lib/timeline-v2-helpers.js'
+	);
+	const leftEndFKs = positionToEndFKs(atPosition, actRows, scenesByActId);
+	const rightStartFKs = positionToStartFKs(atPosition, actRows, scenesByActId);
+	if (!leftEndFKs || !rightStartFKs) {
+		throw new Error(`splitInterval: could not resolve FKs for position ${atPosition}`);
+	}
+
+	// Update original (left half).
+	const [left] = await db
+		.update(intervals)
+		.set({
+			endActId: leftEndFKs.endActId,
+			endSceneId: leftEndFKs.endSceneId,
+			endPosition: leftEndFKs.endPosition,
+			updatedAt: sql`(unixepoch())` as unknown as Date
+		})
+		.where(eq(intervals.id, intervalId))
+		.returning();
+
+	// Insert new (right half).
+	const [right] = await db
+		.insert(intervals)
+		.values({
+			entityId: existing.entityId,
+			startActId: rightStartFKs.startActId,
+			startSceneId: rightStartFKs.startSceneId,
+			endActId: existing.endActId,
+			endSceneId: existing.endSceneId,
+			startPosition: rightStartFKs.startPosition,
+			endPosition: existing.endPosition
+		})
+		.returning();
+
+	return { left, right };
+}
+
+// =============================================================================
+// moveSceneToAct — T3 (full SceneEditor) cross-act move
+// =============================================================================
+
+/**
+ * Reparent a Scene to a different Act, optionally specifying its new sibling
+ * position. Updates intervals anchored to that scene to point at the new
+ * parent act (P2-3 from the eng review's outside voice — without this fix,
+ * scene-anchored intervals carry stale start_act_id / end_act_id after the
+ * scene's parent_id changes).
+ *
+ * Behavior:
+ *   1. Validate target is an Act (and not the source scene's current parent
+ *      with the same position — no-op).
+ *   2. Bump siblings in the target act at position >= newPosition by +1
+ *      (cascade — see CONSIDERATIONS D18 generalized cascade primitive).
+ *   3. Update scene's parent_id and position.
+ *   4. Update intervals.start_act_id / end_act_id for any interval anchored
+ *      to this scene (start_scene_id = sceneId or end_scene_id = sceneId).
+ *   5. Recompute intervals for BOTH the old and new parent acts (composition
+ *      changed in both — m may differ, scene boundaries shift).
+ *
+ * Atomicity caveat: see writeInterval's note. T1's sync refactor will wrap
+ * this in db.transaction(...).
+ */
+export async function moveSceneToAct(
+	db: DB,
+	sceneId: string,
+	newActId: string,
+	newPosition: number
+): Promise<void> {
+	const [scene] = await db.select().from(entities).where(eq(entities.id, sceneId));
+	if (!scene) throw new Error(`Scene not found: ${sceneId}`);
+	if (scene.type !== 'Scene') {
+		throw new Error(`Entity ${sceneId} has type='${scene.type}', expected 'Scene'`);
+	}
+	if (!scene.parentId) {
+		throw new Error(`Scene ${sceneId} has no parent_id`);
+	}
+
+	const [target] = await db.select().from(entities).where(eq(entities.id, newActId));
+	if (!target) throw new Error(`Target act not found: ${newActId}`);
+	if (target.type !== 'Act') {
+		throw new Error(`Target ${newActId} has type='${target.type}', expected 'Act'`);
+	}
+
+	const oldActId = scene.parentId;
+
+	// Cascade: bump siblings in target act at position >= newPosition.
+	await db
+		.update(entities)
+		.set({
+			position: sql`${entities.position} + 1` as unknown as number,
+			updatedAt: sql`(unixepoch())` as unknown as Date
+		})
+		.where(
+			and(
+				eq(entities.type, 'Scene'),
+				eq(entities.parentId, newActId),
+				sql`${entities.position} >= ${newPosition}`
+			)
+		);
+
+	// Update scene's parent_id and position.
+	await db
+		.update(entities)
+		.set({
+			parentId: newActId,
+			position: newPosition,
+			updatedAt: sql`(unixepoch())` as unknown as Date
+		})
+		.where(eq(entities.id, sceneId));
+
+	// Update intervals' act FKs for any interval anchored to this scene.
+	await db
+		.update(intervals)
+		.set({
+			startActId: newActId,
+			updatedAt: sql`(unixepoch())` as unknown as Date
+		})
+		.where(eq(intervals.startSceneId, sceneId));
+	await db
+		.update(intervals)
+		.set({
+			endActId: newActId,
+			updatedAt: sql`(unixepoch())` as unknown as Date
+		})
+		.where(eq(intervals.endSceneId, sceneId));
+
+	// Recompute both old and new parent acts.
+	if (oldActId !== newActId) {
+		await recomputeIntervalsForAct(db, oldActId);
+	}
+	await recomputeIntervalsForAct(db, newActId);
 }
 
 // =============================================================================

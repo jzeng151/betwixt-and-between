@@ -61,6 +61,10 @@
   // ── Detail mode ───────────────────────────────────────────────────────────
   const entity = $derived($entities.find((e) => e.id === entityId));
 
+  // View/edit toggle (Block 5). Default 'view' so opening a character is
+  // a read-first flow; click Edit to switch to the editable form.
+  let mode = $state<'view' | 'edit'>('view');
+
   let saveError = $state('');
   let role = $state('');
   let affiliation = $state('');
@@ -364,7 +368,14 @@
 
 {:else}
   <!-- ── Detail mode ── -->
-  <div class="char-detail">
+  <div class="char-detail" class:view-mode={mode === 'view'}>
+    <div class="mode-row">
+      <button
+        type="button"
+        class="mode-toggle"
+        onclick={() => (mode = mode === 'view' ? 'edit' : 'view')}
+      >{mode === 'view' ? 'Edit' : 'Done'}</button>
+    </div>
 
     <!-- Avatar + name row -->
     <div class="header">
@@ -398,7 +409,11 @@
 
       <div class="header-info">
         <h1 class="entity-name">
-          <InlineEdit value={entity.name} onSave={rename} />
+          {#if mode === 'edit'}
+            <InlineEdit value={entity.name} onSave={rename} forceEditing />
+          {:else}
+            <span>{entity.name}</span>
+          {/if}
         </h1>
         <div class="header-meta">
           <!-- Role -->
@@ -1237,4 +1252,37 @@
     width: 200px;
   }
   .custom-field-input:focus { border-color: var(--color-accent); }
+
+  /* View/edit toggle row + per-mode gating (Block 5). */
+  .mode-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 4px;
+  }
+  .mode-toggle {
+    background: var(--color-accent);
+    color: var(--color-surface);
+    border: none;
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: var(--font-ui);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+  }
+  .mode-toggle:hover { filter: brightness(1.1); }
+
+  /* In view mode: hide pencils, hide field-edit buttons, hide avatar
+     overlay (camera icon), make swatches + radios + custom-hex inert. */
+  .view-mode .hfield-pencil,
+  .view-mode .field-edit-btn,
+  .view-mode .avatar-overlay,
+  .view-mode .hex-input {
+    display: none;
+  }
+  .view-mode .avatar-lg { cursor: default; pointer-events: none; }
+  .view-mode .swatch-row,
+  .view-mode .radio-group { pointer-events: none; opacity: 0.85; }
 </style>

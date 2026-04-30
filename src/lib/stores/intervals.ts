@@ -88,21 +88,55 @@ function createIntervalStore() {
 			await load();
 			throw new Error(await errorMessage(res));
 		}
-		const updated: Interval = await res.json();
-		update((all) => all.map((i) => (i.id === id ? updated : i)));
+		// API returns `{ ...updatedRow, absorbed: string[] }` where `absorbed`
+		// is the list of sibling rows the server merged into this update.
+		// We need to drop those from the store so stale bars stop rendering.
+		const body: Interval & { absorbed?: string[] } = await res.json();
+		const absorbed = new Set(body.absorbed ?? []);
+		const updated: Interval = { ...body };
+		// strip the helper field so the store entries match the Interval type
+		delete (updated as Interval & { absorbed?: string[] }).absorbed;
+		update((all) =>
+			all
+				.filter((i) => !absorbed.has(i.id))
+				.map((i) => (i.id === id ? updated : i))
+		);
 		return updated;
+	}
+
+	async function splitIntervalAt(id: string, atPosition: number): Promise<void> {
+		const res = await fetch(`/api/intervals/${id}/split`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ atPosition })
+		});
+		if (!res.ok) {
+			await load();
+			throw new Error(await errorMessage(res));
+		}
+		// Server-side splitInterval mutates the original (left half) and inserts
+		// a new row (right half). Reload rather than tracking the diff client-side.
+		await load();
 	}
 
 	async function deleteInterval(id: string): Promise<void> {
 		update((all) => all.filter((i) => i.id !== id));
-		const res = await fetch(`/api/intervals/${id}`, { method: 'DELETE' });
+		let res: Response;
+		try {
+			res = await fetch(`/api/intervals/${id}`, { method: 'DELETE' });
+		} catch (err) {
+			// Network error before any response — the optimistic remove would
+			// otherwise hide the row forever. Re-sync from the server and rethrow.
+			await load();
+			throw err;
+		}
 		if (!res.ok) {
 			await load();
 			throw new Error(await errorMessage(res));
 		}
 	}
 
-	return { subscribe, load, createInterval, updateInterval, deleteInterval };
+	return { subscribe, load, createInterval, updateInterval, deleteInterval, splitIntervalAt };
 }
 
 export const intervals = createIntervalStore();

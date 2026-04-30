@@ -7,17 +7,19 @@
   import Timeline from './apps/Timeline.svelte';
   import WorldMap from './apps/WorldMap.svelte';
   import StoryGraph from './apps/StoryGraph.svelte';
+  import EntityDetail from './EntityDetail.svelte';
 
   const APP_TITLES: Record<string, string> = {
     'character-editor': 'Characters',
     'world-map': 'World Map',
     'timeline': 'Timeline',
+    'entity-detail': 'Entity',
     'wiki': 'Wiki',
     'story-graph': 'Story Graph',
   };
 
   function windowTitle(appId: string, entityId: string | null): string {
-    if (entityId && appId === 'character-editor') {
+    if (entityId && (appId === 'character-editor' || appId === 'entity-detail')) {
       return $entities.find((e) => e.id === entityId)?.name ?? APP_TITLES[appId] ?? appId;
     }
     return APP_TITLES[appId] ?? appId;
@@ -61,6 +63,12 @@
       <Wiki entityId={win.entityId} />
     {:else if win.appId === 'timeline'}
       <Timeline entityId={win.entityId} />
+    {:else if win.appId === 'entity-detail'}
+      <EntityDetail
+        entityId={win.entityId}
+        isPopout={true}
+        onClose={() => windowStore.close(win.id)}
+      />
     {:else if win.appId === 'world-map'}
       <WorldMap entityId={win.entityId} />
     {:else if win.appId === 'story-graph'}

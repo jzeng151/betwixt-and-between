@@ -4,6 +4,7 @@ import {
 	sqliteTable,
 	text,
 	index,
+	uniqueIndex,
 	check,
 	type AnySQLiteColumn
 } from 'drizzle-orm/sqlite-core';
@@ -12,6 +13,20 @@ import { sql } from 'drizzle-orm';
 export const EntityType = ['Character', 'Location', 'Event', 'Act', 'Scene', 'Note'] as const;
 export type EntityType = (typeof EntityType)[number];
 
+/**
+ * Relationship types and their directional convention (`from [type] to`):
+ *   appears_in     — DEPRECATED for new writes (see V1 retirement, 2026-04-28).
+ *                    Kept in the enum for legacy reads.
+ *   takes_place_at — Event takes_place_at Location
+ *   caused_by      — Event/Scene caused_by Event/Scene (effect → cause)
+ *   allied_with    — Character allied_with Character (symmetric semantically)
+ *   rivals         — Character rivals Character (symmetric semantically)
+ *   mentor_of      — Character (mentor) mentor_of Character (mentee)
+ *   located_at     — Character located_at Location
+ *   pov_of         — Event/Scene pov_of Character (from is from-the-POV-of to).
+ *                    Multi-allowed: an event may have multiple POV characters.
+ *                    Uniqueness enforced at (from_id, to_id, type) level.
+ */
 export const RelationshipType = [
 	'appears_in',
 	'takes_place_at',
@@ -19,7 +34,8 @@ export const RelationshipType = [
 	'allied_with',
 	'rivals',
 	'mentor_of',
-	'located_at'
+	'located_at',
+	'pov_of'
 ] as const;
 export type RelationshipType = (typeof RelationshipType)[number];
 
@@ -55,19 +71,31 @@ export const entities = sqliteTable(
 	]
 );
 
-export const relationships = sqliteTable('relationships', {
-	id: text('id')
-		.primaryKey()
-		.$defaultFn(() => crypto.randomUUID()),
-	fromId: text('from_id')
-		.notNull()
-		.references(() => entities.id, { onDelete: 'cascade' }),
-	toId: text('to_id')
-		.notNull()
-		.references(() => entities.id, { onDelete: 'cascade' }),
-	label: text('label'),
-	type: text('type', { enum: RelationshipType }).notNull()
-});
+export const relationships = sqliteTable(
+	'relationships',
+	{
+		id: text('id')
+			.primaryKey()
+			.$defaultFn(() => crypto.randomUUID()),
+		fromId: text('from_id')
+			.notNull()
+			.references(() => entities.id, { onDelete: 'cascade' }),
+		toId: text('to_id')
+			.notNull()
+			.references(() => entities.id, { onDelete: 'cascade' }),
+		label: text('label'),
+		type: text('type', { enum: RelationshipType }).notNull()
+	},
+	(table) => [
+		// Prevent duplicate edges of the same type between the same pair.
+		// Allows multi-edges of DIFFERENT types (e.g., A allied_with B AND
+		// A rivals B is illogical but allowed; A pov_of X AND A pov_of Y is
+		// allowed and meaningful for multi-POV events). Enforced at the
+		// schema level so any future write path automatically inherits the
+		// constraint. Migrated 2026-04-29 in 0001_relationships_dedup.sql.
+		uniqueIndex('relationships_dedup').on(table.fromId, table.toId, table.type)
+	]
+);
 
 export const canvasPositions = sqliteTable('canvas_positions', {
 	id: text('id')

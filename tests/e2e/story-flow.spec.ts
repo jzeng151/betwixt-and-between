@@ -45,11 +45,15 @@ test.describe('Story flow', () => {
 		const charDetail = page.locator('.char-detail');
 		await expect(charDetail.locator('.entity-name')).toContainText('Original Name', { timeout: 5000 });
 
-		// Hover the name to reveal the pencil button, then click it
-		await charDetail.locator('.entity-name').hover();
-		await charDetail.locator('button[aria-label="Rename"]').click({ force: true });
+		// Block 5: char-detail opens in view mode → toggle to edit. With
+		// forceEditing on InlineEdit, the title input renders directly so
+		// no pencil click is needed; just type and press Enter, then
+		// toggle back to view mode so the title renders as visible text
+		// for the assertion.
+		await charDetail.locator('.mode-toggle').click();
 		await page.locator('.inline-edit-input').fill('Renamed Character');
 		await page.locator('.inline-edit-input').press('Enter');
+		await charDetail.locator('.mode-toggle').click();
 
 		await expect(charDetail.locator('.entity-name')).toContainText('Renamed Character', { timeout: 3000 });
 	});

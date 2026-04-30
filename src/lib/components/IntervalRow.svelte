@@ -10,12 +10,12 @@
 <script lang="ts">
 	import IntervalBar from '$lib/components/IntervalBar.svelte';
 	import {
-		internalActBoundaryFractions,
 		smartSnap,
 		positionToStartFKs,
 		positionToEndFKs
 	} from '$lib/timeline-v2-helpers.js';
 	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+	import { playhead } from '$lib/stores/playhead.js';
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { Interval } from '$lib/stores/intervals.js';
 
@@ -30,10 +30,18 @@
 		colorFor: (entity: Entity, idx: number) => string;
 		dataNoteSnippet: (entity: Entity) => string | null;
 		tooltipFor: (entity: Entity, interval: Interval) => string;
-		pxForFractionalSpan: (span: number) => number;
+		/** Story-time → cumulative track fraction (accounts for per-act weights). */
+		posToFrac: (pos: number) => number;
+		/** Inverse of posToFrac, for converting drag pixels back to story-time. */
+		fracToPos: (frac: number) => number;
+		/** Pixel width spanning [start, end) at the current track width. */
+		pxForRange: (start: number, end: number) => number;
 		onLockAcquire: () => void;
 		onLockRelease: () => void;
 		onError: (msg: string) => void;
+		/** Click on a bar (not on a resize handle) selects the interval's
+		 *  entity for the Timeline side panel. (D2/2B-i) */
+		onSelect?: (entityId: string, intervalId: string) => void;
 	}
 	let {
 		entity,
@@ -46,10 +54,13 @@
 		colorFor,
 		dataNoteSnippet,
 		tooltipFor,
-		pxForFractionalSpan,
+		posToFrac,
+		fracToPos,
+		pxForRange,
 		onLockAcquire,
 		onLockRelease,
-		onError
+		onError,
+		onSelect
 	}: Props = $props();
 
 	let rowEl: HTMLDivElement | null = $state(null);
@@ -62,6 +73,22 @@
 		previewEnd: number;
 	};
 	let resizing: ResizeState | null = $state(null);
+
+	// Local translate state — drag the body of a bar to shift it
+	// temporally without changing its duration (T5). Distinguished from a
+	// click by the `moved` flag (4 px threshold) so a small click still
+	// fires onSelect.
+	type TranslateState = {
+		intervalId: string;
+		startX: number;
+		originalStart: number;
+		originalEnd: number;
+		previewStart: number;
+		previewEnd: number;
+		moved: boolean;
+	};
+	let translating: TranslateState | null = $state(null);
+	const TRANSLATE_THRESHOLD = 4;
 
 	// Scene count lookup for smartSnap — reads current acts/scenesByActId.
 	function sceneCountFor(actIdx: number): number {
@@ -87,7 +114,7 @@
 
 		function onMove(ev: PointerEvent) {
 			if (!resizing) return;
-			const rawPos = ((ev.clientX - trackLeft) / trackWidthPx) * actCount;
+			const rawPos = fracToPos((ev.clientX - trackLeft) / trackWidthPx);
 			const clamped = Math.max(0, Math.min(rawPos, actCount));
 			// Default: free-fraction. Hold Alt to snap to act/scene grid.
 			const next = ev.altKey ? smartSnap(clamped, sceneCountFor) : clamped;
@@ -145,6 +172,83 @@
 		window.addEventListener('pointerup', onUp);
 	}
 
+	// ── Bar translation (T5) ──────────────────────────────────────────────
+	function startTranslate(e: PointerEvent, iv: Interval) {
+		// Left button only; bail if scrubbing (scrub mode is exclusive) or
+		// the click started on a resize / hairline-split target.
+		if (e.button !== 0) return;
+		if ($playhead != null) return;
+		const target = e.target as HTMLElement;
+		if (target.closest('.resize-handle, .hairline-hit')) return;
+		e.preventDefault();
+		translating = {
+			intervalId: iv.id,
+			startX: e.clientX,
+			originalStart: iv.startPosition,
+			originalEnd: iv.endPosition,
+			previewStart: iv.startPosition,
+			previewEnd: iv.endPosition,
+			moved: false
+		};
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		onLockAcquire();
+	}
+
+	function moveTranslate(e: PointerEvent) {
+		if (!translating || trackWidthPx === 0) return;
+		const dx = e.clientX - translating.startX;
+		if (!translating.moved && Math.abs(dx) > TRANSLATE_THRESHOLD) {
+			translating.moved = true;
+		}
+		if (!translating.moved) return;
+		// Convert pixel dx → story-time delta via the cumulative-fraction
+		// mapping so per-act widths are honored.
+		const startFrac = posToFrac(translating.originalStart);
+		const targetFrac = startFrac + dx / trackWidthPx;
+		let newStart = fracToPos(Math.max(0, Math.min(1, targetFrac)));
+		const span = translating.originalEnd - translating.originalStart;
+		let newEnd = newStart + span;
+		// Clamp into [0, actCount].
+		if (newEnd > actCount) {
+			newEnd = actCount;
+			newStart = newEnd - span;
+		}
+		if (newStart < 0) {
+			newStart = 0;
+			newEnd = span;
+		}
+		translating = { ...translating, previewStart: newStart, previewEnd: newEnd };
+	}
+
+	async function endTranslate(e: PointerEvent) {
+		const t = translating;
+		translating = null;
+		(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+		if (!t) return;
+		onLockRelease();
+		if (!t.moved) {
+			// Treat as click — selection.
+			onSelect?.(entity.id, t.intervalId);
+			return;
+		}
+		// Resolve the new FKs from the dragged positions and PATCH.
+		const startFKs = positionToStartFKs(t.previewStart, acts, scenesByActId);
+		const endFKs = positionToEndFKs(t.previewEnd, acts, scenesByActId);
+		if (!startFKs || !endFKs) return;
+		try {
+			await intervalsStore.updateInterval(t.intervalId, {
+				startActId: startFKs.startActId,
+				startSceneId: startFKs.startSceneId,
+				endActId: endFKs.endActId,
+				endSceneId: endFKs.endSceneId,
+				startPosition: startFKs.startPosition,
+				endPosition: endFKs.endPosition
+			});
+		} catch (err) {
+			onError((err as Error).message);
+		}
+	}
+
 	// Re-render when track width changes (pxForFractionalSpan closes over it).
 	$effect(() => {
 		void trackWidthPx;
@@ -153,17 +257,36 @@
 
 <div class="row" data-entity-id={entity.id} bind:this={rowEl}>
 	{#each intervals as iv (iv.id)}
-		{@const previewStart = resizing?.intervalId === iv.id ? resizing.previewStart : iv.startPosition}
-		{@const previewEnd = resizing?.intervalId === iv.id ? resizing.previewEnd : iv.endPosition}
+		{@const previewStart =
+			resizing?.intervalId === iv.id
+				? resizing.previewStart
+				: translating?.intervalId === iv.id && translating.moved
+					? translating.previewStart
+					: iv.startPosition}
+		{@const previewEnd =
+			resizing?.intervalId === iv.id
+				? resizing.previewEnd
+				: translating?.intervalId === iv.id && translating.moved
+					? translating.previewEnd
+					: iv.endPosition}
 		{@const span = previewEnd - previewStart}
-		{@const leftPct = (previewStart / Math.max(actCount, 1)) * 100}
-		{@const widthPct = (span / Math.max(actCount, 1)) * 100}
-		{@const widthPx = pxForFractionalSpan(span)}
+		{@const leftFrac = posToFrac(previewStart)}
+		{@const rightFrac = posToFrac(previewEnd)}
+		{@const leftPct = leftFrac * 100}
+		{@const widthPct = (rightFrac - leftFrac) * 100}
+		{@const widthPx = pxForRange(previewStart, previewEnd)}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="bar-wrapper"
 			class:resizing={resizing?.intervalId === iv.id}
+			class:translating={translating?.intervalId === iv.id && translating.moved}
 			data-tooltip={tooltipFor(entity, iv)}
 			style="left: {leftPct}%; width: {widthPct}%;"
+			onpointerdown={(e) => startTranslate(e, iv)}
+			onpointermove={moveTranslate}
+			onpointerup={endTranslate}
+			onpointercancel={endTranslate}
 		>
 			<IntervalBar
 				name={entity.name}
@@ -171,8 +294,40 @@
 				tooltipText={tooltipFor(entity, iv)}
 				color={colorFor(entity, idx)}
 				{widthPx}
-				internalBoundaries={internalActBoundaryFractions(previewStart, previewEnd)}
+				internalBoundaries={(() => {
+					// Collect boundary positions in story-time, then map them
+					// through posToFrac so they land at the correct spot within
+					// a possibly-non-uniformly-stretched bar.
+					const boundaryPositions: number[] = [];
+					const sa = Math.floor(previewStart);
+					const ea = Math.floor(previewEnd - 1e-12);
+					for (let i = sa + 1; i <= ea; i++) boundaryPositions.push(i);
+					for (let i = sa; i <= ea; i++) {
+						const m = sceneCountFor(i);
+						if (m <= 1) continue;
+						for (let k = 1; k < m; k++) {
+							const p = i + k / m;
+							if (p > previewStart + 1e-12 && p < previewEnd - 1e-12) {
+								boundaryPositions.push(p);
+							}
+						}
+					}
+					boundaryPositions.sort((a, b) => a - b);
+					const sf = posToFrac(previewStart);
+					const ef = posToFrac(previewEnd);
+					const span = ef - sf;
+					if (span <= 0) return [];
+					return boundaryPositions.map((p) => (posToFrac(p) - sf) / span);
+				})()}
 				isEvent={entity.type === 'Event'}
+				onSplit={async (fraction) => {
+					const atPosition = iv.startPosition + fraction * (iv.endPosition - iv.startPosition);
+					try {
+						await intervalsStore.splitIntervalAt(iv.id, atPosition);
+					} catch (err) {
+						onError((err as Error).message);
+					}
+				}}
 			/>
 			<div
 				class="resize-handle resize-handle--left"
@@ -205,9 +360,13 @@
 		position: absolute;
 		top: 0;
 		bottom: 0;
+		cursor: grab;
 		/* Focus glow on the bar when it's being resized — matches the locked
 		   v2 mockup's `.interval.with-handles` box-shadow rule. The glow lives
 		   on the wrapper so it survives the SVG bar's clipping. */
+	}
+	.bar-wrapper.translating {
+		cursor: grabbing;
 	}
 	/* Styled tooltip on bar hover — matches the locked v2 mockup
 	   (mockup CSS lines 311-349). Reads from the wrapper's

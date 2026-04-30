@@ -30,3 +30,6 @@ vite.config.ts.timestamp-*
 # Generated vitest examples
 src/lib/vitest-examples/
 test-results/
+.claude/
+desync-bug.png
+tooltip-bug.png
