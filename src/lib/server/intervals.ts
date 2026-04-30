@@ -120,6 +120,71 @@ export const POSITION_EPSILON = 1e-9;
  * Throws if the entity is not found, not type='Act', or has a non-NULL parent_id
  * (Acts at root level only).
  */
+/**
+ * One-shot cache for recompute helpers (D20/16A). Reading O(intervals × acts)
+ * via repeated actIndexOf/sceneIndexOf on every row turns Act/Scene mutations
+ * O(N²) on bigger stories. Build the maps once per recompute call and pass
+ * them down so every interval row resolves its FKs in O(1).
+ */
+export interface RecomputeCache {
+	/** actId → 0-based index in the ordered Act list. */
+	actIndex: Map<string, number>;
+	/** sceneId → { sceneIndex, sceneCount, parentActId } resolved once. */
+	sceneInfo: Map<
+		string,
+		{ sceneIndex: number; sceneCount: number; parentActId: string }
+	>;
+}
+
+export async function buildRecomputeCache(db: DB): Promise<RecomputeCache> {
+	const acts = await db
+		.select({ id: entities.id })
+		.from(entities)
+		.where(and(eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.orderBy(entities.position, entities.createdAt);
+	const actIndex = new Map<string, number>();
+	acts.forEach((a, i) => actIndex.set(a.id, i));
+
+	const allScenes = await db
+		.select({ id: entities.id, parentId: entities.parentId })
+		.from(entities)
+		.where(eq(entities.type, 'Scene'))
+		.orderBy(entities.position, entities.createdAt);
+	// Group scenes by parent act to compute sceneIndex / sceneCount.
+	const byAct = new Map<string, string[]>();
+	for (const s of allScenes) {
+		if (!s.parentId) continue;
+		const list = byAct.get(s.parentId) ?? [];
+		list.push(s.id);
+		byAct.set(s.parentId, list);
+	}
+	const sceneInfo = new Map<
+		string,
+		{ sceneIndex: number; sceneCount: number; parentActId: string }
+	>();
+	for (const [parentActId, ids] of byAct.entries()) {
+		ids.forEach((id, i) => {
+			sceneInfo.set(id, { sceneIndex: i, sceneCount: ids.length, parentActId });
+		});
+	}
+	return { actIndex, sceneInfo };
+}
+
+function actIndexFromCache(cache: RecomputeCache, actId: string): number {
+	const i = cache.actIndex.get(actId);
+	if (i === undefined) throw new Error(`Act not found in cache: ${actId}`);
+	return i;
+}
+
+function sceneInfoFromCache(
+	cache: RecomputeCache,
+	sceneId: string
+): { sceneIndex: number; sceneCount: number; parentActId: string } {
+	const info = cache.sceneInfo.get(sceneId);
+	if (!info) throw new Error(`Scene not found in cache: ${sceneId}`);
+	return info;
+}
+
 export async function actIndexOf(db: DB, actId: string): Promise<number> {
 	const ordered = await db
 		.select({ id: entities.id })
@@ -193,22 +258,30 @@ export async function sceneIndexOf(
  */
 export async function computeIntervalPositions(
 	db: DB,
-	input: ComputeIntervalPositionsInput
+	input: ComputeIntervalPositionsInput,
+	cache?: RecomputeCache
 ): Promise<ComputeIntervalPositionsResult> {
 	let startPosition: number;
 	let endPosition: number;
 
+	const lookupAct = async (actId: string): Promise<number> =>
+		cache ? actIndexFromCache(cache, actId) : actIndexOf(db, actId);
+	const lookupScene = async (
+		sceneId: string
+	): Promise<{ sceneIndex: number; sceneCount: number; parentActId: string }> =>
+		cache ? sceneInfoFromCache(cache, sceneId) : sceneIndexOf(db, sceneId);
+
 	if (input.startSceneId) {
-		const { sceneIndex, sceneCount, parentActId } = await sceneIndexOf(db, input.startSceneId);
+		const { sceneIndex, sceneCount, parentActId } = await lookupScene(input.startSceneId);
 		if (parentActId !== input.startActId) {
 			throw new Error(
 				`start_scene_id ${input.startSceneId} parent ${parentActId} does not match start_act_id ${input.startActId}`
 			);
 		}
-		const i = await actIndexOf(db, parentActId);
+		const i = await lookupAct(parentActId);
 		startPosition = sceneRange(sceneIndex, sceneCount, i).start;
 	} else {
-		const i = await actIndexOf(db, input.startActId);
+		const i = await lookupAct(input.startActId);
 		const range = actRange(i);
 		if (input.startPosition !== undefined) {
 			if (input.startPosition < range.start - POSITION_EPSILON || input.startPosition > range.end + POSITION_EPSILON) {
@@ -223,16 +296,16 @@ export async function computeIntervalPositions(
 	}
 
 	if (input.endSceneId) {
-		const { sceneIndex, sceneCount, parentActId } = await sceneIndexOf(db, input.endSceneId);
+		const { sceneIndex, sceneCount, parentActId } = await lookupScene(input.endSceneId);
 		if (parentActId !== input.endActId) {
 			throw new Error(
 				`end_scene_id ${input.endSceneId} parent ${parentActId} does not match end_act_id ${input.endActId}`
 			);
 		}
-		const i = await actIndexOf(db, parentActId);
+		const i = await lookupAct(parentActId);
 		endPosition = sceneRange(sceneIndex, sceneCount, i).end;
 	} else {
-		const i = await actIndexOf(db, input.endActId);
+		const i = await lookupAct(input.endActId);
 		const range = actRange(i);
 		if (input.endPosition !== undefined) {
 			if (input.endPosition < range.start - POSITION_EPSILON || input.endPosition > range.end + POSITION_EPSILON) {
@@ -581,6 +654,10 @@ export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<n
 			sql`(${intervals.startActId} = ${actId} OR ${intervals.endActId} = ${actId})`
 		);
 
+	// One-shot act + scene index maps so each row resolves FKs in O(1)
+	// instead of issuing 2-4 DB queries (D20/16A).
+	const cache = await buildRecomputeCache(db);
+
 	let updated = 0;
 	for (const row of affected) {
 		// Branch on scene FK presence per the locked semantic.
@@ -588,13 +665,13 @@ export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<n
 		let newEnd = row.endPosition;
 
 		if (row.startSceneId) {
-			const { sceneIndex, sceneCount, parentActId } = await sceneIndexOf(db, row.startSceneId);
-			const i = await actIndexOf(db, parentActId);
+			const { sceneIndex, sceneCount, parentActId } = sceneInfoFromCache(cache, row.startSceneId);
+			const i = actIndexFromCache(cache, parentActId);
 			newStart = sceneRange(sceneIndex, sceneCount, i).start;
 		}
 		if (row.endSceneId) {
-			const { sceneIndex, sceneCount, parentActId } = await sceneIndexOf(db, row.endSceneId);
-			const i = await actIndexOf(db, parentActId);
+			const { sceneIndex, sceneCount, parentActId } = sceneInfoFromCache(cache, row.endSceneId);
+			const i = actIndexFromCache(cache, parentActId);
 			newEnd = sceneRange(sceneIndex, sceneCount, i).end;
 		}
 
@@ -624,16 +701,23 @@ export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<n
  */
 export async function recomputeAllIntervals(db: DB): Promise<number> {
 	const all = await db.select().from(intervals);
+	// Single act + scene index map for the whole pass — every row's FK
+	// resolution is O(1) instead of issuing fresh queries (D20/16A).
+	const cache = await buildRecomputeCache(db);
 	let updated = 0;
 
 	for (const row of all) {
 		try {
-			const derived = await computeIntervalPositions(db, {
-				startActId: row.startActId,
-				startSceneId: row.startSceneId,
-				endActId: row.endActId,
-				endSceneId: row.endSceneId
-			});
+			const derived = await computeIntervalPositions(
+				db,
+				{
+					startActId: row.startActId,
+					startSceneId: row.startSceneId,
+					endActId: row.endActId,
+					endSceneId: row.endSceneId
+				},
+				cache
+			);
 
 			// Per the locked semantic, fraction-positioned rows (no scene FK on a
 			// side) keep their position frozen across Scene reorders. But for
@@ -646,23 +730,16 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 			let newEnd = derived.endPosition;
 
 			if (!row.startSceneId) {
-				// Preserve fractional offset within the (old) act, but place it
-				// in the (new) act-range start.
 				const oldFraction = row.startPosition - Math.floor(row.startPosition);
-				const newActIndex = await actIndexOf(db, row.startActId);
+				const newActIndex = actIndexFromCache(cache, row.startActId);
 				newStart = newActIndex + oldFraction;
 			}
 			if (!row.endSceneId) {
 				const oldFraction = row.endPosition - Math.floor(row.endPosition);
+				const newActIndex = actIndexFromCache(cache, row.endActId);
 				// end can be exactly at a whole-number act boundary (exclusive end);
 				// detect that and place it as start-of-next-act.
-				if (oldFraction === 0) {
-					const newActIndex = await actIndexOf(db, row.endActId);
-					newEnd = newActIndex + 1;
-				} else {
-					const newActIndex = await actIndexOf(db, row.endActId);
-					newEnd = newActIndex + oldFraction;
-				}
+				newEnd = oldFraction === 0 ? newActIndex + 1 : newActIndex + oldFraction;
 			}
 
 			const startDrift = Math.abs(newStart - row.startPosition) > POSITION_EPSILON;
