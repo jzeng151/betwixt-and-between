@@ -3,7 +3,7 @@ import { db } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { recomputeAllIntervals, recomputeIntervalsForAct } from '$lib/server/intervals.js';
 import { intervals as intervalsTable } from '$lib/server/db/schema.js';
-import { and, eq, gt, gte, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, eq, gt, gte, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ params }) => {
@@ -136,11 +136,6 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	return json(updated);
 };
 
-// drizzle-orm exposes lte under a different export — alias here.
-function lte(col: typeof entities.position, val: number) {
-	return sql`${col} <= ${val}`;
-}
-
 /**
  * Delete an entity. For Acts, optionally accepts ?moveScenesTo=<actId>
  * to reparent the act's scenes to another act before cascade-deleting
@@ -253,7 +248,16 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 						await db.delete(intervalsTable).where(eq(intervalsTable.id, iv.id));
 						continue;
 					}
-					const newEndPos = (prevAct.position ?? deletedIdx - 1) + 1;
+					// Use the ordered-list index, not the stored `position`
+					// column. The interval-position system is built on
+					// `actIndexOf`'s rank-in-query-order; if `entities.position`
+					// ever drifts from a dense 0-based layout (null position
+					// row, manual DB edit, cascade bug) the column-based math
+					// would silently rescope to the wrong story-time slot.
+					// prevAct's index in the pre-delete ordering = deletedIdx-1,
+					// which equals its post-delete index too (deleting a later
+					// row doesn't shift earlier rows). end-of-prevAct = idx + 1.
+					const newEndPos = deletedIdx;
 					await db
 						.update(intervalsTable)
 						.set({
@@ -271,7 +275,11 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 						await db.delete(intervalsTable).where(eq(intervalsTable.id, iv.id));
 						continue;
 					}
-					const newStartPos = nextAct.position ?? deletedIdx + 1;
+					// nextAct's pre-delete index = deletedIdx+1; post-delete it
+					// shifts down to deletedIdx because the deleted act is gone.
+					// Using the post-delete index here means recomputeAllIntervals
+					// (which runs after) finds no drift to correct.
+					const newStartPos = deletedIdx;
 					await db
 						.update(intervalsTable)
 						.set({

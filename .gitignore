@@ -33,3 +33,4 @@ test-results/
 .claude/
 desync-bug.png
 tooltip-bug.png
+test.db

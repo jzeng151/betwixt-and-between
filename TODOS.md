@@ -362,46 +362,98 @@ Locked by `/plan-design-review` + `/plan-eng-review` on 2026-04-29. Decision log
 
 ### 15. Phase 1B — Graph features (separate branch: `phase-1b/graph`)
 
-Locked at /plan-eng-review 2026-04-30. 13 decisions captured.
+Locked at /plan-eng-review 2026-04-30; refined after /codex consult outside-voice 2026-04-30. 18 decisions captured.
+
+Prerequisite to opening this branch: Phase 1.6 already shipped to main (✓ done 2026-04-30).
 
 **Prerequisite cleanup (Lane Z, lands first as own commits):**
 - [ ] Z1. chore(StoryGraph): typecheck-clean baseline (fix 2 known TS errors, remove duplicate-onMount remnants).
 - [ ] Z2. chore: drop unused `tldraw` / `react` / `react-dom` from `package.json`.
-- [ ] Z3. refactor: extract `REL_COLOR` / `NODE_COLOR` maps to `src/lib/relationship-colors.ts` with `Record<RelationshipType, string>` exhaustiveness check (covers `pov_of` which `StoryGraph.svelte` currently misses).
-- [ ] Z4. refactor: extract `<GraphCanvas>` primitive from `StoryGraph.svelte` (~250 LOC: pan/zoom/drag/connect/edge-render). Existing StoryGraph e2e + scrubber-dimming behavior must regress-test clean.
+- [ ] Z3. refactor: extract `REL_COLOR` / `NODE_COLOR` maps to `src/lib/relationship-colors.ts` with `Record<RelationshipType, string>` exhaustiveness check. **MUST also add `pov_of` to `REL_TYPES` in the create-relationship form** (StoryGraph.svelte:33-36) and a `--color-rel-pov` token in `app.css` — the schema added `pov_of` (commit 9a6465a) but the form still can't create it.
+- [ ] Z4. refactor: extract `<GraphCanvas>` primitive from `StoryGraph.svelte`. **Realistic scope: ~350-450 LOC** (not "chore"-sized; budget half-week). Hidden coupling to surface in extraction: `outOfScope` $derived (lines 71-86), `screenEdges` $derived (89-117), `nodePos` reactivity, `fitView` reads `displayEntities`, `connecting` state spans pointer handlers + SVG. Prop API ~6-8 slots: `nodes`, `edges`, `dimmed`, `windowId`, `onConnect`, `onContextMenu`, slot for overlay-on-node, `onPositionChange`. Z4 blocks ALL of Lane C (single-author critical path — no parallelization across Z4).
 
 **Lane A — Server (parallelizable with Lane B after Z lands):**
-- [ ] A1. Migration 0002: `pinned INTEGER NOT NULL DEFAULT 0` on `canvas_positions`. Idempotent; default 0; existing rows unaffected.
-- [ ] A2. PUT `/api/canvas-positions` accepts `pinned` in payload; persists.
-- [ ] A3. POST `/api/canvas-positions/batch` — single-transaction multi-row upsert. Body: `Array<{ entityId, x, y, width, height, pinned }>`. Partial failure rolls back (atomicity required by C5 dagre layout).
+- [ ] A1. Migration 0002: create `window_canvas_state` table (per-window canvas + pin state). Use `CREATE TABLE IF NOT EXISTS` for SQL-level idempotency on top of drizzle's framework idempotency. Schema:
+       ```sql
+       window_canvas_state (
+         window_id  TEXT NOT NULL,
+         entity_id  TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+         x          INTEGER NOT NULL,
+         y          INTEGER NOT NULL,
+         width      INTEGER NOT NULL DEFAULT 160,
+         height     INTEGER NOT NULL DEFAULT 80,
+         pinned     INTEGER NOT NULL DEFAULT 0,
+         PRIMARY KEY (window_id, entity_id)
+       )
+       INDEX window_canvas_state_window_idx ON (window_id)
+       ```
+       No backfill. `canvas_positions` stays unchanged as the seed/fallback layer. Lazy population: first move/layout in a window writes a row.
+- [ ] A2. New endpoint `/api/canvas-positions/window/[windowId]`:
+       - GET → list rows for that window.
+       - PUT → upsert one `{ entityId, x, y, width, height, pinned }` row.
+       - DELETE → remove row(s) for that window (e.g., on window close, optional).
+       Existing `/api/canvas-positions` (per-entity, no `pinned`) stays as the seed-layer endpoint for StoryGraph.
+- [ ] A3. POST `/api/canvas-positions/window/[windowId]/batch` — single-transaction multi-row upsert. Body: `Array<{ entityId, x, y, width, height, pinned }>`. Partial failure rolls back (atomicity required for C5 dagre layout — keeps the atomicity guarantee that motivated the original A3).
 
 **Lane B — Pure logic + reusable atoms (parallelizable with Lane A):**
-- [ ] B1. `src/lib/graph/edge-policy.ts` — `DIRECTION: Record<RelationshipType, 'directed' | 'symmetric'>` with exhaustiveness check. Symmetric: `allied_with`, `rivals`. Directed: everything else (per `schema.ts` docstring).
+- [ ] B1. `src/lib/graph/edge-policy.ts` — `DIRECTION: Record<RelationshipType, 'directed' | 'symmetric'>` with exhaustiveness check. Symmetric: `allied_with`, `rivals`. Directed: everything else.
 - [ ] B2. `src/lib/graph/traversal.ts` — pure functions:
        - `sharedNeighbors(focalSet, edges, policy): Set<id>` (intersection)
        - `oneHopUnion(focalSet, edges, policy): Set<id>` (1-hop union)
        - `reachable(focalSet, edges, policy): Set<id>` (cycle-safe BFS)
+       Special-case structural entity types: traversal helpers MUST treat `Act` and `Scene` as opt-in for traversal (caller passes `includeStructural: false` by default) to avoid huge `appears_in` / `caused_by` fan-outs.
        Hand-written unit cases per the test plan (no fast-check).
-- [ ] B3. `<ContextMenu items={...} x y onClose={...} />` reusable component: keyboard nav (Esc / arrow keys), click-outside, viewport-edge clamping. Used by StoryGraph + FocusedGraph + future Timeline/WorldMap.
+- [ ] B3. `<ContextMenu items={...} x y onClose={...} />` reusable component: keyboard nav (Esc / arrow keys), click-outside, viewport-edge clamping. Two callsites in this PR (StoryGraph + FocusedGraph). If the abstraction feels clumsy at the second use, inline.
 
 **Lane C — Feature integration (depends on Z + A + B):**
-- [ ] C1. Add `'FocusedGraph'` to `AppId` enum + extend `windows.ts` window state shape: `{ focalSet: string[]; viewMode: 'shared' | 'their_worlds' | 'reachable' }`. Multi-window per Phase 1B by design.
-- [ ] C2. `<FocusedGraph>` component consuming `<GraphCanvas>` + traversal helpers. Visible-set is `$derived` from focalSet + mode + entities + relationships. **Append behavior:** existing nodes do NOT move; new nodes use stored `canvas_positions` or grid fallback (B1 — "stay where you were").
+- [ ] C1. Add `'FocusedGraph'` to `AppId` enum + extend `windows.ts` window state shape:
+       ```ts
+       { focalSet: string[];
+         viewMode: 'shared' | 'their_worlds' | 'reachable';
+         typeOrder?: EntityType[];   // user-ordered type ranks for layered layout
+       }
+       ```
+       Multi-window per Phase 1B by design. Each window's pin/position/typeOrder is independent (per-window canvas via A1).
+- [ ] C2. `<FocusedGraph>` component consuming `<GraphCanvas>` + traversal helpers. Visible-set is `$derived` from focalSet + mode + entities + relationships. Mutation discipline: focalSet writes MUST reassign (`focalSet = [...focalSet, id]`), never `Object.assign` / push, to keep `$derived` invalidation correct (Svelte 5 footgun — see test plan).
+       **Append behavior:** existing nodes do NOT move; new nodes use stored `window_canvas_state` for that window or fall back to `canvas_positions` seed or grid spawn (per Issue 7 / B1 "stay where you were").
 - [ ] C3. Right-click menu wired into StoryGraph + FocusedGraph nodes: Open in window, View connections, Open Focused Graph, Edit, Delete, Pin to canvas. Custom action configurability deferred.
+       FG-only: when right-clicking on a focal node, replace "Open Focused Graph" with **"Remove from focal set"**.
+       UX collisions: (a) right-clicking during a connect-drag CANCELS the connect and does NOT open the menu; (b) menu items operating on optimistic-create-pending edges (temp IDs) are disabled until the server-assigned ID resolves.
 - [ ] C4. Legend UI panel (corner of viewport) with toggleable entries per `RelationshipType`. Visible-edge set = union of toggled-on types (default: all on). Layers WITH scrubber dimming, not against it.
-- [ ] C5. "Layout by type" right-click action: dynamic-import `dagre`, run on visible non-pinned nodes, persist via `/api/canvas-positions/batch` (A3). Pinned nodes left in place. Bundle cost paid on first click only (~80KB).
+- [ ] C5. "Layout by type" right-click action: dynamic-import `dagre`, run on visible **non-pinned** nodes assigned to ranks via the window's `typeOrder` (default order if unset), persist via `/api/canvas-positions/window/[windowId]/batch` (A3). Bundle cost paid on first click only (~80KB).
+       **Algorithm (locked T2A):**
+       ```
+       1. unpinned ← visibleSet − pinnedSet (per the calling window)
+       2. for each n in unpinned: dagreNode.rank = typeOrder.indexOf(n.type)
+       3. dagre.layout(unpinned, edges_among_unpinned) → positions
+       4. shift = centroid(pinnedSet current positions) − centroid(positions)
+                   if pinnedSet empty: shift to viewport center (existing fitView)
+       5. apply shift to all unpinned positions
+       6. write unpinned to window_canvas_state via A3 batch
+       ```
+       Pinned-stays-put is the sacred invariant. Edges crossing pinned↔unpinned will be visually ugly; accepted cost.
+       Concurrency: layout-by-type acquires a window-local async lock (in-memory, per FocusedGraph instance); two simultaneous clicks within one window queue. Cross-window concurrent layout = independent (per-window canvas) so no cross-talk.
 - [ ] C6. **Soft-filter rule** (locked invariant): scrubber dimming layers on top of FocusedGraph view-mode visibility; does NOT alter the traversal result set. Layout-by-type uses full visibleSet, never the in-scope-at-T subset.
+       UX edge case to test: in `shared` mode the visible-set is already small (intersection); adding scrubber dimming can produce a "90% dimmed" view. Test plan must include a visual-test case for this scenario; consider a future per-window toggle "auto-dim scrubber off when visibleSet < 5" as a follow-up if it lands badly in practice.
+- [ ] C7. `<TypeOrderPanel>` — small drag-reorder component. Settings panel inside FocusedGraph (and optionally StoryGraph) where user reorders the `typeOrder` list. "Apply" runs C5 layout. Default ordering: project-level `DEFAULT_TYPE_ORDER` constant in `src/lib/graph/defaults.ts` (e.g., `['Scene', 'Event', 'Character', 'Location', 'Act', 'Note']`). Window override stored per-window.
 
 **Worktree parallelization:**
 
 | Lane | Touches | Depends on |
 |---|---|---|
-| Z (cleanup) | `StoryGraph.svelte`, `package.json`, `src/lib/relationship-colors.ts`, new `<GraphCanvas>` | — (lands first) |
-| A (server) | `drizzle/`, `src/routes/api/canvas-positions/`, `src/lib/server/db/schema.ts` | Z |
+| Z (cleanup) | `StoryGraph.svelte`, `package.json`, `src/lib/relationship-colors.ts`, new `<GraphCanvas>` | — (Phase 1.6 already on main) |
+| A (server) | `drizzle/0002`, `src/routes/api/canvas-positions/window/`, `src/lib/server/db/schema.ts` | Z |
 | B (logic + atoms) | `src/lib/graph/`, new `<ContextMenu>` | Z |
-| C (integration) | new `<FocusedGraph>`, `StoryGraph.svelte` (right-click wire-up), `windows.ts`, `navigation.ts` | Z + A + B |
+| C (integration) | new `<FocusedGraph>`, new `<TypeOrderPanel>`, `StoryGraph.svelte` (right-click wire-up), `windows.ts`, `navigation.ts` | Z + A + B |
 
-Lanes A and B run in parallel worktrees after Z merges. Lane C waits for both. Conflict surface between A and B is zero (disjoint dirs). C imports from both but doesn't modify their files.
+Z4 (`<GraphCanvas>` extraction) is a single-author critical path: it blocks all of Lane C and is non-trivially coupled. Treat it as half-week, not chore. Lanes A and B run in parallel worktrees after Z merges. Lane C waits for both. Within Lane C: C2 only needs B; C5 needs A3 + B + C2.
+
+**Test plan additions** (beyond the 29 paths from /plan-eng-review):
+- `$derived` staleness: explicit test that focalSet mutation via reassignment invalidates view; mutation via `push`/`Object.assign` is forbidden by code review.
+- Scrubber + `shared` mode visual test: confirm UX is acceptable when visibleSet is small.
+- Concurrent layout-by-type: two FG windows on same entity set, layout in both, assert per-window state remains independent.
+- Optimistic-create + right-click race: clicking "View connections" on a temp-ID edge is no-op until server ID resolves.
+- Per-window canvas isolation: pin in window A, run layout in window B, assert window A position unchanged.
 
 **NOT in scope:**
 - Custom right-click action configurability (deferred per original bullet).
@@ -411,3 +463,4 @@ Lanes A and B run in parallel worktrees after Z merges. Lane C waits for both. C
 - Cross-window highlight sync (selecting in StoryGraph → highlight in FocusedGraph). Defer until requested.
 - Server-side traversal endpoint (graph fits in client; round-trip wasteful).
 - Hard-filter view modes (scrubber changes traversal set). Soft-filter is the locked semantic.
+- Migrating existing StoryGraph from `canvas_positions` to `window_canvas_state` — StoryGraph keeps using the seed table; FG windows use per-window state.

@@ -374,18 +374,9 @@
 		if (savingAct) return;
 		savingAct = true;
 		try {
-			const res = await fetch('/api/entities', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					type: 'Act',
-					name: `Act ${acts.length + 1}`,
-					position: acts.length
-				})
+			const created = await entities.createEntity('Act', `Act ${acts.length + 1}`, {
+				position: acts.length
 			});
-			if (!res.ok) throw new Error(await res.text());
-			const created = (await res.json()) as { id: string };
-			await entities.load();
 			// Land in the editor — name is editable in the title bar.
 			selectFromTimeline(created.id, 'edit');
 		} catch (err) {

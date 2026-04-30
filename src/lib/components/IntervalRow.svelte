@@ -221,20 +221,26 @@
 	}
 
 	async function endTranslate(e: PointerEvent) {
-		const t = translating;
-		translating = null;
 		(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+		const t = translating;
 		if (!t) return;
 		onLockRelease();
 		if (!t.moved) {
-			// Treat as click — selection.
+			// Treat as click — selection. Clear state immediately.
+			translating = null;
 			onSelect?.(entity.id, t.intervalId);
 			return;
 		}
-		// Resolve the new FKs from the dragged positions and PATCH.
+		// Hold the `translating` preview through the in-flight PATCH so
+		// the bar doesn't snap back to its old position while we wait —
+		// only clear AFTER the store has the new value (or rolled back on
+		// error). Mirrors the edge-resize pattern in startResize/onUp.
 		const startFKs = positionToStartFKs(t.previewStart, acts, scenesByActId);
 		const endFKs = positionToEndFKs(t.previewEnd, acts, scenesByActId);
-		if (!startFKs || !endFKs) return;
+		if (!startFKs || !endFKs) {
+			translating = null;
+			return;
+		}
 		try {
 			await intervalsStore.updateInterval(t.intervalId, {
 				startActId: startFKs.startActId,
@@ -246,6 +252,8 @@
 			});
 		} catch (err) {
 			onError((err as Error).message);
+		} finally {
+			translating = null;
 		}
 	}
 
