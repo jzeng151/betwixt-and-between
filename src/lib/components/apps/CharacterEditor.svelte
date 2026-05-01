@@ -1,3 +1,9 @@
+<script module lang="ts">
+  // Tracks IDs of characters just created via the "+ New" button so the
+  // detail view can open directly in edit mode for them.
+  const pendingEditMode = new Set<string>();
+</script>
+
 <script lang="ts">
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
@@ -9,7 +15,7 @@
   import { CHARACTER_COLORS, HEX_COLOR_RE, type TimelineLabelMode } from '$lib/timeline-v2-helpers.js';
 
   interface Props { winId: string; entityId: string | null; }
-  let { entityId }: Props = $props();
+  let { winId, entityId }: Props = $props();
 
   const ROLE_OPTIONS: { value: string; color: string }[] = [
     { value: '',            color: 'var(--color-text-muted)' },
@@ -38,32 +44,45 @@
   const characters = $derived($entities.filter((e) => e.type === 'Character'));
 
   // ── List mode ─────────────────────────────────────────────────────────────
-  let newName = $state('');
-  let addError = $state('');
+  let searchQuery = $state('');
+  const filteredCharacters = $derived(
+    searchQuery.trim()
+      ? characters.filter((c) => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      : characters
+  );
 
-  async function commitAdd() {
-    const name = newName.trim();
-    if (!name) return;
-    addError = '';
+  async function createCharacter() {
     try {
-      const created = await entities.createEntity('Character', name);
-      newName = '';
+      const created = await entities.createEntity('Character', 'New Character');
+      pendingEditMode.add(created.id);
       openEntity(created.id);
     } catch {
-      addError = "Couldn't create character.";
+      // ignore
     }
   }
 
-  function handleAddKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') commitAdd();
-    if (e.key === 'Escape') { newName = ''; addError = ''; }
+  // Bulk-select state for list mode
+  let selecting = $state(false);
+  let selected = $state(new Set<string>());
+  function toggleSelect(id: string) {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    selected = next;
+  }
+  function cancelSelect() {
+    selecting = false;
+    selected = new Set();
+  }
+  async function deleteSelected() {
+    const ids = [...selected];
+    selected = new Set();
+    selecting = false;
+    await Promise.all(ids.map((id) => entities.deleteEntity(id)));
   }
 
   // ── Detail mode ───────────────────────────────────────────────────────────
   const entity = $derived($entities.find((e) => e.id === entityId));
 
-  // View/edit toggle (Block 5). Default 'view' so opening a character is
-  // a read-first flow; click Edit to switch to the editable form.
   let mode = $state<'view' | 'edit'>('view');
 
   let saveError = $state('');
@@ -78,15 +97,6 @@
   let customHexError = $state('');
   let timelineLabel = $state<TimelineLabelMode>({ mode: 'name-and-note' });
 
-  // Edit-mode state for role, affiliation, motivation & notes
-  let editingRole = $state(false);
-  let editingAffiliation = $state(false);
-  let editingMotivation = $state(false);
-  let editingNotes = $state(false);
-  let draftRole = $state('');
-  let draftAffiliation = $state('');
-  let draftMotivation = $state('');
-  let draftNotes = $state('');
 
   // Avatar upload ref
   let fileInput: HTMLInputElement = $state(null!);
@@ -115,10 +125,10 @@
       } else {
         timelineLabel = { mode: 'name-and-note' };
       }
-      editingRole = false;
-      editingAffiliation = false;
-      editingMotivation = false;
-      editingNotes = false;
+      if (pendingEditMode.has(entity.id)) {
+        pendingEditMode.delete(entity.id);
+        mode = 'edit';
+      }
     }
   });
 
@@ -155,6 +165,12 @@
     } catch {
       saveError = "Couldn't save.";
     }
+  }
+
+  async function deleteCharacter() {
+    if (!entityId) return;
+    await entities.deleteEntity(entityId);
+    windowStore.close(winId);
   }
 
   // ── Color picker ──────────────────────────────────────────────────────────
@@ -202,45 +218,6 @@
     await saveAll();
   }
 
-  // Role edit
-  function startRole() { draftRole = role; editingRole = true; }
-  function cancelRole() { editingRole = false; }
-  async function commitRole() {
-    role = draftRole;
-    editingRole = false;
-    await saveAll();
-  }
-
-  // Affiliation edit
-  function startAffiliation() { draftAffiliation = affiliation; editingAffiliation = true; }
-  function cancelAffiliation() { editingAffiliation = false; }
-  async function commitAffiliation() {
-    affiliation = draftAffiliation.trim();
-    editingAffiliation = false;
-    await saveAll();
-  }
-  function handleAffiliationKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') commitAffiliation();
-    if (e.key === 'Escape') cancelAffiliation();
-  }
-
-  // Motivation edit
-  function startMotivation() { draftMotivation = motivation; editingMotivation = true; }
-  function cancelMotivation() { editingMotivation = false; }
-  async function commitMotivation() {
-    motivation = draftMotivation;
-    editingMotivation = false;
-    await saveAll();
-  }
-
-  // Notes edit
-  function startNotes() { draftNotes = notes; editingNotes = true; }
-  function cancelNotes() { editingNotes = false; }
-  async function commitNotes() {
-    notes = draftNotes;
-    editingNotes = false;
-    await saveAll();
-  }
 
   // Avatar upload — resize to ≤200px before storing
   function triggerAvatarUpload() { fileInput.click(); }
@@ -320,23 +297,38 @@
 {#if !entityId}
   <!-- ── List mode ── -->
   <div class="list-view">
-    <div class="add-row">
+    <div class="list-toolbar">
       <input
-        class="add-input"
-        placeholder="Character name…"
-        bind:value={newName}
-        onkeydown={handleAddKeydown}
+        class="search-input"
+        placeholder="Search characters…"
+        bind:value={searchQuery}
       />
-      {#if addError}<p class="add-error">{addError}</p>{/if}
+      {#if selecting}
+        <button class="select-cancel-btn" onclick={cancelSelect}>Cancel</button>
+        {#if selected.size > 0}
+          <button class="delete-btn" onclick={deleteSelected}>Delete ({selected.size})</button>
+        {/if}
+      {:else}
+        <button class="select-toggle-btn" onclick={() => (selecting = true)}>Select</button>
+        <button class="create-btn" onclick={createCharacter}>+ New</button>
+      {/if}
     </div>
 
     {#if characters.length === 0}
       <p class="empty">No characters yet.</p>
+    {:else if filteredCharacters.length === 0}
+      <p class="empty">No matches.</p>
     {:else}
       <ul class="char-list">
-        {#each characters as char}
+        {#each filteredCharacters as char}
           {@const d = readData(char.data)}
-          <li>
+          <li class="char-item">
+            {#if selecting}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <div class="char-check" role="checkbox" aria-checked={selected.has(char.id)} tabindex="0" onclick={(e) => { e.stopPropagation(); toggleSelect(char.id); }}>
+                <input type="checkbox" checked={selected.has(char.id)} tabindex="-1" readonly />
+              </div>
+            {/if}
             <button class="char-row" onclick={() => openEntity(char.id)}>
               <div class="char-avatar">
                 {#if d.avatar}
@@ -371,6 +363,7 @@
   <!-- ── Detail mode ── -->
   <div class="char-detail" class:view-mode={mode === 'view'}>
     <div class="mode-row">
+      <button type="button" class="detail-delete-btn" onclick={deleteCharacter}>Delete</button>
       <button
         type="button"
         class="mode-toggle"
@@ -418,53 +411,33 @@
         </h1>
         <div class="header-meta">
           <!-- Role -->
-          {#if editingRole}
-            <div class="hfield-editing">
-              <select class="hfield-select" bind:value={draftRole} onchange={commitRole}>
-                {#each ROLE_OPTIONS as opt}
-                  <option value={opt.value}>{opt.value || '— none —'}</option>
-                {/each}
-              </select>
-              <button class="hfield-cancel" onclick={cancelRole} title="Cancel">×</button>
-            </div>
+          {#if mode === 'edit'}
+            <select class="hfield-select" bind:value={role} onchange={saveAll}>
+              {#each ROLE_OPTIONS as opt}
+                <option value={opt.value}>{opt.value || '— none —'}</option>
+              {/each}
+            </select>
           {:else}
-            <div class="hfield-wrap">
-              {#if role}
-                <span class="role-badge" style="--rc:{roleColor(role)}">{role}</span>
-              {:else}
-                <span class="hfield-empty">Role</span>
-              {/if}
-              <button class="hfield-pencil" onclick={startRole} title="Edit role">
-                <svg width="10" height="10" viewBox="0 0 11 11" fill="none" aria-hidden="true">
-                  <path d="M7.5 1.5 l2 2 -6 6 -2.5 0.5 0.5-2.5 6-6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" fill="none"/>
-                </svg>
-              </button>
-            </div>
+            {#if role}
+              <span class="role-badge" style="--rc:{roleColor(role)}">{role}</span>
+            {:else}
+              <span class="hfield-empty">Role</span>
+            {/if}
           {/if}
           <!-- Affiliation -->
-          {#if editingAffiliation}
-            <!-- svelte-ignore a11y_autofocus -->
+          {#if mode === 'edit'}
             <input
               class="hfield-input"
-              bind:value={draftAffiliation}
-              onblur={commitAffiliation}
-              onkeydown={handleAffiliationKeydown}
+              bind:value={affiliation}
+              onblur={saveAll}
               placeholder="Affiliation"
-              autofocus
             />
           {:else}
-            <div class="hfield-wrap">
-              {#if affiliation}
-                <span class="hfield-text">{affiliation}</span>
-              {:else}
-                <span class="hfield-empty">Affiliation</span>
-              {/if}
-              <button class="hfield-pencil" onclick={startAffiliation} title="Edit affiliation">
-                <svg width="10" height="10" viewBox="0 0 11 11" fill="none" aria-hidden="true">
-                  <path d="M7.5 1.5 l2 2 -6 6 -2.5 0.5 0.5-2.5 6-6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" fill="none"/>
-                </svg>
-              </button>
-            </div>
+            {#if affiliation}
+              <span class="hfield-text">{affiliation}</span>
+            {:else}
+              <span class="hfield-empty">Affiliation</span>
+            {/if}
           {/if}
         </div>
       </div>
@@ -603,48 +576,32 @@
         {/if}
       </div>
 
-      <div class="field-header">
-        <label class="field-label" for="char-motivation">Motivation</label>
-        {#if !editingMotivation}
-          <button class="field-edit-btn" onclick={startMotivation}>Edit</button>
-        {/if}
-      </div>
-      {#if editingMotivation}
+      <label class="field-label" for="char-motivation">Motivation</label>
+      {#if mode === 'edit'}
         <textarea
           id="char-motivation"
           class="field-textarea"
           placeholder="What drives this character?"
-          bind:value={draftMotivation}
+          bind:value={motivation}
+          onblur={saveAll}
           rows="3"
         ></textarea>
-        <div class="field-actions">
-          <button class="field-cancel-btn" onclick={cancelMotivation}>Cancel</button>
-          <button class="field-save-btn" onclick={commitMotivation}>Save</button>
-        </div>
       {:else}
         <p class="field-display" class:field-empty={!motivation}>
           {motivation || 'Not set.'}
         </p>
       {/if}
 
-      <div class="field-header">
-        <label class="field-label" for="char-notes">Notes</label>
-        {#if !editingNotes}
-          <button class="field-edit-btn" onclick={startNotes}>Edit</button>
-        {/if}
-      </div>
-      {#if editingNotes}
+      <label class="field-label" for="char-notes">Notes</label>
+      {#if mode === 'edit'}
         <textarea
           id="char-notes"
           class="field-textarea"
           placeholder="Additional notes…"
-          bind:value={draftNotes}
+          bind:value={notes}
+          onblur={saveAll}
           rows="4"
         ></textarea>
-        <div class="field-actions">
-          <button class="field-cancel-btn" onclick={cancelNotes}>Cancel</button>
-          <button class="field-save-btn" onclick={commitNotes}>Save</button>
-        </div>
       {:else}
         <p class="field-display" class:field-empty={!notes}>
           {notes || 'Not set.'}
@@ -664,21 +621,80 @@
     gap: 8px;
   }
 
-  .add-row { display: flex; flex-direction: column; gap: 4px; }
+  .list-toolbar { display: flex; flex-direction: row; gap: 6px; align-items: center; }
 
-  .add-input {
+  .search-input {
+    flex: 1;
+    min-width: 0;
     background: var(--color-surface);
-    border: 1px solid var(--color-accent);
+    border: 1px solid var(--color-border);
     border-radius: 6px;
     color: var(--color-text);
     font-family: var(--font-ui);
     font-size: 12px;
     padding: 6px 10px;
-    width: 100%;
     outline: none;
   }
+  .search-input:focus { border-color: var(--color-accent); }
 
-  .add-error { font-size: 10px; color: var(--color-rel-rival); }
+  .create-btn {
+    flex-shrink: 0;
+    background: var(--color-accent);
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    padding: 6px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .create-btn:hover { opacity: 0.85; }
+
+  .select-toggle-btn, .select-cancel-btn {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    color: var(--color-text-muted);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    padding: 6px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .select-toggle-btn:hover, .select-cancel-btn:hover {
+    border-color: var(--color-text);
+    color: var(--color-text);
+  }
+
+  .delete-btn {
+    flex-shrink: 0;
+    background: var(--color-rel-rival);
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    padding: 6px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .delete-btn:hover { opacity: 0.85; }
+
+  .char-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .char-check {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding: 4px;
+    cursor: pointer;
+  }
+  .char-check input { cursor: pointer; }
 
   .char-list {
     list-style: none;
@@ -883,34 +899,6 @@
     align-items: center;
   }
 
-  .hfield-wrap {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .hfield-pencil {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: none;
-    border: none;
-    padding: 2px;
-    border-radius: 3px;
-    color: var(--color-text-muted);
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.12s, color 0.12s;
-    flex-shrink: 0;
-  }
-  .hfield-wrap:hover .hfield-pencil,
-  .hfield-pencil:focus {
-    opacity: 1;
-  }
-  .hfield-pencil:hover {
-    color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-  }
 
   .hfield-empty {
     font-size: 10px;
@@ -925,12 +913,6 @@
     font-family: var(--font-ui);
   }
 
-  .hfield-editing {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-
   .hfield-select {
     background: var(--color-surface-2);
     border: 1px solid var(--color-accent);
@@ -943,16 +925,6 @@
     cursor: pointer;
   }
 
-  .hfield-cancel {
-    background: none;
-    border: none;
-    color: var(--color-text-muted);
-    font-size: 13px;
-    cursor: pointer;
-    padding: 0 2px;
-    line-height: 1;
-  }
-  .hfield-cancel:hover { color: var(--color-rel-rival); }
 
   .hfield-input {
     background: transparent;
@@ -1144,34 +1116,6 @@
   }
   .field-textarea:focus { outline: 2px solid var(--color-accent); outline-offset: 0; border-color: var(--color-accent); }
 
-  .field-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 6px;
-  }
-  .field-cancel-btn {
-    background: transparent;
-    border: 1px solid var(--color-border);
-    color: var(--color-text-muted);
-    font-family: var(--font-ui);
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 5px;
-    cursor: pointer;
-  }
-  .field-cancel-btn:hover { border-color: var(--color-text-muted); color: var(--color-text); }
-  .field-save-btn {
-    background: var(--color-accent);
-    border: 1px solid var(--color-accent);
-    color: var(--color-surface);
-    font-family: var(--font-ui);
-    font-size: 11px;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 5px;
-    cursor: pointer;
-  }
-  .field-save-btn:hover { opacity: 0.85; }
 
   .save-error { color: var(--color-rel-rival); font-size: 11px; }
   .muted { color: var(--color-text-muted); font-size: 12px; }
@@ -1258,6 +1202,8 @@
   .mode-row {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
     margin-bottom: 4px;
   }
   .mode-toggle {
@@ -1275,9 +1221,23 @@
   }
   .mode-toggle:hover { filter: brightness(1.1); }
 
-  /* In view mode: hide pencils, hide field-edit buttons, hide avatar
+  .detail-delete-btn {
+    background: var(--color-rel-rival);
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .detail-delete-btn:hover { opacity: 0.85; }
+
+  /* In view mode: hide field-edit buttons, hide avatar
      overlay (camera icon), make swatches + radios + custom-hex inert. */
-  .view-mode .hfield-pencil,
   .view-mode .field-edit-btn,
   .view-mode .avatar-overlay,
   .view-mode .hex-input {
