@@ -69,6 +69,9 @@
   // Bulk-select state for list mode
   let selecting = $state(false);
   let selected = $state(new Set<string>());
+  let confirmingBulkDelete = $state(false);
+  let bulkDeleting = $state(false);
+  let bulkDeleteError = $state('');
   function toggleSelect(id: string) {
     const next = new Set(selected);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -77,6 +80,8 @@
   function cancelSelect() {
     selecting = false;
     selected = new Set();
+    confirmingBulkDelete = false;
+    bulkDeleteError = '';
   }
   // Visible-only selection count: the search input stays active in select
   // mode, so an item the user selected can be filtered out of view. The
@@ -91,9 +96,27 @@
     // mail client: filtering hides messages, applies actions only to
     // what you can see.
     const ids = [...visibleSelected];
+    if (ids.length === 0) return;
+    // Snapshot the prior UI state so we can roll back if the network
+    // call fails (Greptile P2). Without this, a 500 leaves the user with
+    // an empty selection AND the toolbar back to non-select mode, but
+    // the characters still present — confusing.
+    const priorSelected = selected;
+    const priorSelecting = selecting;
+    bulkDeleting = true;
+    bulkDeleteError = '';
     selected = new Set();
     selecting = false;
-    await Promise.all(ids.map((id) => entities.deleteEntity(id)));
+    confirmingBulkDelete = false;
+    try {
+      await Promise.all(ids.map((id) => entities.deleteEntity(id)));
+    } catch {
+      selected = priorSelected;
+      selecting = priorSelecting;
+      bulkDeleteError = "Couldn't delete some characters.";
+    } finally {
+      bulkDeleting = false;
+    }
   }
 
   // ── Detail mode ───────────────────────────────────────────────────────────
@@ -190,11 +213,32 @@
     }
   }
 
+  let confirmingDelete = $state(false);
+  let deleting = $state(false);
+  let deleteError = $state('');
+
   async function deleteCharacter() {
     if (!entityId) return;
-    await entities.deleteEntity(entityId);
-    windowStore.close(winId);
+    deleting = true;
+    deleteError = '';
+    try {
+      await entities.deleteEntity(entityId);
+      confirmingDelete = false;
+      windowStore.close(winId);
+    } catch {
+      deleteError = "Couldn't delete character.";
+    } finally {
+      deleting = false;
+    }
   }
+
+  // Reset confirmation state when navigating between characters so a
+  // half-confirmed delete on character A doesn't carry over to B.
+  $effect(() => {
+    void entityId;
+    confirmingDelete = false;
+    deleteError = '';
+  });
 
   // ── Color picker ──────────────────────────────────────────────────────────
   async function chooseColor(hex: string) {
@@ -327,9 +371,23 @@
         bind:value={searchQuery}
       />
       {#if selecting}
-        <button class="select-cancel-btn" onclick={cancelSelect}>Cancel</button>
-        {#if visibleSelected.size > 0}
-          <button class="delete-btn" onclick={deleteSelected}>Delete ({visibleSelected.size})</button>
+        {#if confirmingBulkDelete}
+          <span class="bulk-confirm-msg">Delete {visibleSelected.size}?</span>
+          <button
+            class="select-cancel-btn"
+            disabled={bulkDeleting}
+            onclick={() => (confirmingBulkDelete = false)}
+          >Cancel</button>
+          <button
+            class="btn-danger"
+            disabled={bulkDeleting}
+            onclick={deleteSelected}
+          >{bulkDeleting ? '…' : 'Delete'}</button>
+        {:else}
+          <button class="select-cancel-btn" onclick={cancelSelect}>Cancel</button>
+          {#if visibleSelected.size > 0}
+            <button class="btn-danger" onclick={() => (confirmingBulkDelete = true)}>Delete ({visibleSelected.size})</button>
+          {/if}
         {/if}
       {:else}
         <button class="select-toggle-btn" onclick={() => (selecting = true)}>Select</button>
@@ -339,6 +397,9 @@
 
     {#if createError}
       <p class="create-error" role="alert">{createError}</p>
+    {/if}
+    {#if bulkDeleteError}
+      <p class="create-error" role="alert">{bulkDeleteError}</p>
     {/if}
 
     {#if characters.length === 0}
@@ -407,7 +468,6 @@
   <!-- ── Detail mode ── -->
   <div class="char-detail" class:view-mode={mode === 'view'}>
     <div class="mode-row">
-      <button type="button" class="detail-delete-btn" onclick={deleteCharacter}>Delete</button>
       <button
         type="button"
         class="mode-toggle"
@@ -654,6 +714,35 @@
 
       {#if saveError}<p class="save-error">{saveError}</p>{/if}
     </div>
+
+    <div class="detail-footer">
+      {#if confirmingDelete}
+        <div class="delete-confirm">
+          <span class="delete-confirm-msg">Delete <strong>{entity.name}</strong>?</span>
+          <div class="delete-confirm-btns">
+            <button
+              type="button"
+              class="btn-cancel"
+              disabled={deleting}
+              onclick={() => (confirmingDelete = false)}
+            >Cancel</button>
+            <button
+              type="button"
+              class="btn-danger"
+              disabled={deleting}
+              onclick={deleteCharacter}
+            >{deleting ? '…' : 'Delete'}</button>
+          </div>
+          {#if deleteError}<div class="delete-error">{deleteError}</div>{/if}
+        </div>
+      {:else}
+        <button
+          type="button"
+          class="btn-delete"
+          onclick={() => (confirmingDelete = true)}
+        >Delete character</button>
+      {/if}
+    </div>
   </div>
 {/if}
 
@@ -719,19 +808,36 @@
     color: var(--color-text);
   }
 
-  .delete-btn {
+  /* Filled-red destructive button — used for bulk Delete (N) and the
+     confirmation step in the detail-view footer. Matches EntityDetail's
+     .btn-danger so destructive actions feel consistent across the app. */
+  .btn-danger {
     flex-shrink: 0;
-    background: var(--color-rel-rival);
+    background: #ef4444;
     border: none;
-    border-radius: 6px;
+    border-radius: 4px;
     color: #fff;
     font-family: var(--font-ui);
-    font-size: 12px;
-    padding: 6px 10px;
+    font-size: 11px;
+    padding: 6px 12px;
     cursor: pointer;
     white-space: nowrap;
   }
-  .delete-btn:hover { opacity: 0.85; }
+  .btn-danger:hover { opacity: 0.9; }
+  .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-cancel {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-family: var(--font-ui);
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
 
   .char-item {
     display: flex;
@@ -745,7 +851,19 @@
     padding: 4px;
     cursor: pointer;
   }
-  .char-check input { cursor: pointer; }
+  .char-check input {
+    cursor: pointer;
+    accent-color: var(--color-accent);
+    width: 14px;
+    height: 14px;
+  }
+
+  .bulk-confirm-msg {
+    flex: 1;
+    font-size: 11px;
+    color: var(--color-text);
+    font-family: var(--font-ui);
+  }
 
   .char-list {
     list-style: none;
@@ -858,6 +976,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    min-height: 100%;
   }
 
   .header {
@@ -1272,20 +1391,49 @@
   }
   .mode-toggle:hover { filter: brightness(1.1); }
 
-  .detail-delete-btn {
-    background: var(--color-rel-rival);
-    border: none;
+  /* Detail-view footer sits at the bottom of the visible area (matches
+     EntityDetail). Outline-style Delete defers attention to Edit/Done at
+     the top; the filled .btn-danger only appears after confirmation. */
+  .detail-footer {
+    margin-top: auto;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border);
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+  }
+  .btn-delete {
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: #ef4444;
     border-radius: 4px;
-    color: #fff;
+    padding: 6px 10px;
+    font-size: 11px;
     font-family: var(--font-ui);
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 3px 10px;
     cursor: pointer;
   }
-  .detail-delete-btn:hover { opacity: 0.85; }
+  .btn-delete:hover { border-color: #ef4444; }
+  .delete-confirm {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .delete-confirm-msg {
+    font-size: 12px;
+    color: var(--color-text);
+    font-family: var(--font-ui);
+  }
+  .delete-confirm-btns {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .delete-error {
+    color: #ef4444;
+    font-size: 10px;
+    font-family: var(--font-ui);
+  }
 
   /* In view mode: hide field-edit buttons, hide avatar
      overlay (camera icon), make swatches + radios + custom-hex inert. */

@@ -290,7 +290,7 @@ describe('CharacterEditor — list mode bulk delete', () => {
 		expect(getByText('Delete (1)')).toBeInTheDocument();
 	});
 
-	it('clicking Delete (N) calls deleteEntity and exits select mode', async () => {
+	it('clicking Delete (N) → Delete confirms and calls deleteEntity, exits select mode', async () => {
 		const { getByText, queryByText, container } = render(CharacterEditor, {
 			props: { winId: 'w1', entityId: null }
 		});
@@ -298,7 +298,10 @@ describe('CharacterEditor — list mode bulk delete', () => {
 		await tick();
 		await fireEvent.click(container.querySelector('.char-check')!);
 		await tick();
+		// First click: arms confirmation. Second click: actually deletes.
 		await fireEvent.click(getByText('Delete (1)'));
+		await tick();
+		await fireEvent.click(getByText('Delete'));
 		await waitFor(() => {
 			expect(globalThis.fetch).toHaveBeenCalledWith(
 				'/api/entities/char-1',
@@ -309,6 +312,26 @@ describe('CharacterEditor — list mode bulk delete', () => {
 			expect(queryByText('Cancel')).toBeNull();
 			expect(getByText('Select')).toBeInTheDocument();
 		});
+	});
+
+	it('Cancel on the bulk-delete confirmation aborts without deleting', async () => {
+		const { getByText, container } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: null }
+		});
+		await fireEvent.click(getByText('Select'));
+		await tick();
+		await fireEvent.click(container.querySelector('.char-check')!);
+		await tick();
+		await fireEvent.click(getByText('Delete (1)'));
+		await tick();
+		await fireEvent.click(getByText('Cancel'));
+		await tick();
+		// No DELETE was fired and the toolbar is back to the pre-confirm state.
+		expect(globalThis.fetch).not.toHaveBeenCalledWith(
+			expect.any(String),
+			expect.objectContaining({ method: 'DELETE' })
+		);
+		expect(getByText('Delete (1)')).toBeInTheDocument();
 	});
 });
 
@@ -327,18 +350,22 @@ describe('CharacterEditor — detail mode delete', () => {
 		closeSpy.mockRestore();
 	});
 
-	it('renders a Delete button in detail view', () => {
+	it('renders a Delete character button in detail view footer', () => {
 		const { container } = render(CharacterEditor, {
 			props: { winId: 'w1', entityId: 'char-1' }
 		});
-		expect(container.querySelector('.detail-delete-btn')).toBeInTheDocument();
+		expect(container.querySelector('.btn-delete')).toBeInTheDocument();
 	});
 
-	it('clicking Delete calls deleteEntity then closes the window', async () => {
-		const { container } = render(CharacterEditor, {
+	it('clicking Delete character → Delete confirms, calls deleteEntity, closes the window', async () => {
+		const { container, getByText } = render(CharacterEditor, {
 			props: { winId: 'w1', entityId: 'char-1' }
 		});
-		await fireEvent.click(container.querySelector('.detail-delete-btn')!);
+		// First click: arm confirmation.
+		await fireEvent.click(container.querySelector('.btn-delete')!);
+		await tick();
+		// Confirmation: Cancel + Delete buttons.
+		await fireEvent.click(getByText('Delete'));
 		await waitFor(() => {
 			expect(globalThis.fetch).toHaveBeenCalledWith(
 				'/api/entities/char-1',
@@ -346,6 +373,22 @@ describe('CharacterEditor — detail mode delete', () => {
 			);
 			expect(closeSpy).toHaveBeenCalledWith('w1');
 		});
+	});
+
+	it('Cancel on the detail-view confirmation aborts without deleting', async () => {
+		const { container, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(container.querySelector('.btn-delete')!);
+		await tick();
+		await fireEvent.click(getByText('Cancel'));
+		await tick();
+		expect(globalThis.fetch).not.toHaveBeenCalledWith(
+			expect.any(String),
+			expect.objectContaining({ method: 'DELETE' })
+		);
+		expect(closeSpy).not.toHaveBeenCalled();
+		expect(container.querySelector('.btn-delete')).toBeInTheDocument();
 	});
 });
 
