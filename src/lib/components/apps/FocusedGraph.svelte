@@ -124,6 +124,7 @@
           displayEntityIds.has(r.toId) &&
           enabledRelTypes.has(r.type)
       )
+      .filter((r) => displayEntityIds.has(r.fromId) && displayEntityIds.has(r.toId))
       .map((r) => ({
         id: r.id,
         fromId: r.fromId,
