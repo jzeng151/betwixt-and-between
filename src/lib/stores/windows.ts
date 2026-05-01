@@ -101,7 +101,9 @@ function createWindowStore() {
 							? 960
 							: appId === 'entity-detail'
 								? 480
-								: 320,
+								: appId === 'character-editor'
+									? 380
+									: 320,
 				height: isGraph ? 500 : 480,
 				minimized: false,
 				maximized: false,
