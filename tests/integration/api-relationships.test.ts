@@ -219,7 +219,7 @@ describe('/api/relationships/[id] DELETE', () => {
 
 	it('returns 404 for unknown relationship id', async () => {
 		await expect(
-			relIdRoute.DELETE(mkEvent({ params: { id: 'no-such-id' } }))
+			relIdRoute.DELETE(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 

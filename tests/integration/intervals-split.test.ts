@@ -253,6 +253,6 @@ describe('splitInterval — D7/5b A', () => {
 	});
 
 	it('rejects split on a non-existent interval', async () => {
-		await expect(splitInterval(db, 'no-such-id', 1.0)).rejects.toThrow();
+		await expect(splitInterval(db, '00000000-0000-0000-0000-000000000000', 1.0)).rejects.toThrow();
 	});
 });

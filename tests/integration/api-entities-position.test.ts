@@ -271,7 +271,7 @@ describe('PATCH /api/entities/[id] — Act position cascade (D18 / Issue 12A)', 
 		const before = await getActsOrdered();
 		await expect(
 			idRoute.PATCH(
-				mkEvent({ params: { id: 'no-such-act' }, body: { position: 1 } })
+				mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' }, body: { position: 1 } })
 			)
 		).rejects.toMatchObject({ status: 404 });
 		const after = await getActsOrdered();

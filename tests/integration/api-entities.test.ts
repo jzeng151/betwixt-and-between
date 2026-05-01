@@ -154,7 +154,7 @@ describe('/api/entities/[id] GET', () => {
 
 	it('returns 404 for missing id', async () => {
 		await expect(
-			idRoute.GET(mkEvent({ params: { id: 'nope-not-real' } }))
+			idRoute.GET(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 });
@@ -188,7 +188,7 @@ describe('/api/entities/[id] PATCH', () => {
 
 	it('returns 404 when patching missing entity', async () => {
 		await expect(
-			idRoute.PATCH(mkEvent({ params: { id: 'nope' }, body: { name: 'X' } }))
+			idRoute.PATCH(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' }, body: { name: 'X' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 });
@@ -213,7 +213,7 @@ describe('/api/entities/[id] DELETE', () => {
 
 	it('returns 404 when deleting missing entity', async () => {
 		await expect(
-			idRoute.DELETE(mkEvent({ params: { id: 'nope' } }))
+			idRoute.DELETE(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 

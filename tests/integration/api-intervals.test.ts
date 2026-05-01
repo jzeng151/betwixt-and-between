@@ -194,7 +194,7 @@ describe('/api/intervals/[id] GET/PATCH/DELETE', () => {
 
 	it('GET returns 404 for missing id', async () => {
 		await expect(
-			idRoute.GET(mkEvent({ params: { id: 'nope' } }))
+			idRoute.GET(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 
@@ -212,7 +212,7 @@ describe('/api/intervals/[id] GET/PATCH/DELETE', () => {
 
 	it('PATCH returns 404 for missing id', async () => {
 		await expect(
-			idRoute.PATCH(mkEvent({ params: { id: 'nope' }, body: {} }))
+			idRoute.PATCH(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' }, body: {} }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 
@@ -234,7 +234,7 @@ describe('/api/intervals/[id] GET/PATCH/DELETE', () => {
 
 	it('DELETE returns 404 for missing id', async () => {
 		await expect(
-			idRoute.DELETE(mkEvent({ params: { id: 'nope' } }))
+			idRoute.DELETE(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 });
