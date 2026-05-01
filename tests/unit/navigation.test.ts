@@ -22,11 +22,11 @@ function makeEntity(id: string, type: Entity['type'], name: string): Entity {
 		id,
 		type,
 		name,
-		data: '{}',
+		data: {},
 		parentId: null,
 		position: null,
-		createdAt: 0,
-		updatedAt: 0
+		createdAt: new Date(0),
+		updatedAt: new Date(0)
 	};
 }
 
@@ -37,7 +37,7 @@ function clearWindows() {
 }
 
 describe('openEntity', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		clearWindows();
 		entitiesWritable.set([]);
 	});

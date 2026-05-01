@@ -9,7 +9,7 @@ function reset() {
 	for (const w of all) windowStore.close(w.id);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	reset();
 });
 

@@ -18,14 +18,14 @@ function makeResponse(body: unknown, ok = true, status = 200): Response {
 function entity(partial: Partial<Entity> & { id: string; name: string }): Entity {
 	return {
 		type: 'Character',
-		data: '{}',
+		data: {},
 		createdAt: 0,
 		updatedAt: 0,
 		...partial
 	} as Entity;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	// Reset store between tests by setting via a load() with empty array
 	const fetchMock = vi.fn().mockResolvedValue(makeResponse([]));
 	globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -100,7 +100,7 @@ describe('entities.createEntity', () => {
 
 describe('entities.updateEntity', () => {
 	beforeEach(async () => {
-		const seed = [entity({ id: 'e1', name: 'Old', type: 'Character', data: '{"age":10}' })];
+		const seed = [entity({ id: 'e1', name: 'Old', type: 'Character', data: { age: 10 } })];
 		const fetchMock = vi.fn().mockResolvedValue(makeResponse(seed));
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 		await entities.load();
@@ -120,7 +120,7 @@ describe('entities.updateEntity', () => {
 		expect(get(entities)[0].name).toBe('New');
 
 		resolveServer(
-			makeResponse(entity({ id: 'e1', name: 'NewServer', type: 'Character', data: '{"age":10}' }))
+			makeResponse(entity({ id: 'e1', name: 'NewServer', type: 'Character', data: { age: 10 } }))
 		);
 		await pending;
 
@@ -130,7 +130,7 @@ describe('entities.updateEntity', () => {
 
 	it('serializes optimistic data to JSON string in the store', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
-			makeResponse(entity({ id: 'e1', name: 'Old', type: 'Character', data: '{"age":99}' }))
+			makeResponse(entity({ id: 'e1', name: 'Old', type: 'Character', data: { age: 99 } }))
 		);
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 

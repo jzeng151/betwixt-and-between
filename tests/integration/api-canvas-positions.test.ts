@@ -33,7 +33,7 @@ async function readJson(res: Response): Promise<any> {
 }
 
 describe('/api/canvas-positions GET', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		currentDb = await createTestDb();
 	});
 

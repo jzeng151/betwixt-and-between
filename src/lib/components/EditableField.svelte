@@ -118,7 +118,7 @@
 		const value = draft;
 		lastAttempt = value;
 		saveError = null;
-		const existing = entity ? parseData(entity.data) : {};
+		const existing = entity ? (entity.data ?? {}) : {};
 		try {
 			await entities.updateEntity(entityId, {
 				data: { ...existing, [field]: value }
@@ -133,7 +133,7 @@
 		if (lastAttempt == null) return;
 		const value = lastAttempt;
 		saveError = null;
-		const existing = entity ? parseData(entity.data) : {};
+		const existing = entity ? (entity.data ?? {}) : {};
 		try {
 			await entities.updateEntity(entityId, {
 				data: { ...existing, [field]: value }
@@ -164,7 +164,7 @@
 
 	// Picklist / swatches: commit on change.
 	async function commitValue(value: string) {
-		const existing = entity ? parseData(entity.data) : {};
+		const existing = entity ? (entity.data ?? {}) : {};
 		try {
 			await entities.updateEntity(entityId, {
 				data: { ...existing, [field]: value }

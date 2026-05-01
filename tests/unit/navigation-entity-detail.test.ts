@@ -22,11 +22,11 @@ function makeEntity(id: string, type: Entity['type'], name: string): Entity {
 		id,
 		type,
 		name,
-		data: '{}',
+		data: {},
 		parentId: null,
 		position: null,
-		createdAt: 0,
-		updatedAt: 0
+		createdAt: new Date(0),
+		updatedAt: new Date(0)
 	};
 }
 
@@ -36,7 +36,7 @@ function clearWindows() {
 }
 
 describe('openEntityDetail (D10 / 9A)', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		clearWindows();
 		entitiesWritable.set([]);
 	});
@@ -105,7 +105,7 @@ describe('openEntityDetail (D10 / 9A)', () => {
 });
 
 describe('openEntity (post D10-extension / 19A)', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		clearWindows();
 		entitiesWritable.set([]);
 	});

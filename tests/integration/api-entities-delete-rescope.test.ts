@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTestDb, seedActs, SCHEMA_DDL } from '../helpers/test-db.js';
+import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
 import { eq } from 'drizzle-orm';

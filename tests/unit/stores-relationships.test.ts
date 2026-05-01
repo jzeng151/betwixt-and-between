@@ -21,7 +21,7 @@ function rel(partial: Partial<Relationship> & { id: string }): Relationship {
 	} as Relationship;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([])) as unknown as typeof fetch;
 	return relationships.load();
 });

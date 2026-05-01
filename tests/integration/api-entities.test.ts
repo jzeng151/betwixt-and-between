@@ -42,7 +42,7 @@ async function readJson(res: Response): Promise<any> {
 }
 
 describe('/api/entities GET', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		currentDb = await createTestDb();
 	});
 
@@ -63,7 +63,7 @@ describe('/api/entities GET', () => {
 });
 
 describe('/api/entities POST', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		currentDb = await createTestDb();
 	});
 
@@ -138,7 +138,7 @@ describe('/api/entities POST', () => {
 });
 
 describe('/api/entities/[id] GET', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		currentDb = await createTestDb();
 	});
 
@@ -160,7 +160,7 @@ describe('/api/entities/[id] GET', () => {
 });
 
 describe('/api/entities/[id] PATCH', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		currentDb = await createTestDb();
 	});
 
@@ -194,7 +194,7 @@ describe('/api/entities/[id] PATCH', () => {
 });
 
 describe('/api/entities/[id] DELETE', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		currentDb = await createTestDb();
 	});
 

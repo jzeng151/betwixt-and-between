@@ -144,7 +144,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 });
 
 describe('/api/relationships GET', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		currentDb = await createTestDb();
 	});
 
@@ -192,7 +192,7 @@ describe('/api/relationships GET', () => {
 });
 
 describe('/api/relationships/[id] DELETE', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		currentDb = await createTestDb();
 	});
 
