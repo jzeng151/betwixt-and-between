@@ -784,10 +784,11 @@
         {/if}
       </div>
       {#if mode === 'edit'}
-        <!-- Top row: 8 swatches on the left, color wheel as a square
-             affordance on the right. Hex input lives below on its own
-             line. Layout matches color-vision.png mock. -->
-        <div class="color-top-row">
+        <!-- 2-row grid: swatches (row 1, left) + hex input (row 2,
+             left), color wheel spans both rows on the right and fills
+             the otherwise-blank space. align-self: stretch lets the
+             wheel grow to the combined row height. -->
+        <div class="color-grid">
           <div class="swatch-row" role="group" aria-label="Timeline color">
             {#each CHARACTER_COLORS as hex}
               {@const inUse = usedColors.has(hex.toLowerCase())}
@@ -805,10 +806,28 @@
               ></button>
             {/each}
           </div>
-          <!-- Native color picker — square block at the row's right
-               edge per the design mock. Commits on `change` (when the
-               OS picker closes); accidentally opening without changing
-               color is a no-op. -->
+          <div class="hex-row">
+            <input
+              class="hex-input"
+              type="text"
+              placeholder="#rrggbb"
+              maxlength="7"
+              bind:value={customHex}
+              onblur={commitCustomHex}
+              onkeydown={handleHexKeydown}
+              data-testid="char-color-custom-input"
+            />
+            {#if customHexPreview}
+              <span
+                class="swatch swatch-display"
+                style="--sw:{customHexPreview}"
+                aria-hidden="true"
+                data-testid="char-color-custom-preview"
+              ></span>
+            {/if}
+          </div>
+          <!-- Native color picker spans both grid rows so the right
+               column has no blank space below the wheel. -->
           <input
             type="color"
             class="color-wheel"
@@ -817,26 +836,6 @@
             aria-label="Custom color picker"
             data-testid="char-color-wheel"
           />
-        </div>
-        <div class="hex-row">
-          <input
-            class="hex-input"
-            type="text"
-            placeholder="#rrggbb"
-            maxlength="7"
-            bind:value={customHex}
-            onblur={commitCustomHex}
-            onkeydown={handleHexKeydown}
-            data-testid="char-color-custom-input"
-          />
-          {#if customHexPreview}
-            <span
-              class="swatch swatch-display"
-              style="--sw:{customHexPreview}"
-              aria-hidden="true"
-              data-testid="char-color-custom-preview"
-            ></span>
-          {/if}
         </div>
         {#if customHexError}
           <p class="hex-error" data-testid="char-color-custom-error">{customHexError}</p>
@@ -1666,22 +1665,26 @@
   }
   .hex-input:focus { border-color: var(--color-accent); }
 
-  /* Top row layout: swatches flex-grow on the left, color wheel as a
-     fixed square on the right. Hex input + live preview swatch live
-     on their own row below. Matches color-vision.png. */
-  .color-top-row {
-    display: flex;
+  /* 2-row grid layout: swatches (row 1) + hex input (row 2) on the
+     left column, color wheel spans both rows on the right.
+     align-self: stretch on the wheel makes it fill the full combined
+     height so there's no blank space in the right column. */
+  .color-grid {
+    display: grid;
+    grid-template-columns: 1fr 60px;
+    grid-template-rows: auto auto;
+    column-gap: 10px;
+    row-gap: 6px;
     align-items: center;
-    gap: 10px;
   }
-  .color-top-row .swatch-row {
-    flex: 1;
-    min-width: 0;
-  }
-  .color-wheel {
-    flex-shrink: 0;
-    width: 52px;
-    height: 52px;
+  .color-grid .swatch-row { grid-column: 1; grid-row: 1; }
+  .color-grid .hex-row { grid-column: 1; grid-row: 2; }
+  .color-grid .color-wheel {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: stretch;
+    width: 100%;
+    height: auto;
     padding: 0;
     border: 1px solid var(--color-border);
     border-radius: 6px;
@@ -1697,7 +1700,6 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-top: 6px;
   }
 
   /* Used-elsewhere swatch indicator — a small dot in the top-right
