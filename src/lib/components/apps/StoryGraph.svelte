@@ -7,33 +7,11 @@
   import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
+  import { REL_COLOR, NODE_COLOR, REL_TYPES } from '$lib/relationship-colors.js';
 
   // ── Constants ──────────────────────────────────────────────────────────────
   const NODE_W = 120;
   const NODE_H = 32;
-
-  const REL_COLOR: Record<string, string> = {
-    allied_with:    'var(--color-rel-ally)',
-    rivals:         'var(--color-rel-rival)',
-    appears_in:     'var(--color-rel-arc)',
-    takes_place_at: 'var(--color-rel-event)',
-    caused_by:      'var(--color-rel-other)',
-    located_at:     'var(--color-rel-loc)',
-    mentor_of:      'var(--color-rel-mentor)',
-  };
-
-  const NODE_COLOR: Record<string, string> = {
-    Character: 'var(--color-accent)',
-    Location:  'var(--color-rel-loc)',
-    Event:     'var(--color-rel-event)',
-    Act:       'var(--color-rel-arc)',
-    Scene:     'var(--color-rel-arc)',
-  };
-
-  const REL_TYPES: RelationshipType[] = [
-    'allied_with', 'rivals', 'mentor_of', 'appears_in',
-    'takes_place_at', 'caused_by', 'located_at',
-  ];
 
   // ── Viewport transform ─────────────────────────────────────────────────────
   let panX = $state(0);
