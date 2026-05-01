@@ -397,6 +397,55 @@ describe('CharacterEditor — list mode bulk delete', () => {
 		);
 		expect(getByText('Delete (1)')).toBeInTheDocument();
 	});
+
+	it('partial-failure deletes re-select only the failed IDs (Greptile P2)', async () => {
+		// Seed two characters. char-1 DELETEs succeed; char-2 DELETEs
+		// fail. Verify Promise.allSettled flow: only char-2 remains
+		// selected, error message reflects the count of 1 (singular).
+		const aragorn = makeCharacter();
+		const gandalf: Entity = {
+			id: 'char-2',
+			type: 'Character',
+			name: 'Gandalf',
+			data: {},
+			parentId: null,
+			position: 0,
+			createdAt: new Date(0),
+			updatedAt: new Date(0)
+		} as Entity;
+		globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+			if (init?.method === 'DELETE') {
+				if (url === '/api/entities/char-1') return makeResponse(null, true, 204);
+				if (url === '/api/entities/char-2') return makeResponse('boom', false, 500);
+			}
+			return makeResponse([aragorn, gandalf]);
+		}) as unknown as typeof fetch;
+		await entities.load();
+
+		const { container, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: null }
+		});
+		await fireEvent.click(getByText('Select'));
+		await tick();
+		// Select both rows.
+		const checks = container.querySelectorAll('.char-check');
+		expect(checks.length).toBe(2);
+		await fireEvent.click(checks[0]);
+		await fireEvent.click(checks[1]);
+		await tick();
+		expect(getByText('Delete (2)')).toBeInTheDocument();
+		await fireEvent.click(getByText('Delete (2)'));
+		await tick();
+		await fireEvent.click(getByText('Delete'));
+		await waitFor(() => {
+			// Error message uses singular form for 1 failure (not "1 characters").
+			expect(getByText("Couldn't delete 1 character.")).toBeInTheDocument();
+		});
+		// Still in select mode so the user can retry the failed one;
+		// only the failed char-2 remains selected → toolbar shows
+		// "Delete (1)", not "Delete (2)" or no toolbar at all.
+		expect(getByText('Delete (1)')).toBeInTheDocument();
+	});
 });
 
 describe('CharacterEditor — detail mode delete', () => {

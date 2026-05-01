@@ -64,7 +64,16 @@
     try {
       const created = await entities.createEntity('Character', 'New Character');
       pendingEditMode.add(created.id);
-      openEntity(created.id);
+      try {
+        openEntity(created.id);
+      } catch (err) {
+        // openEntity is a stable router but if it throws (e.g. window
+        // store error), back out the pending-edit signal so the
+        // already-created entity doesn't later pop into edit mode via
+        // some other code path.
+        pendingEditMode.delete(created.id);
+        throw err;
+      }
     } catch {
       // Surface the failure inline (was previously swallowed). Most likely
       // network or 500 from the server — user gets a brief notice and can
@@ -104,26 +113,27 @@
     // what you can see.
     const ids = [...visibleSelected];
     if (ids.length === 0) return;
-    // Snapshot the prior UI state so we can roll back if the network
-    // call fails (Greptile P2). Without this, a 500 leaves the user with
-    // an empty selection AND the toolbar back to non-select mode, but
-    // the characters still present — confusing.
-    const priorSelected = selected;
-    const priorSelecting = selecting;
     bulkDeleting = true;
     bulkDeleteError = '';
     selected = new Set();
     selecting = false;
     confirmingBulkDelete = false;
-    try {
-      await Promise.all(ids.map((id) => entities.deleteEntity(id)));
-    } catch {
-      selected = priorSelected;
-      selecting = priorSelecting;
-      bulkDeleteError = "Couldn't delete some characters.";
-    } finally {
-      bulkDeleting = false;
+    // Use allSettled so a partial failure (3/5 succeed) only re-selects
+    // the IDs that ACTUALLY failed, instead of restoring the whole
+    // pre-delete set including the 3 successes. Each per-id
+    // entities.deleteEntity already does its own optimistic-update +
+    // rollback for the entity row itself.
+    const results = await Promise.allSettled(
+      ids.map((id) => entities.deleteEntity(id))
+    );
+    const failedIds = ids.filter((_, i) => results[i].status === 'rejected');
+    if (failedIds.length > 0) {
+      selected = new Set(failedIds);
+      selecting = true;
+      bulkDeleteError =
+        `Couldn't delete ${failedIds.length} character${failedIds.length === 1 ? '' : 's'}.`;
     }
+    bulkDeleting = false;
   }
 
   // ── Detail mode ───────────────────────────────────────────────────────────
