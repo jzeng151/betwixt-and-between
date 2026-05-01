@@ -69,6 +69,12 @@
 		/** Fires after a drag completes; host can persist the position. Debounce
 		    is the host's responsibility. */
 		onNodePositionChange?: (id: string, position: NodePosition) => void;
+		/** Fires on right-click of a node. clientX/clientY are BROWSER-VIEWPORT
+		    coords (NOT canvas-local) so a `position: fixed` ContextMenu lands
+		    at the cursor regardless of how the host window is positioned.
+		    Cancels any in-progress connect-drag automatically (per the locked
+		    C3 UX collision rule). */
+		onContextMenu?: (id: string, clientX: number, clientY: number) => void;
 	}
 
 	let {
@@ -80,7 +86,8 @@
 		nodeOverlay,
 		onConnect,
 		onNodeOpen,
-		onNodePositionChange
+		onNodePositionChange,
+		onContextMenu
 	}: Props = $props();
 
 	const NODE_W = 120;
@@ -325,6 +332,23 @@
 		onNodeOpen?.(id);
 	}
 
+	function onNodeContextMenu(e: MouseEvent, id: string) {
+		e.preventDefault();
+		e.stopPropagation();
+		// UX collision rule (locked C3): right-clicking during a connect-drag
+		// CANCELS the connect and does NOT open the menu. Drop any in-progress
+		// connect state before deciding whether to fire onContextMenu.
+		if (connecting) {
+			connecting = null;
+			return;
+		}
+		// Pass BROWSER-VIEWPORT coords (clientX/clientY) — ContextMenu uses
+		// position: fixed and needs viewport coords, not canvas-local. Greptile
+		// P1 on PR #12: the previous viewportXY() return value (canvas-local)
+		// made the menu appear offset by the host window's position.
+		onContextMenu?.(id, e.clientX, e.clientY);
+	}
+
 	// Public-via-snippet method: overlay UI calls this to start a connection drag.
 	export function startConnect(e: PointerEvent, fromId: string) {
 		e.stopPropagation();
@@ -401,6 +425,7 @@
 					style="left:{p.x}px; top:{p.y}px; --nc:{nc}"
 					onpointerdown={(e) => onNodePointerDown(e, node.id)}
 					ondblclick={(e) => onNodeDblClick(e, node.id)}
+					oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
 					onpointerenter={() => (hoveredNodeId = node.id)}
 					onpointerleave={() => {
 						if (draggingNode?.id !== node.id) hoveredNodeId = null;

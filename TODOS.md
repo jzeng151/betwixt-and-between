@@ -389,8 +389,8 @@ Prerequisite to opening this branch: Phase 1.6 already shipped to main (✓ done
 - [x] B2. `src/lib/graph/traversal.ts` — `sharedNeighbors`, `oneHopUnion`, `reachable` (cycle-safe BFS). `TraversalOptions` with `includeStructural` + `structuralIds: Set<string>` so callers opt into walking through Act/Scene nodes (avoids huge `appears_in` / `caused_by` fan-outs by default). 13 unit tests at `tests/unit/graph-traversal.test.ts`.
 - [x] B3. `<ContextMenu items={...} x y onClose={...} />` reusable component at `src/lib/components/ContextMenu.svelte`. Keyboard nav (Arrow / Enter / Esc), click-outside dismiss, viewport-edge clamping (extracted to `src/lib/components/context-menu-clamp.ts` for testability). Greptile fix: `selectItem` calls `onClose()` after `onSelect()` so callsites don't have to wrap. 9 component tests + 6 clamp unit tests + 4 edge-policy unit tests.
 
-**Lane C — Feature integration (depends on Z + A + B):**
-- [ ] C1. Add `'FocusedGraph'` to `AppId` enum + extend `windows.ts` window state shape:
+**Lane C — Feature integration (depends on Z + A + B):** Splitting into 2 PRs. PR 1 = C1+C2+C3+C6 (foundation + right-click menu). PR 2 = C4+C5+C7 (legend, dagre layout, type-order panel).
+- [x] C1. **DONE** in Lane C PR 1. Added `'focused-graph'` to AppId, extended WindowState with optional `focalSet`/`viewMode`/`typeOrder`, new store helpers (`openFocusedGraph`, `setFocalSet`, `setViewMode`, `setTypeOrder`) — each reassigns arrays never mutates per Svelte 5 $derived-invalidation rule. Focused-graph windows are multi-instance like story-graph.
        ```ts
        { focalSet: string[];
          viewMode: 'shared' | 'their_worlds' | 'reachable';
@@ -398,11 +398,8 @@ Prerequisite to opening this branch: Phase 1.6 already shipped to main (✓ done
        }
        ```
        Multi-window per Phase 1B by design. Each window's pin/position/typeOrder is independent (per-window canvas via A1).
-- [ ] C2. `<FocusedGraph>` component consuming `<GraphCanvas>` + traversal helpers. Visible-set is `$derived` from focalSet + mode + entities + relationships. Mutation discipline: focalSet writes MUST reassign (`focalSet = [...focalSet, id]`), never `Object.assign` / push, to keep `$derived` invalidation correct (Svelte 5 footgun — see test plan).
-       **Append behavior:** existing nodes do NOT move; new nodes use stored `window_canvas_state` for that window or fall back to `canvas_positions` seed or grid spawn (per Issue 7 / B1 "stay where you were").
-- [ ] C3. Right-click menu wired into StoryGraph + FocusedGraph nodes: Open in window, View connections, Open Focused Graph, Edit, Delete, Pin to canvas. Custom action configurability deferred.
-       FG-only: when right-clicking on a focal node, replace "Open Focused Graph" with **"Remove from focal set"**.
-       UX collisions: (a) right-clicking during a connect-drag CANCELS the connect and does NOT open the menu; (b) menu items operating on optimistic-create-pending edges (temp IDs) are disabled until the server-assigned ID resolves.
+- [x] C2. **DONE** in Lane C PR 1. `<FocusedGraph>` at `src/lib/components/apps/FocusedGraph.svelte`. Visible-set $derived from focalSet + mode + relationships via `sharedNeighbors` / `oneHopUnion` / `reachable` (Lane B's traversal helpers). Includes the focal set itself in display so 'shared' mode never hides the focals you just picked. Note exclusion matches StoryGraph parity. Position seed from per-window endpoint (Lane A) with per-entity `/api/canvas-positions` fallback. Per-window persistence on drag-complete via PUT to A2 endpoint. Header has viewMode select + focal-set chips with × removal. Empty-state hint when focalSet empty.
+- [x] C3. **DONE** in Lane C PR 1. GraphCanvas gains optional `onContextMenu(id, screenX, screenY)` prop + per-node `oncontextmenu` listener. Locked UX collision rule honored: right-click during a connect-drag CANCELS the connect and does NOT open the menu. StoryGraph items: Open in window / Open Focused Graph (entry point) / Delete. FocusedGraph items: Open in window + (Remove from focal set if focal | Add to focal set otherwise). Item shapes minimal for v1 — View connections / Edit / Pin to canvas deferred (Pin needs the per-window pin UI from C5/C7).
 - [ ] C4. Legend UI panel (corner of viewport) with toggleable entries per `RelationshipType`. Visible-edge set = union of toggled-on types (default: all on). Layers WITH scrubber dimming, not against it.
 - [ ] C5. "Layout by type" right-click action: dynamic-import `dagre`, run on visible **non-pinned** nodes assigned to ranks via the window's `typeOrder` (default order if unset), persist via `/api/canvas-positions/window/[windowId]/batch` (A3). Bundle cost paid on first click only (~80KB).
        **Algorithm (locked T2A):**
@@ -417,8 +414,7 @@ Prerequisite to opening this branch: Phase 1.6 already shipped to main (✓ done
        ```
        Pinned-stays-put is the sacred invariant. Edges crossing pinned↔unpinned will be visually ugly; accepted cost.
        Concurrency: layout-by-type acquires a window-local async lock (in-memory, per FocusedGraph instance); two simultaneous clicks within one window queue. Cross-window concurrent layout = independent (per-window canvas) so no cross-talk.
-- [ ] C6. **Soft-filter rule** (locked invariant): scrubber dimming layers on top of FocusedGraph view-mode visibility; does NOT alter the traversal result set. Layout-by-type uses full visibleSet, never the in-scope-at-T subset.
-       UX edge case to test: in `shared` mode the visible-set is already small (intersection); adding scrubber dimming can produce a "90% dimmed" view. Test plan must include a visual-test case for this scenario; consider a future per-window toggle "auto-dim scrubber off when visibleSet < 5" as a follow-up if it lands badly in practice.
+- [x] C6. **Soft-filter rule honored** in Lane C PR 1. Documented as inline comment near the `visibleSet` derivation in FocusedGraph. Structurally enforced: traversal helpers (B2) take no time/playhead parameter, so there's no way to leak playhead into the visible-set computation. `outOfScope` flows ONLY into GraphCanvas's `dimmedNodes` prop. Visual-test case for 'shared mode + small visibleSet' deferred to manual QA; if the 90%-dimmed UX lands badly, follow-up adds the auto-dim-off toggle.
 - [ ] C7. `<TypeOrderPanel>` — small drag-reorder component. Settings panel inside FocusedGraph (and optionally StoryGraph) where user reorders the `typeOrder` list. "Apply" runs C5 layout. Default ordering: project-level `DEFAULT_TYPE_ORDER` constant in `src/lib/graph/defaults.ts` (e.g., `['Scene', 'Event', 'Character', 'Location', 'Act', 'Note']`). Window override stored per-window.
 
 **Worktree parallelization:**

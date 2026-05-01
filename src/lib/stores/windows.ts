@@ -7,7 +7,16 @@ export type AppId =
 	| 'timeline'
 	| 'entity-detail'
 	| 'wiki'
-	| 'story-graph';
+	| 'story-graph'
+	| 'focused-graph';
+
+/**
+ * View modes for `focused-graph` windows (Phase 1B Lane C):
+ *   - `shared`        — only entities reachable from EVERY focal node (intersection)
+ *   - `their_worlds`  — union of 1-hop neighbors of any focal node
+ *   - `reachable`     — cycle-safe BFS from any focal node (everything they touch)
+ */
+export type FocusedGraphMode = 'shared' | 'their_worlds' | 'reachable';
 
 export type WindowState = {
 	id: string;
@@ -20,6 +29,15 @@ export type WindowState = {
 	minimized: boolean;
 	maximized: boolean;
 	zIndex: number;
+	// FocusedGraph window state. Only set on appId === 'focused-graph'.
+	// focalSet writes MUST reassign (`focalSet = [...focalSet, id]`),
+	// never push/Object.assign, to keep Svelte 5 $derived invalidation
+	// correct downstream. The store's `update` already reassigns the
+	// whole window object so mutation through the store helpers below
+	// is safe; component-local mirrors must follow the same rule.
+	focalSet?: string[];
+	viewMode?: FocusedGraphMode;
+	typeOrder?: EntityType[];
 };
 
 /**
@@ -46,9 +64,12 @@ function createWindowStore() {
 	const { subscribe, update, set } = writable<WindowState[]>([]);
 
 	function open(appId: AppId, entityId: string | null = null): string {
-		// story-graph windows are always independent — each open call creates a new instance
-		const windowId = appId === 'story-graph'
-			? `story-graph-${Date.now()}`
+		// story-graph and focused-graph windows are always independent —
+		// each open call creates a new instance. Other apps dedupe by id
+		// (single timeline / wiki / entity-detail per entity).
+		const isMultiInstance = appId === 'story-graph' || appId === 'focused-graph';
+		const windowId = isMultiInstance
+			? `${appId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 			: entityId ? `${appId}-${entityId}` : appId;
 
 		const existing = get({ subscribe }).find((w) => w.id === windowId);
@@ -63,7 +84,7 @@ function createWindowStore() {
 		lastOpenY = lastOpenY + 28 > 400 ? 80 : lastOpenY + 28;
 		zCounter++;
 
-		const isGraph = appId === 'story-graph';
+		const isGraph = appId === 'story-graph' || appId === 'focused-graph';
 
 		update((all) => [
 			...all,
@@ -84,10 +105,52 @@ function createWindowStore() {
 				height: isGraph ? 500 : 480,
 				minimized: false,
 				maximized: false,
-				zIndex: zCounter
+				zIndex: zCounter,
+				// Seed focused-graph windows with empty focal set + default
+				// view mode + undefined typeOrder (caller may set right after).
+				...(appId === 'focused-graph'
+					? { focalSet: [] as string[], viewMode: 'their_worlds' as FocusedGraphMode }
+					: {})
 			}
 		]);
 		return windowId;
+	}
+
+	/**
+	 * Open a fresh FocusedGraph window seeded with a focal set. Returns the
+	 * new window id so callers can pass it to <FocusedGraph windowId={...} />.
+	 * Each call creates an independent window; multiple FocusedGraph
+	 * instances are by design (Phase 1B C1).
+	 */
+	function openFocusedGraph(
+		focalSet: string[],
+		viewMode: FocusedGraphMode = 'their_worlds'
+	): string {
+		const windowId = open('focused-graph', null);
+		update((all) =>
+			all.map((w) => (w.id === windowId ? { ...w, focalSet: [...focalSet], viewMode } : w))
+		);
+		return windowId;
+	}
+
+	/**
+	 * Replace the focal set for a window. Reassigns the array (never mutates)
+	 * so Svelte 5 $derived dependencies invalidate correctly.
+	 */
+	function setFocalSet(windowId: string, focalSet: string[]) {
+		update((all) =>
+			all.map((w) => (w.id === windowId ? { ...w, focalSet: [...focalSet] } : w))
+		);
+	}
+
+	function setViewMode(windowId: string, viewMode: FocusedGraphMode) {
+		update((all) => all.map((w) => (w.id === windowId ? { ...w, viewMode } : w)));
+	}
+
+	function setTypeOrder(windowId: string, typeOrder: EntityType[]) {
+		update((all) =>
+			all.map((w) => (w.id === windowId ? { ...w, typeOrder: [...typeOrder] } : w))
+		);
 	}
 
 	function openForEntity(entityId: string, entityType: EntityType): string {
@@ -176,6 +239,10 @@ function createWindowStore() {
 		subscribe,
 		open,
 		openForEntity,
+		openFocusedGraph,
+		setFocalSet,
+		setViewMode,
+		setTypeOrder,
 		close,
 		focus,
 		minimize,

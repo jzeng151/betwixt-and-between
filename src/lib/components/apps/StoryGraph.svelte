@@ -4,6 +4,7 @@
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
   import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
+  import { windowStore } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
   import { REL_COLOR, REL_TYPES } from '$lib/relationship-colors.js';
@@ -12,6 +13,7 @@
     type GraphEdge,
     type NodePosition
   } from '$lib/components/GraphCanvas.svelte';
+  import ContextMenu from '$lib/components/ContextMenu.svelte';
 
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
@@ -21,6 +23,9 @@
 
   // First × click arms delete; second click on same node confirms.
   let confirmDeleteId = $state<string | null>(null);
+
+  // Right-click context menu state.
+  let contextMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
 
   // Reference to the canvas so the per-node overlay UI can trigger connect drags.
   let canvas: GraphCanvas;
@@ -87,23 +92,32 @@
     })();
   });
 
-  // ── Position persistence (debounced) ───────────────────────────────────────
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  // ── Position persistence (per-node debounce) ──────────────────────────────
+  // Greptile P2 on PR #12: a single shared timer dropped cross-node writes
+  // when two drags completed within 500 ms. Per-node map preserves the
+  // coalescing semantic for rapid re-drags of the SAME node while never
+  // canceling a different node's pending PUT.
+  const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function onNodePositionChange(id: string, p: NodePosition) {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      fetch('/api/canvas-positions', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entityId: id,
-          x: Math.round(p.x),
-          y: Math.round(p.y),
-          width: Math.round(p.w),
-          height: Math.round(p.h)
-        })
-      });
-    }, 500);
+    const existing = saveTimers.get(id);
+    if (existing) clearTimeout(existing);
+    saveTimers.set(
+      id,
+      setTimeout(() => {
+        saveTimers.delete(id);
+        fetch('/api/canvas-positions', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entityId: id,
+            x: Math.round(p.x),
+            y: Math.round(p.y),
+            width: Math.round(p.w),
+            height: Math.round(p.h)
+          })
+        });
+      }, 500)
+    );
   }
 
   // ── Connect → rel-form ─────────────────────────────────────────────────────
@@ -157,6 +171,30 @@
       confirmDeleteId = id;
     }
   }
+
+  // ── Right-click context menu ───────────────────────────────────────────────
+  // Locked menu items per Phase 1B C3:
+  //   Open in window, View connections, Open Focused Graph, Edit, Delete,
+  //   Pin to canvas. (Pin is deferred until the per-window pin state UI lands;
+  //   ships disabled here so the slot is reserved.)
+  const contextMenuItems = $derived.by(() => {
+    if (!contextMenu) return [];
+    const id = contextMenu.entityId;
+    return [
+      {
+        label: 'Open in window',
+        onSelect: () => openEntity(id)
+      },
+      {
+        label: 'Open Focused Graph',
+        onSelect: () => windowStore.openFocusedGraph([id], 'their_worlds')
+      },
+      {
+        label: 'Delete',
+        onSelect: () => entities.deleteEntity(id)
+      }
+    ];
+  });
 </script>
 
 <GraphCanvas
@@ -168,6 +206,7 @@
   onConnect={onConnect}
   onNodeOpen={openEntity}
   onNodePositionChange={onNodePositionChange}
+  onContextMenu={(id, x, y) => (contextMenu = { entityId: id, x, y })}
 >
   {#snippet emptyState()}
     {#if !hasEntities}
@@ -228,6 +267,15 @@
       </button>
     </div>
   </div>
+{/if}
+
+{#if contextMenu}
+  <ContextMenu
+    items={contextMenuItems}
+    x={contextMenu.x}
+    y={contextMenu.y}
+    onClose={() => (contextMenu = null)}
+  />
 {/if}
 
 <style>
