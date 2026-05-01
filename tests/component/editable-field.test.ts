@@ -67,19 +67,21 @@ import EditableField from '../../src/lib/components/EditableField.svelte';
 
 const entitiesWritable = entities as unknown as ReturnType<typeof writable<Entity[]>>;
 
-function seedEntity(partial: Partial<Entity> & { id: string; name: string; data: string }) {
+function seedEntity(
+	partial: Partial<Entity> & { id: string; name: string; data: Record<string, unknown> }
+) {
 	const e: Entity = {
 		type: 'Act',
 		parentId: null,
 		position: 0,
-		createdAt: 0,
-		updatedAt: 0,
+		createdAt: new Date(0),
+		updatedAt: new Date(0),
 		...partial
 	} as Entity;
 	entitiesWritable.set([e]);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	updateEntityMock.mockReset();
 	updateEntityMock.mockResolvedValue({});
 	addRelationshipMock.mockReset();
@@ -95,7 +97,7 @@ beforeEach(() => {
 
 describe('EditableField — kind=textarea', () => {
 	it('reads initial value from $entities.find(id).data[field]', () => {
-		seedEntity({ id: 'act-1', name: 'A', data: JSON.stringify({ synopsis: 'opening' }) });
+		seedEntity({ id: 'act-1', name: 'A', data: { synopsis: 'opening' } });
 		const { container } = render(EditableField, {
 			props: {
 				entityId: 'act-1',
@@ -110,7 +112,7 @@ describe('EditableField — kind=textarea', () => {
 	});
 
 	it('blur commits the draft via entities.updateEntity with merged data', async () => {
-		seedEntity({ id: 'act-1', name: 'A', data: JSON.stringify({ synopsis: 'old', goal: 'g1' }) });
+		seedEntity({ id: 'act-1', name: 'A', data: { synopsis: 'old', goal: 'g1' } });
 		const { container } = render(EditableField, {
 			props: { entityId: 'act-1', field: 'synopsis', label: 'Synopsis', kind: 'textarea' }
 		});
@@ -127,7 +129,7 @@ describe('EditableField — kind=textarea', () => {
 	});
 
 	it('Esc reverts the draft and does NOT commit', async () => {
-		seedEntity({ id: 'act-1', name: 'A', data: JSON.stringify({ synopsis: 'old' }) });
+		seedEntity({ id: 'act-1', name: 'A', data: { synopsis: 'old' } });
 		const { container } = render(EditableField, {
 			props: { entityId: 'act-1', field: 'synopsis', label: 'Synopsis', kind: 'textarea' }
 		});
@@ -139,7 +141,7 @@ describe('EditableField — kind=textarea', () => {
 	});
 
 	it('shows Retry button on PATCH failure and re-fires the PATCH with the same value', async () => {
-		seedEntity({ id: 'act-1', name: 'A', data: JSON.stringify({ synopsis: '' }) });
+		seedEntity({ id: 'act-1', name: 'A', data: { synopsis: '' } });
 		updateEntityMock
 			.mockRejectedValueOnce(new Error('server'))
 			.mockResolvedValueOnce({});
@@ -166,7 +168,7 @@ describe('EditableField — kind=textarea', () => {
 
 describe('EditableField — kind=single-line', () => {
 	it('blur commits', async () => {
-		seedEntity({ id: 'sc-1', name: 'S', data: JSON.stringify({ goal: '' }) });
+		seedEntity({ id: 'sc-1', name: 'S', data: { goal: '' } });
 		const { container } = render(EditableField, {
 			props: { entityId: 'sc-1', field: 'goal', label: 'Goal', kind: 'single-line' }
 		});
@@ -178,7 +180,7 @@ describe('EditableField — kind=single-line', () => {
 	});
 
 	it('Enter commits without needing blur', async () => {
-		seedEntity({ id: 'sc-1', name: 'S', data: JSON.stringify({ goal: '' }) });
+		seedEntity({ id: 'sc-1', name: 'S', data: { goal: '' } });
 		const { container } = render(EditableField, {
 			props: { entityId: 'sc-1', field: 'goal', label: 'Goal', kind: 'single-line' }
 		});
@@ -190,7 +192,7 @@ describe('EditableField — kind=single-line', () => {
 	});
 
 	it('Esc cancels', async () => {
-		seedEntity({ id: 'sc-1', name: 'S', data: JSON.stringify({ goal: 'old' }) });
+		seedEntity({ id: 'sc-1', name: 'S', data: { goal: 'old' } });
 		const { container } = render(EditableField, {
 			props: { entityId: 'sc-1', field: 'goal', label: 'Goal', kind: 'single-line' }
 		});
@@ -207,7 +209,7 @@ describe('EditableField — kind=single-line', () => {
 
 describe('EditableField — kind=picklist', () => {
 	it('commits immediately on change (no blur required)', async () => {
-		seedEntity({ id: 'ev-1', name: 'E', type: 'Event', data: JSON.stringify({ outcome: 'no' }) });
+		seedEntity({ id: 'ev-1', name: 'E', type: 'Event', data: { outcome: 'no' } });
 		const { container } = render(EditableField, {
 			props: {
 				entityId: 'ev-1',
@@ -236,7 +238,7 @@ describe('EditableField — kind=picklist', () => {
 
 describe('EditableField — kind=swatches', () => {
 	it('commits when a swatch is clicked', async () => {
-		seedEntity({ id: 'act-1', name: 'A', data: JSON.stringify({ color: 'amber' }) });
+		seedEntity({ id: 'act-1', name: 'A', data: { color: 'amber' } });
 		const { container } = render(EditableField, {
 			props: {
 				entityId: 'act-1',
@@ -266,7 +268,7 @@ describe('EditableField — kind=swatches', () => {
 
 describe('EditableField — kind=multi-entity-picker', () => {
 	it('adding a character fires a single relationship insert (no entities.updateEntity call)', async () => {
-		seedEntity({ id: 'ev-1', name: 'E', type: 'Event', data: JSON.stringify({}) });
+		seedEntity({ id: 'ev-1', name: 'E', type: 'Event', data: {} });
 		// Two candidate Characters available for the picker
 		entitiesWritable.update((all) => [
 			...all,
@@ -274,21 +276,21 @@ describe('EditableField — kind=multi-entity-picker', () => {
 				id: 'char-1',
 				type: 'Character',
 				name: 'Ellie',
-				data: '{}',
+				data: {},
 				parentId: null,
 				position: null,
-				createdAt: 0,
-				updatedAt: 0
+				createdAt: new Date(0),
+				updatedAt: new Date(0)
 			} as Entity,
 			{
 				id: 'char-2',
 				type: 'Character',
 				name: 'Damien',
-				data: '{}',
+				data: {},
 				parentId: null,
 				position: null,
-				createdAt: 0,
-				updatedAt: 0
+				createdAt: new Date(0),
+				updatedAt: new Date(0)
 			} as Entity
 		]);
 		const { container } = render(EditableField, {
@@ -317,18 +319,18 @@ describe('EditableField — kind=multi-entity-picker', () => {
 	});
 
 	it('removing a chip fires a single relationship delete', async () => {
-		seedEntity({ id: 'ev-1', name: 'E', type: 'Event', data: JSON.stringify({}) });
+		seedEntity({ id: 'ev-1', name: 'E', type: 'Event', data: {} });
 		entitiesWritable.update((all) => [
 			...all,
 			{
 				id: 'char-1',
 				type: 'Character',
 				name: 'Ellie',
-				data: '{}',
+				data: {},
 				parentId: null,
 				position: null,
-				createdAt: 0,
-				updatedAt: 0
+				createdAt: new Date(0),
+				updatedAt: new Date(0)
 			} as Entity
 		]);
 		// Seed the mocked relationships store so EditableField can find the row id
@@ -366,7 +368,7 @@ describe('EditableField — kind=multi-entity-picker', () => {
 
 describe('EditableField — optimistic update + rollback (D15)', () => {
 	it('passes the merged data to entities.updateEntity (which handles the optimistic write)', async () => {
-		seedEntity({ id: 'act-1', name: 'A', data: JSON.stringify({ synopsis: 'before', goal: 'g' }) });
+		seedEntity({ id: 'act-1', name: 'A', data: { synopsis: 'before', goal: 'g' } });
 		const { container } = render(EditableField, {
 			props: { entityId: 'act-1', field: 'synopsis', label: 'Synopsis', kind: 'textarea' }
 		});

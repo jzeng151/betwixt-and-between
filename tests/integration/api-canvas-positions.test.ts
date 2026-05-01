@@ -8,7 +8,7 @@ import { createTestDb } from '../helpers/test-db.js';
 import { entities, canvasPositions } from '../../src/lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 
-let currentDb: ReturnType<typeof createTestDb>;
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
@@ -33,8 +33,8 @@ async function readJson(res: Response): Promise<any> {
 }
 
 describe('/api/canvas-positions GET', () => {
-	beforeEach(() => {
-		currentDb = createTestDb();
+	beforeEach(async () => {
+		currentDb = await createTestDb();
 	});
 
 	it('returns empty array initially', async () => {
@@ -60,7 +60,7 @@ describe('/api/canvas-positions PUT', () => {
 	let entityId: string;
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		const [e] = await currentDb
 			.insert(entities)
 			.values({ type: 'Character', name: 'Ellie' })
@@ -110,7 +110,7 @@ describe('/api/canvas-positions PUT', () => {
 
 	it('rejects unknown entity with 400', async () => {
 		await expect(
-			route.PUT(mkEvent({ body: { entityId: 'nope', x: 1, y: 2 } }))
+			route.PUT(mkEvent({ body: { entityId: '00000000-0000-0000-0000-000000000000', x: 1, y: 2 } }))
 		).rejects.toMatchObject({ status: 400 });
 	});
 

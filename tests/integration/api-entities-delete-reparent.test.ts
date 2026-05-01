@@ -22,7 +22,7 @@ import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
 
-let currentDb: ReturnType<typeof createTestDb>;
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
@@ -47,7 +47,7 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 	let ellie: string;
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		acts = await seedActs(currentDb);
 		const [c] = await currentDb
 			.insert(entities)
@@ -198,7 +198,7 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 
 	it('rejects moveScenesTo with non-existent target (400)', async () => {
 		const url = new URL(
-			`http://localhost/api/entities/${acts.act1}?moveScenesTo=does-not-exist`
+			`http://localhost/api/entities/${acts.act1}?moveScenesTo=00000000-0000-0000-0000-000000000000`
 		);
 		await expect(
 			idRoute.DELETE(mkEvent({ params: { id: acts.act1 }, url }))

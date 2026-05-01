@@ -20,7 +20,7 @@ import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval, splitInterval } from '../../src/lib/server/intervals.js';
 
-type Db = ReturnType<typeof createTestDb>;
+type Db = Awaited<ReturnType<typeof createTestDb>>;
 
 describe('splitInterval — D7/5b A', () => {
 	let db: Db;
@@ -28,7 +28,7 @@ describe('splitInterval — D7/5b A', () => {
 	let ellie: string;
 
 	beforeEach(async () => {
-		db = createTestDb();
+		db = await createTestDb();
 		acts = await seedActs(db);
 		const [c] = await db
 			.insert(entities)
@@ -253,6 +253,6 @@ describe('splitInterval — D7/5b A', () => {
 	});
 
 	it('rejects split on a non-existent interval', async () => {
-		await expect(splitInterval(db, 'no-such-id', 1.0)).rejects.toThrow();
+		await expect(splitInterval(db, '00000000-0000-0000-0000-000000000000', 1.0)).rejects.toThrow();
 	});
 });

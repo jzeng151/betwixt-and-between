@@ -191,27 +191,15 @@ export const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
 /** Minimal entity shape consumed by these helpers (avoids store coupling). */
 export interface EntityForHelpers {
 	type: string;
-	data: string;
+	// jsonb-shaped object post-T8a (was a JSON-stringified string in the
+	// sqlite era). Helpers no longer parse — caller passes the object.
+	data: Record<string, unknown> | null | undefined;
 }
 
 export type TimelineLabelMode =
 	| { mode: 'name-only' }
 	| { mode: 'name-and-note' }
 	| { mode: 'custom'; field: string };
-
-/**
- * Parse the `entity.data` JSON string. Returns an empty object if the string
- * is missing or invalid — never throws. Returned values are otherwise raw.
- */
-export function parseEntityData(raw: string | null | undefined): Record<string, unknown> {
-	if (!raw) return {};
-	try {
-		const v = JSON.parse(raw);
-		return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-	} catch {
-		return {};
-	}
-}
 
 /**
  * Color for an entity bar.
@@ -221,7 +209,7 @@ export function parseEntityData(raw: string | null | undefined): Record<string, 
  */
 export function colorFor(entity: EntityForHelpers, idx: number): string {
 	if (entity.type === 'Event') return EVENT_COLOR;
-	const d = parseEntityData(entity.data);
+	const d = entity.data ?? {};
 	const custom = typeof d.color === 'string' ? d.color : null;
 	if (custom && HEX_COLOR_RE.test(custom)) return custom;
 	return CHARACTER_COLORS[idx % CHARACTER_COLORS.length];
@@ -250,7 +238,7 @@ function firstLineSnippet(value: unknown): string | null {
  *   - default / `name-and-note` / unset → first line of `data.notes`
  */
 export function dataNoteSnippet(entity: EntityForHelpers): string | null {
-	const d = parseEntityData(entity.data);
+	const d = entity.data ?? {};
 	const label = d.timelineLabel as TimelineLabelMode | undefined;
 	if (label && typeof label === 'object' && 'mode' in label) {
 		if (label.mode === 'name-only') return null;

@@ -161,13 +161,8 @@
 	let weightOverride = $state<Record<string, number>>({});
 
 	function actBaseWeight(a: Entity): number {
-		try {
-			const d = JSON.parse(a.data) as Record<string, unknown>;
-			const raw = d?.timelineWeight;
-			if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw;
-		} catch {
-			// fall through
-		}
+		const raw = a.data?.timelineWeight;
+		if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw;
 		return 1;
 	}
 
@@ -181,13 +176,7 @@
 				updates.map(async ({ id, weight }) => {
 					const e = $entities.find((x) => x.id === id);
 					if (!e) return;
-					let existing: Record<string, unknown> = {};
-					try {
-						const v = JSON.parse(e.data);
-						if (v && typeof v === 'object' && !Array.isArray(v)) existing = v;
-					} catch {
-						// keep existing = {}
-					}
+					const existing = e.data ?? {};
 					await entities.updateEntity(id, {
 						data: { ...existing, timelineWeight: weight }
 					});

@@ -26,8 +26,9 @@
     return ROLE_OPTIONS.find((o) => o.value.toLowerCase() === lower)?.color ?? 'var(--color-text-muted)';
   }
 
-  function parseData(raw: string): Record<string, string> {
-    try { return JSON.parse(raw) ?? {}; } catch { return {}; }
+  // entity.data is jsonb (object) post-T8a; coerce to Record<string,string> shape.
+  function readData(data: Record<string, unknown> | undefined): Record<string, string> {
+    return (data ?? {}) as Record<string, string>;
   }
 
   function initials(name: string): string {
@@ -92,7 +93,7 @@
 
   $effect(() => {
     if (entity) {
-      const d = parseData(entity.data);
+      const d = readData(entity.data);
       role = d.role ?? '';
       affiliation = d.affiliation ?? '';
       motivation = d.motivation ?? '';
@@ -134,7 +135,7 @@
     // Preserve any unknown keys in the existing data blob so we don't drop
     // fields we don't manage here (e.g. custom user fields used for
     // timelineLabel.mode === 'custom').
-    const existing = entity ? parseData(entity.data) : {};
+    const existing = entity ? readData(entity.data) : {};
     const data: Record<string, unknown> = {
       ...existing,
       role,
@@ -334,7 +335,7 @@
     {:else}
       <ul class="char-list">
         {#each characters as char}
-          {@const d = parseData(char.data)}
+          {@const d = readData(char.data)}
           <li>
             <button class="char-row" onclick={() => openEntity(char.id)}>
               <div class="char-avatar">

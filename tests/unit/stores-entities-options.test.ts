@@ -33,7 +33,7 @@ function entity(partial: Partial<Entity> & { id: string; name: string }): Entity
 	} as Entity;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	const fetchMock = vi.fn().mockResolvedValue(makeResponse([]));
 	globalThis.fetch = fetchMock as unknown as typeof fetch;
 	return entities.load();

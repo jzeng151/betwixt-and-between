@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, relationships, intervals } from '../../src/lib/server/db/schema.js';
 
-let currentDb: ReturnType<typeof createTestDb>;
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
@@ -39,7 +39,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 	let bob: string;
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		const [a] = await currentDb
 			.insert(entities)
 			.values({ type: 'Character', name: 'Alice' })
@@ -101,7 +101,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 	it('rejects unknown fromId entity with 400', async () => {
 		await expect(
 			relRoute.POST(
-				mkEvent({ body: { fromId: 'does-not-exist', toId: bob, type: 'rivals' } })
+				mkEvent({ body: { fromId: '00000000-0000-0000-0000-000000000000', toId: bob, type: 'rivals' } })
 			)
 		).rejects.toMatchObject({ status: 400 });
 	});
@@ -109,7 +109,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 	it('rejects unknown toId entity with 400', async () => {
 		await expect(
 			relRoute.POST(
-				mkEvent({ body: { fromId: alice, toId: 'does-not-exist', type: 'rivals' } })
+				mkEvent({ body: { fromId: alice, toId: '00000000-0000-0000-0000-000000000000', type: 'rivals' } })
 			)
 		).rejects.toMatchObject({ status: 400 });
 	});
@@ -131,7 +131,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 				toId: bob,
 				type: 'allied_with'
 			})
-		).rejects.toThrow(/UNIQUE constraint failed/);
+		).rejects.toThrow();
 		// But a different type between same pair is allowed.
 		await currentDb.insert(relationships).values({
 			fromId: alice,
@@ -144,8 +144,8 @@ describe('/api/relationships POST (non-hijack)', () => {
 });
 
 describe('/api/relationships GET', () => {
-	beforeEach(() => {
-		currentDb = createTestDb();
+	beforeEach(async () => {
+		currentDb = await createTestDb();
 	});
 
 	it('returns empty array when no relationships', async () => {
@@ -192,8 +192,8 @@ describe('/api/relationships GET', () => {
 });
 
 describe('/api/relationships/[id] DELETE', () => {
-	beforeEach(() => {
-		currentDb = createTestDb();
+	beforeEach(async () => {
+		currentDb = await createTestDb();
 	});
 
 	it('deletes a real relationship and returns 204', async () => {
@@ -219,7 +219,7 @@ describe('/api/relationships/[id] DELETE', () => {
 
 	it('returns 404 for unknown relationship id', async () => {
 		await expect(
-			relIdRoute.DELETE(mkEvent({ params: { id: 'no-such-id' } }))
+			relIdRoute.DELETE(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 

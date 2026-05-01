@@ -18,11 +18,11 @@ function makeCharacter(data: Record<string, unknown> = {}): Entity {
 		id: 'char-1',
 		type: 'Character',
 		name: 'Aragorn',
-		data: JSON.stringify(data),
+		data,
 		parentId: null,
 		position: 0,
-		createdAt: 0,
-		updatedAt: 0
+		createdAt: new Date(0),
+		updatedAt: new Date(0)
 	} as Entity;
 }
 

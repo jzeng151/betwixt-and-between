@@ -85,17 +85,8 @@
 	// Current entity from store.
 	const entity = $derived(($entities as Entity[]).find((e) => e.id === entityId));
 
-	function parseData(raw: string): Record<string, unknown> {
-		try {
-			const v = JSON.parse(raw);
-			return v && typeof v === 'object' && !Array.isArray(v)
-				? (v as Record<string, unknown>)
-				: {};
-		} catch {
-			return {};
-		}
-	}
-	const data = $derived(entity ? parseData(entity.data) : {});
+	// entity.data is jsonb (object) post-T8a; no parse needed.
+	const data = $derived(entity ? entity.data : {});
 	const currentValue = $derived(
 		typeof data[field] === 'string' ? (data[field] as string) : ''
 	);
@@ -127,7 +118,7 @@
 		const value = draft;
 		lastAttempt = value;
 		saveError = null;
-		const existing = entity ? parseData(entity.data) : {};
+		const existing = entity ? (entity.data ?? {}) : {};
 		try {
 			await entities.updateEntity(entityId, {
 				data: { ...existing, [field]: value }
@@ -142,7 +133,7 @@
 		if (lastAttempt == null) return;
 		const value = lastAttempt;
 		saveError = null;
-		const existing = entity ? parseData(entity.data) : {};
+		const existing = entity ? (entity.data ?? {}) : {};
 		try {
 			await entities.updateEntity(entityId, {
 				data: { ...existing, [field]: value }
@@ -173,7 +164,7 @@
 
 	// Picklist / swatches: commit on change.
 	async function commitValue(value: string) {
-		const existing = entity ? parseData(entity.data) : {};
+		const existing = entity ? (entity.data ?? {}) : {};
 		try {
 			await entities.updateEntity(entityId, {
 				data: { ...existing, [field]: value }

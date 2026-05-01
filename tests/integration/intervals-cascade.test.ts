@@ -23,13 +23,13 @@ import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval, recomputeAllIntervals } from '../../src/lib/server/intervals.js';
 
 describe('cascade behavior on entity deletion', () => {
-	let db: ReturnType<typeof createTestDb>;
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 	let acts: { act0: string; act1: string; act2: string };
 	let ellie: string;
 	let damien: string;
 
 	beforeEach(async () => {
-		db = createTestDb();
+		db = await createTestDb();
 		acts = await seedActs(db);
 		const [a] = await db
 			.insert(entities)

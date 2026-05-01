@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTestDb, seedActs, SCHEMA_DDL } from '../helpers/test-db.js';
+import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
 import { eq } from 'drizzle-orm';
@@ -22,7 +22,7 @@ import { eq } from 'drizzle-orm';
 // to point at the in-memory test DB.
 import { vi } from 'vitest';
 
-let testDb: ReturnType<typeof createTestDb>;
+let testDb: Awaited<ReturnType<typeof createTestDb>>;
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
 		return testDb;
@@ -45,7 +45,7 @@ describe('act delete rescopes intervals instead of cascading', () => {
 	let ellie: string;
 
 	beforeEach(async () => {
-		testDb = createTestDb();
+		testDb = await createTestDb();
 		acts = await seedActs(testDb);
 		const [e] = await testDb
 			.insert(entities)

@@ -25,7 +25,7 @@ import {
 	moveSceneToAct
 } from '../../src/lib/server/intervals.js';
 
-type Db = ReturnType<typeof createTestDb>;
+type Db = Awaited<ReturnType<typeof createTestDb>>;
 
 describe('Interval helpers — transaction threading and atomicity (D17/17A)', () => {
 	let db: Db;
@@ -33,7 +33,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 	let ellie: string;
 
 	beforeEach(async () => {
-		db = createTestDb();
+		db = await createTestDb();
 		acts = await seedActs(db);
 		const [c] = await db
 			.insert(entities)

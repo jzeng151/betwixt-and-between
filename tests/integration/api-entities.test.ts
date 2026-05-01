@@ -14,7 +14,7 @@ import { createTestDb } from '../helpers/test-db.js';
 
 // Module-level holder so each test can swap in a fresh DB. The mock factory
 // closes over `currentDb` by reference via a getter.
-let currentDb: ReturnType<typeof createTestDb>;
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
@@ -42,8 +42,8 @@ async function readJson(res: Response): Promise<any> {
 }
 
 describe('/api/entities GET', () => {
-	beforeEach(() => {
-		currentDb = createTestDb();
+	beforeEach(async () => {
+		currentDb = await createTestDb();
 	});
 
 	it('returns empty array when no entities', async () => {
@@ -63,8 +63,8 @@ describe('/api/entities GET', () => {
 });
 
 describe('/api/entities POST', () => {
-	beforeEach(() => {
-		currentDb = createTestDb();
+	beforeEach(async () => {
+		currentDb = await createTestDb();
 	});
 
 	it('creates a Character entity with valid input', async () => {
@@ -82,20 +82,20 @@ describe('/api/entities POST', () => {
 		expect(body.name).toBe('Bob');
 	});
 
-	it('serializes data field as JSON string', async () => {
+	it('round-trips data field as jsonb object', async () => {
 		const res = await POST(
 			mkEvent({ body: { type: 'Character', name: 'Bob', data: { age: 30, role: 'hero' } } })
 		);
 		const body = await readJson(res);
-		// Drizzle stores it as JSON-encoded text; the API returns whatever the row is.
-		expect(typeof body.data).toBe('string');
-		expect(JSON.parse(body.data)).toEqual({ age: 30, role: 'hero' });
+		// Post-T8a: data is jsonb; the API returns the object directly, no
+		// JSON.parse boundary needed.
+		expect(body.data).toEqual({ age: 30, role: 'hero' });
 	});
 
-	it('defaults data to empty object string when omitted', async () => {
+	it('defaults data to empty object when omitted', async () => {
 		const res = await POST(mkEvent({ body: { type: 'Character', name: 'Bob' } }));
 		const body = await readJson(res);
-		expect(body.data).toBe('{}');
+		expect(body.data).toEqual({});
 	});
 
 	it('rejects unknown entity type with 400', async () => {
@@ -138,8 +138,8 @@ describe('/api/entities POST', () => {
 });
 
 describe('/api/entities/[id] GET', () => {
-	beforeEach(() => {
-		currentDb = createTestDb();
+	beforeEach(async () => {
+		currentDb = await createTestDb();
 	});
 
 	it('returns the entity by id', async () => {
@@ -154,14 +154,14 @@ describe('/api/entities/[id] GET', () => {
 
 	it('returns 404 for missing id', async () => {
 		await expect(
-			idRoute.GET(mkEvent({ params: { id: 'nope-not-real' } }))
+			idRoute.GET(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 });
 
 describe('/api/entities/[id] PATCH', () => {
-	beforeEach(() => {
-		currentDb = createTestDb();
+	beforeEach(async () => {
+		currentDb = await createTestDb();
 	});
 
 	it('updates name and trims whitespace', async () => {
@@ -175,7 +175,7 @@ describe('/api/entities/[id] PATCH', () => {
 		expect(body.name).toBe('Ellie Renamed');
 	});
 
-	it('updates data field by JSON.stringify', async () => {
+	it('updates data field as jsonb object', async () => {
 		const created = await readJson(
 			await POST(mkEvent({ body: { type: 'Character', name: 'Ellie' } }))
 		);
@@ -183,19 +183,19 @@ describe('/api/entities/[id] PATCH', () => {
 			mkEvent({ params: { id: created.id }, body: { data: { hobbies: ['archery'] } } })
 		);
 		const body = await readJson(res);
-		expect(JSON.parse(body.data)).toEqual({ hobbies: ['archery'] });
+		expect(body.data).toEqual({ hobbies: ['archery'] });
 	});
 
 	it('returns 404 when patching missing entity', async () => {
 		await expect(
-			idRoute.PATCH(mkEvent({ params: { id: 'nope' }, body: { name: 'X' } }))
+			idRoute.PATCH(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' }, body: { name: 'X' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 });
 
 describe('/api/entities/[id] DELETE', () => {
-	beforeEach(() => {
-		currentDb = createTestDb();
+	beforeEach(async () => {
+		currentDb = await createTestDb();
 	});
 
 	it('deletes the entity and returns 204', async () => {
@@ -213,7 +213,7 @@ describe('/api/entities/[id] DELETE', () => {
 
 	it('returns 404 when deleting missing entity', async () => {
 		await expect(
-			idRoute.DELETE(mkEvent({ params: { id: 'nope' } }))
+			idRoute.DELETE(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 

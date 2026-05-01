@@ -6,8 +6,9 @@
   interface Props { entityId: string | null; }
   let { entityId }: Props = $props();
 
-  function parseBody(raw: string): string {
-    try { return JSON.parse(raw)?.body ?? ''; } catch { return ''; }
+  // entity.data is jsonb (object) post-T8a; no parse needed.
+  function readBody(data: Record<string, unknown>): string {
+    return (data?.body as string) ?? '';
   }
 
   const notes = $derived(
@@ -17,7 +18,11 @@
   );
 
   let searchQuery = $state('');
-  let selectedId = $state<string | null>(entityId);
+  // Don't seed from `entityId` directly — that captures the initial value
+  // and won't track prop updates (Svelte's state_referenced_locally
+  // warning). The effect below picks up the initial entityId on mount AND
+  // any prop changes thereafter.
+  let selectedId = $state<string | null>(null);
 
   $effect(() => {
     if (entityId) selectedId = entityId;
@@ -49,7 +54,7 @@
 
   $effect(() => {
     if (selectedNote) {
-      editBody = parseBody(selectedNote.data);
+      editBody = readBody(selectedNote.data);
       previewMode = false;
     }
   });

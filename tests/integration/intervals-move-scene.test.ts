@@ -22,7 +22,7 @@ import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval, moveSceneToAct } from '../../src/lib/server/intervals.js';
 
-type Db = ReturnType<typeof createTestDb>;
+type Db = Awaited<ReturnType<typeof createTestDb>>;
 
 describe('moveSceneToAct — T3-pulled-in', () => {
 	let db: Db;
@@ -30,7 +30,7 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 	let ellie: string;
 
 	beforeEach(async () => {
-		db = createTestDb();
+		db = await createTestDb();
 		acts = await seedActs(db);
 		const [c] = await db
 			.insert(entities)

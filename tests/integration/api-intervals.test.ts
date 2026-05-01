@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 
-let currentDb: ReturnType<typeof createTestDb>;
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
@@ -40,7 +40,7 @@ describe('/api/intervals GET', () => {
 	let bob: string;
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		acts = await seedActs(currentDb);
 		const [e] = await currentDb
 			.insert(entities)
@@ -107,7 +107,7 @@ describe('/api/intervals POST', () => {
 	let ellie: string;
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		acts = await seedActs(currentDb);
 		const [e] = await currentDb
 			.insert(entities)
@@ -170,7 +170,7 @@ describe('/api/intervals/[id] GET/PATCH/DELETE', () => {
 	let intervalId: string;
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		acts = await seedActs(currentDb);
 		const [e] = await currentDb
 			.insert(entities)
@@ -194,7 +194,7 @@ describe('/api/intervals/[id] GET/PATCH/DELETE', () => {
 
 	it('GET returns 404 for missing id', async () => {
 		await expect(
-			idRoute.GET(mkEvent({ params: { id: 'nope' } }))
+			idRoute.GET(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 
@@ -212,7 +212,7 @@ describe('/api/intervals/[id] GET/PATCH/DELETE', () => {
 
 	it('PATCH returns 404 for missing id', async () => {
 		await expect(
-			idRoute.PATCH(mkEvent({ params: { id: 'nope' }, body: {} }))
+			idRoute.PATCH(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' }, body: {} }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 
@@ -234,7 +234,7 @@ describe('/api/intervals/[id] GET/PATCH/DELETE', () => {
 
 	it('DELETE returns 404 for missing id', async () => {
 		await expect(
-			idRoute.DELETE(mkEvent({ params: { id: 'nope' } }))
+			idRoute.DELETE(mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' } }))
 		).rejects.toMatchObject({ status: 404 });
 	});
 });

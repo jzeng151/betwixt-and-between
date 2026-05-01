@@ -39,7 +39,7 @@ import {
 	POSITION_EPSILON
 } from '../../src/lib/server/intervals.js';
 
-type Db = ReturnType<typeof createTestDb>;
+type Db = Awaited<ReturnType<typeof createTestDb>>;
 
 interface Violation {
 	row: typeof intervals.$inferSelect;
@@ -191,7 +191,7 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 	let acts: { act0: string; act1: string; act2: string };
 
 	beforeEach(async () => {
-		db = createTestDb();
+		db = await createTestDb();
 		acts = await seedActs(db);
 	});
 

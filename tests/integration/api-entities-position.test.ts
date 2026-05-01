@@ -20,7 +20,7 @@ import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
 
-let currentDb: ReturnType<typeof createTestDb>;
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
@@ -57,7 +57,7 @@ describe('POST /api/entities — Act with position (D1, insert semantics)', () =
 	let acts: { act0: string; act1: string; act2: string };
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		acts = await seedActs(currentDb);
 	});
 
@@ -181,7 +181,7 @@ describe('PATCH /api/entities/[id] — Act position cascade (D18 / Issue 12A)', 
 	let acts: { act0: string; act1: string; act2: string };
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		acts = await seedActs(currentDb);
 	});
 
@@ -271,7 +271,7 @@ describe('PATCH /api/entities/[id] — Act position cascade (D18 / Issue 12A)', 
 		const before = await getActsOrdered();
 		await expect(
 			idRoute.PATCH(
-				mkEvent({ params: { id: 'no-such-act' }, body: { position: 1 } })
+				mkEvent({ params: { id: '00000000-0000-0000-0000-000000000000' }, body: { position: 1 } })
 			)
 		).rejects.toMatchObject({ status: 404 });
 		const after = await getActsOrdered();

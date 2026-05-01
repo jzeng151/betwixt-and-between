@@ -44,12 +44,15 @@
   let nodePos = $state<Record<string, { x: number; y: number; w: number; h: number }>>({});
 
   // ── Interaction ────────────────────────────────────────────────────────────
-  let draggingNode: { id: string; offX: number; offY: number } | null = $state(null);
+  // Svelte 5 type-narrowing: `let foo: T | null = $state(null)` narrows
+  // $state(null) to literally `null`, not T | null. Use the `$state<T>()`
+  // type parameter so the rune declares the union shape correctly.
+  let draggingNode = $state<{ id: string; offX: number; offY: number } | null>(null);
   // connecting: screen-space endpoint as the mouse moves
-  let connecting: { fromId: string; screenX: number; screenY: number } | null = $state(null);
-  let panning: { startMX: number; startMY: number; startPX: number; startPY: number } | null = $state(null);
-  let pending: { fromId: string; toId: string; sx: number; sy: number } | null = $state(null);
-  let hoveredNodeId: string | null = $state(null);
+  let connecting = $state<{ fromId: string; screenX: number; screenY: number } | null>(null);
+  let panning = $state<{ startMX: number; startMY: number; startPX: number; startPY: number } | null>(null);
+  let pending = $state<{ fromId: string; toId: string; sx: number; sy: number } | null>(null);
+  let hoveredNodeId = $state<string | null>(null);
   // First × click arms delete; second click on same node confirms
   let confirmDeleteId: string | null = $state(null);
 
@@ -163,26 +166,32 @@
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
-  onMount(async () => {
-    const res = await fetch('/api/canvas-positions').catch(() => null);
-    const rows: { entityId: string; x: number; y: number; width: number; height: number }[] =
-      res?.ok ? await res.json() : [];
-    const stored = Object.fromEntries(
-      rows.map((r) => [r.entityId, { x: r.x, y: r.y, w: r.width, h: r.height }])
-    );
+  // Sync onMount so the cleanup return is well-typed (Svelte's onMount rejects
+  // async callbacks that return a cleanup — Promise<() => void> doesn't fit
+  // the `() => any | void` signature). The async load is fired-and-awaited
+  // inside via an IIFE; the ResizeObserver cleanup is returned synchronously.
+  onMount(() => {
+    void (async () => {
+      const res = await fetch('/api/canvas-positions').catch(() => null);
+      const rows: { entityId: string; x: number; y: number; width: number; height: number }[] =
+        res?.ok ? await res.json() : [];
+      const stored = Object.fromEntries(
+        rows.map((r) => [r.entityId, { x: r.x, y: r.y, w: r.width, h: r.height }])
+      );
 
-    const ents = displayEntities;
-    const positions: Record<string, { x: number; y: number; w: number; h: number }> = {};
-    ents.forEach((e, i) => {
-      positions[e.id] = stored[e.id] ?? {
-        x: 60 + (i % 4) * 180,
-        y: 60 + Math.floor(i / 4) * 100,
-        w: NODE_W,
-        h: NODE_H,
-      };
-    });
-    nodePos = positions;
-    fitView(positions);
+      const ents = displayEntities;
+      const positions: Record<string, { x: number; y: number; w: number; h: number }> = {};
+      ents.forEach((e, i) => {
+        positions[e.id] = stored[e.id] ?? {
+          x: 60 + (i % 4) * 180,
+          y: 60 + Math.floor(i / 4) * 100,
+          w: NODE_W,
+          h: NODE_H,
+        };
+      });
+      nodePos = positions;
+      fitView(positions);
+    })();
 
     // Re-fit when the viewport is resized (window resize or window drag-resize)
     const ro = new ResizeObserver(() => {

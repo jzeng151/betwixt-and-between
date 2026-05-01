@@ -14,62 +14,50 @@ import { and, asc, count, eq, isNull, sql } from 'drizzle-orm';
 import { createTestDb } from '../helpers/test-db.js';
 import { entities, relationships, canvasPositions } from '../../src/lib/server/db/schema.js';
 
-describe('entities.data JSON field handling', () => {
-	let db: ReturnType<typeof createTestDb>;
+describe('entities.data jsonb field handling', () => {
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 
-	beforeEach(() => {
-		db = createTestDb();
+	beforeEach(async () => {
+		db = await createTestDb();
 	});
 
-	it('round-trips a stringified JSON object via the data column', async () => {
+	it('round-trips an object via the jsonb data column', async () => {
 		const payload = { motivation: 'find brother', age: 27 };
 		const [created] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie', data: JSON.stringify(payload) })
+			.values({ type: 'Character', name: 'Ellie', data: payload })
 			.returning();
 
 		const [fetched] = await db.select().from(entities).where(eq(entities.id, created.id));
-		expect(fetched.data).toBe('{"motivation":"find brother","age":27}');
-		const parsed = JSON.parse(fetched.data);
-		expect(parsed.motivation).toBe('find brother');
-		expect(parsed.age).toBe(27);
+		expect(fetched.data).toEqual(payload);
+		expect(fetched.data.motivation).toBe('find brother');
+		expect(fetched.data.age).toBe(27);
 	});
 
-	it('defaults data to "{}" when not specified', async () => {
+	it('defaults data to {} when not specified', async () => {
 		const [created] = await db
 			.insert(entities)
 			.values({ type: 'Note', name: 'Untitled' })
 			.returning();
-		expect(created.data).toBe('{}');
-		expect(JSON.parse(created.data)).toEqual({});
-	});
-
-	it('preserves a malformed JSON string at write time (TEXT, not JSON column)', async () => {
-		const [created] = await db
-			.insert(entities)
-			.values({ type: 'Note', name: 'broken', data: '{not valid json' })
-			.returning();
-		expect(created.data).toBe('{not valid json');
-		expect(() => JSON.parse(created.data)).toThrow();
+		expect(created.data).toEqual({});
 	});
 
 	it('updates only the data field without touching name or type', async () => {
 		const [created] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Damien', data: JSON.stringify({ rank: 1 }) })
+			.values({ type: 'Character', name: 'Damien', data: { rank: 1 } })
 			.returning();
 
 		await db
 			.update(entities)
-			.set({ data: JSON.stringify({ rank: 2, scarred: true }) })
+			.set({ data: { rank: 2, scarred: true } })
 			.where(eq(entities.id, created.id));
 
 		const [updated] = await db.select().from(entities).where(eq(entities.id, created.id));
 		expect(updated.name).toBe('Damien');
 		expect(updated.type).toBe('Character');
-		const parsed = JSON.parse(updated.data);
-		expect(parsed.rank).toBe(2);
-		expect(parsed.scarred).toBe(true);
+		expect(updated.data.rank).toBe(2);
+		expect(updated.data.scarred).toBe(true);
 	});
 
 	it('handles arrays and nested objects in the data field', async () => {
@@ -79,32 +67,30 @@ describe('entities.data JSON field handling', () => {
 		};
 		const [created] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Iris', data: JSON.stringify(payload) })
+			.values({ type: 'Character', name: 'Iris', data: payload })
 			.returning();
 
-		const parsed = JSON.parse(created.data);
-		expect(parsed.tags).toEqual(['protagonist', 'wounded']);
-		expect(parsed.stats.hp).toBe(12);
+		expect(created.data.tags).toEqual(['protagonist', 'wounded']);
+		expect((created.data.stats as Record<string, number>).hp).toBe(12);
 	});
 
 	it('handles unicode and special characters in the data field', async () => {
 		const payload = { quote: 'Iść — naprzód! 「行く」', emoji: 'spades' };
 		const [created] = await db
 			.insert(entities)
-			.values({ type: 'Note', name: 'q', data: JSON.stringify(payload) })
+			.values({ type: 'Note', name: 'q', data: payload })
 			.returning();
 
-		const parsed = JSON.parse(created.data);
-		expect(parsed.quote).toBe('Iść — naprzód! 「行く」');
-		expect(parsed.emoji).toBe('spades');
+		expect(created.data.quote).toBe('Iść — naprzód! 「行く」');
+		expect(created.data.emoji).toBe('spades');
 	});
 });
 
 describe('entities.parent_id + position', () => {
-	let db: ReturnType<typeof createTestDb>;
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 
-	beforeEach(() => {
-		db = createTestDb();
+	beforeEach(async () => {
+		db = await createTestDb();
 	});
 
 	it('persists parent_id pointing at an Act for a Scene', async () => {
@@ -242,10 +228,10 @@ describe('entities.parent_id + position', () => {
 });
 
 describe('canvas_positions UNIQUE(entity_id) constraint', () => {
-	let db: ReturnType<typeof createTestDb>;
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 
-	beforeEach(() => {
-		db = createTestDb();
+	beforeEach(async () => {
+		db = await createTestDb();
 	});
 
 	it('allows canvas_positions for distinct entity_ids', async () => {
@@ -275,7 +261,7 @@ describe('canvas_positions UNIQUE(entity_id) constraint', () => {
 
 		await expect(
 			db.insert(canvasPositions).values({ entityId: a.id, x: 99, y: 99 })
-		).rejects.toThrow(/UNIQUE/i);
+		).rejects.toThrow();
 	});
 
 	it('honors onConflictDoUpdate for canvas_position upsert', async () => {
@@ -320,10 +306,10 @@ describe('canvas_positions UNIQUE(entity_id) constraint', () => {
 });
 
 describe('multi-edge cascade fan-out from a single entity', () => {
-	let db: ReturnType<typeof createTestDb>;
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 
-	beforeEach(() => {
-		db = createTestDb();
+	beforeEach(async () => {
+		db = await createTestDb();
 	});
 
 	it('deleting an entity removes all dependent rows but leaves siblings intact', async () => {
@@ -386,10 +372,10 @@ describe('multi-edge cascade fan-out from a single entity', () => {
 });
 
 describe('ordering queries against entities_type_position_idx', () => {
-	let db: ReturnType<typeof createTestDb>;
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 
-	beforeEach(() => {
-		db = createTestDb();
+	beforeEach(async () => {
+		db = await createTestDb();
 	});
 
 	it('returns root-level Acts in ascending position order', async () => {
@@ -431,13 +417,15 @@ describe('ordering queries against entities_type_position_idx', () => {
 		await db.insert(entities).values({ type: 'Act', name: 'Act 0', position: 0 });
 		await db.insert(entities).values({ type: 'Act', name: 'Act 1', position: 1 });
 
-		const plan = await db.all(
-			sql`EXPLAIN QUERY PLAN SELECT * FROM entities WHERE type = 'Act' AND parent_id IS NULL ORDER BY position`
+		// pg uses EXPLAIN (not EXPLAIN QUERY PLAN). drizzle exposes raw SQL
+		// via .execute(); pglite returns rows under .rows.
+		const plan = await db.execute(
+			sql`EXPLAIN SELECT * FROM entities WHERE type = 'Act' AND parent_id IS NULL ORDER BY position`
 		);
 		const planText = JSON.stringify(plan);
-		// Either the type/position index or some other index — the key signal is
-		// "USING INDEX" rather than a full scan.
-		expect(planText).toMatch(/INDEX/i);
+		// Index Scan / Index Only Scan — the key signal is "Index" rather
+		// than "Seq Scan."
+		expect(planText).toMatch(/Index/i);
 	});
 
 	it('orders by created_at when position is unavailable (entities_created_at_idx)', async () => {
@@ -445,9 +433,11 @@ describe('ordering queries against entities_type_position_idx', () => {
 			.insert(entities)
 			.values({ type: 'Note', name: 'First' })
 			.returning();
-		// Force a different created_at by manually setting it (raw SQL avoids races
-		// inside the same unixepoch() second).
-		await db.run(sql`UPDATE entities SET created_at = created_at - 10 WHERE id = ${first.id}`);
+		// Force a different created_at by manually setting it (raw SQL avoids
+		// races inside the same now() microsecond). pg uses interval syntax.
+		await db.execute(
+			sql`UPDATE entities SET created_at = created_at - interval '10 seconds' WHERE id = ${first.id}`
+		);
 		await db.insert(entities).values({ type: 'Note', name: 'Second' });
 
 		const notes = await db
@@ -459,7 +449,7 @@ describe('ordering queries against entities_type_position_idx', () => {
 		expect(notes.map((n) => n.name)).toEqual(['First', 'Second']);
 	});
 
-	it('treats NULL positions as orderable but groups them per SQLite NULLS FIRST default', async () => {
+	it('treats NULL positions as orderable per Postgres ASC NULLS LAST default', async () => {
 		await db.insert(entities).values({ type: 'Character', name: 'P', position: 5 });
 		await db.insert(entities).values({ type: 'Character', name: 'Q' }); // null position
 		await db.insert(entities).values({ type: 'Character', name: 'R', position: 1 });
@@ -470,9 +460,11 @@ describe('ordering queries against entities_type_position_idx', () => {
 			.where(eq(entities.type, 'Character'))
 			.orderBy(asc(entities.position));
 
-		// SQLite default ASC: NULLs sort first.
-		expect(chars[0].name).toBe('Q');
-		expect(chars[1].name).toBe('R');
-		expect(chars[2].name).toBe('P');
+		// Postgres default ASC: NULLs sort LAST (opposite of sqlite).
+		// Code that depends on a specific NULL ordering should add an
+		// explicit `NULLS FIRST`/`NULLS LAST` clause.
+		expect(chars[0].name).toBe('R');
+		expect(chars[1].name).toBe('P');
+		expect(chars[2].name).toBe('Q');
 	});
 });
