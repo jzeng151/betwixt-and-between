@@ -688,6 +688,105 @@ describe('CharacterEditor — mode resets to view on entity navigation (Greptile
 	});
 });
 
+describe('CharacterEditor — duplicate-color UX', () => {
+	it('marks a swatch as used when another entity already has that color', async () => {
+		// Seed a Location with #2dd4bf — the duplicate-color check
+		// applies across all entity types, not just characters.
+		const aragorn = makeCharacter();
+		const minas: Entity = {
+			id: 'loc-1',
+			type: 'Location',
+			name: 'Minas Tirith',
+			data: { color: '#2dd4bf' },
+			parentId: null,
+			position: 0,
+			createdAt: new Date(0),
+			updatedAt: new Date(0)
+		} as Entity;
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([aragorn, minas])) as unknown as typeof fetch;
+		await entities.load();
+		const { getByTestId, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		const teal = getByTestId('char-color-#2dd4bf');
+		expect(teal.className).toContain('swatch-used');
+		expect(teal.getAttribute('title')).toMatch(/Minas Tirith/);
+	});
+
+	it('warns inline when the picked color is already used by someone else', async () => {
+		// Seed a Location with the color we'll then assign to the
+		// character. The character's saved color triggers the inline
+		// warning.
+		const aragorn = makeCharacter({ color: '#2dd4bf' });
+		const minas: Entity = {
+			id: 'loc-1',
+			type: 'Location',
+			name: 'Minas Tirith',
+			data: { color: '#2dd4bf' },
+			parentId: null,
+			position: 0,
+			createdAt: new Date(0),
+			updatedAt: new Date(0)
+		} as Entity;
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([aragorn, minas])) as unknown as typeof fetch;
+		await entities.load();
+		const { getByTestId, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		const warn = getByTestId('char-color-collision');
+		expect(warn.textContent).toMatch(/Also used by Minas Tirith/);
+	});
+
+	it('does not warn when only the current entity has the color', async () => {
+		const aragorn = makeCharacter({ color: '#2dd4bf' });
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([aragorn])) as unknown as typeof fetch;
+		await entities.load();
+		const { queryByTestId, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		expect(queryByTestId('char-color-collision')).toBeNull();
+	});
+});
+
+describe('CharacterEditor — color picker preview & defaults', () => {
+	it('typing a valid hex shows a live preview swatch', async () => {
+		const { getByTestId, queryByTestId, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		const input = getByTestId('char-color-custom-input') as HTMLInputElement;
+		// Partial — no preview yet.
+		await fireEvent.input(input, { target: { value: '#abc' } });
+		await tick();
+		expect(queryByTestId('char-color-custom-preview')).toBeNull();
+		// Full valid hex — preview swatch appears.
+		await fireEvent.input(input, { target: { value: '#abcdef' } });
+		await tick();
+		await waitFor(() => {
+			expect(getByTestId('char-color-custom-preview')).toBeInTheDocument();
+		});
+	});
+
+	it('view mode shows the auto-assigned default color as a swatch', async () => {
+		// Default fixture (no `color` set) → view mode shows the auto
+		// color from CHARACTER_COLORS[idx % 8]. With one character at
+		// idx=0, that's #c8942a.
+		const { container, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		// Display row contains a swatch element + the "Default (#…)" label.
+		expect(getByText(/Default \(#[0-9a-f]{6}\)/i)).toBeInTheDocument();
+		expect(container.querySelector('.swatch-display')).toBeInTheDocument();
+	});
+});
+
 describe('CharacterEditor — edit mode persists across window-focus updates', () => {
 	it('windowStore.focus() re-emit does not flip mode back to view', async () => {
 		const { getByText, container } = render(CharacterEditor, {

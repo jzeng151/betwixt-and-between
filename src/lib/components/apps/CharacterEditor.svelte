@@ -294,6 +294,16 @@
     if (e.key === 'Escape') { customHex = ''; customHexError = ''; }
   }
 
+  // Live preview of the typed hex value while the user is still
+  // composing it. Only valid 6-digit hex shows a preview; partial /
+  // invalid input falls through to null and the preview swatch is
+  // hidden so we don't paint random fragments.
+  const customHexPreview = $derived(
+    customHex.trim() && HEX_COLOR_RE.test(customHex.trim())
+      ? customHex.trim().toLowerCase()
+      : null
+  );
+
   // ── Timeline label config ─────────────────────────────────────────────────
   async function setTimelineMode(mode: 'name-only' | 'name-and-note' | 'custom') {
     if (mode === 'custom') {
@@ -324,6 +334,33 @@
   function iconsInCategory(cat: IconCategory) {
     return listCharacterIcons().filter((i) => i.category === cat);
   }
+
+  // Map of normalized hex → name of an OTHER entity that already uses
+  // that color, scanned across every entity type (not just characters).
+  // Drives the "this color is already taken" UX. Excludes the current
+  // entity so its own selected color doesn't trigger a self-collision
+  // warning. We normalise to lowercase since hex picker / wheel /
+  // user-typed paste can produce mixed-case strings.
+  const usedColors = $derived.by(() => {
+    const m = new Map<string, string>();
+    for (const e of $entities) {
+      if (e.id === entityId) continue;
+      const d = readData(e.data);
+      const c = typeof d.color === 'string' ? d.color.toLowerCase() : '';
+      if (c && HEX_COLOR_RE.test(c)) m.set(c, e.name);
+    }
+    return m;
+  });
+
+  // Auto-color this character would receive if no custom color is set.
+  // Mirrors timeline-v2-helpers' colorFor() exactly so the view-mode
+  // "default" preview matches what actually renders on the timeline.
+  const autoColor = $derived.by(() => {
+    if (!entityId) return CHARACTER_COLORS[0];
+    const chars = $entities.filter((e) => e.type === 'Character');
+    const idx = chars.findIndex((e) => e.id === entityId);
+    return CHARACTER_COLORS[(idx < 0 ? 0 : idx) % CHARACTER_COLORS.length];
+  });
 
   // Resolved icon entry for the currently-set icon ID. Null when no icon
   // is set OR the saved ID is unknown (registry was edited; saved ID no
@@ -677,22 +714,12 @@
         <p class="section-label">{group.label}</p>
         <div class="chip-row">
           {#each linked as link (link.rel.id)}
-            <span class="chip-wrap">
-              <EntityLink
-                id={link.other.id}
-                name={link.other.name}
-                relationshipType={group.type}
-              />
-              {#if mode === 'edit'}
-                <button
-                  type="button"
-                  class="chip-remove"
-                  aria-label="Remove {link.other.name}"
-                  title="Remove"
-                  onclick={() => removeRelationship(link.rel.id)}
-                >×</button>
-              {/if}
-            </span>
+            <EntityLink
+              id={link.other.id}
+              name={link.other.name}
+              relationshipType={group.type}
+              onRemove={mode === 'edit' ? () => removeRelationship(link.rel.id) : undefined}
+            />
           {/each}
           <div class="picker-wrap">
             {#if mode === 'edit'}
@@ -737,54 +764,77 @@
       {#if mode === 'edit'}
         <div class="swatch-row" role="group" aria-label="Timeline color">
           {#each CHARACTER_COLORS as hex}
+            {@const inUse = usedColors.has(hex.toLowerCase())}
             <button
               type="button"
               class="swatch"
               class:swatch-selected={color === hex}
+              class:swatch-used={inUse && color !== hex}
               style="--sw:{hex}"
-              aria-label={hex}
+              aria-label={inUse ? `${hex} (used by ${usedColors.get(hex.toLowerCase())})` : hex}
               aria-pressed={color === hex}
               data-testid="char-color-{hex}"
+              title={inUse ? `Already used by ${usedColors.get(hex.toLowerCase())}` : hex}
               onclick={() => chooseColor(hex)}
             ></button>
           {/each}
-          <!-- Native color picker — visual alternative to the hex input.
-               Commits on `change` (when the OS picker closes), so a user
-               who accidentally opens it without changing color triggers
-               nothing. The hex text input below remains for paste/manual
-               entry. -->
+        </div>
+
+        <!-- Native color picker — visual alternative to the hex input.
+             Sized 4× the swatches per design ask so it reads as the
+             primary "pick anything" affordance. Commits on `change`
+             (when the OS picker closes), so a user who accidentally
+             opens it without changing color triggers nothing. -->
+        <div class="wheel-row">
           <input
             type="color"
             class="color-wheel"
-            value={color ?? '#c8942a'}
+            value={color ?? autoColor}
             onchange={(e) => chooseColor((e.currentTarget as HTMLInputElement).value.toLowerCase())}
             aria-label="Custom color picker"
             data-testid="char-color-wheel"
           />
-          <input
-            class="hex-input"
-            type="text"
-            placeholder="#rrggbb"
-            maxlength="7"
-            bind:value={customHex}
-            onblur={commitCustomHex}
-            onkeydown={handleHexKeydown}
-            data-testid="char-color-custom-input"
-          />
+          <div class="hex-row">
+            <input
+              class="hex-input"
+              type="text"
+              placeholder="#rrggbb"
+              maxlength="7"
+              bind:value={customHex}
+              onblur={commitCustomHex}
+              onkeydown={handleHexKeydown}
+              data-testid="char-color-custom-input"
+            />
+            {#if customHexPreview}
+              <span
+                class="swatch swatch-display"
+                style="--sw:{customHexPreview}"
+                aria-hidden="true"
+                data-testid="char-color-custom-preview"
+              ></span>
+            {/if}
+          </div>
         </div>
         {#if customHexError}
           <p class="hex-error" data-testid="char-color-custom-error">{customHexError}</p>
         {/if}
+        {#if color && usedColors.has(color)}
+          <p class="color-collision" data-testid="char-color-collision">
+            Also used by {usedColors.get(color)}.
+          </p>
+        {/if}
       {:else}
-        <!-- View mode: show only the chosen color (or "Default") instead
-             of the full picker. Less visual noise when the user is just
-             reading. -->
+        <!-- View mode: show only the chosen color (or the auto-assigned
+             default for this character) so the reader sees the actual
+             color rendered on the timeline. Less visual noise than the
+             full picker. -->
         <div class="display-row">
           {#if color}
             <span class="swatch swatch-display" style="--sw:{color}" aria-hidden="true"></span>
             <span class="display-text">{color}</span>
           {:else}
-            <span class="display-text display-muted">Default</span>
+            <span class="swatch swatch-display" style="--sw:{autoColor}" aria-hidden="true"></span>
+            <span class="display-text display-muted">Default ({autoColor})</span>
           {/if}
         </div>
       {/if}
@@ -1415,35 +1465,8 @@
     border-style: solid;
   }
 
-  /* Edit-mode delete affordance for individual relationship chips.
-     Visually attached to the chip's right edge via overlap so the chip
-     and × read as one element. */
-  .chip-wrap {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-  }
-  .chip-remove {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    padding: 0;
-    border-radius: 50%;
-    background: transparent;
-    border: 1px solid var(--color-border);
-    color: var(--color-text-muted);
-    font-size: 12px;
-    line-height: 1;
-    cursor: pointer;
-    transition: border-color 0.1s, color 0.1s, background 0.1s;
-  }
-  .chip-remove:hover {
-    border-color: #ef4444;
-    color: #ef4444;
-    background: color-mix(in srgb, #ef4444 12%, transparent);
-  }
+  /* (chip × delete now lives inside the chip — see app.css
+     `.entity-chip-remove`. EntityLink takes an optional onRemove prop.) */
 
   /* Picker */
   .picker-backdrop {
@@ -1619,20 +1642,65 @@
     outline: none;
   }
   .hex-input:focus { border-color: var(--color-accent); }
-  /* Native color picker — small square aligned with the swatch row. */
+
+  /* Native color picker — 4× larger than the swatches so it reads as
+     the primary "pick anything" affordance. Sits on its own row above
+     the hex input. */
+  .wheel-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 6px;
+  }
   .color-wheel {
-    width: 22px;
-    height: 22px;
+    width: 88px;
+    height: 88px;
     padding: 0;
     border: 1px solid var(--color-border);
-    border-radius: 4px;
+    border-radius: 8px;
     background: transparent;
     cursor: pointer;
   }
-  .color-wheel::-webkit-color-swatch-wrapper { padding: 2px; }
-  .color-wheel::-webkit-color-swatch { border: none; border-radius: 2px; }
-  .color-wheel::-moz-color-swatch { border: none; border-radius: 2px; }
+  .color-wheel::-webkit-color-swatch-wrapper { padding: 4px; }
+  .color-wheel::-webkit-color-swatch { border: none; border-radius: 4px; }
+  .color-wheel::-moz-color-swatch { border: none; border-radius: 4px; }
   .color-wheel:hover { border-color: var(--color-accent); }
+
+  /* Hex input + live preview swatch. The preview hides until the
+     typed value is a valid 6-digit hex so partial / invalid input
+     doesn't render a half-painted color. */
+  .hex-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Used-elsewhere swatch indicator — a small dot in the top-right
+     corner. Doesn't disable the swatch (with >8 characters collision
+     is forced anyway), just signals "if you pick this, you'll match
+     someone else." Skipped for the currently-selected color. */
+  .swatch { position: relative; }
+  .swatch-used::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-text);
+    border: 1.5px solid var(--color-surface);
+    transform: translate(40%, -40%);
+    pointer-events: none;
+  }
+
+  .color-collision {
+    margin: 4px 0 0;
+    font-size: 11px;
+    font-family: var(--font-ui);
+    color: var(--color-text-muted);
+    font-style: italic;
+  }
 
   /* View-mode collapsed display row for color + timeline-label. */
   .display-row {

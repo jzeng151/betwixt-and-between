@@ -6,9 +6,13 @@
     id: string;
     name: string;
     relationshipType?: RelationshipType | 'arc' | 'other';
+    /** When provided, renders a × button inside the chip's right edge.
+     *  Caller is responsible for the actual delete (e.g. calling
+     *  relationships.deleteRelationship). */
+    onRemove?: () => void;
   }
 
-  let { id, name, relationshipType = 'other' }: Props = $props();
+  let { id, name, relationshipType = 'other', onRemove }: Props = $props();
 
   const COLOR_MAP: Record<string, string> = {
     appears_in:    'var(--color-rel-arc)',
@@ -25,11 +29,20 @@
   const chipColor = $derived(COLOR_MAP[relationshipType] ?? 'var(--color-rel-other)');
 </script>
 
-<button
-  class="entity-chip"
-  style="--chip-color: {chipColor}"
-  onclick={() => openEntity(id)}
-  tabindex="0"
->
-  {name}
-</button>
+<span class="entity-chip" style="--chip-color: {chipColor}">
+  <button
+    type="button"
+    class="entity-chip-name"
+    onclick={() => openEntity(id)}
+    tabindex="0"
+  >{name}</button>
+  {#if onRemove}
+    <button
+      type="button"
+      class="entity-chip-remove"
+      aria-label="Remove {name}"
+      title="Remove"
+      onclick={onRemove}
+    >×</button>
+  {/if}
+</span>
