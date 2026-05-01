@@ -8,22 +8,32 @@
 // Phase 1 ships character archetypes only; locations / events / scenes
 // are tracked at the bottom of TODOS.md.
 
-import {
-  Sword,
-  Shield,
-  Crown,
-  BookOpen,
-  Skull,
-  Flame,
-  Bone,
-  WandSparkles,
-  Moon,
-  Eye,
-  Compass,
-  Footprints,
-  Bird,
-  type Icon as LucideIcon,
-} from 'lucide-svelte';
+// Per-icon imports — the package's main barrel
+// (`lucide-svelte/dist/lucide-svelte.js`) re-exports from a path that
+// doesn't exist in the v1.0.1 tarball, so importing from
+// `'lucide-svelte'` blows up at module-resolution time. The
+// `lucide-svelte/icons/<name>` paths are the explicit per-icon entries
+// the package's `exports` field documents and they ship fine.
+import Sword from 'lucide-svelte/icons/sword';
+import Shield from 'lucide-svelte/icons/shield';
+import Crown from 'lucide-svelte/icons/crown';
+import BookOpen from 'lucide-svelte/icons/book-open';
+import Skull from 'lucide-svelte/icons/skull';
+import Flame from 'lucide-svelte/icons/flame';
+import Bone from 'lucide-svelte/icons/bone';
+import WandSparkles from 'lucide-svelte/icons/wand-sparkles';
+import Moon from 'lucide-svelte/icons/moon';
+import Eye from 'lucide-svelte/icons/eye';
+import Compass from 'lucide-svelte/icons/compass';
+import Footprints from 'lucide-svelte/icons/footprints';
+import Bird from 'lucide-svelte/icons/bird';
+
+import type { ComponentType, SvelteComponent } from 'svelte';
+
+// Lucide v1 ships class-based Svelte components; the IconProps type is
+// not stably exported, so a `ComponentType<SvelteComponent>` is the
+// loosest correct type that still lets `<IconComp ... />` typecheck.
+type IconComponent = ComponentType<SvelteComponent>;
 
 export type IconCategory = 'Heroes' | 'Villains' | 'Mystics' | 'Wanderers';
 
@@ -31,7 +41,7 @@ export interface IconEntry {
   id: string;            // e.g. "lucide:sword"
   label: string;         // human-readable, shown as a tooltip
   category: IconCategory;
-  component: typeof LucideIcon;
+  component: IconComponent;
 }
 
 // Order within each category drives picker layout.
