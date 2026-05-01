@@ -8,6 +8,7 @@
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
   import { REL_COLOR, REL_TYPES } from '$lib/relationship-colors.js';
+  import { pickDefaultRelType } from '$lib/graph/rel-type-picker.js';
   import GraphCanvas, {
     type GraphNode,
     type GraphEdge,
@@ -141,33 +142,9 @@
   // ── Connect → rel-form ─────────────────────────────────────────────────────
   let saveError = $state('');
 
-  /**
-   * Pick a default rel type for a new edge between this pair: prefer a type
-   * the pair doesn't already have so the dropdown lands on a value that'll
-   * succeed. Two entities can hold multiple relationships of DIFFERENT
-   * types (schema UNIQUE on (from_id, to_id, type) allows it) — the user
-   * shouldn't have to manually click through the dropdown to find an
-   * unused one. `appears_in` is excluded as the API rejects it (deprecated;
-   * presence lives in intervals).
-   */
-  function pickDefaultRelType(fromId: string, toId: string): RelationshipType {
-    const existing = new Set(
-      $relationships
-        .filter((r) => r.fromId === fromId && r.toId === toId)
-        .map((r) => r.type)
-    );
-    for (const t of REL_TYPES) {
-      if (t === 'appears_in') continue;
-      if (!existing.has(t)) return t;
-    }
-    // All types used — fall back to the form's classic default. Save will
-    // fail with a clear error, which is the right signal at saturation.
-    return 'allied_with';
-  }
-
   function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
     pending = { fromId, toId, sx: screenX, sy: screenY };
-    relType = pickDefaultRelType(fromId, toId);
+    relType = pickDefaultRelType($relationships, fromId, toId);
     relLabel = '';
     saveError = '';
   }
