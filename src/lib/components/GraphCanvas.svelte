@@ -93,15 +93,30 @@
 
 	// ── Node positions (canvas coords) ─────────────────────────────────────────
 	let nodePos = $state<Record<string, NodePosition>>({});
+	// One-shot guard: when /api/canvas-positions returns AFTER nodes have
+	// auto-placed (the common race — entity store is local-fast, the canvas
+	// fetch is network), we still need to apply server positions exactly
+	// once. A `nodePos.length === 0` guard would silently miss this.
+	let seededFromServer = $state(false);
 
-	// Seed from host on mount; auto-place new nodes as they appear.
 	$effect(() => {
-		const np = untrack(() => nodePos);
-		if (Object.keys(np).length === 0 && Object.keys(initialPositions).length > 0) {
-			nodePos = { ...initialPositions };
+		// Server seed: apply once, the first time initialPositions arrives
+		// non-empty. Server positions override auto-placed positions for
+		// nodes that have a stored entry; auto-placed nodes without a
+		// server position keep their layout.
+		if (!seededFromServer && Object.keys(initialPositions).length > 0) {
+			seededFromServer = true;
+			const current = untrack(() => nodePos);
+			nodePos = { ...current, ...initialPositions };
+			// Re-fit so the viewport centers on the restored layout, not
+			// the brief auto-placed one we just overwrote.
+			queueMicrotask(() => fitView(untrack(() => nodePos)));
 			return;
 		}
-		// Place nodes that don't yet have a position.
+		// Auto-place nodes that don't yet have a position. Falls back to
+		// initialPositions[id] if the server happens to know about a node
+		// that the auto-place loop is processing (rare but possible if
+		// a new entity arrives between seed and now).
 		const missing = nodes.filter((n) => !untrack(() => nodePos[n.id]));
 		if (missing.length > 0) {
 			const current = untrack(() => nodePos);
@@ -282,6 +297,17 @@
 		}
 	}
 
+	// pointercancel fires when the OS or browser interrupts the gesture
+	// (touch interrupted by a scroll, stylus lift, browser taking over).
+	// Clear all in-progress state without committing — connecting in
+	// particular must NOT fire onConnect even if the cancel point happens
+	// to be over a target node.
+	function onPointerCancel() {
+		draggingNode = null;
+		panning = null;
+		connecting = null;
+	}
+
 	function onWheel(e: WheelEvent) {
 		e.preventDefault();
 		const rect = viewport.getBoundingClientRect();
@@ -316,6 +342,7 @@
 	onpointerdown={onViewportPointerDown}
 	onpointermove={onPointerMove}
 	onpointerup={onPointerUp}
+	onpointercancel={onPointerCancel}
 	onwheel={onWheel}
 	style:cursor={panning ? 'grabbing' : 'default'}
 >
