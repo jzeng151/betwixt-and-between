@@ -7,6 +7,7 @@
   import Timeline from './apps/Timeline.svelte';
   import WorldMap from './apps/WorldMap.svelte';
   import StoryGraph from './apps/StoryGraph.svelte';
+  import FocusedGraph from './apps/FocusedGraph.svelte';
   import EntityDetail from './EntityDetail.svelte';
 
   const APP_TITLES: Record<string, string> = {
@@ -16,6 +17,7 @@
     'entity-detail': 'Entity',
     'wiki': 'Wiki',
     'story-graph': 'Story Graph',
+    'focused-graph': 'Focused Graph',
   };
 
   function windowTitle(appId: string, entityId: string | null): string {
@@ -55,7 +57,7 @@
     zIndex={win.zIndex}
     minimized={win.minimized}
     maximized={win.maximized}
-    bare={win.appId === 'story-graph'}
+    bare={win.appId === 'story-graph' || win.appId === 'focused-graph'}
   >
     {#if win.appId === 'character-editor'}
       <CharacterEditor winId={win.id} entityId={win.entityId} />
@@ -73,6 +75,8 @@
       <WorldMap entityId={win.entityId} />
     {:else if win.appId === 'story-graph'}
       <StoryGraph />
+    {:else if win.appId === 'focused-graph'}
+      <FocusedGraph windowId={win.id} />
     {/if}
   </Window>
 {/each}

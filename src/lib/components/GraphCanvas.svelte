@@ -69,6 +69,10 @@
 		/** Fires after a drag completes; host can persist the position. Debounce
 		    is the host's responsibility. */
 		onNodePositionChange?: (id: string, position: NodePosition) => void;
+		/** Fires on right-click of a node. screenX/screenY are viewport-local
+		    coords, useful for positioning a ContextMenu. Cancels any in-progress
+		    connect-drag automatically (per the locked C3 UX collision rule). */
+		onContextMenu?: (id: string, screenX: number, screenY: number) => void;
 	}
 
 	let {
@@ -80,7 +84,8 @@
 		nodeOverlay,
 		onConnect,
 		onNodeOpen,
-		onNodePositionChange
+		onNodePositionChange,
+		onContextMenu
 	}: Props = $props();
 
 	const NODE_W = 120;
@@ -325,6 +330,20 @@
 		onNodeOpen?.(id);
 	}
 
+	function onNodeContextMenu(e: MouseEvent, id: string) {
+		e.preventDefault();
+		e.stopPropagation();
+		// UX collision rule (locked C3): right-clicking during a connect-drag
+		// CANCELS the connect and does NOT open the menu. Drop any in-progress
+		// connect state before deciding whether to fire onContextMenu.
+		if (connecting) {
+			connecting = null;
+			return;
+		}
+		const vp = viewportXY(e.clientX, e.clientY);
+		onContextMenu?.(id, vp.x, vp.y);
+	}
+
 	// Public-via-snippet method: overlay UI calls this to start a connection drag.
 	export function startConnect(e: PointerEvent, fromId: string) {
 		e.stopPropagation();
@@ -401,6 +420,7 @@
 					style="left:{p.x}px; top:{p.y}px; --nc:{nc}"
 					onpointerdown={(e) => onNodePointerDown(e, node.id)}
 					ondblclick={(e) => onNodeDblClick(e, node.id)}
+					oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
 					onpointerenter={() => (hoveredNodeId = node.id)}
 					onpointerleave={() => {
 						if (draggingNode?.id !== node.id) hoveredNodeId = null;
