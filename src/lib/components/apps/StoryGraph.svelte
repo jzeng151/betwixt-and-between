@@ -121,21 +121,50 @@
   }
 
   // ── Connect → rel-form ─────────────────────────────────────────────────────
+  let saveError = $state('');
+
+  /**
+   * Pick a default rel type for a new edge between this pair: prefer a type
+   * the pair doesn't already have so the dropdown lands on a value that'll
+   * succeed. Two entities can hold multiple relationships of DIFFERENT
+   * types (schema UNIQUE on (from_id, to_id, type) allows it) — the user
+   * shouldn't have to manually click through the dropdown to find an
+   * unused one. `appears_in` is excluded as the API rejects it (deprecated;
+   * presence lives in intervals).
+   */
+  function pickDefaultRelType(fromId: string, toId: string): RelationshipType {
+    const existing = new Set(
+      $relationships
+        .filter((r) => r.fromId === fromId && r.toId === toId)
+        .map((r) => r.type)
+    );
+    for (const t of REL_TYPES) {
+      if (t === 'appears_in') continue;
+      if (!existing.has(t)) return t;
+    }
+    // All types used — fall back to the form's classic default. Save will
+    // fail with a clear error, which is the right signal at saturation.
+    return 'allied_with';
+  }
+
   function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
     pending = { fromId, toId, sx: screenX, sy: screenY };
-    relType = 'allied_with';
+    relType = pickDefaultRelType(fromId, toId);
     relLabel = '';
+    saveError = '';
   }
 
   function cancelPending() {
     pending = null;
     relLabel = '';
     relType = 'allied_with';
+    saveError = '';
   }
 
   async function savePending() {
     if (!pending) return;
     saving = true;
+    saveError = '';
     try {
       await relationships.createRelationship(
         pending.fromId,
@@ -146,8 +175,15 @@
       pending = null;
       relLabel = '';
       relType = 'allied_with';
-    } catch {
-      /* noop */
+    } catch (err) {
+      // Surface the failure (was previously silently swallowed). Most
+      // common cause: a relationship of this type between this pair
+      // already exists (UNIQUE violation surfaces as a 400 from the API).
+      // Show a short message and let the user pick a different type.
+      const msg = (err as Error)?.message ?? 'Save failed';
+      saveError = msg.includes('unique') || msg.includes('duplicate')
+        ? `A "${relType.replace(/_/g, ' ')}" relationship between these already exists.`
+        : 'Couldn\'t save — pick a different type or try again.';
     } finally {
       saving = false;
     }
@@ -260,6 +296,9 @@
       bind:value={relLabel}
       autocomplete="off"
     />
+    {#if saveError}
+      <p class="rel-form-error" role="alert">{saveError}</p>
+    {/if}
     <div class="rel-form-actions">
       <button onclick={cancelPending}>Cancel</button>
       <button class="primary" onclick={savePending} disabled={saving}>
@@ -398,6 +437,14 @@
     border-radius: 4px;
     font-family: var(--font-ui);
     font-size: 12px;
+  }
+
+  .rel-form-error {
+    margin: 0;
+    color: var(--color-rel-rival);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    line-height: 1.3;
   }
 
   .rel-form-actions {
