@@ -216,27 +216,48 @@
 
   // ── Pin / Unpin (C3 menu item; C5 reads pinnedSet) ────────────────────────
   function togglePin(id: string) {
-    const isPinned = pinnedSet.has(id);
+    const wasPinned = pinnedSet.has(id);
     const next = new Set(pinnedSet);
-    if (isPinned) next.delete(id);
+    if (wasPinned) next.delete(id);
     else next.add(id);
     pinnedSet = next;
-    // Persist immediately — pin state is a deliberate user gesture, not a
-    // drag-rate change, so no debounce.
-    const p = currentPositions[id];
-    if (!p) return;
-    fetch(`/api/canvas-positions/window/${windowId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        entityId: id,
-        x: Math.round(p.x),
-        y: Math.round(p.y),
-        width: Math.round(p.w),
-        height: Math.round(p.h),
-        pinned: isPinned ? 0 : 1
-      })
-    });
+
+    // Position-fallback chain so the persist always fires (Greptile P2 on
+    // PR #13: silent pin-drop when currentPositions[id] is undefined). A
+    // right-clickable node has been rendered, but the host's currentPositions
+    // mirror only updates on drag — auto-placed nodes fall through to the
+    // initialPositions seed, then to a sane (0,0) default for the very rare
+    // race where a brand-new node is right-clicked before its position
+    // surfaces. Lazy-population spec (Lane A) accepts arbitrary x/y on
+    // first write.
+    const p =
+      currentPositions[id] ?? initialPositions[id] ?? { x: 0, y: 0, w: 120, h: 32 };
+    const newPinned = !wasPinned;
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/canvas-positions/window/${windowId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entityId: id,
+            x: Math.round(p.x),
+            y: Math.round(p.y),
+            width: Math.round(p.w),
+            height: Math.round(p.h),
+            pinned: newPinned ? 1 : 0
+          })
+        });
+        if (!res.ok) throw new Error(`pin toggle failed: ${res.status}`);
+      } catch (err) {
+        // Roll back the local pin state so the UI matches the server.
+        const rollback = new Set(pinnedSet);
+        if (newPinned) rollback.delete(id);
+        else rollback.add(id);
+        pinnedSet = rollback;
+        console.warn('FocusedGraph: pin toggle failed, rolling back', err);
+      }
+    })();
   }
 
   // ── C5: Layout by type ────────────────────────────────────────────────────
@@ -286,6 +307,12 @@
 
         if (newPositions.length === 0) return;
 
+        // Snapshot the local mirrors BEFORE optimistic update so we can
+        // roll back cleanly if the batch write fails (Greptile P2 on
+        // PR #13: silent client/server divergence on batch-write failure).
+        const positionsBefore = currentPositions;
+        const initialBefore = initialPositions;
+
         // Apply to local mirror so the UI updates immediately.
         const updates: Record<string, NodePosition> = {};
         for (const np of newPositions) {
@@ -307,7 +334,7 @@
         initialPositions = { ...initialPositions, ...updates };
 
         // Atomic batch write via A3.
-        await fetch(`/api/canvas-positions/window/${windowId}/batch`, {
+        const res = await fetch(`/api/canvas-positions/window/${windowId}/batch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(
@@ -321,6 +348,16 @@
             }))
           )
         });
+        if (!res.ok) {
+          // Roll back the optimistic update so the UI matches the server.
+          // Without this the layout would visually persist but vanish on
+          // next window mount.
+          currentPositions = positionsBefore;
+          initialPositions = initialBefore;
+          console.warn(
+            `FocusedGraph: layout-by-type batch write failed (${res.status}), rolled back`
+          );
+        }
       } finally {
         isLayingOut = false;
       }

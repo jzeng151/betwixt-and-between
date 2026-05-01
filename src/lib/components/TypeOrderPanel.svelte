@@ -135,15 +135,28 @@
 		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
 	}
 
+	/*
+	 * pointer-events: none on children — HTML5 DnD fires dragleave on the
+	 * parent any time the cursor crosses into a child element, which would
+	 * make the highlight flicker as the user drags over a list item
+	 * (Greptile P2 on PR #13). Suppressing pointer-events on .grip and
+	 * .label means the cursor stays "over" the .type-order-item the whole
+	 * time, so dragenter/dragleave fire only at the actual element boundary.
+	 * The drag itself starts on the .type-order-item (which keeps
+	 * pointer-events: auto by default) — mousedown on a child still
+	 * propagates to the draggable parent.
+	 */
 	.grip {
 		color: var(--color-text-muted);
 		font-size: 14px;
 		line-height: 1;
 		letter-spacing: -2px;
+		pointer-events: none;
 	}
 
 	.label {
 		color: var(--color-text);
+		pointer-events: none;
 	}
 
 	.apply-btn {
