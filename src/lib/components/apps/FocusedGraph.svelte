@@ -116,23 +116,28 @@
     displayEntities.map((e) => ({ id: e.id, type: e.type, name: e.name }))
   );
 
+  // Single source of truth for "edges currently in the graph": both endpoints
+  // displayed (post-Note exclusion) AND the rel type is toggled on in the
+  // Legend. graphEdges + layoutByType's edge list both project from this so
+  // the filter predicate stays in lockstep.
+  const visibleRelationships = $derived(
+    $relationships.filter(
+      (r) =>
+        displayEntityIds.has(r.fromId) &&
+        displayEntityIds.has(r.toId) &&
+        enabledRelTypes.has(r.type)
+    )
+  );
+
   const graphEdges = $derived<GraphEdge[]>(
-    $relationships
-      .filter(
-        (r) =>
-          displayEntityIds.has(r.fromId) &&
-          displayEntityIds.has(r.toId) &&
-          enabledRelTypes.has(r.type)
-      )
-      .filter((r) => displayEntityIds.has(r.fromId) && displayEntityIds.has(r.toId))
-      .map((r) => ({
-        id: r.id,
-        fromId: r.fromId,
-        toId: r.toId,
-        color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
-        label: r.label ?? r.type.replace(/_/g, ' '),
-        dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId)
-      }))
+    visibleRelationships.map((r) => ({
+      id: r.id,
+      fromId: r.fromId,
+      toId: r.toId,
+      color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
+      label: r.label ?? r.type.replace(/_/g, ' '),
+      dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId)
+    }))
   );
 
   // ── Position seed (per-window first, per-entity fallback) ─────────────────
@@ -299,14 +304,12 @@
           width: 120,
           height: 32
         }));
-        const layoutEdges = $relationships
-          .filter(
-            (r) =>
-              displayEntityIds.has(r.fromId) &&
-              displayEntityIds.has(r.toId) &&
-              enabledRelTypes.has(r.type)
-          )
-          .map((r) => ({ fromId: r.fromId, toId: r.toId }));
+        // Reuse the same predicate that drives graphEdges — keeps the
+        // visible-edge contract DRY.
+        const layoutEdges = visibleRelationships.map((r) => ({
+          fromId: r.fromId,
+          toId: r.toId
+        }));
         const positionsForCentroid = Object.entries(currentPositions).map(([id, p]) => ({
           id,
           x: p.x,
