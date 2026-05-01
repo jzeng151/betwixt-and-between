@@ -1,9 +1,8 @@
 import { json, error } from '@sveltejs/kit';
 import { db } from '$lib/server/db/index.js';
 import { windowCanvasState } from '$lib/server/db/schema.js';
+import { isUuid, coercePinned } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Atomic multi-row upsert for one window. Wrapped in a single transaction so
@@ -20,8 +19,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 	const rows = body.map((raw, i) => {
 		if (!raw || typeof raw !== 'object') error(400, `row ${i}: must be an object`);
 		const { entityId, x, y, width, height, pinned } = raw as Record<string, unknown>;
-		if (typeof entityId !== 'string' || !UUID_RE.test(entityId))
-			error(400, `row ${i}: entityId must be a uuid`);
+		if (!isUuid(entityId)) error(400, `row ${i}: entityId must be a uuid`);
 		if (typeof x !== 'number' || typeof y !== 'number')
 			error(400, `row ${i}: x and y must be numbers`);
 		return {
@@ -31,7 +29,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 			y: Math.trunc(y),
 			width: typeof width === 'number' ? Math.trunc(width) : 160,
 			height: typeof height === 'number' ? Math.trunc(height) : 80,
-			pinned: typeof pinned === 'number' ? (pinned ? 1 : 0) : 0
+			pinned: coercePinned(pinned)
 		};
 	});
 

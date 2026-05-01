@@ -125,6 +125,34 @@ describe('/api/canvas-positions/window/[windowId] PUT', () => {
 		expect(rows[0].pinned).toBe(1);
 	});
 
+	it('coerces boolean pinned to integer 0/1 (Greptile P2)', async () => {
+		// JSON clients commonly serialize boolean-feeling fields as true/false;
+		// the integer storage shape is internal. Both should land as 1/0.
+		await route.PUT(
+			mkEvent({
+				params: { windowId: 'win-1' },
+				body: { entityId, x: 1, y: 2, pinned: true }
+			})
+		);
+		const [row1] = await currentDb
+			.select()
+			.from(windowCanvasState)
+			.where(eq(windowCanvasState.windowId, 'win-1'));
+		expect(row1.pinned).toBe(1);
+
+		await route.PUT(
+			mkEvent({
+				params: { windowId: 'win-1' },
+				body: { entityId, x: 1, y: 2, pinned: false }
+			})
+		);
+		const [row2] = await currentDb
+			.select()
+			.from(windowCanvasState)
+			.where(eq(windowCanvasState.windowId, 'win-1'));
+		expect(row2.pinned).toBe(0);
+	});
+
 	it('rejects malformed body with 400', async () => {
 		await expect(
 			route.PUT(mkEvent({ params: { windowId: 'win-1' }, body: null }))
@@ -271,9 +299,14 @@ describe('/api/canvas-positions/window/[windowId]/batch POST', () => {
 			{ entityId: ghost, x: 3, y: 3 }
 		];
 
+		// Tightened from .toBeDefined() (Greptile P2): assert the rejection is
+		// actually a FK violation, not a 400 from a mis-wired validation path
+		// or some unrelated runtime failure. drizzle wraps the pg error as
+		// 'Failed query: insert into ...' with the underlying 23503 message
+		// in the cause; the regex tolerates either wrapping shape.
 		await expect(
 			batchRoute.POST(mkEvent({ params: { windowId: 'win-1' }, body }))
-		).rejects.toBeDefined();
+		).rejects.toThrow(/foreign key|Failed query.*insert/i);
 
 		// Critical C5 guarantee: the two valid rows must NOT be in the DB.
 		const rows = await currentDb.select().from(windowCanvasState);
