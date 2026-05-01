@@ -378,38 +378,16 @@ Prerequisite to opening this branch: Phase 1.6 already shipped to main (✓ done
 - [x] Z3. refactor: extract `REL_COLOR` / `NODE_COLOR` maps to `src/lib/relationship-colors.ts` — **DONE** in commit on `phase-1b/lane-z`. New file with `Record<RelationshipType, string>` + `Record<EntityType, string>` exhaustiveness checks. Added `pov_of` to `REL_TYPES` in the create-relationship form. Added `--color-rel-pov: #a78bfa` token in `src/app.css` (violet, distinct from adjacent edge colors).
 - [x] Z4. refactor: extract `<GraphCanvas>` primitive from `StoryGraph.svelte` — **DONE** in commit on `phase-1b/lane-z`. New file `src/lib/components/GraphCanvas.svelte` (~470 LOC) with prop API per locked spec: `nodes`, `edges`, `dimmedNodes`, `initialPositions`, `emptyState` snippet, `nodeOverlay` snippet, `onConnect`, `onNodeOpen`, `onNodePositionChange`, plus an `export function startConnect()` for overlay-driven drag initiation. StoryGraph 672 → 382 LOC. Behavior parity verified via typecheck + 382-test suite. Z4 unblocks ALL of Lane C.
 
-**Lane A — Server (parallelizable with Lane B after Z lands):**
-- [ ] A1. Migration 0002: create `window_canvas_state` table (per-window canvas + pin state). Use `CREATE TABLE IF NOT EXISTS` for SQL-level idempotency on top of drizzle's framework idempotency. Schema:
-       ```sql
-       window_canvas_state (
-         window_id  TEXT NOT NULL,
-         entity_id  TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-         x          INTEGER NOT NULL,
-         y          INTEGER NOT NULL,
-         width      INTEGER NOT NULL DEFAULT 160,
-         height     INTEGER NOT NULL DEFAULT 80,
-         pinned     INTEGER NOT NULL DEFAULT 0,
-         PRIMARY KEY (window_id, entity_id)
-       )
-       INDEX window_canvas_state_window_idx ON (window_id)
-       ```
-       No backfill. `canvas_positions` stays unchanged as the seed/fallback layer. Lazy population: first move/layout in a window writes a row.
-- [ ] A2. New endpoint `/api/canvas-positions/window/[windowId]`:
-       - GET → list rows for that window.
-       - PUT → upsert one `{ entityId, x, y, width, height, pinned }` row.
-       - DELETE → remove row(s) for that window (e.g., on window close, optional).
-       Existing `/api/canvas-positions` (per-entity, no `pinned`) stays as the seed-layer endpoint for StoryGraph.
-- [ ] A3. POST `/api/canvas-positions/window/[windowId]/batch` — single-transaction multi-row upsert. Body: `Array<{ entityId, x, y, width, height, pinned }>`. Partial failure rolls back (atomicity required for C5 dagre layout — keeps the atomicity guarantee that motivated the original A3).
+**Lane A — Server (parallelizable with Lane B after Z lands):** **SHIPPED 2026-05-01** as PR #10 (commit `d8cf9d6`).
+- [x] A1. Migration `0001_rare_raider.sql`: `window_canvas_state` table with composite PK `(window_id, entity_id)`, FK to `entities` ON DELETE CASCADE, `pinned` integer 0/1, `window_canvas_state_window_idx` index. `CREATE TABLE IF NOT EXISTS` added by hand-edit per spec. Drizzle schema in `src/lib/server/db/schema.ts`.
+- [x] A2. Endpoint `src/routes/api/canvas-positions/window/[windowId]/+server.ts`: GET / PUT / DELETE per spec.
+- [x] A3. Endpoint `src/routes/api/canvas-positions/window/[windowId]/batch/+server.ts`: POST atomic multi-row upsert wrapped in `db.transaction(async tx => ...)`. C5-motivating rollback guarantee verified by FK-violation test that asserts `expect(rows).toHaveLength(0)` after a partial-failure batch.
+- 14 integration tests in `tests/integration/api-canvas-positions-window.test.ts`. Greptile review applied: extracted `UUID_RE` + `coercePinned` to `src/lib/server/validation.ts` (DRY), tightened the FK rollback test's rejection assertion from `.toBeDefined()` to a regex matching the drizzle/pg error shape, fixed the silent-data-corruption bug where `pinned: true` mapped to 0 (now coerces booleans to 1/0).
 
-**Lane B — Pure logic + reusable atoms (parallelizable with Lane A):**
-- [ ] B1. `src/lib/graph/edge-policy.ts` — `DIRECTION: Record<RelationshipType, 'directed' | 'symmetric'>` with exhaustiveness check. Symmetric: `allied_with`, `rivals`. Directed: everything else.
-- [ ] B2. `src/lib/graph/traversal.ts` — pure functions:
-       - `sharedNeighbors(focalSet, edges, policy): Set<id>` (intersection)
-       - `oneHopUnion(focalSet, edges, policy): Set<id>` (1-hop union)
-       - `reachable(focalSet, edges, policy): Set<id>` (cycle-safe BFS)
-       Special-case structural entity types: traversal helpers MUST treat `Act` and `Scene` as opt-in for traversal (caller passes `includeStructural: false` by default) to avoid huge `appears_in` / `caused_by` fan-outs.
-       Hand-written unit cases per the test plan (no fast-check).
-- [ ] B3. `<ContextMenu items={...} x y onClose={...} />` reusable component: keyboard nav (Esc / arrow keys), click-outside, viewport-edge clamping. Two callsites in this PR (StoryGraph + FocusedGraph). If the abstraction feels clumsy at the second use, inline.
+**Lane B — Pure logic + reusable atoms (parallelizable with Lane A):** **SHIPPED 2026-05-01** as PR #11 (commit `635e66f`).
+- [x] B1. `src/lib/graph/edge-policy.ts` — `DIRECTION: Record<RelationshipType, 'directed' | 'symmetric'>` with exhaustiveness check. Symmetric: `allied_with`, `rivals`. Directed: everything else (including `pov_of`, `mentor_of`, `caused_by`, `takes_place_at`, `located_at`, `appears_in`).
+- [x] B2. `src/lib/graph/traversal.ts` — `sharedNeighbors`, `oneHopUnion`, `reachable` (cycle-safe BFS). `TraversalOptions` with `includeStructural` + `structuralIds: Set<string>` so callers opt into walking through Act/Scene nodes (avoids huge `appears_in` / `caused_by` fan-outs by default). 13 unit tests at `tests/unit/graph-traversal.test.ts`.
+- [x] B3. `<ContextMenu items={...} x y onClose={...} />` reusable component at `src/lib/components/ContextMenu.svelte`. Keyboard nav (Arrow / Enter / Esc), click-outside dismiss, viewport-edge clamping (extracted to `src/lib/components/context-menu-clamp.ts` for testability). Greptile fix: `selectItem` calls `onClose()` after `onSelect()` so callsites don't have to wrap. 9 component tests + 6 clamp unit tests + 4 edge-policy unit tests.
 
 **Lane C — Feature integration (depends on Z + A + B):**
 - [ ] C1. Add `'FocusedGraph'` to `AppId` enum + extend `windows.ts` window state shape:
