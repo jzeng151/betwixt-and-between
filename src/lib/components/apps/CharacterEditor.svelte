@@ -784,22 +784,41 @@
         {/if}
       </div>
       {#if mode === 'edit'}
-        <div class="swatch-row" role="group" aria-label="Timeline color">
-          {#each CHARACTER_COLORS as hex}
-            {@const inUse = usedColors.has(hex.toLowerCase())}
-            <button
-              type="button"
-              class="swatch"
-              class:swatch-selected={color === hex}
-              class:swatch-used={inUse && color !== hex}
-              style="--sw:{hex}"
-              aria-label={inUse ? `${hex} (used by ${usedColors.get(hex.toLowerCase())})` : hex}
-              aria-pressed={color === hex}
-              data-testid="char-color-{hex}"
-              title={inUse ? `Already used by ${usedColors.get(hex.toLowerCase())}` : hex}
-              onclick={() => chooseColor(hex)}
-            ></button>
-          {/each}
+        <!-- Top row: 8 swatches on the left, color wheel as a square
+             affordance on the right. Hex input lives below on its own
+             line. Layout matches color-vision.png mock. -->
+        <div class="color-top-row">
+          <div class="swatch-row" role="group" aria-label="Timeline color">
+            {#each CHARACTER_COLORS as hex}
+              {@const inUse = usedColors.has(hex.toLowerCase())}
+              <button
+                type="button"
+                class="swatch"
+                class:swatch-selected={color === hex}
+                class:swatch-used={inUse && color !== hex}
+                style="--sw:{hex}"
+                aria-label={inUse ? `${hex} (used by ${usedColors.get(hex.toLowerCase())})` : hex}
+                aria-pressed={color === hex}
+                data-testid="char-color-{hex}"
+                title={inUse ? `Already used by ${usedColors.get(hex.toLowerCase())}` : hex}
+                onclick={() => chooseColor(hex)}
+              ></button>
+            {/each}
+          </div>
+          <!-- Native color picker — square block at the row's right
+               edge per the design mock. Commits on `change` (when the
+               OS picker closes); accidentally opening without changing
+               color is a no-op. -->
+          <input
+            type="color"
+            class="color-wheel"
+            value={color ?? autoColor}
+            onchange={(e) => chooseColor((e.currentTarget as HTMLInputElement).value.toLowerCase())}
+            aria-label="Custom color picker"
+            data-testid="char-color-wheel"
+          />
+        </div>
+        <div class="hex-row">
           <input
             class="hex-input"
             type="text"
@@ -819,21 +838,6 @@
             ></span>
           {/if}
         </div>
-
-        <!-- Native color picker — stretched across the full width of
-             the row above (swatches + hex input) so it reads as a
-             distinct "pick anything" affordance instead of a tiny
-             square. Commits on `change` (when the OS picker closes),
-             so accidentally opening without changing color is a
-             no-op. -->
-        <input
-          type="color"
-          class="color-wheel"
-          value={color ?? autoColor}
-          onchange={(e) => chooseColor((e.currentTarget as HTMLInputElement).value.toLowerCase())}
-          aria-label="Custom color picker"
-          data-testid="char-color-wheel"
-        />
         {#if customHexError}
           <p class="hex-error" data-testid="char-color-custom-error">{customHexError}</p>
         {/if}
@@ -1662,13 +1666,22 @@
   }
   .hex-input:focus { border-color: var(--color-accent); }
 
-  /* Native color picker — stretched across the full row width below
-     the swatches so it reads as a distinct "pick anything"
-     affordance. Hex input lives back inline with the swatches. */
+  /* Top row layout: swatches flex-grow on the left, color wheel as a
+     fixed square on the right. Hex input + live preview swatch live
+     on their own row below. Matches color-vision.png. */
+  .color-top-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .color-top-row .swatch-row {
+    flex: 1;
+    min-width: 0;
+  }
   .color-wheel {
-    width: 100%;
-    height: 28px;
-    margin-top: 6px;
+    flex-shrink: 0;
+    width: 52px;
+    height: 52px;
     padding: 0;
     border: 1px solid var(--color-border);
     border-radius: 6px;
@@ -1676,9 +1689,16 @@
     cursor: pointer;
   }
   .color-wheel::-webkit-color-swatch-wrapper { padding: 3px; }
-  .color-wheel::-webkit-color-swatch { border: none; border-radius: 3px; }
-  .color-wheel::-moz-color-swatch { border: none; border-radius: 3px; }
+  .color-wheel::-webkit-color-swatch { border: none; border-radius: 4px; }
+  .color-wheel::-moz-color-swatch { border: none; border-radius: 4px; }
   .color-wheel:hover { border-color: var(--color-accent); }
+
+  .hex-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+  }
 
   /* Used-elsewhere swatch indicator — a small dot in the top-right
      corner. Doesn't disable the swatch (with >8 characters collision
