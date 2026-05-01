@@ -69,6 +69,14 @@
     $entities.filter((e) => displaySet.has(e.id) && e.type !== 'Note')
   );
 
+  // Set of ids that ACTUALLY render as nodes (post-Note exclusion). Edges
+  // filter against this rather than displaySet so we don't enqueue edges
+  // pointing at a Note that won't exist as a node — GraphCanvas safely drops
+  // those today, but matching the node-filter shape keeps the two
+  // derivations consistent and avoids an asymmetry that would surprise a
+  // reader (Greptile P2 follow-up on PR #12).
+  const displayEntityIds = $derived(new Set(displayEntities.map((e) => e.id)));
+
   // ── Out-of-scope at playhead (same shape as StoryGraph) ───────────────────
   const outOfScope = $derived.by(() => {
     const set = new Set<string>();
@@ -94,7 +102,7 @@
 
   const graphEdges = $derived<GraphEdge[]>(
     $relationships
-      .filter((r) => displaySet.has(r.fromId) && displaySet.has(r.toId))
+      .filter((r) => displayEntityIds.has(r.fromId) && displayEntityIds.has(r.toId))
       .map((r) => ({
         id: r.id,
         fromId: r.fromId,
