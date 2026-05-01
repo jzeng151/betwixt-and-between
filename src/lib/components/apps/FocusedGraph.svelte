@@ -140,6 +140,10 @@
     }))
   );
 
+  // Reference to the canvas for out-of-band position updates (reseed) +
+  // refit calls after layout-by-type mutates positions. Set via bind:this.
+  let canvas: GraphCanvas | undefined = $state();
+
   // ── Position seed (per-window first, per-entity fallback) ─────────────────
   let initialPositions = $state<Record<string, NodePosition>>({});
   // Pinned set: ids whose pinned column is 1 in this window's
@@ -338,13 +342,12 @@
           };
         }
         currentPositions = { ...currentPositions, ...updates };
-        // Re-seed initialPositions so GraphCanvas's seededFromServer guard
-        // re-applies. (Workaround: GraphCanvas seeds once; for layout-by-type
-        // we'd need to push positions through. Pragmatic: just update the
-        // backing store and rely on the post-merge fitView; user can reload
-        // the window to see the new layout. Long-term fix tracked as a
-        // follow-up — see PR description.)
         initialPositions = { ...initialPositions, ...updates };
+        // Push the new positions THROUGH GraphCanvas so the visible nodes
+        // animate to their new spots immediately (rather than appearing
+        // only after a window remount). canvas.reseed() merges into
+        // GraphCanvas's internal nodePos and re-fits.
+        canvas?.reseed(updates);
         optimisticApplied = true;
 
         // Atomic batch write via A3.
@@ -364,8 +367,12 @@
         });
         if (!res.ok) {
           // Roll back the optimistic update so the UI matches the server.
+          // reseed() pushes positionsBefore back into the canvas so the
+          // visual reverts too — without it the nodes would stay at the
+          // new positions even though the data layer reverted.
           currentPositions = positionsBefore;
           initialPositions = initialBefore;
+          canvas?.reseed(positionsBefore);
           console.warn(
             `FocusedGraph: layout-by-type batch write failed (${res.status}), rolled back`
           );
@@ -380,6 +387,7 @@
         if (optimisticApplied) {
           currentPositions = positionsBefore;
           initialPositions = initialBefore;
+          canvas?.reseed(positionsBefore);
         }
         console.warn('FocusedGraph: layout-by-type failed, rolled back', err);
       } finally {
@@ -499,6 +507,7 @@
 
   <div class="fg-canvas">
     <GraphCanvas
+      bind:this={canvas}
       nodes={graphNodes}
       edges={graphEdges}
       dimmedNodes={outOfScope}
@@ -511,6 +520,16 @@
         <div class="fg-empty">
           <p>Pick a focal entity to start.</p>
         </div>
+      {/snippet}
+
+      {#snippet nodeBadge({ id })}
+        {#if pinnedSet.has(id)}
+          <span
+            class="pin-badge"
+            title="Pinned to canvas (excluded from Layout by type)"
+            aria-label="Pinned"
+          >📌</span>
+        {/if}
       {/snippet}
     </GraphCanvas>
 
@@ -676,6 +695,23 @@
     right: 12px;
     z-index: 5;
     pointer-events: auto;
+  }
+
+  .pin-badge {
+    position: absolute;
+    top: -8px;
+    left: -8px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    line-height: 1;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    pointer-events: none;
   }
 
   .fg-laying-out {

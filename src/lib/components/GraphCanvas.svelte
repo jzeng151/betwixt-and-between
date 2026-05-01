@@ -61,6 +61,10 @@
 		emptyState?: Snippet;
 		/** Per-node overlay UI (connect button, delete button, pin badge, etc.). */
 		nodeOverlay?: Snippet<[NodeOverlayContext]>;
+		/** Per-node always-visible chrome (pin badges, status icons, etc.).
+		    Unlike `nodeOverlay` which renders only on hover, this snippet
+		    renders for every node, every frame. Keep the content cheap. */
+		nodeBadge?: Snippet<[NodeOverlayContext]>;
 		/** Fires when a user drags from a node to another node. screenX/screenY are
 		    viewport-local coords, useful for positioning a follow-up form. */
 		onConnect?: (fromId: string, toId: string, screenX: number, screenY: number) => void;
@@ -84,6 +88,7 @@
 		initialPositions,
 		emptyState,
 		nodeOverlay,
+		nodeBadge,
 		onConnect,
 		onNodeOpen,
 		onNodePositionChange,
@@ -349,6 +354,31 @@
 		onContextMenu?.(id, e.clientX, e.clientY);
 	}
 
+	/**
+	 * Force-merge external position updates into the canvas's internal nodePos
+	 * and re-fit. Used by hosts that mutate positions out-of-band (e.g.
+	 * FocusedGraph's "Layout by type") — the host can't reach into nodePos
+	 * directly because GraphCanvas's seededFromServer guard runs once. This
+	 * is the well-defined escape hatch.
+	 *
+	 * Reassigns nodePos so Svelte 5 $derived deps (screenEdges) invalidate;
+	 * fitView runs on the next microtask so layout effects settle first.
+	 */
+	export function reseed(positions: Record<string, NodePosition>) {
+		const merged = { ...nodePos };
+		for (const [id, p] of Object.entries(positions)) {
+			merged[id] = { ...merged[id], ...p };
+		}
+		nodePos = merged;
+		queueMicrotask(() => fitView(nodePos));
+	}
+
+	/** Re-center the viewport on the current set of nodes (e.g. after a host
+	    mutation that changed node count or extents). Idempotent. */
+	export function refit() {
+		fitView(nodePos);
+	}
+
 	// Public-via-snippet method: overlay UI calls this to start a connection drag.
 	export function startConnect(e: PointerEvent, fromId: string) {
 		e.stopPropagation();
@@ -436,6 +466,15 @@
 				>
 					<span class="node-name">{node.name}</span>
 					<span class="node-type">{node.type}</span>
+					{#if nodeBadge}
+						<span class="gc-badge-host">
+							{@render nodeBadge({
+								id: node.id,
+								hovered: hoveredNodeId === node.id,
+								dragging: draggingNode?.id === node.id
+							})}
+						</span>
+					{/if}
 					{#if nodeOverlay && hoveredNodeId === node.id && !draggingNode && !panning}
 						<div class="gc-overlay-host gc-no-drag">
 							{@render nodeOverlay({
@@ -516,6 +555,10 @@
 	}
 
 	.gc-overlay-host {
+		display: contents;
+	}
+
+	.gc-badge-host {
 		display: contents;
 	}
 </style>

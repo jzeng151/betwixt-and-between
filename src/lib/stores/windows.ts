@@ -167,6 +167,18 @@ function createWindowStore() {
 	}
 
 	function close(id: string) {
+		// Fire-and-forget cleanup for focused-graph windows: drop the per-
+		// window canvas rows so they don't orphan in window_canvas_state.
+		// Lane A's DELETE endpoint accepts the windowId and removes ALL
+		// rows for it. Tab close / page reload won't go through this path
+		// — user expects state preserved on those — so cleanup only fires
+		// on explicit close (X button or Ctrl-W).
+		const w = get({ subscribe }).find((x) => x.id === id);
+		if (w?.appId === 'focused-graph' && typeof fetch !== 'undefined') {
+			void fetch(`/api/canvas-positions/window/${id}`, { method: 'DELETE' }).catch(() => {
+				// non-fatal — the row stays orphan, no user impact
+			});
+		}
 		update((all) => all.filter((w) => w.id !== id));
 	}
 
