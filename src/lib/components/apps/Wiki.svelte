@@ -6,8 +6,9 @@
   interface Props { entityId: string | null; }
   let { entityId }: Props = $props();
 
-  function parseBody(raw: string): string {
-    try { return JSON.parse(raw)?.body ?? ''; } catch { return ''; }
+  // entity.data is jsonb (object) post-T8a; no parse needed.
+  function readBody(data: Record<string, unknown>): string {
+    return (data?.body as string) ?? '';
   }
 
   const notes = $derived(
@@ -49,7 +50,7 @@
 
   $effect(() => {
     if (selectedNote) {
-      editBody = parseBody(selectedNote.data);
+      editBody = readBody(selectedNote.data);
       previewMode = false;
     }
   });

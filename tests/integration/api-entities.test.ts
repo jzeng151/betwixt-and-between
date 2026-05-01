@@ -14,7 +14,7 @@ import { createTestDb } from '../helpers/test-db.js';
 
 // Module-level holder so each test can swap in a fresh DB. The mock factory
 // closes over `currentDb` by reference via a getter.
-let currentDb: ReturnType<typeof createTestDb>;
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
@@ -43,7 +43,7 @@ async function readJson(res: Response): Promise<any> {
 
 describe('/api/entities GET', () => {
 	beforeEach(() => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 	});
 
 	it('returns empty array when no entities', async () => {
@@ -64,7 +64,7 @@ describe('/api/entities GET', () => {
 
 describe('/api/entities POST', () => {
 	beforeEach(() => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 	});
 
 	it('creates a Character entity with valid input', async () => {
@@ -139,7 +139,7 @@ describe('/api/entities POST', () => {
 
 describe('/api/entities/[id] GET', () => {
 	beforeEach(() => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 	});
 
 	it('returns the entity by id', async () => {
@@ -161,7 +161,7 @@ describe('/api/entities/[id] GET', () => {
 
 describe('/api/entities/[id] PATCH', () => {
 	beforeEach(() => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 	});
 
 	it('updates name and trims whitespace', async () => {
@@ -195,7 +195,7 @@ describe('/api/entities/[id] PATCH', () => {
 
 describe('/api/entities/[id] DELETE', () => {
 	beforeEach(() => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 	});
 
 	it('deletes the entity and returns 204', async () => {

@@ -20,7 +20,7 @@ import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
 
-let currentDb: ReturnType<typeof createTestDb>;
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
@@ -48,7 +48,7 @@ describe('POST /api/entities/batch — atomic multi-entity creation (D21)', () =
 	let acts: { act0: string; act1: string; act2: string };
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		acts = await seedActs(currentDb);
 	});
 

@@ -6,11 +6,15 @@ export type Entity = {
 	id: string;
 	type: EntityType;
 	name: string;
-	data: string;
+	// jsonb on the server (T8a port). Object shape — no JSON.parse at the
+	// boundary anymore. Field schema varies by entity type (Act has goal /
+	// stakes / turning point; Event has outcome; Scene has sensory anchor;
+	// etc.) — narrowing to a tagged union is a future polish.
+	data: Record<string, unknown>;
 	parentId: string | null;
 	position: number | null;
-	createdAt: number | Date;
-	updatedAt: number | Date;
+	createdAt: string | Date;
+	updatedAt: string | Date;
 };
 
 function createEntityStore() {
@@ -95,7 +99,9 @@ function createEntityStore() {
 					? {
 							...e,
 							...(optimistic.name !== undefined ? { name: optimistic.name } : {}),
-							...(optimistic.data !== undefined ? { data: JSON.stringify(optimistic.data) } : {}),
+							...(optimistic.data !== undefined
+								? { data: optimistic.data as Record<string, unknown> }
+								: {}),
 							...(optimistic.parentId !== undefined ? { parentId: optimistic.parentId } : {}),
 							...(optimistic.position !== undefined ? { position: optimistic.position } : {})
 						}

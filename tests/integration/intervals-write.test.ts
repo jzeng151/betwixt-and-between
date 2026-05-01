@@ -18,7 +18,7 @@ import {
 	recomputeAllIntervals
 } from '../../src/lib/server/intervals.js';
 
-type Db = ReturnType<typeof createTestDb>;
+type Db = Awaited<ReturnType<typeof createTestDb>>;
 
 describe('writeInterval — chokepoint', () => {
 	let db: Db;
@@ -26,7 +26,7 @@ describe('writeInterval — chokepoint', () => {
 	let ellie: string;
 
 	beforeEach(async () => {
-		db = createTestDb();
+		db = await createTestDb();
 		acts = await seedActs(db);
 		const [c] = await db
 			.insert(entities)
@@ -180,7 +180,7 @@ describe('updateInterval', () => {
 	let ellie: string;
 
 	beforeEach(async () => {
-		db = createTestDb();
+		db = await createTestDb();
 		acts = await seedActs(db);
 		const [c] = await db
 			.insert(entities)
@@ -339,7 +339,7 @@ describe('writeInterval — same-entity overlap rejection', () => {
 	let ellie: string;
 
 	beforeEach(async () => {
-		db = createTestDb();
+		db = await createTestDb();
 		acts = await seedActs(db);
 		const [c] = await db
 			.insert(entities)
@@ -407,7 +407,7 @@ describe('recomputeIntervalsForAct', () => {
 	let ellie: string;
 
 	beforeEach(async () => {
-		db = createTestDb();
+		db = await createTestDb();
 		acts = await seedActs(db);
 		const [c] = await db
 			.insert(entities)
@@ -492,7 +492,7 @@ describe('recomputeAllIntervals (Act-level mutations)', () => {
 	let ellie: string;
 
 	beforeEach(async () => {
-		db = createTestDb();
+		db = await createTestDb();
 		acts = await seedActs(db);
 		const [c] = await db
 			.insert(entities)

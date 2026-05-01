@@ -31,11 +31,11 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	const [entity] = await db.select().from(entities).where(eq(entities.id, params.id));
 	if (!entity) error(404, 'Entity not found');
 
-	const updates: Record<string, unknown> = {
-		updatedAt: sql`(unixepoch())`
-	};
+	// updated_at is maintained by the bump_updated_at BEFORE UPDATE trigger
+	// — do not set it here. data is jsonb on pg; pass the object directly.
+	const updates: Record<string, unknown> = {};
 	if (name !== undefined) updates.name = name.trim();
-	if (data !== undefined) updates.data = JSON.stringify(data);
+	if (data !== undefined) updates.data = data;
 
 	// parentId change (Scene cross-act move). Defer to moveSceneToAct primitive
 	// for the full cascade (interval FK fix-up + recompute both parents).
@@ -85,7 +85,6 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 				.update(entities)
 				.set({
 					position: sql`${entities.position} + 1` as unknown as number,
-					updatedAt: sql`(unixepoch())` as unknown as Date
 				})
 				.where(
 					and(
@@ -101,7 +100,6 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 				.update(entities)
 				.set({
 					position: sql`${entities.position} - 1` as unknown as number,
-					updatedAt: sql`(unixepoch())` as unknown as Date
 				})
 				.where(
 					and(
@@ -184,7 +182,6 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 				.set({
 					parentId: moveScenesTo,
 					position: offset + i,
-					updatedAt: sql`(unixepoch())` as unknown as Date
 				})
 				.where(eq(entities.id, scene.id));
 			// Update intervals anchored to this scene.
@@ -192,14 +189,12 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 				.update(intervalsTable)
 				.set({
 					startActId: moveScenesTo,
-					updatedAt: sql`(unixepoch())` as unknown as Date
 				})
 				.where(eq(intervalsTable.startSceneId, scene.id));
 			await db
 				.update(intervalsTable)
 				.set({
 					endActId: moveScenesTo,
-					updatedAt: sql`(unixepoch())` as unknown as Date
 				})
 				.where(eq(intervalsTable.endSceneId, scene.id));
 		}
@@ -264,7 +259,6 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 							endActId: prevAct.id,
 							endSceneId: null,
 							endPosition: newEndPos,
-							updatedAt: sql`(unixepoch())` as unknown as Date
 						})
 						.where(eq(intervalsTable.id, iv.id));
 				}
@@ -286,7 +280,6 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 							startActId: nextAct.id,
 							startSceneId: null,
 							startPosition: newStartPos,
-							updatedAt: sql`(unixepoch())` as unknown as Date
 						})
 						.where(eq(intervalsTable.id, iv.id));
 				}

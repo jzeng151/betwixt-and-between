@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, relationships, intervals } from '../../src/lib/server/db/schema.js';
 
-let currentDb: ReturnType<typeof createTestDb>;
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
@@ -39,7 +39,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 	let bob: string;
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		const [a] = await currentDb
 			.insert(entities)
 			.values({ type: 'Character', name: 'Alice' })
@@ -145,7 +145,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 
 describe('/api/relationships GET', () => {
 	beforeEach(() => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 	});
 
 	it('returns empty array when no relationships', async () => {
@@ -193,7 +193,7 @@ describe('/api/relationships GET', () => {
 
 describe('/api/relationships/[id] DELETE', () => {
 	beforeEach(() => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 	});
 
 	it('deletes a real relationship and returns 204', async () => {

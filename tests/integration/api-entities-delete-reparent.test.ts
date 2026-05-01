@@ -22,7 +22,7 @@ import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
 
-let currentDb: ReturnType<typeof createTestDb>;
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
 	get db() {
@@ -47,7 +47,7 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 	let ellie: string;
 
 	beforeEach(async () => {
-		currentDb = createTestDb();
+		currentDb = await createTestDb();
 		acts = await seedActs(currentDb);
 		const [c] = await currentDb
 			.insert(entities)

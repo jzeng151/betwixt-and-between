@@ -39,8 +39,11 @@
  */
 
 import { sql, eq, and, isNull, inArray } from 'drizzle-orm';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import type { SQLiteTransaction } from 'drizzle-orm/sqlite-core';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import type { PgTransaction } from 'drizzle-orm/pg-core';
+import type { PostgresJsQueryResultHKT } from 'drizzle-orm/postgres-js';
+import type { PgliteDatabase } from 'drizzle-orm/pglite';
+import type { PgliteQueryResultHKT } from 'drizzle-orm/pglite';
 import type { ExtractTablesWithRelations } from 'drizzle-orm';
 import * as schema from './db/schema.js';
 import { entities, intervals } from './db/schema.js';
@@ -52,19 +55,29 @@ import { actRange, sceneRange } from '$lib/timeline-v2-helpers.js';
 /**
  * Polymorphic DB handle. Helpers accept either the top-level db or a
  * transaction context — both expose the same query API thanks to Drizzle's
- * BetterSQLiteTransaction extending BaseSQLiteDatabase. Locked 2026-04-29
- * in /plan-eng-review (Issue 11A/17A) — closes the PR 1 tech-debt note that
- * used to live at the top of writeInterval.
+ * PgTransaction extending BasePgDatabase. Locked 2026-04-29 in /plan-eng-review
+ * (Issue 11A/17A) — closes the PR 1 tech-debt note that used to live at the
+ * top of writeInterval. Migrated from sqlite to postgres-js + pglite in T8a
+ * (2026-05-01) — see CONSIDERATIONS.md [2026-05-01].
  *
  * Callers wrap in `db.transaction(async (tx) => { await writeInterval(tx, ...) })`
- * to get atomic write semantics. All multi-step write helpers in this module
- * accept Db so the same helper composes inside or outside a transaction.
+ * to get atomic write semantics. drizzle-orm/postgres-js supports async tx
+ * callbacks natively, so the helper chain stays async and the previously-
+ * deferred T1 sync conversion is no longer required.
+ *
+ * Union covers both production (postgres-js → Neon) and tests (pglite). Their
+ * Drizzle adapters expose identical query APIs.
  */
 export type Db =
-	| BetterSQLite3Database<typeof schema>
-	| SQLiteTransaction<
-			'sync',
-			import('better-sqlite3').RunResult,
+	| PostgresJsDatabase<typeof schema>
+	| PgTransaction<
+			PostgresJsQueryResultHKT,
+			typeof schema,
+			ExtractTablesWithRelations<typeof schema>
+	  >
+	| PgliteDatabase<typeof schema>
+	| PgTransaction<
+			PgliteQueryResultHKT,
 			typeof schema,
 			ExtractTablesWithRelations<typeof schema>
 	  >;
@@ -625,7 +638,6 @@ export async function updateInterval(
 			endSceneId: unionEndSceneId,
 			startPosition: unionStart,
 			endPosition: unionEnd,
-			updatedAt: sql`(unixepoch())` as unknown as Date
 		})
 		.where(eq(intervals.id, id))
 		.returning();
@@ -684,7 +696,6 @@ export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<n
 			.set({
 				startPosition: newStart,
 				endPosition: newEnd,
-				updatedAt: sql`(unixepoch())` as unknown as Date
 			})
 			.where(eq(intervals.id, row.id));
 		updated++;
@@ -757,7 +768,6 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 				.set({
 					startPosition: newStart,
 					endPosition: newEnd,
-					updatedAt: sql`(unixepoch())` as unknown as Date
 				})
 				.where(eq(intervals.id, row.id));
 			updated++;
@@ -787,13 +797,13 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
  *   - Updates original to [start, atPosition); inserts new row [atPosition, end)
  *     with the same entityId.
  *
- * The UPDATE (left half) and INSERT (right half) are wrapped in a raw
- * BEGIN / COMMIT block on the underlying better-sqlite3 client so a crash
- * between the two writes can't leave a permanently shortened interval
- * with no right half. better-sqlite3 is single-threaded and synchronous
- * so the awaits inside don't introduce concurrent connections; the manual
- * BEGIN/COMMIT is a short-term mitigation that survives the T1 sync
- * refactor (which would replace this with a proper drizzle transaction).
+ * Atomicity: callers should wrap in `db.transaction(async (tx) => { await
+ * splitInterval(tx, ...) })` so a crash between the UPDATE (left half) and
+ * INSERT (right half) rolls back both. drizzle-orm/postgres-js supports
+ * async tx callbacks natively (the previous sqlite-era raw BEGIN/COMMIT
+ * workaround is gone). When called outside a tx the two writes are not
+ * atomic — by design only the split endpoint and tests-that-want-rollback
+ * compose this inside a tx.
  */
 export async function splitInterval(
 	db: DB,
@@ -844,47 +854,31 @@ export async function splitInterval(
 		throw new Error(`splitInterval: could not resolve FKs for position ${atPosition}`);
 	}
 
-	// Wrap the two writes in a raw BEGIN/COMMIT so a crash between UPDATE
-	// (left half) and INSERT (right half) can't leave the interval
-	// permanently shortened. drizzle exposes the underlying better-sqlite3
-	// Database via the `$client` property at runtime; the type doesn't
-	// declare it so we cast through a structural check. splitInterval is
-	// only called with the top-level db (never a tx).
-	const client = (db as unknown as { $client: import('better-sqlite3').Database }).$client;
-	client.exec('BEGIN');
-	let left: typeof intervals.$inferSelect;
-	let right: typeof intervals.$inferSelect;
-	try {
-		// Update original (left half).
-		[left] = await db
-			.update(intervals)
-			.set({
-				endActId: leftEndFKs.endActId,
-				endSceneId: leftEndFKs.endSceneId,
-				endPosition: leftEndFKs.endPosition,
-				updatedAt: sql`(unixepoch())` as unknown as Date
-			})
-			.where(eq(intervals.id, intervalId))
-			.returning();
+	// Update original (left half). updated_at is maintained by the
+	// bump_updated_at BEFORE UPDATE trigger; do not set explicitly.
+	const [left] = await db
+		.update(intervals)
+		.set({
+			endActId: leftEndFKs.endActId,
+			endSceneId: leftEndFKs.endSceneId,
+			endPosition: leftEndFKs.endPosition
+		})
+		.where(eq(intervals.id, intervalId))
+		.returning();
 
-		// Insert new (right half).
-		[right] = await db
-			.insert(intervals)
-			.values({
-				entityId: existing.entityId,
-				startActId: rightStartFKs.startActId,
-				startSceneId: rightStartFKs.startSceneId,
-				endActId: existing.endActId,
-				endSceneId: existing.endSceneId,
-				startPosition: rightStartFKs.startPosition,
-				endPosition: existing.endPosition
-			})
-			.returning();
-		client.exec('COMMIT');
-	} catch (err) {
-		client.exec('ROLLBACK');
-		throw err;
-	}
+	// Insert new (right half).
+	const [right] = await db
+		.insert(intervals)
+		.values({
+			entityId: existing.entityId,
+			startActId: rightStartFKs.startActId,
+			startSceneId: rightStartFKs.startSceneId,
+			endActId: existing.endActId,
+			endSceneId: existing.endSceneId,
+			startPosition: rightStartFKs.startPosition,
+			endPosition: existing.endPosition
+		})
+		.returning();
 
 	return { left, right };
 }
@@ -942,7 +936,6 @@ export async function moveSceneToAct(
 		.update(entities)
 		.set({
 			position: sql`${entities.position} + 1` as unknown as number,
-			updatedAt: sql`(unixepoch())` as unknown as Date
 		})
 		.where(
 			and(
@@ -958,7 +951,6 @@ export async function moveSceneToAct(
 		.set({
 			parentId: newActId,
 			position: newPosition,
-			updatedAt: sql`(unixepoch())` as unknown as Date
 		})
 		.where(eq(entities.id, sceneId));
 
@@ -967,14 +959,12 @@ export async function moveSceneToAct(
 		.update(intervals)
 		.set({
 			startActId: newActId,
-			updatedAt: sql`(unixepoch())` as unknown as Date
 		})
 		.where(eq(intervals.startSceneId, sceneId));
 	await db
 		.update(intervals)
 		.set({
 			endActId: newActId,
-			updatedAt: sql`(unixepoch())` as unknown as Date
 		})
 		.where(eq(intervals.endSceneId, sceneId));
 

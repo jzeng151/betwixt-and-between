@@ -15,10 +15,10 @@ import { createTestDb } from '../helpers/test-db.js';
 import { entities, relationships, canvasPositions } from '../../src/lib/server/db/schema.js';
 
 describe('entities.data JSON field handling', () => {
-	let db: ReturnType<typeof createTestDb>;
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 
 	beforeEach(() => {
-		db = createTestDb();
+		db = await createTestDb();
 	});
 
 	it('round-trips a stringified JSON object via the data column', async () => {
@@ -101,10 +101,10 @@ describe('entities.data JSON field handling', () => {
 });
 
 describe('entities.parent_id + position', () => {
-	let db: ReturnType<typeof createTestDb>;
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 
 	beforeEach(() => {
-		db = createTestDb();
+		db = await createTestDb();
 	});
 
 	it('persists parent_id pointing at an Act for a Scene', async () => {
@@ -242,10 +242,10 @@ describe('entities.parent_id + position', () => {
 });
 
 describe('canvas_positions UNIQUE(entity_id) constraint', () => {
-	let db: ReturnType<typeof createTestDb>;
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 
 	beforeEach(() => {
-		db = createTestDb();
+		db = await createTestDb();
 	});
 
 	it('allows canvas_positions for distinct entity_ids', async () => {
@@ -320,10 +320,10 @@ describe('canvas_positions UNIQUE(entity_id) constraint', () => {
 });
 
 describe('multi-edge cascade fan-out from a single entity', () => {
-	let db: ReturnType<typeof createTestDb>;
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 
 	beforeEach(() => {
-		db = createTestDb();
+		db = await createTestDb();
 	});
 
 	it('deleting an entity removes all dependent rows but leaves siblings intact', async () => {
@@ -386,10 +386,10 @@ describe('multi-edge cascade fan-out from a single entity', () => {
 });
 
 describe('ordering queries against entities_type_position_idx', () => {
-	let db: ReturnType<typeof createTestDb>;
+	let db: Awaited<ReturnType<typeof createTestDb>>;
 
 	beforeEach(() => {
-		db = createTestDb();
+		db = await createTestDb();
 	});
 
 	it('returns root-level Acts in ascending position order', async () => {

@@ -52,7 +52,6 @@ export const POST: RequestHandler = async ({ request }) => {
 				.update(entities)
 				.set({
 					position: sql`${entities.position} + 1` as unknown as number,
-					updatedAt: sql`(unixepoch())` as unknown as Date
 				})
 				.where(
 					and(
@@ -71,7 +70,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			.values({
 				type,
 				name: name.trim(),
-				data: data ? JSON.stringify(data) : '{}',
+				data: (data ?? {}) as Record<string, unknown>,
 				parentId: typeof parentId === 'string' ? parentId : null,
 				position: typeof position === 'number' ? position : null
 			})

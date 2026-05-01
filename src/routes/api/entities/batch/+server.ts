@@ -57,7 +57,7 @@ export const POST: RequestHandler = async ({ request }) => {
 				.values({
 					type: item.type,
 					name: item.name.trim(),
-					data: item.data ? JSON.stringify(item.data) : '{}',
+					data: (item.data ?? {}) as Record<string, unknown>,
 					parentId: typeof item.parentId === 'string' ? item.parentId : null,
 					position: typeof item.position === 'number' ? item.position : null
 				})

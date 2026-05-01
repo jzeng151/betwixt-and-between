@@ -1,13 +1,16 @@
 import {
+	pgTable,
+	uuid,
+	text,
 	integer,
 	real,
-	sqliteTable,
-	text,
+	jsonb,
+	timestamp,
 	index,
 	uniqueIndex,
 	check,
-	type AnySQLiteColumn
-} from 'drizzle-orm/sqlite-core';
+	type AnyPgColumn
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 export const EntityType = ['Character', 'Location', 'Event', 'Act', 'Scene', 'Note'] as const;
@@ -39,30 +42,33 @@ export const RelationshipType = [
 ] as const;
 export type RelationshipType = (typeof RelationshipType)[number];
 
-export const entities = sqliteTable(
+export const entities = pgTable(
 	'entities',
 	{
-		id: text('id')
-			.primaryKey()
-			.$defaultFn(() => crypto.randomUUID()),
+		id: uuid('id').primaryKey().defaultRandom(),
 		type: text('type', { enum: EntityType }).notNull(),
 		name: text('name').notNull(),
-		data: text('data').notNull().default('{}'),
+		// jsonb so app code can pass objects directly; Drizzle's $type<>
+		// gives compile-time shape without runtime parse/stringify at the
+		// boundary. Replaces text('data') JSON-stringified pattern from
+		// the sqlite era.
+		data: jsonb('data').notNull().default({}).$type<Record<string, unknown>>(),
 		// Hierarchy support: Scenes use parent_id to point at their parent Act.
 		// Acts at root level have parent_id = NULL and use `position` for sibling ordering at the type level.
-		parentId: text('parent_id').references((): AnySQLiteColumn => entities.id, {
+		parentId: uuid('parent_id').references((): AnyPgColumn => entities.id, {
 			onDelete: 'cascade'
 		}),
 		// Sibling ordering integer. For Scenes within an Act: order within parent.
 		// For root-level Acts (parent_id IS NULL, type='Act'): act index in the global story-time axis.
 		// NULL for non-Act / non-Scene entities or when ordering is irrelevant.
 		position: integer('position'),
-		createdAt: integer('created_at', { mode: 'timestamp' })
-			.notNull()
-			.default(sql`(unixepoch())`),
-		updatedAt: integer('updated_at', { mode: 'timestamp' })
-			.notNull()
-			.default(sql`(unixepoch())`)
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// updated_at maintained by `bump_updated_at` BEFORE UPDATE trigger
+		// (see migration). Application code does NOT set this column on
+		// updates — the trigger fires on every UPDATE and rewrites it to
+		// now(). Drops the 17 manual `updatedAt: sql\`(unixepoch())\`` calls
+		// that lived across handlers + intervals.ts in the sqlite era.
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
 		index('entities_created_at_idx').on(table.createdAt),
@@ -71,16 +77,14 @@ export const entities = sqliteTable(
 	]
 );
 
-export const relationships = sqliteTable(
+export const relationships = pgTable(
 	'relationships',
 	{
-		id: text('id')
-			.primaryKey()
-			.$defaultFn(() => crypto.randomUUID()),
-		fromId: text('from_id')
+		id: uuid('id').primaryKey().defaultRandom(),
+		fromId: uuid('from_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
-		toId: text('to_id')
+		toId: uuid('to_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
 		label: text('label'),
@@ -92,16 +96,15 @@ export const relationships = sqliteTable(
 		// A rivals B is illogical but allowed; A pov_of X AND A pov_of Y is
 		// allowed and meaningful for multi-POV events). Enforced at the
 		// schema level so any future write path automatically inherits the
-		// constraint. Migrated 2026-04-29 in 0001_relationships_dedup.sql.
+		// constraint. Migrated 2026-04-29 in 0001_relationships_dedup.sql,
+		// carries over to the pg baseline migration regenerated in T8a.
 		uniqueIndex('relationships_dedup').on(table.fromId, table.toId, table.type)
 	]
 );
 
-export const canvasPositions = sqliteTable('canvas_positions', {
-	id: text('id')
-		.primaryKey()
-		.$defaultFn(() => crypto.randomUUID()),
-	entityId: text('entity_id')
+export const canvasPositions = pgTable('canvas_positions', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	entityId: uuid('entity_id')
 		.notNull()
 		.unique()
 		.references(() => entities.id, { onDelete: 'cascade' }),
@@ -112,7 +115,7 @@ export const canvasPositions = sqliteTable('canvas_positions', {
 });
 
 // =============================================================================
-// intervals — Phase 1A PR 1
+// intervals — Phase 1A PR 1 (ported to pg in T8a, 2026-05-01)
 // =============================================================================
 //
 // Hybrid storage: FK references to acts/scenes (for referential integrity AND
@@ -127,10 +130,10 @@ export const canvasPositions = sqliteTable('canvas_positions', {
 //   Scene k of m within Act i occupies [i + k/m, i + (k+1)/m)
 //
 // Polymorphism: start_act_id / end_act_id must reference entities of type='Act';
-// start_scene_id / end_scene_id must reference entities of type='Scene'. SQLite
-// cannot enforce; writeInterval validates at write time + the Vitest invariant
-// test asserts type alignment on every row (CONSIDERATIONS.md → /plan-eng-review
-// resolution item 2).
+// start_scene_id / end_scene_id must reference entities of type='Scene'. Postgres
+// cannot enforce a polymorphic FK constraint cleanly; writeInterval validates at
+// write time + the Vitest invariant test asserts type alignment on every row
+// (CONSIDERATIONS.md → /plan-eng-review resolution item 2).
 //
 // ON DELETE behavior (CONSIDERATIONS.md → "ON DELETE behavior"):
 //   entity_id          → CASCADE (delete character → delete their intervals)
@@ -140,33 +143,27 @@ export const canvasPositions = sqliteTable('canvas_positions', {
 //   end_scene_id       → SET NULL + position recompute (in same transaction)
 // =============================================================================
 
-export const intervals = sqliteTable(
+export const intervals = pgTable(
 	'intervals',
 	{
-		id: text('id')
-			.primaryKey()
-			.$defaultFn(() => crypto.randomUUID()),
-		entityId: text('entity_id')
+		id: uuid('id').primaryKey().defaultRandom(),
+		entityId: uuid('entity_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
-		startActId: text('start_act_id')
+		startActId: uuid('start_act_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
-		startSceneId: text('start_scene_id').references(() => entities.id, {
+		startSceneId: uuid('start_scene_id').references(() => entities.id, {
 			onDelete: 'set null'
 		}),
-		endActId: text('end_act_id')
+		endActId: uuid('end_act_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
-		endSceneId: text('end_scene_id').references(() => entities.id, { onDelete: 'set null' }),
+		endSceneId: uuid('end_scene_id').references(() => entities.id, { onDelete: 'set null' }),
 		startPosition: real('start_position').notNull(),
 		endPosition: real('end_position').notNull(),
-		createdAt: integer('created_at', { mode: 'timestamp' })
-			.notNull()
-			.default(sql`(unixepoch())`),
-		updatedAt: integer('updated_at', { mode: 'timestamp' })
-			.notNull()
-			.default(sql`(unixepoch())`)
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
 		index('intervals_entity_idx').on(table.entityId),
