@@ -18,7 +18,11 @@
   );
 
   let searchQuery = $state('');
-  let selectedId = $state<string | null>(entityId);
+  // Don't seed from `entityId` directly — that captures the initial value
+  // and won't track prop updates (Svelte's state_referenced_locally
+  // warning). The effect below picks up the initial entityId on mount AND
+  // any prop changes thereafter.
+  let selectedId = $state<string | null>(null);
 
   $effect(() => {
     if (entityId) selectedId = entityId;
