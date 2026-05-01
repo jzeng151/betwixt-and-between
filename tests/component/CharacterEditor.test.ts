@@ -3,6 +3,7 @@ import { render, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import CharacterEditor from '$lib/components/apps/CharacterEditor.svelte';
 import { entities, type Entity } from '$lib/stores/entities.js';
+import { relationships } from '$lib/stores/relationships.js';
 import { windowStore } from '$lib/stores/windows.js';
 import { openEntity } from '$lib/navigation.js';
 
@@ -55,9 +56,12 @@ beforeEach(async () => {
 
 describe('CharacterEditor — color picker', () => {
 	it('clicking a swatch marks it selected (aria-pressed=true)', async () => {
-		const { getByTestId } = render(CharacterEditor, {
+		const { getByTestId, getByText } = render(CharacterEditor, {
 			props: { winId: 'w1', entityId: 'char-1' }
 		});
+		// Color picker is edit-mode-only; enter edit mode first.
+		await fireEvent.click(getByText('Edit'));
+		await tick();
 		const teal = getByTestId('char-color-#2dd4bf');
 		expect(teal).toHaveAttribute('aria-pressed', 'false');
 		await fireEvent.click(teal);
@@ -68,9 +72,11 @@ describe('CharacterEditor — color picker', () => {
 	});
 
 	it('entering invalid hex shows an inline error', async () => {
-		const { getByTestId, queryByTestId } = render(CharacterEditor, {
+		const { getByTestId, queryByTestId, getByText } = render(CharacterEditor, {
 			props: { winId: 'w1', entityId: 'char-1' }
 		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
 		const input = getByTestId('char-color-custom-input') as HTMLInputElement;
 		expect(queryByTestId('char-color-custom-error')).toBeNull();
 		await fireEvent.input(input, { target: { value: 'red' } });
@@ -82,31 +88,76 @@ describe('CharacterEditor — color picker', () => {
 	});
 
 	it('entering valid hex does not show error and selects custom color', async () => {
-		const { getByTestId, queryByTestId } = render(CharacterEditor, {
+		const { getByTestId, queryByTestId, getByText } = render(CharacterEditor, {
 			props: { winId: 'w1', entityId: 'char-1' }
 		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
 		const input = getByTestId('char-color-custom-input') as HTMLInputElement;
 		await fireEvent.input(input, { target: { value: '#abcdef' } });
 		await fireEvent.blur(input);
 		await tick();
 		expect(queryByTestId('char-color-custom-error')).toBeNull();
 	});
+
+	it('color wheel input fires a change → save with the picked color', async () => {
+		const { getByTestId, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		const wheel = getByTestId('char-color-wheel') as HTMLInputElement;
+		// Native `<input type="color">` fires `change` when the OS picker
+		// closes — JSDOM lets us simulate that with a value + change event.
+		wheel.value = '#1234ab';
+		await fireEvent.change(wheel);
+		await waitFor(() => {
+			const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+			const patch = calls.find(([, init]) => init?.method === 'PATCH');
+			expect(patch).toBeTruthy();
+			const body = JSON.parse((patch![1] as RequestInit).body as string);
+			expect(body.data.color).toBe('#1234ab');
+		});
+	});
+
+	it('view mode collapses the picker to just the chosen color (or "Default")', async () => {
+		// Seed the entity with a color so view mode has something to show.
+		const fixture = makeCharacter({ color: '#2dd4bf' });
+		globalThis.fetch = vi
+			.fn()
+			.mockResolvedValue(makeResponse([fixture])) as unknown as typeof fetch;
+		await entities.load();
+		const { queryByTestId, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		// View mode: no swatch buttons or hex input rendered.
+		expect(queryByTestId('char-color-#2dd4bf')).toBeNull();
+		expect(queryByTestId('char-color-custom-input')).toBeNull();
+		expect(queryByTestId('char-color-wheel')).toBeNull();
+		// The chosen hex is shown as plain text.
+		expect(getByText('#2dd4bf')).toBeInTheDocument();
+	});
 });
 
 describe('CharacterEditor — show on timeline', () => {
 	it('default selection is name-and-note; custom field input is hidden', async () => {
-		const { getByTestId, queryByTestId } = render(CharacterEditor, {
+		const { getByTestId, queryByTestId, getByText } = render(CharacterEditor, {
 			props: { winId: 'w1', entityId: 'char-1' }
 		});
+		// Radio group is edit-mode-only.
+		await fireEvent.click(getByText('Edit'));
+		await tick();
 		const def = getByTestId('char-tl-name-and-note') as HTMLInputElement;
 		expect(def.checked).toBe(true);
 		expect(queryByTestId('char-tl-custom-field')).toBeNull();
 	});
 
 	it('selecting custom reveals the field input', async () => {
-		const { getByTestId } = render(CharacterEditor, {
+		const { getByTestId, getByText } = render(CharacterEditor, {
 			props: { winId: 'w1', entityId: 'char-1' }
 		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
 		const customRadio = getByTestId('char-tl-custom') as HTMLInputElement;
 		await fireEvent.click(customRadio);
 		await tick();
@@ -116,9 +167,11 @@ describe('CharacterEditor — show on timeline', () => {
 	});
 
 	it('selecting name-only hides the field input', async () => {
-		const { getByTestId, queryByTestId } = render(CharacterEditor, {
+		const { getByTestId, queryByTestId, getByText } = render(CharacterEditor, {
 			props: { winId: 'w1', entityId: 'char-1' }
 		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
 		// First reveal it
 		await fireEvent.click(getByTestId('char-tl-custom'));
 		await tick();
@@ -129,6 +182,17 @@ describe('CharacterEditor — show on timeline', () => {
 		await waitFor(() => {
 			expect(queryByTestId('char-tl-custom-field')).toBeNull();
 		});
+	});
+
+	it('view mode collapses to a single description line, no radios rendered', async () => {
+		const { queryByTestId, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		// Default fixture has no timelineLabel set, so it falls back to
+		// name-and-note. Display text reflects that.
+		expect(queryByTestId('char-tl-name-and-note')).toBeNull();
+		expect(queryByTestId('char-tl-custom')).toBeNull();
+		expect(getByText('Name + note snippet')).toBeInTheDocument();
 	});
 });
 
@@ -660,6 +724,56 @@ describe('CharacterEditor — generic icon picker', () => {
 		// Picker closed; trigger reverts to "Change icon".
 		await waitFor(() => {
 			expect(queryByText('Heroes')).toBeNull();
+		});
+		expect(container).toBeTruthy();
+	});
+
+	it('relationship × delete fires DELETE /api/relationships/<id> in edit mode only', async () => {
+		// Seed two characters and one allied_with relationship between them.
+		const aragorn = makeCharacter();
+		const gandalf: Entity = {
+			id: 'char-2',
+			type: 'Character',
+			name: 'Gandalf',
+			data: {},
+			parentId: null,
+			position: 0,
+			createdAt: new Date(0),
+			updatedAt: new Date(0)
+		} as Entity;
+		const rel = {
+			id: 'rel-1',
+			type: 'allied_with',
+			fromId: 'char-1',
+			toId: 'char-2',
+			label: null
+		};
+		globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+			if (init?.method === 'DELETE' && url === '/api/relationships/rel-1') {
+				return makeResponse(null, true, 204);
+			}
+			if (url === '/api/relationships') return makeResponse([rel]);
+			return makeResponse([aragorn, gandalf]);
+		}) as unknown as typeof fetch;
+		await entities.load();
+		await relationships.load();
+
+		const { container, getByText, queryByLabelText, getByLabelText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		// View mode — no × button rendered.
+		expect(queryByLabelText('Remove Gandalf')).toBeNull();
+		// Enter edit mode → × appears next to the chip.
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		const removeBtn = getByLabelText('Remove Gandalf');
+		expect(removeBtn).toBeInTheDocument();
+		await fireEvent.click(removeBtn);
+		await waitFor(() => {
+			expect(globalThis.fetch).toHaveBeenCalledWith(
+				'/api/relationships/rel-1',
+				expect.objectContaining({ method: 'DELETE' })
+			);
 		});
 		expect(container).toBeTruthy();
 	});

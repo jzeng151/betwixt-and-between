@@ -6,12 +6,13 @@
 
 <script lang="ts">
   import { entities } from '$lib/stores/entities.js';
-  import { relationships } from '$lib/stores/relationships.js';
+  import { relationships, type Relationship } from '$lib/stores/relationships.js';
   import { windowStore } from '$lib/stores/windows.js';
   import EntityLink from '$lib/components/EntityLink.svelte';
   import InlineEdit from '$lib/components/InlineEdit.svelte';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
+  import type { Entity } from '$lib/stores/entities.js';
   import { CHARACTER_COLORS, HEX_COLOR_RE, type TimelineLabelMode } from '$lib/timeline-v2-helpers.js';
   import {
     getCharacterIcon,
@@ -174,17 +175,25 @@
       } else {
         timelineLabel = { mode: 'name-and-note' };
       }
-      // Default to view mode on entity change. The PR's stated intent is
-      // "existing characters open in view mode" — without this reset, an
-      // in-place navigation (e.g. clicking an EntityLink relationship chip
-      // while mode === 'edit') would carry the edit state into the new
-      // character. Pending-edit-mode for "+ New" overrides below.
-      if (pendingEditMode.has(entity.id)) {
-        pendingEditMode.delete(entity.id);
+    }
+  });
+
+  // Mode reset must depend on `entityId` (the PROP) only, NOT on
+  // `entity` (the derived from $entities). The data-sync effect above
+  // re-fires on every store update — including after a PATCH returns —
+  // which would silently flip mode back to 'view' mid-edit. Splitting
+  // the reset means it only fires on real navigation between
+  // characters. Same reasoning for confirmingDelete.
+  $effect(() => {
+    if (entityId) {
+      if (pendingEditMode.has(entityId)) {
+        pendingEditMode.delete(entityId);
         mode = 'edit';
       } else {
         mode = 'view';
       }
+      confirmingDelete = false;
+      deleteError = '';
     }
   });
 
@@ -249,14 +258,6 @@
       deleting = false;
     }
   }
-
-  // Reset confirmation state when navigating between characters so a
-  // half-confirmed delete on character A doesn't carry over to B.
-  $effect(() => {
-    void entityId;
-    confirmingDelete = false;
-    deleteError = '';
-  });
 
   // ── Color picker ──────────────────────────────────────────────────────────
   async function chooseColor(hex: string) {
@@ -361,15 +362,32 @@
     { label: 'Key Events',  type: 'takes_place_at' },
   ];
 
-  function getLinked(type: RelationshipType) {
+  function getLinked(type: RelationshipType): { rel: Relationship; other: Entity }[] {
     if (!entityId) return [];
-    return $relationships
-      .filter((r) => r.type === type && (r.fromId === entityId || r.toId === entityId))
-      .map((r) => {
-        const linkedId = r.fromId === entityId ? r.toId : r.fromId;
-        return $entities.find((e) => e.id === linkedId);
-      })
-      .filter(Boolean);
+    const out: { rel: Relationship; other: Entity }[] = [];
+    for (const r of $relationships) {
+      if (r.type !== type) continue;
+      if (r.fromId !== entityId && r.toId !== entityId) continue;
+      const linkedId = r.fromId === entityId ? r.toId : r.fromId;
+      const other = $entities.find((e) => e.id === linkedId);
+      if (other) out.push({ rel: r, other });
+    }
+    return out;
+  }
+
+  async function removeRelationship(id: string) {
+    saveError = '';
+    try {
+      await relationships.deleteRelationship(id);
+    } catch {
+      saveError = "Couldn't remove relationship.";
+    }
+  }
+
+  function timelineLabelDescription(tl: TimelineLabelMode): string {
+    if (tl.mode === 'name-only') return 'Name only';
+    if (tl.mode === 'custom') return tl.field ? `Custom field: ${tl.field}` : 'Custom field (none chosen)';
+    return 'Name + note snippet';
   }
 
   // ── Entity picker ──────────────────────────────────────────────────────────
@@ -386,7 +404,7 @@
 
   function pickerOptions(relType: RelationshipType) {
     const types = PICKER_TYPES[relType] ?? [];
-    const linked = new Set(getLinked(relType).map((e) => e?.id));
+    const linked = new Set(getLinked(relType).map(({ other }) => other.id));
     return $entities.filter(
       (e) => types.includes(e.type as EntityType) && e.id !== entityId && !linked.has(e.id)
     );
@@ -653,18 +671,33 @@
       <section class="rel-group">
         <p class="section-label">{group.label}</p>
         <div class="chip-row">
-          {#each linked as e}
-            {#if e}
-              <EntityLink id={e.id} name={e.name} relationshipType={group.type} />
-            {/if}
+          {#each linked as link (link.rel.id)}
+            <span class="chip-wrap">
+              <EntityLink
+                id={link.other.id}
+                name={link.other.name}
+                relationshipType={group.type}
+              />
+              {#if mode === 'edit'}
+                <button
+                  type="button"
+                  class="chip-remove"
+                  aria-label="Remove {link.other.name}"
+                  title="Remove"
+                  onclick={() => removeRelationship(link.rel.id)}
+                >×</button>
+              {/if}
+            </span>
           {/each}
           <div class="picker-wrap">
-            <button
-              class="chip-add"
-              class:chip-add-open={pickerGroup === group.type}
-              onclick={() => (pickerGroup = pickerGroup === group.type ? null : group.type)}
-              title="Add {group.label}"
-            >+</button>
+            {#if mode === 'edit'}
+              <button
+                class="chip-add"
+                class:chip-add-open={pickerGroup === group.type}
+                onclick={() => (pickerGroup = pickerGroup === group.type ? null : group.type)}
+                title="Add {group.label}"
+              >+</button>
+            {/if}
             {#if pickerGroup === group.type}
               {@const opts = pickerOptions(group.type)}
               <div class="picker-dropdown">
@@ -692,88 +725,122 @@
       <!-- Timeline color picker -->
       <div class="field-header">
         <span class="field-label">Timeline color</span>
-        {#if color}
+        {#if mode === 'edit' && color}
           <button class="field-edit-btn" onclick={resetColor} data-testid="char-color-reset">Reset to default</button>
         {/if}
       </div>
-      <div class="swatch-row" role="group" aria-label="Timeline color">
-        {#each CHARACTER_COLORS as hex}
-          <button
-            type="button"
-            class="swatch"
-            class:swatch-selected={color === hex}
-            style="--sw:{hex}"
-            aria-label={hex}
-            aria-pressed={color === hex}
-            data-testid="char-color-{hex}"
-            onclick={() => chooseColor(hex)}
-          ></button>
-        {/each}
-        <input
-          class="hex-input"
-          type="text"
-          placeholder="#rrggbb"
-          maxlength="7"
-          bind:value={customHex}
-          onblur={commitCustomHex}
-          onkeydown={handleHexKeydown}
-          data-testid="char-color-custom-input"
-        />
-      </div>
-      {#if customHexError}
-        <p class="hex-error" data-testid="char-color-custom-error">{customHexError}</p>
+      {#if mode === 'edit'}
+        <div class="swatch-row" role="group" aria-label="Timeline color">
+          {#each CHARACTER_COLORS as hex}
+            <button
+              type="button"
+              class="swatch"
+              class:swatch-selected={color === hex}
+              style="--sw:{hex}"
+              aria-label={hex}
+              aria-pressed={color === hex}
+              data-testid="char-color-{hex}"
+              onclick={() => chooseColor(hex)}
+            ></button>
+          {/each}
+          <!-- Native color picker — visual alternative to the hex input.
+               Commits on `change` (when the OS picker closes), so a user
+               who accidentally opens it without changing color triggers
+               nothing. The hex text input below remains for paste/manual
+               entry. -->
+          <input
+            type="color"
+            class="color-wheel"
+            value={color ?? '#c8942a'}
+            onchange={(e) => chooseColor((e.currentTarget as HTMLInputElement).value.toLowerCase())}
+            aria-label="Custom color picker"
+            data-testid="char-color-wheel"
+          />
+          <input
+            class="hex-input"
+            type="text"
+            placeholder="#rrggbb"
+            maxlength="7"
+            bind:value={customHex}
+            onblur={commitCustomHex}
+            onkeydown={handleHexKeydown}
+            data-testid="char-color-custom-input"
+          />
+        </div>
+        {#if customHexError}
+          <p class="hex-error" data-testid="char-color-custom-error">{customHexError}</p>
+        {/if}
+      {:else}
+        <!-- View mode: show only the chosen color (or "Default") instead
+             of the full picker. Less visual noise when the user is just
+             reading. -->
+        <div class="display-row">
+          {#if color}
+            <span class="swatch swatch-display" style="--sw:{color}" aria-hidden="true"></span>
+            <span class="display-text">{color}</span>
+          {:else}
+            <span class="display-text display-muted">Default</span>
+          {/if}
+        </div>
       {/if}
 
       <!-- Show on timeline -->
       <div class="field-header">
         <span class="field-label">Show on timeline</span>
       </div>
-      <div class="radio-group" role="radiogroup" aria-label="Show on timeline">
-        <label class="radio-row">
-          <input
-            type="radio"
-            name="timelineLabelMode"
-            value="name-only"
-            checked={timelineLabel.mode === 'name-only'}
-            onchange={() => setTimelineMode('name-only')}
-            data-testid="char-tl-name-only"
-          />
-          <span class="radio-text">Name only</span>
-        </label>
-        <label class="radio-row">
-          <input
-            type="radio"
-            name="timelineLabelMode"
-            value="name-and-note"
-            checked={timelineLabel.mode === 'name-and-note'}
-            onchange={() => setTimelineMode('name-and-note')}
-            data-testid="char-tl-name-and-note"
-          />
-          <span class="radio-text">Name + note snippet (default)</span>
-        </label>
-        <label class="radio-row">
-          <input
-            type="radio"
-            name="timelineLabelMode"
-            value="custom"
-            checked={timelineLabel.mode === 'custom'}
-            onchange={() => setTimelineMode('custom')}
-            data-testid="char-tl-custom"
-          />
-          <span class="radio-text">Custom field</span>
-        </label>
-        {#if timelineLabel.mode === 'custom'}
-          <input
-            class="custom-field-input"
-            type="text"
-            placeholder="field name (e.g. motivation)"
-            value={timelineLabel.field}
-            onblur={(e) => commitCustomField((e.currentTarget as HTMLInputElement).value)}
-            onkeydown={(e) => { if (e.key === 'Enter') commitCustomField((e.currentTarget as HTMLInputElement).value); }}
-            data-testid="char-tl-custom-field"
-          />
-        {/if}
-      </div>
+      {#if mode === 'edit'}
+        <div class="radio-group" role="radiogroup" aria-label="Show on timeline">
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="timelineLabelMode"
+              value="name-only"
+              checked={timelineLabel.mode === 'name-only'}
+              onchange={() => setTimelineMode('name-only')}
+              data-testid="char-tl-name-only"
+            />
+            <span class="radio-text">Name only</span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="timelineLabelMode"
+              value="name-and-note"
+              checked={timelineLabel.mode === 'name-and-note'}
+              onchange={() => setTimelineMode('name-and-note')}
+              data-testid="char-tl-name-and-note"
+            />
+            <span class="radio-text">Name + note snippet (default)</span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="timelineLabelMode"
+              value="custom"
+              checked={timelineLabel.mode === 'custom'}
+              onchange={() => setTimelineMode('custom')}
+              data-testid="char-tl-custom"
+            />
+            <span class="radio-text">Custom field</span>
+          </label>
+          {#if timelineLabel.mode === 'custom'}
+            <input
+              class="custom-field-input"
+              type="text"
+              placeholder="field name (e.g. motivation)"
+              value={timelineLabel.field}
+              onblur={(e) => commitCustomField((e.currentTarget as HTMLInputElement).value)}
+              onkeydown={(e) => { if (e.key === 'Enter') commitCustomField((e.currentTarget as HTMLInputElement).value); }}
+              data-testid="char-tl-custom-field"
+            />
+          {/if}
+        </div>
+      {:else}
+        <!-- View mode: collapse the radio group into a single line. -->
+        <div class="display-row">
+          <span class="display-text">{timelineLabelDescription(timelineLabel)}</span>
+        </div>
+      {/if}
 
       <label class="field-label" for="char-motivation">Motivation</label>
       {#if mode === 'edit'}
@@ -1343,6 +1410,36 @@
     border-style: solid;
   }
 
+  /* Edit-mode delete affordance for individual relationship chips.
+     Visually attached to the chip's right edge via overlap so the chip
+     and × read as one element. */
+  .chip-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .chip-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border-radius: 50%;
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: border-color 0.1s, color 0.1s, background 0.1s;
+  }
+  .chip-remove:hover {
+    border-color: #ef4444;
+    color: #ef4444;
+    background: color-mix(in srgb, #ef4444 12%, transparent);
+  }
+
   /* Picker */
   .picker-backdrop {
     position: fixed;
@@ -1517,6 +1614,38 @@
     outline: none;
   }
   .hex-input:focus { border-color: var(--color-accent); }
+  /* Native color picker — small square aligned with the swatch row. */
+  .color-wheel {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+  }
+  .color-wheel::-webkit-color-swatch-wrapper { padding: 2px; }
+  .color-wheel::-webkit-color-swatch { border: none; border-radius: 2px; }
+  .color-wheel::-moz-color-swatch { border: none; border-radius: 2px; }
+  .color-wheel:hover { border-color: var(--color-accent); }
+
+  /* View-mode collapsed display row for color + timeline-label. */
+  .display-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--color-text);
+  }
+  .display-text { font-size: 12px; color: var(--color-text); }
+  .display-muted { color: var(--color-text-muted); font-style: italic; }
+  .swatch-display {
+    width: 16px;
+    height: 16px;
+    pointer-events: none;
+  }
+
   .hex-error {
     color: var(--color-rel-rival);
     font-size: 10px;
@@ -1627,14 +1756,13 @@
     font-family: var(--font-ui);
   }
 
-  /* In view mode: hide field-edit buttons, hide avatar
-     overlay (camera icon), make swatches + radios + custom-hex inert. */
+  /* In view mode: hide field-edit buttons + the avatar's hover camera
+     icon. The full timeline color picker, hex input, and radio group
+     are now conditionally rendered (mode === 'edit'), so no view-mode
+     opacity/pointer-events overrides are needed. */
   .view-mode .field-edit-btn,
-  .view-mode .avatar-overlay,
-  .view-mode .hex-input {
+  .view-mode .avatar-overlay {
     display: none;
   }
   .view-mode .avatar-lg { cursor: default; pointer-events: none; }
-  .view-mode .swatch-row,
-  .view-mode .radio-group { pointer-events: none; opacity: 0.85; }
 </style>
