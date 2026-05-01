@@ -6,8 +6,8 @@
   import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
   import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
-  import { REL_COLOR } from '$lib/relationship-colors.js';
-  import { RelationshipType, type EntityType } from '$lib/server/db/schema.js';
+  import { REL_COLOR, REL_TYPES } from '$lib/relationship-colors.js';
+  import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
   import { DEFAULT_TYPE_ORDER } from '$lib/graph/defaults.js';
   import {
     sharedNeighbors,
@@ -102,7 +102,7 @@
   // Hard filter: toggling a type off hides those edges entirely (vs. scrubber
   // dimming which is a soft visual filter). In-memory per-window for v1; if
   // persistence becomes a need, move to windowStore as a per-window field.
-  let enabledRelTypes = $state<Set<RelationshipType>>(new Set(RelationshipType));
+  let enabledRelTypes = $state<Set<RelationshipType>>(new Set(REL_TYPES));
 
   function toggleRelType(t: RelationshipType) {
     const next = new Set(enabledRelTypes);
