@@ -474,6 +474,60 @@ If the app's destiny is "single-user forever, run on a Pi in the closet," the be
 
 ---
 
+### [2026-05-01] T8 split — port now, deploy after Phase 1B (refines [2026-04-30])
+
+/plan-eng-review on T8 produced a scope split + auth-provider change. The locked direction from [2026-04-30] is preserved at the strategic level (Neon + Postgres + multi-user-capable foundation); the implementation is sequenced into two PRs with Phase 1B between them. Auth provider changes from Auth.js to **Better-Auth** based on the user's flexibility and Better-Auth's cleaner DX for the Drizzle pg + magic-link path.
+
+**T8a — sqlite→Postgres port (pre-Phase-1B):**
+
+- Driver swap: `drizzle-orm/better-sqlite3` → `drizzle-orm/postgres-js` against Neon dev branch (local) and Neon free tier (eventual prod). `postgres-js` chosen over `node-postgres` (faster, modern API) and over `@neondatabase/serverless` (provider-agnostic preserves option to swap providers later).
+- Schema port: `sqliteTable` → `pgTable`. Native `uuid('id').defaultRandom()` for PKs (4 tables) + matching FKs (~12 columns). `text('data')` JSON-stringified → `jsonb('data').$type<EntityData>()` on entities (drops `JSON.parse`/`JSON.stringify` boundary calls in stores + handlers). `integer({mode:'timestamp'}).default(sql\`(unixepoch())\`)` → `timestamp({withTimezone:true}).notNull().defaultNow()` for createdAt/updatedAt.
+- BEFORE UPDATE trigger per table sets `NEW.updated_at = now()`. Drops 17 manual `updatedAt: sql\`(unixepoch())\`` lines across handlers and intervals.ts. DB-side automation beats application-side discipline here (systems-over-heroes principle).
+- CHECK constraints, FK cascades, unique indexes carry over identically.
+- Migrations: `rm -rf drizzle/` → flip `drizzle.config.ts` to `dialect: 'postgresql'` → `drizzle-kit generate` produces clean PG baseline. The two existing sqlite migrations are not preserved (short history; regen is cleaner than dialect-aware preservation).
+- `intervals.ts` cleanup: drop `client.exec('BEGIN')` raw cast in `splitInterval`; replace with `db.transaction(async (tx) => ...)`. Thread `Db | Tx` polymorphism through helper chain (rolls in the deferred D17 polymorphic-tx work). Helpers stay async — no sync conversion. The `Db` type alias just re-unions over `PgDatabase | PgTransaction`.
+- Tests: `tests/helpers/test-db.ts` swaps `better-sqlite3 :memory:` for `@electric-sql/pglite` + `drizzle-orm/pglite`. Postgres compiled to WASM, in-process, same SQL/types/planner/transaction semantics as full pg. 215 existing integration tests pass against pg unchanged. PGlite version pinned to match Neon's Postgres major version (PG 17).
+- New tests added in T8a:
+  - `intervals-split-atomicity.test.ts` — **CRITICAL REGRESSION** — verifies that `db.transaction(async tx => { await splitInterval(tx, ...); throw })` rolls back both UPDATE and INSERT halves. Replaces the deferred-T1 raw-BEGIN/COMMIT workaround we're removing.
+  - `jsonb-roundtrip.test.ts` — entity.data deep-equal across insert/read cycle.
+  - `updated-at-trigger.test.ts` — trigger fires on every UPDATE.
+  - `check-constraint.test.ts` — `intervals_position_order` CHECK still rejects start ≥ end.
+  - `uuid-pk.test.ts` — auto-generated v4 uuid on insert.
+- Local dev: Neon dev branch via `.env.local` (primary). 6-line `docker-compose.yml` with `postgres:17-alpine` as offline fallback.
+- CI: minimal `.github/workflows/test.yml` runs `npm test` on PR. Reusable in T8b for the deploy workflow.
+- T8a does NOT add userId columns or Auth.js wiring. Schema is pg-ready but app code is single-tenant. The ENTIRE multi-user concern lands in T8b after Phase 1B.
+
+**Phase 1B — graph features (between T8a and T8b):**
+
+- Lands on the new pg foundation. Phase 1B Lane A's "Migration 0002" becomes the next migration after T8a's regenerated PG baseline.
+- New endpoints (canvas-positions/window/[windowId]/batch etc.) are written in pg patterns from the start (async tx, no sync workarounds).
+- No auth gating yet — Phase 1B inherits T8a's single-tenant assumption.
+
+**T8b — auth + deploy + multi-user (post-Phase-1B):**
+
+- **Auth provider: Better-Auth** (Drizzle-compatible, magic-link + Google OAuth). Reasoning: cleaner DX than Auth.js v5 for the Drizzle pg path; first-class plugins for magic-link and Google OAuth; framework-agnostic so a future SvelteKit version bump is less likely to break. Risk acknowledged: smaller community than Auth.js, 2024-launched project; the magic-link path is simple enough that a swap to Auth.js later is bounded if Better-Auth ever falters.
+- Auth methods at v0: magic-link (primary, works for any email user) + Google OAuth (one-click for users with Google accounts). Better-Auth's test mode returns the magic code in the response, enabling Playwright E2E without a real mailbox; mock OAuth provider runs in CI test setup for the Google flow.
+- userId columns added to entities, relationships, intervals, canvas_positions in T8b's migration. Per-endpoint isolation tests verify cross-user access fails — ~18 explicit tests (per-endpoint × attack-vector), not a parametric harness, so CI failures point at the exact guarantee that broke.
+- Deploy: SvelteKit on Fly.io with `adapter-node` against Neon free tier (or Launch $5/mo for warm compute if cold-start latency annoys). `fly.toml` + `.env.example` + DEPLOY.md.
+- CI/CD: `.github/workflows/deploy.yml` auto-deploys on main merge. Fly token in GH Actions secrets.
+- Backups: `.github/workflows/backup.yml` runs weekly, `pg_dump | gpg | rclone copy` to a Backblaze B2 bucket. Restore script tested as part of T8b acceptance criteria. ~$1-2/mo storage. Neon's 24h-free / 7d-paid PITR alone is insufficient for a writer's app where data IS the product.
+
+**Estimated time (with Claude Code):**
+- T8a: ~1-1.5 days. Lean port, no auth complexity.
+- Phase 1B: separate plan-eng-review; not estimated here.
+- T8b: ~2 days. Auth + deploy + CI/CD + backups + multi-user gating + isolation tests.
+
+**What this entry locks (not in [2026-04-30]):**
+- Better-Auth (replaces Auth.js).
+- Magic-link + Google OAuth auth methods.
+- T8 sequencing: T8a → Phase 1B → T8b.
+- BEFORE UPDATE trigger pattern for updated_at.
+- Native `uuid()` PKs.
+- Postgres-js driver.
+- Per-endpoint explicit isolation tests (no parametric harness).
+
+---
+
 ## Open Decisions (not yet locked)
 
 - Drag-and-drop palette behavior: always show all entities vs filter to "unplaced only." *Defer; ship simplest version first.*
