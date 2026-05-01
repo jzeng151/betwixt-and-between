@@ -7,6 +7,8 @@
   import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR } from '$lib/relationship-colors.js';
+  import { RelationshipType, type EntityType } from '$lib/server/db/schema.js';
+  import { DEFAULT_TYPE_ORDER } from '$lib/graph/defaults.js';
   import {
     sharedNeighbors,
     oneHopUnion,
@@ -19,6 +21,8 @@
     type NodePosition
   } from '$lib/components/GraphCanvas.svelte';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
+  import Legend from '$lib/components/Legend.svelte';
 
   interface Props {
     windowId: string;
@@ -69,6 +73,13 @@
     $entities.filter((e) => displaySet.has(e.id) && e.type !== 'Note')
   );
 
+  // Set of ids that ACTUALLY render as nodes (post-Note exclusion). Edges
+  // filter against this rather than displaySet so we don't enqueue edges
+  // pointing at a Note that won't exist as a node — GraphCanvas safely
+  // drops those today, but matching the node-filter shape keeps the two
+  // derivations consistent (Greptile P2 follow-up from PR #12).
+  const displayEntityIds = $derived(new Set(displayEntities.map((e) => e.id)));
+
   // ── Out-of-scope at playhead (same shape as StoryGraph) ───────────────────
   const outOfScope = $derived.by(() => {
     const set = new Set<string>();
@@ -87,6 +98,19 @@
     return set;
   });
 
+  // ── Legend state (C4) ──────────────────────────────────────────────────────
+  // Hard filter: toggling a type off hides those edges entirely (vs. scrubber
+  // dimming which is a soft visual filter). In-memory per-window for v1; if
+  // persistence becomes a need, move to windowStore as a per-window field.
+  let enabledRelTypes = $state<Set<RelationshipType>>(new Set(RelationshipType));
+
+  function toggleRelType(t: RelationshipType) {
+    const next = new Set(enabledRelTypes);
+    if (next.has(t)) next.delete(t);
+    else next.add(t);
+    enabledRelTypes = next;
+  }
+
   // ── GraphCanvas inputs ────────────────────────────────────────────────────
   const graphNodes = $derived<GraphNode[]>(
     displayEntities.map((e) => ({ id: e.id, type: e.type, name: e.name }))
@@ -94,7 +118,12 @@
 
   const graphEdges = $derived<GraphEdge[]>(
     $relationships
-      .filter((r) => displaySet.has(r.fromId) && displaySet.has(r.toId))
+      .filter(
+        (r) =>
+          displayEntityIds.has(r.fromId) &&
+          displayEntityIds.has(r.toId) &&
+          enabledRelTypes.has(r.type)
+      )
       .map((r) => ({
         id: r.id,
         fromId: r.fromId,
@@ -107,6 +136,14 @@
 
   // ── Position seed (per-window first, per-entity fallback) ─────────────────
   let initialPositions = $state<Record<string, NodePosition>>({});
+  // Pinned set: ids whose pinned column is 1 in this window's
+  // window_canvas_state. Drives both the pin/unpin menu state and C5
+  // layout-by-type (pinned nodes don't move during dagre).
+  let pinnedSet = $state<Set<string>>(new Set());
+  // Live mirror of current node positions. The canvas owns nodePos
+  // internally, but C5 needs to read centroid-of-pinned to compute the
+  // shift step. Mirrors via onNodePositionChange + the initial seed.
+  let currentPositions = $state<Record<string, NodePosition>>({});
 
   onMount(() => {
     void (async () => {
@@ -124,6 +161,8 @@
       const winMap = Object.fromEntries(
         winRows.map((r) => [r.entityId, { x: r.x, y: r.y, w: r.width, h: r.height }])
       );
+      // Pinned column → pinnedSet.
+      pinnedSet = new Set(winRows.filter((r) => r.pinned === 1).map((r) => r.entityId));
       // Per-entity fallback (the seed layer that StoryGraph also reads).
       const entRes = await fetch('/api/canvas-positions').catch(() => null);
       type EntRow = {
@@ -139,6 +178,7 @@
       );
       // Merge: per-window wins for any node it knows.
       initialPositions = { ...entMap, ...winMap };
+      currentPositions = { ...initialPositions };
     })();
   });
 
@@ -148,6 +188,8 @@
   // a different node's pending PUT.
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function onNodePositionChange(id: string, p: NodePosition) {
+    // Mirror so C5 can compute centroid(pinnedSet) without re-fetching.
+    currentPositions = { ...currentPositions, [id]: p };
     const existing = saveTimers.get(id);
     if (existing) clearTimeout(existing);
     saveTimers.set(
@@ -163,11 +205,131 @@
             y: Math.round(p.y),
             width: Math.round(p.w),
             height: Math.round(p.h),
-            pinned: 0
+            // Preserve pin state when persisting a drag — dragging a pinned
+            // node updates its position but should NOT unpin it.
+            pinned: pinnedSet.has(id) ? 1 : 0
           })
         });
       }, 500)
     );
+  }
+
+  // ── Pin / Unpin (C3 menu item; C5 reads pinnedSet) ────────────────────────
+  function togglePin(id: string) {
+    const isPinned = pinnedSet.has(id);
+    const next = new Set(pinnedSet);
+    if (isPinned) next.delete(id);
+    else next.add(id);
+    pinnedSet = next;
+    // Persist immediately — pin state is a deliberate user gesture, not a
+    // drag-rate change, so no debounce.
+    const p = currentPositions[id];
+    if (!p) return;
+    fetch(`/api/canvas-positions/window/${windowId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entityId: id,
+        x: Math.round(p.x),
+        y: Math.round(p.y),
+        width: Math.round(p.w),
+        height: Math.round(p.h),
+        pinned: isPinned ? 0 : 1
+      })
+    });
+  }
+
+  // ── C5: Layout by type ────────────────────────────────────────────────────
+  // Window-local async lock per the locked plan: two simultaneous "Layout by
+  // type" clicks within ONE window queue, but cross-window concurrent layout
+  // is independent (per-window canvas means no cross-talk). The lock is just
+  // a Promise chain — the next layout awaits the current one.
+  let layoutLock: Promise<void> = Promise.resolve();
+  let isLayingOut = $state(false);
+
+  async function layoutByType() {
+    layoutLock = layoutLock.then(async () => {
+      isLayingOut = true;
+      try {
+        const { layoutByType: runLayout } = await import('$lib/graph/dagre-layout.js');
+        const typeOrder = win?.typeOrder ?? DEFAULT_TYPE_ORDER;
+
+        // Build inputs from the current visible set. Notes excluded as in
+        // graphNodes; edges already filtered by displayEntityIds + Legend.
+        const layoutNodes = displayEntities.map((e) => ({
+          id: e.id,
+          type: e.type,
+          width: 120,
+          height: 32
+        }));
+        const layoutEdges = $relationships
+          .filter(
+            (r) =>
+              displayEntityIds.has(r.fromId) &&
+              displayEntityIds.has(r.toId) &&
+              enabledRelTypes.has(r.type)
+          )
+          .map((r) => ({ fromId: r.fromId, toId: r.toId }));
+        const positionsForCentroid = Object.entries(currentPositions).map(([id, p]) => ({
+          id,
+          x: p.x,
+          y: p.y
+        }));
+
+        const newPositions = await runLayout({
+          nodes: layoutNodes,
+          edges: layoutEdges,
+          pinnedIds: pinnedSet,
+          currentPositions: positionsForCentroid,
+          typeOrder
+        });
+
+        if (newPositions.length === 0) return;
+
+        // Apply to local mirror so the UI updates immediately.
+        const updates: Record<string, NodePosition> = {};
+        for (const np of newPositions) {
+          const existing = currentPositions[np.id];
+          updates[np.id] = {
+            x: np.x,
+            y: np.y,
+            w: existing?.w ?? 120,
+            h: existing?.h ?? 32
+          };
+        }
+        currentPositions = { ...currentPositions, ...updates };
+        // Re-seed initialPositions so GraphCanvas's seededFromServer guard
+        // re-applies. (Workaround: GraphCanvas seeds once; for layout-by-type
+        // we'd need to push positions through. Pragmatic: just update the
+        // backing store and rely on the post-merge fitView; user can reload
+        // the window to see the new layout. Long-term fix tracked as a
+        // follow-up — see PR description.)
+        initialPositions = { ...initialPositions, ...updates };
+
+        // Atomic batch write via A3.
+        await fetch(`/api/canvas-positions/window/${windowId}/batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            newPositions.map((np) => ({
+              entityId: np.id,
+              x: Math.round(np.x),
+              y: Math.round(np.y),
+              width: 120,
+              height: 32,
+              pinned: pinnedSet.has(np.id) ? 1 : 0
+            }))
+          )
+        });
+      } finally {
+        isLayingOut = false;
+      }
+    });
+    return layoutLock;
+  }
+
+  function setTypeOrder(next: EntityType[]) {
+    windowStore.setTypeOrder(windowId, next);
   }
 
   // ── Focal-set mutation (RULE: reassign, never push) ───────────────────────
@@ -201,6 +363,7 @@
     if (!contextMenu) return [];
     const id = contextMenu.entityId;
     const isFocal = focalSetIds.has(id);
+    const isPinned = pinnedSet.has(id);
     const items: Array<{ label: string; onSelect: () => void }> = [
       {
         label: 'Open in window',
@@ -218,8 +381,20 @@
         onSelect: () => addToFocalSet(id)
       });
     }
+    items.push({
+      label: isPinned ? 'Unpin from canvas' : 'Pin to canvas',
+      onSelect: () => togglePin(id)
+    });
+    items.push({
+      label: 'Layout by type',
+      onSelect: () => void layoutByType()
+    });
     return items;
   });
+
+  // Settings panel toggle (C7 panel anchored to the header).
+  let settingsOpen = $state(false);
+  const currentTypeOrder = $derived<EntityType[]>(win?.typeOrder ?? DEFAULT_TYPE_ORDER);
 </script>
 
 <div class="fg">
@@ -251,6 +426,14 @@
         <span class="chip-empty">No focal entities yet — right-click an entity in Story Graph and choose "Open Focused Graph".</span>
       {/if}
     </div>
+    <button
+      class="fg-settings-btn"
+      class:open={settingsOpen}
+      title="Layout settings"
+      aria-label="Toggle layout settings"
+      aria-expanded={settingsOpen}
+      onclick={() => (settingsOpen = !settingsOpen)}
+    >⚙</button>
   </header>
 
   <div class="fg-canvas">
@@ -269,6 +452,26 @@
         </div>
       {/snippet}
     </GraphCanvas>
+
+    <!-- Legend: bottom-left, always-on (toggleable) -->
+    <div class="fg-legend">
+      <Legend enabled={enabledRelTypes} onToggle={toggleRelType} />
+    </div>
+
+    <!-- Settings panel: bottom-right, toggle via header gear -->
+    {#if settingsOpen}
+      <div class="fg-settings">
+        <TypeOrderPanel
+          value={currentTypeOrder}
+          onChange={setTypeOrder}
+          onApply={() => void layoutByType()}
+        />
+      </div>
+    {/if}
+
+    {#if isLayingOut}
+      <div class="fg-laying-out" aria-live="polite">Laying out…</div>
+    {/if}
   </div>
 </div>
 
@@ -377,6 +580,57 @@
     flex: 1;
     position: relative;
     min-height: 0;
+  }
+
+  .fg-settings-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  .fg-settings-btn.open {
+    background: var(--color-accent);
+    color: white;
+    border-color: var(--color-accent);
+  }
+
+  .fg-legend {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    z-index: 5;
+    pointer-events: auto;
+  }
+
+  .fg-settings {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    z-index: 5;
+    pointer-events: auto;
+  }
+
+  .fg-laying-out {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 12px;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-accent);
+    border-radius: 12px;
+    color: var(--color-text);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    z-index: 6;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   }
 
   .fg-empty {
