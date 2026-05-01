@@ -178,16 +178,21 @@
     }
   });
 
-  // Mode reset must depend on `entityId` (the PROP) only, NOT on
-  // `entity` (the derived from $entities). The data-sync effect above
-  // re-fires on every store update — including after a PATCH returns —
-  // which would silently flip mode back to 'view' mid-edit. Splitting
-  // the reset means it only fires on real navigation between
-  // characters. Same reasoning for confirmingDelete.
+  // Mode reset only fires when entityId actually changes (real
+  // navigation), not on every parent re-render. Window.svelte's root
+  // onmousedown calls windowStore.focus(id), so every click anywhere
+  // in the window re-emits the window array → re-renders WindowManager's
+  // {#each} → re-passes entityId to CharacterEditor. Without this
+  // guard, the effect re-fires on every click and silently flips
+  // mode='edit' back to 'view'. The plain `let` tracker is intentional —
+  // it must be non-reactive (a $state would re-trigger the effect).
+  let lastSyncedEntityId: string | null = null;
   $effect(() => {
-    if (entityId) {
-      if (pendingEditMode.has(entityId)) {
-        pendingEditMode.delete(entityId);
+    const id = entityId;
+    if (id && id !== lastSyncedEntityId) {
+      lastSyncedEntityId = id;
+      if (pendingEditMode.has(id)) {
+        pendingEditMode.delete(id);
         mode = 'edit';
       } else {
         mode = 'view';

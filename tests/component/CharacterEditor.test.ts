@@ -688,6 +688,31 @@ describe('CharacterEditor — mode resets to view on entity navigation (Greptile
 	});
 });
 
+describe('CharacterEditor — edit mode persists across window-focus updates', () => {
+	it('windowStore.focus() re-emit does not flip mode back to view', async () => {
+		const { getByText, container } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		// Enter edit mode.
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		await waitFor(() => expect(getByText('Done')).toBeInTheDocument());
+		// Open & focus a real window so windowStore emits a fresh array.
+		// This is the same code path that fires every time the user clicks
+		// anywhere inside the window (Window.svelte's root onmousedown).
+		const id = windowStore.open('character-editor', 'char-1');
+		windowStore.focus(id);
+		windowStore.focus(id);
+		await tick();
+		// Still in edit mode — the `Done` button should remain rendered,
+		// the original `Edit` text should not have come back.
+		expect(getByText('Done')).toBeInTheDocument();
+		// Cleanup the window we opened.
+		windowStore.close(id);
+		expect(container).toBeTruthy();
+	});
+});
+
 describe('CharacterEditor — generic icon picker', () => {
 	it('Pick icon button is hidden in view mode, shown in edit mode', async () => {
 		const { queryByText, getByText } = render(CharacterEditor, {
