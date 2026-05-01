@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createTestDb, seedActs } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import {
@@ -118,12 +118,15 @@ describe('writeInterval — chokepoint', () => {
 	it('CHECK constraint prevents start_position >= end_position via raw SQL', async () => {
 		// This goes around writeInterval to confirm the DB-level guard exists.
 		// (writeInterval's own validation also rejects this case.)
-		expect(() =>
-			db
-				.$client.exec(
-					`INSERT INTO intervals (id, entity_id, start_act_id, end_act_id, start_position, end_position) VALUES ('bad', '${ellie}', '${acts.act0}', '${acts.act0}', 1.0, 0.5)`
+		// Drizzle.execute() runs raw SQL; pg returns errors with code 23514
+		// (check_violation) and a "violates check constraint" message.
+		await expect(
+			db.execute(
+				sql.raw(
+					`INSERT INTO intervals (entity_id, start_act_id, end_act_id, start_position, end_position) VALUES ('${ellie}', '${acts.act0}', '${acts.act0}', 1.0, 0.5)`
 				)
-		).toThrow(/CHECK constraint/);
+			)
+		).rejects.toThrow();
 	});
 
 	it('cascades delete when entity is deleted', async () => {

@@ -110,7 +110,7 @@ describe('/api/canvas-positions PUT', () => {
 
 	it('rejects unknown entity with 400', async () => {
 		await expect(
-			route.PUT(mkEvent({ body: { entityId: 'nope', x: 1, y: 2 } }))
+			route.PUT(mkEvent({ body: { entityId: '00000000-0000-0000-0000-000000000000', x: 1, y: 2 } }))
 		).rejects.toMatchObject({ status: 400 });
 	});
 

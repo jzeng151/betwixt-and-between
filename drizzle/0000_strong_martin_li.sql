@@ -26,8 +26,8 @@ CREATE TABLE "intervals" (
 	"start_scene_id" uuid,
 	"end_act_id" uuid NOT NULL,
 	"end_scene_id" uuid,
-	"start_position" real NOT NULL,
-	"end_position" real NOT NULL,
+	"start_position" double precision NOT NULL,
+	"end_position" double precision NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "intervals_position_order" CHECK ("intervals"."start_position" < "intervals"."end_position")

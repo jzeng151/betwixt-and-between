@@ -198,7 +198,7 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 
 	it('rejects moveScenesTo with non-existent target (400)', async () => {
 		const url = new URL(
-			`http://localhost/api/entities/${acts.act1}?moveScenesTo=does-not-exist`
+			`http://localhost/api/entities/${acts.act1}?moveScenesTo=00000000-0000-0000-0000-000000000000`
 		);
 		await expect(
 			idRoute.DELETE(mkEvent({ params: { id: acts.act1 }, url }))

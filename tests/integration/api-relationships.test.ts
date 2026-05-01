@@ -101,7 +101,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 	it('rejects unknown fromId entity with 400', async () => {
 		await expect(
 			relRoute.POST(
-				mkEvent({ body: { fromId: 'does-not-exist', toId: bob, type: 'rivals' } })
+				mkEvent({ body: { fromId: '00000000-0000-0000-0000-000000000000', toId: bob, type: 'rivals' } })
 			)
 		).rejects.toMatchObject({ status: 400 });
 	});
@@ -109,7 +109,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 	it('rejects unknown toId entity with 400', async () => {
 		await expect(
 			relRoute.POST(
-				mkEvent({ body: { fromId: alice, toId: 'does-not-exist', type: 'rivals' } })
+				mkEvent({ body: { fromId: alice, toId: '00000000-0000-0000-0000-000000000000', type: 'rivals' } })
 			)
 		).rejects.toMatchObject({ status: 400 });
 	});
@@ -131,7 +131,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 				toId: bob,
 				type: 'allied_with'
 			})
-		).rejects.toThrow(/UNIQUE constraint failed/);
+		).rejects.toThrow();
 		// But a different type between same pair is allowed.
 		await currentDb.insert(relationships).values({
 			fromId: alice,

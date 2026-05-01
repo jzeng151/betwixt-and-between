@@ -128,14 +128,15 @@ describe('entities.updateEntity', () => {
 		expect(get(entities)[0].name).toBe('NewServer');
 	});
 
-	it('serializes optimistic data to JSON string in the store', async () => {
+	it('applies optimistic data as object in the store (jsonb shape post-T8a)', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			makeResponse(entity({ id: 'e1', name: 'Old', type: 'Character', data: { age: 99 } }))
 		);
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 		const p = entities.updateEntity('e1', { data: { age: 99 } });
-		expect(get(entities)[0].data).toBe('{"age":99}');
+		// data is jsonb (object), not a JSON-stringified string
+		expect(get(entities)[0].data).toEqual({ age: 99 });
 		await p;
 	});
 

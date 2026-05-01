@@ -3,7 +3,7 @@ import {
 	uuid,
 	text,
 	integer,
-	real,
+	doublePrecision,
 	jsonb,
 	timestamp,
 	index,
@@ -160,8 +160,11 @@ export const intervals = pgTable(
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
 		endSceneId: uuid('end_scene_id').references(() => entities.id, { onDelete: 'set null' }),
-		startPosition: real('start_position').notNull(),
-		endPosition: real('end_position').notNull(),
+		// doublePrecision (float8) to match sqlite REAL precision (8-byte
+		// IEEE 754 double). Pg's `real` is single-precision (4-byte float)
+		// — would lose precision in scene-fraction math (1/3, 2/3 etc.).
+		startPosition: doublePrecision('start_position').notNull(),
+		endPosition: doublePrecision('end_position').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 	},

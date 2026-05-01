@@ -135,7 +135,7 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 	});
 
 	it('actIndexOf throws on missing entity', async () => {
-		await expect(actIndexOf(db, 'nope')).rejects.toThrow(/not found/);
+		await expect(actIndexOf(db, '00000000-0000-0000-0000-000000000000')).rejects.toThrow(/not found/);
 	});
 
 	it('sceneIndexOf returns scene index, count, parent', async () => {

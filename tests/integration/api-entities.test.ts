@@ -82,20 +82,20 @@ describe('/api/entities POST', () => {
 		expect(body.name).toBe('Bob');
 	});
 
-	it('serializes data field as JSON string', async () => {
+	it('round-trips data field as jsonb object', async () => {
 		const res = await POST(
 			mkEvent({ body: { type: 'Character', name: 'Bob', data: { age: 30, role: 'hero' } } })
 		);
 		const body = await readJson(res);
-		// Drizzle stores it as JSON-encoded text; the API returns whatever the row is.
-		expect(typeof body.data).toBe('string');
-		expect(JSON.parse(body.data)).toEqual({ age: 30, role: 'hero' });
+		// Post-T8a: data is jsonb; the API returns the object directly, no
+		// JSON.parse boundary needed.
+		expect(body.data).toEqual({ age: 30, role: 'hero' });
 	});
 
-	it('defaults data to empty object string when omitted', async () => {
+	it('defaults data to empty object when omitted', async () => {
 		const res = await POST(mkEvent({ body: { type: 'Character', name: 'Bob' } }));
 		const body = await readJson(res);
-		expect(body.data).toBe('{}');
+		expect(body.data).toEqual({});
 	});
 
 	it('rejects unknown entity type with 400', async () => {
@@ -175,7 +175,7 @@ describe('/api/entities/[id] PATCH', () => {
 		expect(body.name).toBe('Ellie Renamed');
 	});
 
-	it('updates data field by JSON.stringify', async () => {
+	it('updates data field as jsonb object', async () => {
 		const created = await readJson(
 			await POST(mkEvent({ body: { type: 'Character', name: 'Ellie' } }))
 		);
@@ -183,7 +183,7 @@ describe('/api/entities/[id] PATCH', () => {
 			mkEvent({ params: { id: created.id }, body: { data: { hobbies: ['archery'] } } })
 		);
 		const body = await readJson(res);
-		expect(JSON.parse(body.data)).toEqual({ hobbies: ['archery'] });
+		expect(body.data).toEqual({ hobbies: ['archery'] });
 	});
 
 	it('returns 404 when patching missing entity', async () => {

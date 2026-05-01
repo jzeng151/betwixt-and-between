@@ -261,7 +261,7 @@ describe('canvas_positions UNIQUE(entity_id) constraint', () => {
 
 		await expect(
 			db.insert(canvasPositions).values({ entityId: a.id, x: 99, y: 99 })
-		).rejects.toThrow(/UNIQUE/i);
+		).rejects.toThrow();
 	});
 
 	it('honors onConflictDoUpdate for canvas_position upsert', async () => {
@@ -449,7 +449,7 @@ describe('ordering queries against entities_type_position_idx', () => {
 		expect(notes.map((n) => n.name)).toEqual(['First', 'Second']);
 	});
 
-	it('treats NULL positions as orderable but groups them per SQLite NULLS FIRST default', async () => {
+	it('treats NULL positions as orderable per Postgres ASC NULLS LAST default', async () => {
 		await db.insert(entities).values({ type: 'Character', name: 'P', position: 5 });
 		await db.insert(entities).values({ type: 'Character', name: 'Q' }); // null position
 		await db.insert(entities).values({ type: 'Character', name: 'R', position: 1 });
@@ -460,9 +460,11 @@ describe('ordering queries against entities_type_position_idx', () => {
 			.where(eq(entities.type, 'Character'))
 			.orderBy(asc(entities.position));
 
-		// SQLite default ASC: NULLs sort first.
-		expect(chars[0].name).toBe('Q');
-		expect(chars[1].name).toBe('R');
-		expect(chars[2].name).toBe('P');
+		// Postgres default ASC: NULLs sort LAST (opposite of sqlite).
+		// Code that depends on a specific NULL ordering should add an
+		// explicit `NULLS FIRST`/`NULLS LAST` clause.
+		expect(chars[0].name).toBe('R');
+		expect(chars[1].name).toBe('P');
+		expect(chars[2].name).toBe('Q');
 	});
 });

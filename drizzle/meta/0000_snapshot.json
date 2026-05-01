@@ -1,5 +1,5 @@
 {
-  "id": "4c81d840-128c-4df6-a899-d411b6b50d48",
+  "id": "97837347-deb9-4f57-aaaf-0bcb9a2cae99",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -254,13 +254,13 @@
         },
         "start_position": {
           "name": "start_position",
-          "type": "real",
+          "type": "double precision",
           "primaryKey": false,
           "notNull": true
         },
         "end_position": {
           "name": "end_position",
-          "type": "real",
+          "type": "double precision",
           "primaryKey": false,
           "notNull": true
         },
