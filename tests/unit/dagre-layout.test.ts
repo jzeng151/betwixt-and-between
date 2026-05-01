@@ -136,6 +136,49 @@ describe('layoutByType (Phase 1B C5)', () => {
 		expect(scene.y).toBeLessThan(character.y);
 	});
 
+	it('respects typeOrder even when edges flow BACKWARDS (Greptile P1 regression)', async () => {
+		// Prior implementation set { rank: n } on dagre nodes, which dagre
+		// 0.8.5 silently ignores — rank was determined by edge direction.
+		// Tests passed by coincidence (edges flowed in typeOrder direction).
+		// This case has the edge going backwards (Character → Scene); rank
+		// MUST still come from typeOrder, putting Scene above Character.
+		const result = await layoutByType({
+			nodes: [
+				{ id: 's', type: 'Scene', width: 120, height: 32 },
+				{ id: 'c', type: 'Character', width: 120, height: 32 }
+			],
+			edges: [{ fromId: 'c', toId: 's' }], // backwards from typeOrder
+			pinnedIds: new Set(),
+			currentPositions: [],
+			typeOrder: ['Scene', 'Character']
+		});
+		const scene = result.find((r) => r.id === 's')!;
+		const character = result.find((r) => r.id === 'c')!;
+		// Scene at typeOrder index 0 → topmost rank (smallest y).
+		expect(scene.y).toBeLessThan(character.y);
+	});
+
+	it('respects typeOrder even when no edges exist', async () => {
+		// Disconnected nodes: edge-driven ranking (the previous broken
+		// behavior) had nothing to bite on at all. Type-order must drive.
+		const result = await layoutByType({
+			nodes: [
+				{ id: 's', type: 'Scene', width: 120, height: 32 },
+				{ id: 'c', type: 'Character', width: 120, height: 32 },
+				{ id: 'a', type: 'Act', width: 120, height: 32 }
+			],
+			edges: [],
+			pinnedIds: new Set(),
+			currentPositions: [],
+			typeOrder: ['Scene', 'Character', 'Act']
+		});
+		const scene = result.find((r) => r.id === 's')!;
+		const character = result.find((r) => r.id === 'c')!;
+		const act = result.find((r) => r.id === 'a')!;
+		expect(scene.y).toBeLessThan(character.y);
+		expect(character.y).toBeLessThan(act.y);
+	});
+
 	it('places types missing from typeOrder at the bottom', async () => {
 		// 'Note' is not in typeOrder → should rank below Character.
 		const result = await layoutByType({

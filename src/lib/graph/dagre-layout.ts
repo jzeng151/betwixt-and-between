@@ -79,56 +79,77 @@ export async function layoutByType(input: LayoutByTypeInput): Promise<LayoutResu
 	const unpinned = nodes.filter((n) => !pinnedIds.has(n.id));
 	if (unpinned.length === 0) return [];
 
-	const unpinnedIds = new Set(unpinned.map((n) => n.id));
-	const edgesAmongUnpinned = edges.filter(
-		(e) => unpinnedIds.has(e.fromId) && unpinnedIds.has(e.toId)
-	);
+	// Group unpinned nodes by entity type. Dagre 0.8.5's `setNode({rank: n})`
+	// is silently IGNORED — rank is computed from edge direction, not
+	// settable as input. Forcing type-rank ordering through dagre requires
+	// either phantom anchor nodes or a layered post-process. We pick the
+	// post-process: assign Y per rank manually (typeOrder.indexOf wins),
+	// run dagre per-rank to get smart X positions (intra-rank edge-
+	// crossing minimization). This keeps dagre's value (per-rank X layout)
+	// without fighting its API for cross-rank ranking.
+	const nodesByType = new Map<EntityType, LayoutNode[]>();
+	for (const n of unpinned) {
+		const list = nodesByType.get(n.type) ?? [];
+		list.push(n);
+		nodesByType.set(n.type, list);
+	}
+	// Ordered ranks: typeOrder first (only types with actual nodes), then
+	// any remaining types not in typeOrder (sink-rank, deterministic by
+	// insertion order).
+	const presentInOrder = typeOrder.filter((t) => nodesByType.has(t));
+	const extraTypes = [...nodesByType.keys()].filter((t) => !typeOrder.includes(t));
+	const orderedTypes = [...presentInOrder, ...extraTypes];
 
 	// Dynamic-import keeps the ~80KB bundle cost off the page-load path.
 	// Vite resolves this at build time so the chunk lands as a separate JS
 	// file pulled on first call.
 	const dagre = await import('dagre');
 
-	// Top-down layered layout. ranksep: vertical gap between type ranks.
-	// nodesep: horizontal gap within a rank. Tuned for ~120×32 nodes (the
-	// GraphCanvas default size) — a tight 40px nodesep keeps related nodes
-	// visually close without overlap; 80px ranksep gives the type bands
-	// breathing room.
-	const g = new dagre.graphlib.Graph();
-	g.setGraph({ rankdir: 'TB', ranksep: 80, nodesep: 40, marginx: 20, marginy: 20 });
-	g.setDefaultEdgeLabel(() => ({}));
+	const RANKSEP = 80; // vertical gap between type bands
+	const NODESEP = 40; // horizontal gap within a rank
 
-	for (const n of unpinned) {
-		// Dagre supports per-node rank assignment; rank 0 is the topmost band.
-		// indexOf returning -1 (type not in typeOrder) defaults to the bottom
-		// rather than the top so the user's intended ordering for known types
-		// always wins.
-		const rank = typeOrder.indexOf(n.type);
-		g.setNode(n.id, {
-			label: n.id,
-			width: n.width,
-			height: n.height,
-			rank: rank === -1 ? typeOrder.length : rank
-		});
+	const raw: LayoutResult[] = [];
+	let rankYCursor = 0;
+
+	for (const type of orderedTypes) {
+		const rankNodes = nodesByType.get(type)!;
+		const rankHeight = Math.max(...rankNodes.map((n) => n.height));
+
+		// Run dagre on just this rank's subgraph. Edges among same-rank
+		// nodes only — cross-rank edges are visible in the canvas but don't
+		// influence per-rank X. LR layout to lay nodes left-to-right within
+		// the rank.
+		const sameRank = new Set(rankNodes.map((n) => n.id));
+		const g = new dagre.graphlib.Graph();
+		g.setGraph({ rankdir: 'LR', nodesep: NODESEP, marginx: 0, marginy: 0 });
+		g.setDefaultEdgeLabel(() => ({}));
+		for (const n of rankNodes) {
+			g.setNode(n.id, { label: n.id, width: n.width, height: n.height });
+		}
+		for (const e of edges) {
+			if (sameRank.has(e.fromId) && sameRank.has(e.toId)) {
+				g.setEdge(e.fromId, e.toId);
+			}
+		}
+		dagre.layout(g);
+
+		// Read X from dagre, override Y to the rank cursor. Convert from
+		// dagre's center-coords to our top-left coord system.
+		for (const n of rankNodes) {
+			const dn = g.node(n.id) as { x: number; y: number; width: number; height: number };
+			raw.push({
+				id: n.id,
+				x: dn.x - dn.width / 2,
+				y: rankYCursor
+			});
+		}
+		rankYCursor += rankHeight + RANKSEP;
 	}
 
-	for (const e of edgesAmongUnpinned) {
-		g.setEdge(e.fromId, e.toId);
-	}
-
-	dagre.layout(g);
-
-	// dagre returns CENTER positions for nodes; convert to top-left for our
-	// coord system (matches the rest of the canvas which positions by
-	// top-left).
-	const raw: LayoutResult[] = unpinned.map((n) => {
-		const dn = g.node(n.id) as { x: number; y: number; width: number; height: number };
-		return {
-			id: n.id,
-			x: dn.x - dn.width / 2,
-			y: dn.y - dn.height / 2
-		};
-	});
+	// Note: cross-rank edges are visualized in the canvas but don't
+	// constrain layout. This is a deliberate simplification vs. a global
+	// dagre layout — the locked T2A algorithm prioritizes type-rank
+	// ordering as the dominant signal.
 
 	// Shift step: align the new layout's centroid with either (a) the pinned
 	// set's centroid (when there is a pinnedSet) or (b) the viewport center
