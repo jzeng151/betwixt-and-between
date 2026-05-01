@@ -32,6 +32,10 @@
     const item = items[i];
     if (!item || item.disabled) return;
     item.onSelect();
+    // Close after select. The component owns dismiss for Escape and
+    // click-outside; selection should follow the same shape so callsites
+    // don't have to wrap every onSelect with an explicit close.
+    onClose();
   }
 
   function focusItem(i: number) {

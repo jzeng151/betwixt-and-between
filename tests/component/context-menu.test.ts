@@ -26,6 +26,17 @@ describe('ContextMenu', () => {
 		expect(getByText('Three')).toBeInTheDocument();
 	});
 
+	it('selecting an item also fires onClose (Greptile P1)', async () => {
+		const onClose = vi.fn();
+		const items = makeItems([{ label: 'A' }]);
+		const { getByText } = render(ContextMenu, {
+			props: { items, x: 0, y: 0, onClose }
+		});
+		await fireEvent.click(getByText('A'));
+		expect(items[0].onSelect).toHaveBeenCalledTimes(1);
+		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
 	it('clicking an enabled item fires its onSelect', async () => {
 		const items = makeItems([{ label: 'Pick me' }, { label: 'Other' }]);
 		const { getByText } = render(ContextMenu, {
@@ -121,6 +132,10 @@ describe('ContextMenu', () => {
 		const onClose = vi.fn();
 		const items = makeItems([{ label: 'A' }]);
 		render(ContextMenu, { props: { items, x: 0, y: 0, onClose } });
+		// The click-outside listener registers inside a $effect, which
+		// fires after the initial render microtask. Wait for tick() so the
+		// listener is wired up — without this the test passes only by luck.
+		await tick();
 		// pointerdown on document.body (outside the menu)
 		await fireEvent.pointerDown(document.body);
 		expect(onClose).toHaveBeenCalled();
