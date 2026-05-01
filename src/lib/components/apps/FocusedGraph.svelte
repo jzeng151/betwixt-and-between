@@ -266,11 +266,20 @@
   // is independent (per-window canvas means no cross-talk). The lock is just
   // a Promise chain — the next layout awaits the current one.
   let layoutLock: Promise<void> = Promise.resolve();
-  let isLayingOut = $state(false);
+  // Queue depth instead of a boolean: incremented synchronously on click
+  // (before the .then() callback fires) and decremented when the work
+  // finishes. This avoids two UX bugs the boolean had:
+  //   1. Click #2 queued behind click #1 had no indicator until click #1
+  //      finished and click #2's body started — counterintuitive when
+  //      the user sees their click "do nothing".
+  //   2. Between click #1's finally (sets false) and click #2's body
+  //      (sets true), the indicator flickered off for a microtask.
+  let layoutQueueDepth = $state(0);
+  const isLayingOut = $derived(layoutQueueDepth > 0);
 
   async function layoutByType() {
+    layoutQueueDepth++;
     layoutLock = layoutLock.then(async () => {
-      isLayingOut = true;
       // Hoist snapshots so the catch can roll back. Hoist applied-flag so we
       // don't restore on early-return paths (newPositions.length === 0).
       const positionsBefore = currentPositions;
@@ -370,7 +379,7 @@
         }
         console.warn('FocusedGraph: layout-by-type failed, rolled back', err);
       } finally {
-        isLayingOut = false;
+        layoutQueueDepth--;
       }
     });
     return layoutLock;
