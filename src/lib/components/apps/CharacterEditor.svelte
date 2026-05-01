@@ -13,6 +13,12 @@
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
   import { CHARACTER_COLORS, HEX_COLOR_RE, type TimelineLabelMode } from '$lib/timeline-v2-helpers.js';
+  import {
+    getCharacterIcon,
+    listCharacterIcons,
+    CHARACTER_ICON_CATEGORIES,
+    type IconCategory,
+  } from '$lib/icons/registry.js';
 
   interface Props { winId: string; entityId: string | null; }
   let { winId, entityId }: Props = $props();
@@ -130,6 +136,8 @@
   let motivation = $state('');
   let notes = $state('');
   let avatar = $state('');
+  let icon = $state<string>('');
+  let iconPickerOpen = $state(false);
   // Timeline display config
   let color = $state<string | null>(null);
   let customHex = $state('');
@@ -148,6 +156,8 @@
       motivation = d.motivation ?? '';
       notes = d.notes ?? '';
       avatar = d.avatar ?? '';
+      icon = d.icon ?? '';
+      iconPickerOpen = false;
       const rawColor = (d as Record<string, unknown>).color;
       color = typeof rawColor === 'string' && HEX_COLOR_RE.test(rawColor) ? rawColor : null;
       customHex = '';
@@ -205,6 +215,14 @@
       data.color = color;
     } else {
       delete data.color;
+    }
+    // Image and icon are mutually exclusive — only persist one. Empty
+    // string deletes the key so we don't carry stale icon refs after a
+    // user uploads an image.
+    if (icon) {
+      data.icon = icon;
+    } else {
+      delete data.icon;
     }
     try {
       await entities.updateEntity(entityId, { data });
@@ -286,6 +304,26 @@
   }
 
 
+  async function pickIcon(id: string) {
+    icon = id;
+    avatar = '';
+    iconPickerOpen = false;
+    await saveAll();
+  }
+  async function clearIcon() {
+    icon = '';
+    iconPickerOpen = false;
+    await saveAll();
+  }
+  function iconsInCategory(cat: IconCategory) {
+    return listCharacterIcons().filter((i) => i.category === cat);
+  }
+
+  // Resolved icon entry for the currently-set icon ID. Null when no icon
+  // is set OR the saved ID is unknown (registry was edited; saved ID no
+  // longer exists). Falls back gracefully to initials in that case.
+  const iconEntry = $derived(getCharacterIcon(icon));
+
   // Avatar upload — resize to ≤200px before storing
   function triggerAvatarUpload() { fileInput.click(); }
 
@@ -303,6 +341,9 @@
         canvas.height = Math.round(img.height * ratio);
         canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
         avatar = canvas.toDataURL('image/jpeg', 0.82);
+        // Uploading a real image overrides any selected icon — they're
+        // mutually exclusive at the render layer too.
+        icon = '';
         await saveAll();
       };
       img.src = reader.result as string;
@@ -410,6 +451,7 @@
       <ul class="char-list">
         {#each filteredCharacters as char (char.id)}
           {@const d = readData(char.data)}
+          {@const rowIcon = getCharacterIcon(d.icon)}
           <li class="char-item">
             {#if selecting}
               <div
@@ -435,9 +477,16 @@
                 else openEntity(char.id);
               }}
             >
-              <div class="char-avatar">
+              <div
+                class="char-avatar"
+                class:char-avatar-roled={!d.avatar && (d.role || rowIcon)}
+                style={!d.avatar && (d.role || rowIcon) ? `--rc:${roleColor(d.role)}` : ''}
+              >
                 {#if d.avatar}
                   <img src={d.avatar} alt={char.name} class="avatar-thumb" />
+                {:else if rowIcon}
+                  {@const RowIconComp = rowIcon.component}
+                  <RowIconComp size={16} strokeWidth={1.6} />
                 {:else}
                   {initials(char.name)}
                 {/if}
@@ -478,24 +527,41 @@
     <!-- Avatar + name row -->
     <div class="header">
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <div
-        class="avatar-lg"
-        onclick={triggerAvatarUpload}
-        title="Click to change avatar"
-        role="button"
-        tabindex="0"
-        onkeydown={(e) => e.key === 'Enter' && triggerAvatarUpload()}
-      >
-        {#if avatar}
-          <img src={avatar} alt={entity.name} class="avatar-lg-img" />
-        {:else}
-          <span class="avatar-lg-initials">{initials(entity.name)}</span>
-        {/if}
-        <div class="avatar-overlay">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-            <path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" fill="none"/>
-          </svg>
+      <div class="avatar-stack">
+        <div
+          class="avatar-lg"
+          class:avatar-lg-roled={!avatar && (role || iconEntry)}
+          style={!avatar && (role || iconEntry) ? `--rc:${roleColor(role)}` : ''}
+          onclick={triggerAvatarUpload}
+          title="Click to change avatar"
+          role="button"
+          tabindex="0"
+          onkeydown={(e) => e.key === 'Enter' && triggerAvatarUpload()}
+        >
+          {#if avatar}
+            <img src={avatar} alt={entity.name} class="avatar-lg-img" />
+          {:else if iconEntry}
+            {@const IconComp = iconEntry.component}
+            <span class="avatar-lg-icon" aria-label={iconEntry.label}>
+              <IconComp size={26} strokeWidth={1.6} />
+            </span>
+          {:else}
+            <span class="avatar-lg-initials">{initials(entity.name)}</span>
+          {/if}
+          <div class="avatar-overlay">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" fill="none"/>
+            </svg>
+          </div>
         </div>
+        {#if mode === 'edit'}
+          <button
+            type="button"
+            class="icon-pick-link"
+            onclick={() => (iconPickerOpen = !iconPickerOpen)}
+            aria-expanded={iconPickerOpen}
+          >{iconEntry ? 'Change icon' : 'Pick icon'}</button>
+        {/if}
       </div>
       <input
         type="file"
@@ -546,6 +612,35 @@
         </div>
       </div>
     </div>
+
+    {#if iconPickerOpen && mode === 'edit'}
+      <div class="icon-picker">
+        {#each CHARACTER_ICON_CATEGORIES as cat}
+          <div class="icon-picker-cat">
+            <p class="section-label">{cat}</p>
+            <div class="icon-grid">
+              {#each iconsInCategory(cat) as entry}
+                {@const IconComp = entry.component}
+                <button
+                  type="button"
+                  class="icon-tile"
+                  class:icon-tile-selected={icon === entry.id}
+                  title={entry.label}
+                  aria-label={entry.label}
+                  aria-pressed={icon === entry.id}
+                  onclick={() => pickIcon(entry.id)}
+                >
+                  <IconComp size={20} strokeWidth={1.6} />
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/each}
+        {#if iconEntry}
+          <button type="button" class="icon-picker-clear" onclick={clearIcon}>Clear icon</button>
+        {/if}
+      </div>
+    {/if}
 
     {#if saveError}<p class="save-error">{saveError}</p>{/if}
 
@@ -905,6 +1000,14 @@
     overflow: hidden;
     letter-spacing: 0.02em;
   }
+  /* When a role is set and no image is uploaded, tint the placeholder
+     with that role's color so the row reads as "Antagonist" or "Ally"
+     at a glance — same trick as the role badge, applied to the avatar. */
+  .char-avatar-roled {
+    background: color-mix(in srgb, var(--rc) 18%, transparent);
+    border-color: color-mix(in srgb, var(--rc) 35%, transparent);
+    color: var(--rc);
+  }
 
   .avatar-thumb {
     width: 100%;
@@ -1000,6 +1103,14 @@
     cursor: pointer;
     overflow: hidden;
   }
+  /* Roled detail-view placeholder mirrors .char-avatar-roled. */
+  .avatar-lg-roled {
+    background: color-mix(in srgb, var(--rc) 18%, transparent);
+    border-color: color-mix(in srgb, var(--rc) 35%, transparent);
+  }
+  .avatar-lg-roled .avatar-lg-initials {
+    color: var(--rc);
+  }
 
   .avatar-lg-initials {
     font-size: 16px;
@@ -1009,6 +1120,87 @@
     letter-spacing: 0.02em;
     pointer-events: none;
   }
+  .avatar-lg-icon {
+    color: var(--color-accent);
+    pointer-events: none;
+    display: inline-flex;
+  }
+  .avatar-lg-roled .avatar-lg-icon { color: var(--rc); }
+
+  .avatar-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .icon-pick-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 9px;
+    font-family: var(--font-ui);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .icon-pick-link:hover { color: var(--color-accent); }
+
+  /* Icon picker */
+  .icon-picker {
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .icon-picker-cat {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .icon-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .icon-tile {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.1s, color 0.1s;
+  }
+  .icon-tile:hover {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
+  .icon-tile-selected {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  }
+  .icon-picker-clear {
+    align-self: flex-start;
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 10px;
+    font-family: var(--font-ui);
+    cursor: pointer;
+  }
+  .icon-picker-clear:hover { color: var(--color-text); border-color: var(--color-text); }
 
   .avatar-lg-img {
     width: 100%;

@@ -623,3 +623,73 @@ describe('CharacterEditor — mode resets to view on entity navigation (Greptile
 		});
 	});
 });
+
+describe('CharacterEditor — generic icon picker', () => {
+	it('Pick icon button is hidden in view mode, shown in edit mode', async () => {
+		const { queryByText, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		expect(queryByText('Pick icon')).toBeNull();
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		await waitFor(() => {
+			expect(getByText('Pick icon')).toBeInTheDocument();
+		});
+	});
+
+	it('clicking an icon tile saves data.icon and closes the picker', async () => {
+		const { getByText, getByLabelText, queryByText, container } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		await fireEvent.click(getByText('Pick icon'));
+		await tick();
+		// Picker is open — category labels are rendered.
+		expect(getByText('Heroes')).toBeInTheDocument();
+		// Click the "Warrior" tile (Sword icon).
+		await fireEvent.click(getByLabelText('Warrior'));
+		await waitFor(() => {
+			// PATCH was called with data.icon = 'lucide:sword'.
+			const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+			const patch = calls.find(([, init]) => init?.method === 'PATCH');
+			expect(patch).toBeTruthy();
+			const body = JSON.parse((patch![1] as RequestInit).body as string);
+			expect(body.data.icon).toBe('lucide:sword');
+		});
+		// Picker closed; trigger reverts to "Change icon".
+		await waitFor(() => {
+			expect(queryByText('Heroes')).toBeNull();
+		});
+		expect(container).toBeTruthy();
+	});
+
+	it('Clear icon button removes the saved icon', async () => {
+		// Seed the entity with a pre-set icon.
+		const fixture = makeCharacter({ icon: 'lucide:sword' });
+		globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+			if (init?.method === 'PATCH') {
+				const body = JSON.parse(init.body as string);
+				return makeResponse(makeCharacter(body.data ?? {}));
+			}
+			return makeResponse([fixture]);
+		}) as unknown as typeof fetch;
+		await entities.load();
+		const { getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		await fireEvent.click(getByText('Change icon'));
+		await tick();
+		await fireEvent.click(getByText('Clear icon'));
+		await waitFor(() => {
+			const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+			const patch = calls.find(([, init]) => init?.method === 'PATCH');
+			const body = JSON.parse((patch![1] as RequestInit).body as string);
+			// Empty string OR absent key both mean "no icon" — saveAll
+			// deletes the key, so we expect data.icon to be undefined.
+			expect(body.data.icon).toBeUndefined();
+		});
+	});
+});
