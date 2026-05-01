@@ -45,6 +45,7 @@
 
   // ── List mode ─────────────────────────────────────────────────────────────
   let searchQuery = $state('');
+  let createError = $state('');
   const filteredCharacters = $derived(
     searchQuery.trim()
       ? characters.filter((c) => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -52,12 +53,16 @@
   );
 
   async function createCharacter() {
+    createError = '';
     try {
       const created = await entities.createEntity('Character', 'New Character');
       pendingEditMode.add(created.id);
       openEntity(created.id);
     } catch {
-      // ignore
+      // Surface the failure inline (was previously swallowed). Most likely
+      // network or 500 from the server — user gets a brief notice and can
+      // retry. Self-clears on the next attempt.
+      createError = "Couldn't create character.";
     }
   }
 
@@ -73,8 +78,19 @@
     selecting = false;
     selected = new Set();
   }
+  // Visible-only selection count: the search input stays active in select
+  // mode, so an item the user selected can be filtered out of view. The
+  // toolbar count and Delete (N) action both operate on the visible
+  // intersection so the user can't accidentally delete characters they
+  // can't currently see (Greptile P1).
+  const visibleIds = $derived(new Set(filteredCharacters.map((c) => c.id)));
+  const visibleSelected = $derived(new Set([...selected].filter((id) => visibleIds.has(id))));
   async function deleteSelected() {
-    const ids = [...selected];
+    // Delete only the currently-VISIBLE selected ids. Hidden selections
+    // are dropped from the Set but not deleted — same semantic as a
+    // mail client: filtering hides messages, applies actions only to
+    // what you can see.
+    const ids = [...visibleSelected];
     selected = new Set();
     selecting = false;
     await Promise.all(ids.map((id) => entities.deleteEntity(id)));
@@ -125,9 +141,16 @@
       } else {
         timelineLabel = { mode: 'name-and-note' };
       }
+      // Default to view mode on entity change. The PR's stated intent is
+      // "existing characters open in view mode" — without this reset, an
+      // in-place navigation (e.g. clicking an EntityLink relationship chip
+      // while mode === 'edit') would carry the edit state into the new
+      // character. Pending-edit-mode for "+ New" overrides below.
       if (pendingEditMode.has(entity.id)) {
         pendingEditMode.delete(entity.id);
         mode = 'edit';
+      } else {
+        mode = 'view';
       }
     }
   });
@@ -305,8 +328,8 @@
       />
       {#if selecting}
         <button class="select-cancel-btn" onclick={cancelSelect}>Cancel</button>
-        {#if selected.size > 0}
-          <button class="delete-btn" onclick={deleteSelected}>Delete ({selected.size})</button>
+        {#if visibleSelected.size > 0}
+          <button class="delete-btn" onclick={deleteSelected}>Delete ({visibleSelected.size})</button>
         {/if}
       {:else}
         <button class="select-toggle-btn" onclick={() => (selecting = true)}>Select</button>
@@ -314,22 +337,43 @@
       {/if}
     </div>
 
+    {#if createError}
+      <p class="create-error" role="alert">{createError}</p>
+    {/if}
+
     {#if characters.length === 0}
       <p class="empty">No characters yet.</p>
     {:else if filteredCharacters.length === 0}
       <p class="empty">No matches.</p>
     {:else}
       <ul class="char-list">
-        {#each filteredCharacters as char}
+        {#each filteredCharacters as char (char.id)}
           {@const d = readData(char.data)}
           <li class="char-item">
             {#if selecting}
-              <!-- svelte-ignore a11y_click_events_have_key_events -->
-              <div class="char-check" role="checkbox" aria-checked={selected.has(char.id)} tabindex="0" onclick={(e) => { e.stopPropagation(); toggleSelect(char.id); }}>
+              <div
+                class="char-check"
+                role="checkbox"
+                aria-checked={selected.has(char.id)}
+                tabindex="0"
+                onclick={(e) => { e.stopPropagation(); toggleSelect(char.id); }}
+                onkeydown={(e) => {
+                  if (e.key === ' ' || e.key === 'Enter') {
+                    e.preventDefault();
+                    toggleSelect(char.id);
+                  }
+                }}
+              >
                 <input type="checkbox" checked={selected.has(char.id)} tabindex="-1" readonly />
               </div>
             {/if}
-            <button class="char-row" onclick={() => openEntity(char.id)}>
+            <button
+              class="char-row"
+              onclick={() => {
+                if (selecting) toggleSelect(char.id);
+                else openEntity(char.id);
+              }}
+            >
               <div class="char-avatar">
                 {#if d.avatar}
                   <img src={d.avatar} alt={char.name} class="avatar-thumb" />
@@ -650,6 +694,13 @@
     white-space: nowrap;
   }
   .create-btn:hover { opacity: 0.85; }
+
+  .create-error {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: var(--color-rel-rival);
+    font-family: var(--font-ui);
+  }
 
   .select-toggle-btn, .select-cancel-btn {
     flex-shrink: 0;

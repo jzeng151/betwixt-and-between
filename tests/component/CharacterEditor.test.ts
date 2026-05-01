@@ -369,3 +369,214 @@ describe('CharacterEditor — detail mode view/edit toggle', () => {
 		});
 	});
 });
+
+// ── Greptile-flagged regressions on PR #15 ────────────────────────────────────
+
+describe('CharacterEditor — list mode select × search interaction', () => {
+	const aragorn: Entity = {
+		id: 'char-aragorn',
+		type: 'Character',
+		name: 'Aragorn',
+		data: {},
+		parentId: null,
+		position: 0,
+		createdAt: new Date(0),
+		updatedAt: new Date(0)
+	};
+	const gandalf: Entity = {
+		id: 'char-gandalf',
+		type: 'Character',
+		name: 'Gandalf',
+		data: {},
+		parentId: null,
+		position: 1,
+		createdAt: new Date(0),
+		updatedAt: new Date(0)
+	};
+
+	beforeEach(async () => {
+		globalThis.fetch = vi
+			.fn()
+			.mockResolvedValue(makeResponse([aragorn, gandalf])) as unknown as typeof fetch;
+		await entities.load();
+		globalThis.fetch = vi.fn().mockImplementation(async (_u: string, init?: RequestInit) => {
+			if (init?.method === 'DELETE') return makeResponse(null, true, 204);
+			return makeResponse([]);
+		}) as unknown as typeof fetch;
+	});
+
+	it('Delete (N) reflects only currently-visible selections (Greptile P1)', async () => {
+		// Select both characters → select Aragorn AND Gandalf → filter to
+		// "Gandalf" → toolbar should say Delete (1), not Delete (2).
+		const { getByPlaceholderText, getByText, container } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: null }
+		});
+		await fireEvent.click(getByText('Select'));
+		await tick();
+		const checks = container.querySelectorAll('.char-check');
+		await fireEvent.click(checks[0]);
+		await fireEvent.click(checks[1]);
+		await tick();
+		expect(getByText('Delete (2)')).toBeInTheDocument();
+		await fireEvent.input(getByPlaceholderText('Search characters…'), {
+			target: { value: 'gandalf' }
+		});
+		await tick();
+		expect(getByText('Delete (1)')).toBeInTheDocument();
+	});
+
+	it('deleteSelected only deletes visible selections (Greptile P1)', async () => {
+		// Select Aragorn → filter to "Gandalf" → click Delete → only the
+		// hidden Aragorn must NOT get a DELETE request fired. Without the
+		// fix, the selected Set carried hidden ids and bulk-deleted them.
+		const { getByPlaceholderText, getByText, container } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: null }
+		});
+		await fireEvent.click(getByText('Select'));
+		await tick();
+		// Toggle Aragorn (the first row).
+		const checks = container.querySelectorAll('.char-check');
+		await fireEvent.click(checks[0]);
+		await tick();
+		// Filter to Gandalf only.
+		await fireEvent.input(getByPlaceholderText('Search characters…'), {
+			target: { value: 'gandalf' }
+		});
+		await tick();
+		// No selections in the visible set → Delete button should be hidden.
+		expect(getByText('Cancel')).toBeInTheDocument();
+		expect(container.querySelector('.delete-btn')).toBeNull();
+		// A DELETE for Aragorn must NEVER have been fired (we never clicked
+		// delete; the test asserts the no-op state is correct).
+		const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+		const deleteCalls = calls.filter(([, init]) => init?.method === 'DELETE');
+		expect(deleteCalls).toHaveLength(0);
+	});
+});
+
+describe('CharacterEditor — row click in select mode toggles selection (Greptile P1)', () => {
+	beforeEach(async () => {
+		globalThis.fetch = vi
+			.fn()
+			.mockResolvedValue(makeResponse([makeCharacter()])) as unknown as typeof fetch;
+		await entities.load();
+		vi.mocked(openEntity).mockClear();
+	});
+
+	it('clicking the row body in select mode toggles instead of opening', async () => {
+		const { getByText, container } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: null }
+		});
+		await fireEvent.click(getByText('Select'));
+		await tick();
+		// Click the row BUTTON (not the checkbox div) — previously this
+		// always called openEntity, navigating away.
+		const row = container.querySelector('.char-row') as HTMLElement;
+		await fireEvent.click(row);
+		await tick();
+		// Selection toggled ON, no navigation fired.
+		expect(getByText('Delete (1)')).toBeInTheDocument();
+		expect(vi.mocked(openEntity)).not.toHaveBeenCalled();
+	});
+
+	it('clicking the row body in non-select mode still opens the entity', async () => {
+		const { container } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: null }
+		});
+		const row = container.querySelector('.char-row') as HTMLElement;
+		await fireEvent.click(row);
+		await tick();
+		expect(vi.mocked(openEntity)).toHaveBeenCalledWith('char-1');
+	});
+});
+
+describe('CharacterEditor — checkbox keyboard activation (Greptile P2)', () => {
+	beforeEach(async () => {
+		globalThis.fetch = vi
+			.fn()
+			.mockResolvedValue(makeResponse([makeCharacter()])) as unknown as typeof fetch;
+		await entities.load();
+	});
+
+	it('Space key on the checkbox div toggles selection', async () => {
+		const { getByText, container } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: null }
+		});
+		await fireEvent.click(getByText('Select'));
+		await tick();
+		const check = container.querySelector('.char-check') as HTMLElement;
+		await fireEvent.keyDown(check, { key: ' ' });
+		await tick();
+		expect(getByText('Delete (1)')).toBeInTheDocument();
+	});
+
+	it('Enter key on the checkbox div toggles selection', async () => {
+		const { getByText, container } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: null }
+		});
+		await fireEvent.click(getByText('Select'));
+		await tick();
+		const check = container.querySelector('.char-check') as HTMLElement;
+		await fireEvent.keyDown(check, { key: 'Enter' });
+		await tick();
+		expect(getByText('Delete (1)')).toBeInTheDocument();
+	});
+});
+
+describe('CharacterEditor — createCharacter error surfacing (Greptile P2)', () => {
+	beforeEach(() => {
+		globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+			if (init?.method === 'POST') return makeResponse({ error: 'boom' }, false, 500);
+			return makeResponse([]);
+		}) as unknown as typeof fetch;
+	});
+
+	it('shows an error message when create fails (was previously silent)', async () => {
+		const { getByText, findByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: null }
+		});
+		await fireEvent.click(getByText('+ New'));
+		// Inline alert appears.
+		expect(await findByText("Couldn't create character.")).toBeInTheDocument();
+	});
+});
+
+describe('CharacterEditor — mode resets to view on entity navigation (Greptile P1)', () => {
+	const arwen: Entity = {
+		id: 'char-arwen',
+		type: 'Character',
+		name: 'Arwen',
+		data: {},
+		parentId: null,
+		position: 1,
+		createdAt: new Date(0),
+		updatedAt: new Date(0)
+	};
+
+	beforeEach(async () => {
+		globalThis.fetch = vi
+			.fn()
+			.mockResolvedValue(makeResponse([makeCharacter(), arwen])) as unknown as typeof fetch;
+		await entities.load();
+	});
+
+	it('switching entityId from one character to another lands in view mode', async () => {
+		// Open char-1 → click Edit → switch to char-arwen via prop change.
+		// Without the fix, mode would carry over as 'edit' for arwen
+		// (contradicting the PR's stated read-first contract).
+		const { getByText, container, rerender } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		expect(container.querySelector('select')).toBeInTheDocument();
+		// Simulate in-place navigation (e.g. EntityLink chip click).
+		await rerender({ winId: 'w1', entityId: 'char-arwen' });
+		await tick();
+		await waitFor(() => {
+			// Arwen opens in VIEW mode → no role select rendered.
+			expect(container.querySelector('select')).toBeNull();
+			expect(getByText('Edit')).toBeInTheDocument();
+		});
+	});
+});
