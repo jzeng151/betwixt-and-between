@@ -193,6 +193,23 @@
     mode = 'view';
   }
 
+  // Toggle mode via the Edit/Done button. Going from edit → view also
+  // closes any transient pickers/confirmations the user may have left
+  // open; otherwise the relationship picker dropdown (rendered when
+  // `pickerGroup` is set) would remain clickable in view mode and let
+  // the user create relationships outside edit mode.
+  function toggleMode() {
+    if (mode === 'view') {
+      mode = 'edit';
+    } else {
+      pickerGroup = null;
+      iconPickerOpen = false;
+      confirmingDelete = false;
+      deleteError = '';
+      mode = 'view';
+    }
+  }
+
   // Mode reset only fires when entityId actually changes (real
   // navigation), not on every parent re-render. Window.svelte's root
   // onmousedown calls windowStore.focus(id), so every click anywhere
@@ -226,6 +243,13 @@
 
   async function saveAll() {
     if (!entityId) return;
+    // Bail when not in edit mode. The Cancel button flips `mode = 'view'`
+    // on mousedown — earlier than the focused input's `blur` event, which
+    // fires during the focus-shift to the Cancel button. A blur-triggered
+    // saveAll would otherwise PATCH the draft value just before
+    // cancelEdit() runs, so the "cancelled" text would lurk in the entity
+    // store and re-appear on the next $effect re-sync.
+    if (mode !== 'edit') return;
     saveError = '';
     // Preserve any unknown keys in the existing data blob so we don't drop
     // fields we don't manage here (e.g. custom user fields used for
@@ -596,13 +620,14 @@
         <button
           type="button"
           class="mode-cancel"
+          onmousedown={() => (mode = 'view')}
           onclick={cancelEdit}
         >Cancel</button>
       {/if}
       <button
         type="button"
         class="mode-toggle"
-        onclick={() => (mode = mode === 'view' ? 'edit' : 'view')}
+        onclick={toggleMode}
       >{mode === 'view' ? 'Edit' : 'Done'}</button>
     </div>
 
@@ -726,7 +751,7 @@
 
     {#if saveError}<p class="save-error">{saveError}</p>{/if}
 
-    {#if pickerGroup}
+    {#if mode === 'edit' && pickerGroup}
       <div class="picker-backdrop" role="presentation" onclick={() => (pickerGroup = null)} onkeydown={() => (pickerGroup = null)}></div>
     {/if}
 
@@ -752,7 +777,7 @@
                 title="Add {group.label}"
               >+</button>
             {/if}
-            {#if pickerGroup === group.type}
+            {#if mode === 'edit' && pickerGroup === group.type}
               {@const opts = pickerOptions(group.type)}
               <div class="picker-dropdown">
                 {#if opts.length === 0}

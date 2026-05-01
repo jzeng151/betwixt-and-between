@@ -722,6 +722,81 @@ describe('CharacterEditor — Cancel button in edit mode', () => {
 		const motivation2 = container.querySelector('#char-motivation') as HTMLTextAreaElement;
 		expect(motivation2.value).toBe('');
 	});
+
+	it('Cancel mid-blur does NOT PATCH the draft value (Greptile P1)', async () => {
+		// Regression for the blur-before-click race: when the user has
+		// motivation focused and clicks Cancel, the browser fires blur
+		// FIRST, which previously triggered saveAll → PATCH with the
+		// draft. The fix flips mode='view' on Cancel's mousedown, and
+		// saveAll bails when mode !== 'edit'.
+		const { container, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		const motivation = container.querySelector('#char-motivation') as HTMLTextAreaElement;
+		motivation.focus();
+		await fireEvent.input(motivation, { target: { value: 'Drafted but not saved' } });
+		await tick();
+		// Snapshot fetch state: subsequent PATCH calls would be visible.
+		const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+		const callsBefore = fetchMock.mock.calls.length;
+		// Realistic interaction: mousedown on Cancel happens FIRST,
+		// then blur fires on the textarea, then click on Cancel.
+		const cancelBtn = getByText('Cancel');
+		await fireEvent.mouseDown(cancelBtn);
+		await fireEvent.blur(motivation);
+		await fireEvent.click(cancelBtn);
+		await tick();
+		// No PATCH should have fired between the snapshot and now.
+		const newPatches = fetchMock.mock.calls
+			.slice(callsBefore)
+			.filter(([, init]) => init?.method === 'PATCH');
+		expect(newPatches).toEqual([]);
+	});
+});
+
+describe('CharacterEditor — clicking Done closes any open relationship picker (Greptile P1)', () => {
+	it('Done resets pickerGroup so the dropdown is not clickable in view mode', async () => {
+		// Seed a candidate ally so the picker dropdown has a non-empty
+		// list when opened.
+		const aragorn = makeCharacter();
+		const gandalf: Entity = {
+			id: 'char-2',
+			type: 'Character',
+			name: 'Gandalf',
+			data: {},
+			parentId: null,
+			position: 0,
+			createdAt: new Date(0),
+			updatedAt: new Date(0)
+		} as Entity;
+		globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+			if (url === '/api/relationships') return makeResponse([]);
+			return makeResponse([aragorn, gandalf]);
+		}) as unknown as typeof fetch;
+		await entities.load();
+
+		const { container, getByText, queryByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		// Open the Allies picker — find the + chip in the Allies group.
+		const alliesAddBtn = container.querySelector(
+			'.rel-group .chip-add'
+		) as HTMLButtonElement;
+		await fireEvent.click(alliesAddBtn);
+		await tick();
+		// Picker dropdown is now visible with Gandalf as an option.
+		expect(getByText('Gandalf')).toBeInTheDocument();
+		// User clicks Done WITHOUT closing the picker first.
+		await fireEvent.click(getByText('Done'));
+		await tick();
+		// Picker dropdown is gone; Gandalf is no longer rendered as
+		// a clickable picker item.
+		expect(queryByText('Gandalf')).toBeNull();
+	});
 });
 
 describe('CharacterEditor — duplicate-color UX', () => {
