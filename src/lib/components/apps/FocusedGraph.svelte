@@ -271,6 +271,12 @@
   async function layoutByType() {
     layoutLock = layoutLock.then(async () => {
       isLayingOut = true;
+      // Hoist snapshots so the catch can roll back. Hoist applied-flag so we
+      // don't restore on early-return paths (newPositions.length === 0).
+      const positionsBefore = currentPositions;
+      const initialBefore = initialPositions;
+      let optimisticApplied = false;
+
       try {
         const { layoutByType: runLayout } = await import('$lib/graph/dagre-layout.js');
         const typeOrder = win?.typeOrder ?? DEFAULT_TYPE_ORDER;
@@ -307,12 +313,6 @@
 
         if (newPositions.length === 0) return;
 
-        // Snapshot the local mirrors BEFORE optimistic update so we can
-        // roll back cleanly if the batch write fails (Greptile P2 on
-        // PR #13: silent client/server divergence on batch-write failure).
-        const positionsBefore = currentPositions;
-        const initialBefore = initialPositions;
-
         // Apply to local mirror so the UI updates immediately.
         const updates: Record<string, NodePosition> = {};
         for (const np of newPositions) {
@@ -332,6 +332,7 @@
         // the window to see the new layout. Long-term fix tracked as a
         // follow-up — see PR description.)
         initialPositions = { ...initialPositions, ...updates };
+        optimisticApplied = true;
 
         // Atomic batch write via A3.
         const res = await fetch(`/api/canvas-positions/window/${windowId}/batch`, {
@@ -350,14 +351,24 @@
         });
         if (!res.ok) {
           // Roll back the optimistic update so the UI matches the server.
-          // Without this the layout would visually persist but vanish on
-          // next window mount.
           currentPositions = positionsBefore;
           initialPositions = initialBefore;
           console.warn(
             `FocusedGraph: layout-by-type batch write failed (${res.status}), rolled back`
           );
         }
+      } catch (err) {
+        // CRITICAL (Greptile P1 on PR #13): swallow errors so the lock
+        // chain stays alive. Without this catch, a network error / CORS
+        // abort / offline state would leave layoutLock as a rejected
+        // promise; every future layoutByType() click would chain
+        // .then(callback) on it and silently no-op for the lifetime of
+        // the window. Always roll back the optimistic update if it landed.
+        if (optimisticApplied) {
+          currentPositions = positionsBefore;
+          initialPositions = initialBefore;
+        }
+        console.warn('FocusedGraph: layout-by-type failed, rolled back', err);
       } finally {
         isLayingOut = false;
       }
