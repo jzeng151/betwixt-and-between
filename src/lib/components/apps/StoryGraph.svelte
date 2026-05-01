@@ -14,6 +14,7 @@
     type NodePosition
   } from '$lib/components/GraphCanvas.svelte';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import Legend from '$lib/components/Legend.svelte';
 
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
@@ -59,12 +60,29 @@
     return set;
   });
 
+  // ── Legend state (rel-type hard filter) ───────────────────────────────────
+  // Toggle off a type → those edges disappear from the graph entirely.
+  // Pairs cleanly with scrubber dimming (the SOFT filter): a hidden type
+  // stays hidden regardless of playhead, and a dimmed edge is dimmed only
+  // when its type is currently shown. In-memory per-window for v1; default
+  // all types on. Mirror of FocusedGraph's pattern (Phase 1B C4) — same
+  // contract, same component.
+  let enabledRelTypes = $state<Set<RelationshipType>>(new Set(REL_TYPES));
+
+  function toggleRelType(t: RelationshipType) {
+    const next = new Set(enabledRelTypes);
+    if (next.has(t)) next.delete(t);
+    else next.add(t);
+    enabledRelTypes = next;
+  }
+
   const graphEdges = $derived<GraphEdge[]>(
     $relationships
       .filter(
         (r) =>
           displayEntities.some((e) => e.id === r.fromId) &&
-          displayEntities.some((e) => e.id === r.toId)
+          displayEntities.some((e) => e.id === r.toId) &&
+          enabledRelTypes.has(r.type)
       )
       .map((r) => ({
         id: r.id,
@@ -274,6 +292,14 @@
   {/snippet}
 </GraphCanvas>
 
+<!-- Legend: bottom-left, hard filter for rel types. Same component +
+     contract as FocusedGraph (Phase 1B C4). pointer-events: auto on the
+     element itself; the canvas underneath stays interactive everywhere
+     else. -->
+<div class="sg-legend">
+  <Legend enabled={enabledRelTypes} onToggle={toggleRelType} />
+</div>
+
 {#if pending}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
@@ -363,6 +389,14 @@
   }
 
   /* ── Empty state ───────────────────────────────────────────────────────── */
+  .sg-legend {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    z-index: 5;
+    pointer-events: auto;
+  }
+
   .empty-overlay {
     position: absolute;
     inset: 0;
