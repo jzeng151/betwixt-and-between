@@ -92,23 +92,32 @@
     })();
   });
 
-  // ── Position persistence (debounced) ───────────────────────────────────────
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  // ── Position persistence (per-node debounce) ──────────────────────────────
+  // Greptile P2 on PR #12: a single shared timer dropped cross-node writes
+  // when two drags completed within 500 ms. Per-node map preserves the
+  // coalescing semantic for rapid re-drags of the SAME node while never
+  // canceling a different node's pending PUT.
+  const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function onNodePositionChange(id: string, p: NodePosition) {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      fetch('/api/canvas-positions', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entityId: id,
-          x: Math.round(p.x),
-          y: Math.round(p.y),
-          width: Math.round(p.w),
-          height: Math.round(p.h)
-        })
-      });
-    }, 500);
+    const existing = saveTimers.get(id);
+    if (existing) clearTimeout(existing);
+    saveTimers.set(
+      id,
+      setTimeout(() => {
+        saveTimers.delete(id);
+        fetch('/api/canvas-positions', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entityId: id,
+            x: Math.round(p.x),
+            y: Math.round(p.y),
+            width: Math.round(p.w),
+            height: Math.round(p.h)
+          })
+        });
+      }, 500)
+    );
   }
 
   // ── Connect → rel-form ─────────────────────────────────────────────────────
@@ -168,7 +177,7 @@
   //   Open in window, View connections, Open Focused Graph, Edit, Delete,
   //   Pin to canvas. (Pin is deferred until the per-window pin state UI lands;
   //   ships disabled here so the slot is reserved.)
-  const contextMenuItems = $derived(() => {
+  const contextMenuItems = $derived.by(() => {
     if (!contextMenu) return [];
     const id = contextMenu.entityId;
     return [
@@ -262,7 +271,7 @@
 
 {#if contextMenu}
   <ContextMenu
-    items={contextMenuItems()}
+    items={contextMenuItems}
     x={contextMenu.x}
     y={contextMenu.y}
     onClose={() => (contextMenu = null)}

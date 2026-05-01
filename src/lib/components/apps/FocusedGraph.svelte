@@ -142,24 +142,32 @@
     })();
   });
 
-  // ── Position persistence (debounced; per-window endpoint) ─────────────────
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  // ── Position persistence (per-node debounce; per-window endpoint) ─────────
+  // Greptile P2 on PR #12: see StoryGraph for the same fix rationale. Per-node
+  // map preserves rapid-re-drag coalescing of the same node without canceling
+  // a different node's pending PUT.
+  const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function onNodePositionChange(id: string, p: NodePosition) {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      fetch(`/api/canvas-positions/window/${windowId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entityId: id,
-          x: Math.round(p.x),
-          y: Math.round(p.y),
-          width: Math.round(p.w),
-          height: Math.round(p.h),
-          pinned: 0
-        })
-      });
-    }, 500);
+    const existing = saveTimers.get(id);
+    if (existing) clearTimeout(existing);
+    saveTimers.set(
+      id,
+      setTimeout(() => {
+        saveTimers.delete(id);
+        fetch(`/api/canvas-positions/window/${windowId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entityId: id,
+            x: Math.round(p.x),
+            y: Math.round(p.y),
+            width: Math.round(p.w),
+            height: Math.round(p.h),
+            pinned: 0
+          })
+        });
+      }, 500)
+    );
   }
 
   // ── Focal-set mutation (RULE: reassign, never push) ───────────────────────
@@ -189,7 +197,7 @@
     windowStore.setFocalSet(windowId, [...focalSet, id]);
   }
 
-  const contextMenuItems = $derived(() => {
+  const contextMenuItems = $derived.by(() => {
     if (!contextMenu) return [];
     const id = contextMenu.entityId;
     const isFocal = focalSetIds.has(id);
@@ -266,7 +274,7 @@
 
 {#if contextMenu}
   <ContextMenu
-    items={contextMenuItems()}
+    items={contextMenuItems}
     x={contextMenu.x}
     y={contextMenu.y}
     onClose={() => (contextMenu = null)}

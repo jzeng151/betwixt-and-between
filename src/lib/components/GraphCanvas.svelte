@@ -69,10 +69,12 @@
 		/** Fires after a drag completes; host can persist the position. Debounce
 		    is the host's responsibility. */
 		onNodePositionChange?: (id: string, position: NodePosition) => void;
-		/** Fires on right-click of a node. screenX/screenY are viewport-local
-		    coords, useful for positioning a ContextMenu. Cancels any in-progress
-		    connect-drag automatically (per the locked C3 UX collision rule). */
-		onContextMenu?: (id: string, screenX: number, screenY: number) => void;
+		/** Fires on right-click of a node. clientX/clientY are BROWSER-VIEWPORT
+		    coords (NOT canvas-local) so a `position: fixed` ContextMenu lands
+		    at the cursor regardless of how the host window is positioned.
+		    Cancels any in-progress connect-drag automatically (per the locked
+		    C3 UX collision rule). */
+		onContextMenu?: (id: string, clientX: number, clientY: number) => void;
 	}
 
 	let {
@@ -340,8 +342,11 @@
 			connecting = null;
 			return;
 		}
-		const vp = viewportXY(e.clientX, e.clientY);
-		onContextMenu?.(id, vp.x, vp.y);
+		// Pass BROWSER-VIEWPORT coords (clientX/clientY) — ContextMenu uses
+		// position: fixed and needs viewport coords, not canvas-local. Greptile
+		// P1 on PR #12: the previous viewportXY() return value (canvas-local)
+		// made the menu appear offset by the host window's position.
+		onContextMenu?.(id, e.clientX, e.clientY);
 	}
 
 	// Public-via-snippet method: overlay UI calls this to start a connection drag.
