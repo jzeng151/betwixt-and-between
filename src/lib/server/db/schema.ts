@@ -8,6 +8,7 @@ import {
 	timestamp,
 	index,
 	uniqueIndex,
+	primaryKey,
 	check,
 	type AnyPgColumn
 } from 'drizzle-orm/pg-core';
@@ -113,6 +114,40 @@ export const canvasPositions = pgTable('canvas_positions', {
 	width: integer('width').notNull().default(160),
 	height: integer('height').notNull().default(80)
 });
+
+// =============================================================================
+// window_canvas_state — Phase 1B Lane A (2026-05-01)
+// =============================================================================
+//
+// Per-window canvas + pin state. Composite PK on (window_id, entity_id) so the
+// same entity can appear at different positions in different windows (e.g.
+// StoryGraph vs FocusedGraph for a focal-set view). `canvas_positions` stays
+// as the seed/fallback layer; first move/layout in a window writes a row here.
+//
+// `pinned` is integer 0/1 (NOT boolean) per the locked spec — keeps SQL
+// portable with the original sqlite shape and avoids casting in client code.
+// No created_at / updated_at columns: high-write churn from canvas drags would
+// generate trigger noise without ever being read.
+// =============================================================================
+
+export const windowCanvasState = pgTable(
+	'window_canvas_state',
+	{
+		windowId: text('window_id').notNull(),
+		entityId: uuid('entity_id')
+			.notNull()
+			.references(() => entities.id, { onDelete: 'cascade' }),
+		x: integer('x').notNull(),
+		y: integer('y').notNull(),
+		width: integer('width').notNull().default(160),
+		height: integer('height').notNull().default(80),
+		pinned: integer('pinned').notNull().default(0)
+	},
+	(table) => [
+		primaryKey({ columns: [table.windowId, table.entityId] }),
+		index('window_canvas_state_window_idx').on(table.windowId)
+	]
+);
 
 // =============================================================================
 // intervals — Phase 1A PR 1 (ported to pg in T8a, 2026-05-01)
