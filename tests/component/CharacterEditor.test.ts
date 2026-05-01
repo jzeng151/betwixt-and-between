@@ -688,6 +688,42 @@ describe('CharacterEditor — mode resets to view on entity navigation (Greptile
 	});
 });
 
+describe('CharacterEditor — Cancel button in edit mode', () => {
+	it('Cancel is hidden in view mode and visible in edit mode', async () => {
+		const { queryByText, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		expect(queryByText('Cancel')).toBeNull();
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		expect(getByText('Cancel')).toBeInTheDocument();
+	});
+
+	it('clicking Cancel reverts a typed-but-not-saved field and exits to view mode', async () => {
+		const { container, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		// Type into the motivation textarea WITHOUT blurring (auto-save
+		// fires on blur). Cancel should revert this draft.
+		const motivation = container.querySelector('#char-motivation') as HTMLTextAreaElement;
+		await fireEvent.input(motivation, { target: { value: 'Drafted but not saved' } });
+		await tick();
+		expect(motivation.value).toBe('Drafted but not saved');
+		await fireEvent.click(getByText('Cancel'));
+		await tick();
+		// Mode flipped back; the Edit button is the toggle now.
+		expect(getByText('Edit')).toBeInTheDocument();
+		// Re-enter edit and confirm the draft is gone (reverted to ''
+		// because the fixture has no saved motivation).
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		const motivation2 = container.querySelector('#char-motivation') as HTMLTextAreaElement;
+		expect(motivation2.value).toBe('');
+	});
+});
+
 describe('CharacterEditor — duplicate-color UX', () => {
 	it('marks a swatch as used when another entity already has that color', async () => {
 		// Seed a Location with #2dd4bf — the duplicate-color check

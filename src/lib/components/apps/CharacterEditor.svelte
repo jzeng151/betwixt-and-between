@@ -149,34 +149,49 @@
   // Avatar upload ref
   let fileInput: HTMLInputElement = $state(null!);
 
-  $effect(() => {
-    if (entity) {
-      const d = readData(entity.data);
-      role = d.role ?? '';
-      affiliation = d.affiliation ?? '';
-      motivation = d.motivation ?? '';
-      notes = d.notes ?? '';
-      avatar = d.avatar ?? '';
-      icon = d.icon ?? '';
-      iconPickerOpen = false;
-      const rawColor = (d as Record<string, unknown>).color;
-      color = typeof rawColor === 'string' && HEX_COLOR_RE.test(rawColor) ? rawColor : null;
-      customHex = '';
-      customHexError = '';
-      const rawLabel = (d as Record<string, unknown>).timelineLabel as TimelineLabelMode | undefined;
-      if (rawLabel && typeof rawLabel === 'object' && 'mode' in rawLabel) {
-        if (rawLabel.mode === 'name-only' || rawLabel.mode === 'name-and-note') {
-          timelineLabel = { mode: rawLabel.mode };
-        } else if (rawLabel.mode === 'custom') {
-          timelineLabel = { mode: 'custom', field: typeof rawLabel.field === 'string' ? rawLabel.field : '' };
-        } else {
-          timelineLabel = { mode: 'name-and-note' };
-        }
+  // Pull all local form fields from the entity's stored data. Used by
+  // the data-sync effect (when the entity changes externally) AND by
+  // the Cancel button (to discard any not-yet-saved local edits and
+  // revert to the server-confirmed values).
+  function syncFromEntity() {
+    if (!entity) return;
+    const d = readData(entity.data);
+    role = d.role ?? '';
+    affiliation = d.affiliation ?? '';
+    motivation = d.motivation ?? '';
+    notes = d.notes ?? '';
+    avatar = d.avatar ?? '';
+    icon = d.icon ?? '';
+    iconPickerOpen = false;
+    const rawColor = (d as Record<string, unknown>).color;
+    color = typeof rawColor === 'string' && HEX_COLOR_RE.test(rawColor) ? rawColor : null;
+    customHex = '';
+    customHexError = '';
+    const rawLabel = (d as Record<string, unknown>).timelineLabel as TimelineLabelMode | undefined;
+    if (rawLabel && typeof rawLabel === 'object' && 'mode' in rawLabel) {
+      if (rawLabel.mode === 'name-only' || rawLabel.mode === 'name-and-note') {
+        timelineLabel = { mode: rawLabel.mode };
+      } else if (rawLabel.mode === 'custom') {
+        timelineLabel = { mode: 'custom', field: typeof rawLabel.field === 'string' ? rawLabel.field : '' };
       } else {
         timelineLabel = { mode: 'name-and-note' };
       }
+    } else {
+      timelineLabel = { mode: 'name-and-note' };
     }
+  }
+
+  $effect(() => {
+    if (entity) syncFromEntity();
   });
+
+  function cancelEdit() {
+    syncFromEntity();
+    pickerGroup = null;
+    confirmingDelete = false;
+    deleteError = '';
+    mode = 'view';
+  }
 
   // Mode reset only fires when entityId actually changes (real
   // navigation), not on every parent re-render. Window.svelte's root
@@ -577,6 +592,13 @@
   <!-- ── Detail mode ── -->
   <div class="char-detail" class:view-mode={mode === 'view'}>
     <div class="mode-row">
+      {#if mode === 'edit'}
+        <button
+          type="button"
+          class="mode-cancel"
+          onclick={cancelEdit}
+        >Cancel</button>
+      {/if}
       <button
         type="button"
         class="mode-toggle"
@@ -778,43 +800,40 @@
               onclick={() => chooseColor(hex)}
             ></button>
           {/each}
+          <input
+            class="hex-input"
+            type="text"
+            placeholder="#rrggbb"
+            maxlength="7"
+            bind:value={customHex}
+            onblur={commitCustomHex}
+            onkeydown={handleHexKeydown}
+            data-testid="char-color-custom-input"
+          />
+          {#if customHexPreview}
+            <span
+              class="swatch swatch-display"
+              style="--sw:{customHexPreview}"
+              aria-hidden="true"
+              data-testid="char-color-custom-preview"
+            ></span>
+          {/if}
         </div>
 
-        <!-- Native color picker — visual alternative to the hex input.
-             Sized 4× the swatches per design ask so it reads as the
-             primary "pick anything" affordance. Commits on `change`
-             (when the OS picker closes), so a user who accidentally
-             opens it without changing color triggers nothing. -->
-        <div class="wheel-row">
-          <input
-            type="color"
-            class="color-wheel"
-            value={color ?? autoColor}
-            onchange={(e) => chooseColor((e.currentTarget as HTMLInputElement).value.toLowerCase())}
-            aria-label="Custom color picker"
-            data-testid="char-color-wheel"
-          />
-          <div class="hex-row">
-            <input
-              class="hex-input"
-              type="text"
-              placeholder="#rrggbb"
-              maxlength="7"
-              bind:value={customHex}
-              onblur={commitCustomHex}
-              onkeydown={handleHexKeydown}
-              data-testid="char-color-custom-input"
-            />
-            {#if customHexPreview}
-              <span
-                class="swatch swatch-display"
-                style="--sw:{customHexPreview}"
-                aria-hidden="true"
-                data-testid="char-color-custom-preview"
-              ></span>
-            {/if}
-          </div>
-        </div>
+        <!-- Native color picker — stretched across the full width of
+             the row above (swatches + hex input) so it reads as a
+             distinct "pick anything" affordance instead of a tiny
+             square. Commits on `change` (when the OS picker closes),
+             so accidentally opening without changing color is a
+             no-op. -->
+        <input
+          type="color"
+          class="color-wheel"
+          value={color ?? autoColor}
+          onchange={(e) => chooseColor((e.currentTarget as HTMLInputElement).value.toLowerCase())}
+          aria-label="Custom color picker"
+          data-testid="char-color-wheel"
+        />
         {#if customHexError}
           <p class="hex-error" data-testid="char-color-custom-error">{customHexError}</p>
         {/if}
@@ -1643,37 +1662,23 @@
   }
   .hex-input:focus { border-color: var(--color-accent); }
 
-  /* Native color picker — 4× larger than the swatches so it reads as
-     the primary "pick anything" affordance. Sits on its own row above
-     the hex input. */
-  .wheel-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 6px;
-  }
+  /* Native color picker — stretched across the full row width below
+     the swatches so it reads as a distinct "pick anything"
+     affordance. Hex input lives back inline with the swatches. */
   .color-wheel {
-    width: 88px;
-    height: 88px;
+    width: 100%;
+    height: 28px;
+    margin-top: 6px;
     padding: 0;
     border: 1px solid var(--color-border);
-    border-radius: 8px;
+    border-radius: 6px;
     background: transparent;
     cursor: pointer;
   }
-  .color-wheel::-webkit-color-swatch-wrapper { padding: 4px; }
-  .color-wheel::-webkit-color-swatch { border: none; border-radius: 4px; }
-  .color-wheel::-moz-color-swatch { border: none; border-radius: 4px; }
+  .color-wheel::-webkit-color-swatch-wrapper { padding: 3px; }
+  .color-wheel::-webkit-color-swatch { border: none; border-radius: 3px; }
+  .color-wheel::-moz-color-swatch { border: none; border-radius: 3px; }
   .color-wheel:hover { border-color: var(--color-accent); }
-
-  /* Hex input + live preview swatch. The preview hides until the
-     typed value is a valid 6-digit hex so partial / invalid input
-     doesn't render a half-painted color. */
-  .hex-row {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
 
   /* Used-elsewhere swatch indicator — a small dot in the top-right
      corner. Doesn't disable the swatch (with >8 characters collision
@@ -1784,6 +1789,21 @@
     cursor: pointer;
   }
   .mode-toggle:hover { filter: brightness(1.1); }
+
+  .mode-cancel {
+    background: transparent;
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: var(--font-ui);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+  }
+  .mode-cancel:hover { color: var(--color-text); border-color: var(--color-text); }
 
   /* Detail-view footer sits at the bottom of the visible area (matches
      EntityDetail). Outline-style Delete defers attention to Edit/Done at
