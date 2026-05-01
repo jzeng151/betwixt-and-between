@@ -8,12 +8,14 @@
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
   import { REL_COLOR, REL_TYPES } from '$lib/relationship-colors.js';
+  import { pickDefaultRelType } from '$lib/graph/rel-type-picker.js';
   import GraphCanvas, {
     type GraphNode,
     type GraphEdge,
     type NodePosition
   } from '$lib/components/GraphCanvas.svelte';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import Legend from '$lib/components/Legend.svelte';
 
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
@@ -59,12 +61,29 @@
     return set;
   });
 
+  // ── Legend state (rel-type hard filter) ───────────────────────────────────
+  // Toggle off a type → those edges disappear from the graph entirely.
+  // Pairs cleanly with scrubber dimming (the SOFT filter): a hidden type
+  // stays hidden regardless of playhead, and a dimmed edge is dimmed only
+  // when its type is currently shown. In-memory per-window for v1; default
+  // all types on. Mirror of FocusedGraph's pattern (Phase 1B C4) — same
+  // contract, same component.
+  let enabledRelTypes = $state<Set<RelationshipType>>(new Set(REL_TYPES));
+
+  function toggleRelType(t: RelationshipType) {
+    const next = new Set(enabledRelTypes);
+    if (next.has(t)) next.delete(t);
+    else next.add(t);
+    enabledRelTypes = next;
+  }
+
   const graphEdges = $derived<GraphEdge[]>(
     $relationships
       .filter(
         (r) =>
           displayEntities.some((e) => e.id === r.fromId) &&
-          displayEntities.some((e) => e.id === r.toId)
+          displayEntities.some((e) => e.id === r.toId) &&
+          enabledRelTypes.has(r.type)
       )
       .map((r) => ({
         id: r.id,
@@ -121,21 +140,26 @@
   }
 
   // ── Connect → rel-form ─────────────────────────────────────────────────────
+  let saveError = $state('');
+
   function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
     pending = { fromId, toId, sx: screenX, sy: screenY };
-    relType = 'allied_with';
+    relType = pickDefaultRelType($relationships, fromId, toId);
     relLabel = '';
+    saveError = '';
   }
 
   function cancelPending() {
     pending = null;
     relLabel = '';
     relType = 'allied_with';
+    saveError = '';
   }
 
   async function savePending() {
     if (!pending) return;
     saving = true;
+    saveError = '';
     try {
       await relationships.createRelationship(
         pending.fromId,
@@ -146,8 +170,15 @@
       pending = null;
       relLabel = '';
       relType = 'allied_with';
-    } catch {
-      /* noop */
+    } catch (err) {
+      // Surface the failure (was previously silently swallowed). Most
+      // common cause: a relationship of this type between this pair
+      // already exists (UNIQUE violation surfaces as a 400 from the API).
+      // Show a short message and let the user pick a different type.
+      const msg = (err as Error)?.message ?? 'Save failed';
+      saveError = msg.includes('unique') || msg.includes('duplicate')
+        ? `A "${relType.replace(/_/g, ' ')}" relationship between these already exists.`
+        : 'Couldn\'t save — pick a different type or try again.';
     } finally {
       saving = false;
     }
@@ -238,6 +269,14 @@
   {/snippet}
 </GraphCanvas>
 
+<!-- Legend: bottom-left, hard filter for rel types. Same component +
+     contract as FocusedGraph (Phase 1B C4). pointer-events: auto on the
+     element itself; the canvas underneath stays interactive everywhere
+     else. -->
+<div class="sg-legend">
+  <Legend enabled={enabledRelTypes} onToggle={toggleRelType} />
+</div>
+
 {#if pending}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
@@ -260,6 +299,9 @@
       bind:value={relLabel}
       autocomplete="off"
     />
+    {#if saveError}
+      <p class="rel-form-error" role="alert">{saveError}</p>
+    {/if}
     <div class="rel-form-actions">
       <button onclick={cancelPending}>Cancel</button>
       <button class="primary" onclick={savePending} disabled={saving}>
@@ -324,6 +366,14 @@
   }
 
   /* ── Empty state ───────────────────────────────────────────────────────── */
+  .sg-legend {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    z-index: 5;
+    pointer-events: auto;
+  }
+
   .empty-overlay {
     position: absolute;
     inset: 0;
@@ -398,6 +448,14 @@
     border-radius: 4px;
     font-family: var(--font-ui);
     font-size: 12px;
+  }
+
+  .rel-form-error {
+    margin: 0;
+    color: var(--color-rel-rival);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    line-height: 1.3;
   }
 
   .rel-form-actions {

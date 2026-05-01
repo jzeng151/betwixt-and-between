@@ -61,6 +61,10 @@
 		emptyState?: Snippet;
 		/** Per-node overlay UI (connect button, delete button, pin badge, etc.). */
 		nodeOverlay?: Snippet<[NodeOverlayContext]>;
+		/** Per-node always-visible chrome (pin badges, status icons, etc.).
+		    Unlike `nodeOverlay` which renders only on hover, this snippet
+		    renders for every node, every frame. Keep the content cheap. */
+		nodeBadge?: Snippet<[NodeOverlayContext]>;
 		/** Fires when a user drags from a node to another node. screenX/screenY are
 		    viewport-local coords, useful for positioning a follow-up form. */
 		onConnect?: (fromId: string, toId: string, screenX: number, screenY: number) => void;
@@ -84,6 +88,7 @@
 		initialPositions,
 		emptyState,
 		nodeOverlay,
+		nodeBadge,
 		onConnect,
 		onNodeOpen,
 		onNodePositionChange,
@@ -155,28 +160,89 @@
 	let viewport: HTMLDivElement = $state(null!);
 
 	// ── Screen-coord edge geometry ─────────────────────────────────────────────
-	const screenEdges = $derived(
-		edges
-			.map((e) => {
-				const fp = nodePos[e.fromId];
-				const tp = nodePos[e.toId];
-				if (!fp || !tp) return null;
-				const fw = fp.w || NODE_W,
-					fh = fp.h || NODE_H;
-				const tw = tp.w || NODE_W,
-					th = tp.h || NODE_H;
-				return {
-					...e,
-					x1: panX + (fp.x + fw / 2) * zoom,
-					y1: panY + (fp.y + fh / 2) * zoom,
-					x2: panX + (tp.x + tw / 2) * zoom,
-					y2: panY + (tp.y + th / 2) * zoom
-				};
-			})
-			.filter(Boolean) as Array<
-			GraphEdge & { x1: number; y1: number; x2: number; y2: number }
-		>
-	);
+	// Two entities can have multiple relationships of different types between
+	// them (e.g. Character pov_of Event AND Character mentor_of Event). The
+	// schema's UNIQUE(from_id, to_id, type) allows this — the rendering layer
+	// has to fan them out so they're visually distinguishable. Without
+	// fan-out the lines stack at the same coords and only the topmost edge
+	// renders meaningfully.
+	const PARALLEL_OFFSET_PX = 8;
+	const screenEdges = $derived.by(() => {
+		// Pass 1: compute base geometry for each edge.
+		type Geom = GraphEdge & {
+			x1: number;
+			y1: number;
+			x2: number;
+			y2: number;
+		};
+		const base: Geom[] = [];
+		for (const e of edges) {
+			const fp = nodePos[e.fromId];
+			const tp = nodePos[e.toId];
+			if (!fp || !tp) continue;
+			const fw = fp.w || NODE_W,
+				fh = fp.h || NODE_H;
+			const tw = tp.w || NODE_W,
+				th = tp.h || NODE_H;
+			base.push({
+				...e,
+				x1: panX + (fp.x + fw / 2) * zoom,
+				y1: panY + (fp.y + fh / 2) * zoom,
+				x2: panX + (tp.x + tw / 2) * zoom,
+				y2: panY + (tp.y + th / 2) * zoom
+			});
+		}
+
+		// Pass 2: group by undirected pair-key. Edges A→B and B→A share a
+		// pair so they fan together (both lines connect the same two nodes
+		// visually).
+		const groups = new Map<string, Geom[]>();
+		for (const g of base) {
+			const key = g.fromId < g.toId ? `${g.fromId}|${g.toId}` : `${g.toId}|${g.fromId}`;
+			const list = groups.get(key) ?? [];
+			list.push(g);
+			groups.set(key, list);
+		}
+
+		// Pass 3: for each group with > 1 edge, distribute perpendicular
+		// offsets centered around the original line. For a group of N edges,
+		// offset i is (i - (N-1)/2) * PARALLEL_OFFSET_PX. Sort within the
+		// group by edge id for stable ordering across re-renders so an edge
+		// doesn't visually swap sides when sibling edges are added/removed.
+		const out: Geom[] = [];
+		for (const group of groups.values()) {
+			if (group.length === 1) {
+				out.push(group[0]);
+				continue;
+			}
+			group.sort((a, b) => a.id.localeCompare(b.id));
+			const n = group.length;
+			for (let i = 0; i < n; i++) {
+				const g = group[i];
+				const dx = g.x2 - g.x1;
+				const dy = g.y2 - g.y1;
+				const len = Math.hypot(dx, dy);
+				if (len < 1) {
+					// Coincident endpoints — can't compute a perpendicular
+					// without dividing by zero. Render at base position.
+					out.push(g);
+					continue;
+				}
+				// Perpendicular unit vector (rotate 90° CCW).
+				const px = -dy / len;
+				const py = dx / len;
+				const offset = (i - (n - 1) / 2) * PARALLEL_OFFSET_PX;
+				out.push({
+					...g,
+					x1: g.x1 + px * offset,
+					y1: g.y1 + py * offset,
+					x2: g.x2 + px * offset,
+					y2: g.y2 + py * offset
+				});
+			}
+		}
+		return out;
+	});
 
 	const connectLineStart = $derived(
 		connecting
@@ -349,6 +415,31 @@
 		onContextMenu?.(id, e.clientX, e.clientY);
 	}
 
+	/**
+	 * Force-merge external position updates into the canvas's internal nodePos
+	 * and re-fit. Used by hosts that mutate positions out-of-band (e.g.
+	 * FocusedGraph's "Layout by type") — the host can't reach into nodePos
+	 * directly because GraphCanvas's seededFromServer guard runs once. This
+	 * is the well-defined escape hatch.
+	 *
+	 * Reassigns nodePos so Svelte 5 $derived deps (screenEdges) invalidate;
+	 * fitView runs on the next microtask so layout effects settle first.
+	 */
+	export function reseed(positions: Record<string, NodePosition>) {
+		const merged = { ...nodePos };
+		for (const [id, p] of Object.entries(positions)) {
+			merged[id] = { ...merged[id], ...p };
+		}
+		nodePos = merged;
+		queueMicrotask(() => fitView(nodePos));
+	}
+
+	/** Re-center the viewport on the current set of nodes (e.g. after a host
+	    mutation that changed node count or extents). Idempotent. */
+	export function refit() {
+		fitView(nodePos);
+	}
+
 	// Public-via-snippet method: overlay UI calls this to start a connection drag.
 	export function startConnect(e: PointerEvent, fromId: string) {
 		e.stopPropagation();
@@ -436,6 +527,15 @@
 				>
 					<span class="node-name">{node.name}</span>
 					<span class="node-type">{node.type}</span>
+					{#if nodeBadge}
+						<span class="gc-badge-host">
+							{@render nodeBadge({
+								id: node.id,
+								hovered: hoveredNodeId === node.id,
+								dragging: draggingNode?.id === node.id
+							})}
+						</span>
+					{/if}
 					{#if nodeOverlay && hoveredNodeId === node.id && !draggingNode && !panning}
 						<div class="gc-overlay-host gc-no-drag">
 							{@render nodeOverlay({
@@ -516,6 +616,10 @@
 	}
 
 	.gc-overlay-host {
+		display: contents;
+	}
+
+	.gc-badge-host {
 		display: contents;
 	}
 </style>

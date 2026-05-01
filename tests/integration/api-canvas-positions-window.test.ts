@@ -236,6 +236,93 @@ describe('cross-window isolation', () => {
 		expect(body1[0].x).toBe(10);
 		expect(body2[0].x).toBe(99);
 	});
+
+	it('two batch writes to different windows for the same entity stay isolated', async () => {
+		// Concurrency-adjacent test: simulating the pattern where two FG
+		// instances on the same focal set both run "Layout by type". Each
+		// targets its own window endpoint; cross-window state must stay
+		// independent. Per the locked plan: cross-window concurrent layout
+		// is independent (per-window canvas means no cross-talk).
+		const a = await makeEntity('A');
+		const b = await makeEntity('B');
+
+		// Both batches fire at "the same time" — Promise.all sequences them
+		// against the same DB connection but the windowId discriminator means
+		// no rows collide.
+		await Promise.all([
+			batchRoute.POST(
+				mkEvent({
+					params: { windowId: 'win-1' },
+					body: [
+						{ entityId: a, x: 1, y: 1 },
+						{ entityId: b, x: 2, y: 2 }
+					]
+				})
+			),
+			batchRoute.POST(
+				mkEvent({
+					params: { windowId: 'win-2' },
+					body: [
+						{ entityId: a, x: 100, y: 100 },
+						{ entityId: b, x: 200, y: 200 }
+					]
+				})
+			)
+		]);
+
+		const win1 = await readJson(await route.GET(mkEvent({ params: { windowId: 'win-1' } })));
+		const win2 = await readJson(await route.GET(mkEvent({ params: { windowId: 'win-2' } })));
+		expect(win1).toHaveLength(2);
+		expect(win2).toHaveLength(2);
+		// Sort by entityId for deterministic ordering then compare.
+		win1.sort((p: { entityId: string }, q: { entityId: string }) =>
+			p.entityId.localeCompare(q.entityId)
+		);
+		win2.sort((p: { entityId: string }, q: { entityId: string }) =>
+			p.entityId.localeCompare(q.entityId)
+		);
+		expect(win1.map((r: { x: number }) => r.x).sort()).toEqual([1, 2]);
+		expect(win2.map((r: { x: number }) => r.x).sort()).toEqual([100, 200]);
+	});
+
+	it('pin in window A is unaffected by layout-by-type batch in window B (locked test plan)', async () => {
+		// This is the per-window canvas isolation guarantee from the test plan
+		// in TODOS.md. Layout-by-type writes to window B's batch endpoint MUST
+		// NOT touch any rows in window A — pinned-stays-put is sacred per
+		// CONSIDERATIONS T2A and crosses windows too.
+		const shared = await makeEntity('Shared');
+
+		// Pin in win-A at (10, 10)
+		await route.PUT(
+			mkEvent({
+				params: { windowId: 'win-A' },
+				body: { entityId: shared, x: 10, y: 10, pinned: 1 }
+			})
+		);
+
+		// Layout-by-type batch in win-B writes the same entity at a totally
+		// different position (no `pinned` set since the FG layout-by-type
+		// writes pinned=0 for unpinned-in-this-window nodes).
+		await batchRoute.POST(
+			mkEvent({
+				params: { windowId: 'win-B' },
+				body: [{ entityId: shared, x: 500, y: 500, pinned: 0 }]
+			})
+		);
+
+		// win-A's row must be untouched: same coords, still pinned.
+		const winA = await readJson(await route.GET(mkEvent({ params: { windowId: 'win-A' } })));
+		expect(winA).toHaveLength(1);
+		expect(winA[0].x).toBe(10);
+		expect(winA[0].y).toBe(10);
+		expect(winA[0].pinned).toBe(1);
+
+		// win-B's row reflects the layout write.
+		const winB = await readJson(await route.GET(mkEvent({ params: { windowId: 'win-B' } })));
+		expect(winB).toHaveLength(1);
+		expect(winB[0].x).toBe(500);
+		expect(winB[0].pinned).toBe(0);
+	});
 });
 
 describe('cascade on entity delete', () => {

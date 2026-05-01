@@ -433,7 +433,7 @@ Z4 (`<GraphCanvas>` extraction) is a single-author critical path: it blocks all 
 - Scrubber + `shared` mode visual test: confirm UX is acceptable when visibleSet is small.
 - Concurrent layout-by-type: two FG windows on same entity set, layout in both, assert per-window state remains independent.
 - Optimistic-create + right-click race: clicking "View connections" on a temp-ID edge is no-op until server ID resolves.
-- Per-window canvas isolation: pin in window A, run layout in window B, assert window A position unchanged.
+- Per-window canvas isolation: pin in window A, run layout in window B, assert window A position unchanged. **DONE** in `feat/graph-qol` (commit `cb9ce8f`) — see `tests/integration/api-canvas-positions-window.test.ts`.
 
 **NOT in scope:**
 - Custom right-click action configurability (deferred per original bullet).
@@ -444,6 +444,22 @@ Z4 (`<GraphCanvas>` extraction) is a single-author critical path: it blocks all 
 - Server-side traversal endpoint (graph fits in client; round-trip wasteful).
 - Hard-filter view modes (scrubber changes traversal set). Soft-filter is the locked semantic.
 - Migrating existing StoryGraph from `canvas_positions` to `window_canvas_state` — StoryGraph keeps using the seed table; FG windows use per-window state.
+
+**Phase 1B graph QoL polish (post-Lane-C):** Three follow-up commits on `feat/graph-qol` adding ergonomic improvements that fell out of Lane C usage. None of these were on the locked Lane C list — all opportunistic polish.
+
+- [x] **Pin badge + reseed / refit on `<GraphCanvas>` + window-close cleanup + isolation tests** — **DONE** in commit `cb9ce8f`.
+  - Added `nodeBadge` snippet to `<GraphCanvas>` (always-visible chrome, separate from hover-only `nodeOverlay`). FocusedGraph renders 📌 for pinned nodes via this snippet.
+  - Exposed `reseed(positions)` and `refit()` as imperative methods on `<GraphCanvas>` so callers can re-apply external position updates (e.g. after `layoutByType`) without remounting.
+  - `windowStore.close(id)` now fires `DELETE /api/canvas-positions/window/[id]` for `focused-graph` windows so per-window canvas rows don't orphan in `window_canvas_state`. Fire-and-forget (non-fatal). Tab close / page reload skip this path on purpose — state preserved on those.
+  - Per-window canvas isolation tests added to `tests/integration/api-canvas-positions-window.test.ts` (pin in window A → layout in window B → window A's position unchanged).
+
+- [x] **Multi-relationship visual fan-out between same entity pair** — **DONE** in commit `6beb658`.
+  - Two entities can now carry multiple relationship types simultaneously (e.g. `allied_with` + `mentor_of` between the same pair). Edges are grouped by undirected pair-key and offset perpendicular to the base line by `±PARALLEL_OFFSET_PX` per index, distributed centered.
+  - StoryGraph's relationship picker auto-skips already-used types via `pickDefaultRelType` so users don't accidentally re-create an existing edge of the same type.
+  - Picker surfaces `saveError` inline when relationship creation fails (was previously swallowed).
+
+- [x] **Legend hard-filter on main StoryGraph window** — **DONE** in commit `de0cb5b`.
+  - C4 shipped `<Legend>` only on FocusedGraph. The main StoryGraph window now mirrors the same toggleable per-`RelationshipType` filter at bottom-left, with the same in-memory per-window state and default-all-on semantics. Hard filter (vs scrubber's soft dimming).
 
 ---
 
