@@ -77,8 +77,15 @@ describe('windowStore.open', () => {
 		expect(w.height).toBe(480);
 	});
 
-	it('uses default 320x480 for other apps', () => {
+	it('character-editor uses 380x480 (wider default for the color picker grid)', () => {
 		windowStore.open('character-editor', 'c1');
+		const w = get(windowStore)[0];
+		expect(w.width).toBe(380);
+		expect(w.height).toBe(480);
+	});
+
+	it('uses default 320x480 for other non-special apps', () => {
+		windowStore.open('wiki', 'w1');
 		const w = get(windowStore)[0];
 		expect(w.width).toBe(320);
 		expect(w.height).toBe(480);

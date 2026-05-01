@@ -444,3 +444,20 @@ Z4 (`<GraphCanvas>` extraction) is a single-author critical path: it blocks all 
 - Server-side traversal endpoint (graph fits in client; round-trip wasteful).
 - Hard-filter view modes (scrubber changes traversal set). Soft-filter is the locked semantic.
 - Migrating existing StoryGraph from `canvas_positions` to `window_canvas_state` — StoryGraph keeps using the seed table; FG windows use per-window state.
+
+---
+
+## Generic icon registry — extension
+
+`src/lib/icons/registry.ts` ships **character-only** archetype icons in
+the first cut (Heroes / Villains / Mystics / Wanderers, ~13 Lucide
+icons). Storage shape is `entity.data.icon = "lucide:<name>"` — a
+library-prefixed ID, so swapping libraries later is a one-file change.
+
+Pending extensions (not yet scoped, no PR):
+
+- **Locations**: castle / forest / cave / city / ruins / harbor / temple — Lucide vocabulary is thin here; consider adding a Game-icons subset (CC-BY 3.0, requires attribution) for richer storytelling flavor.
+- **Events**: crossed-swords / scroll / heartbreak / coronation / explosion — same vocabulary gap as Locations.
+- **Scenes**: mostly inherit from Event; may not need a separate set.
+- **Notes**: existing pin / bookmark / document icons from Lucide already fit; small set of 4-5 likely sufficient.
+- **Picker re-use**: the `.icon-picker` markup + CSS in `CharacterEditor.svelte` should move to a shared component (`src/lib/components/IconPicker.svelte`) before the second entity type adopts it. Don't copy-paste it.
