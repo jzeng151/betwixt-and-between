@@ -133,7 +133,7 @@
     gap: 12px;
     padding: 40px 0;
     color: var(--color-text-muted);
-    font-size: 12px;
+    font-size: 13px;
     text-align: center;
   }
 
@@ -167,7 +167,7 @@
 
   .loc-name {
     font-family: var(--font-display);
-    font-size: 16px;
+    font-size: 17px;
     font-weight: 400;
     color: var(--color-text);
   }
@@ -184,13 +184,13 @@
     color: var(--color-text);
     border-radius: 6px;
     padding: 7px 14px;
-    font-size: 11px;
+    font-size: 12px;
     font-family: var(--font-ui);
     cursor: pointer;
   }
 
   .action-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
-  .action-btn.small { padding: 4px 10px; font-size: 10px; }
+  .action-btn.small { padding: 4px 10px; font-size: 11px; }
 
-  .save-error { color: var(--color-rel-rival); font-size: 11px; }
+  .save-error { color: var(--color-rel-rival); font-size: 12px; }
 </style>

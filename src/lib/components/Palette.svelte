@@ -121,7 +121,7 @@
     border-bottom: none;
   }
   .palette-label {
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 600;
     color: var(--color-text-muted, #6b7280);
     text-transform: uppercase;
@@ -132,7 +132,7 @@
     align-items: center;
   }
   .palette-filter {
-    font-size: 9px;
+    font-size: 10px;
     color: var(--color-text-muted, #6b7280);
     text-transform: none;
     letter-spacing: 0;
@@ -171,19 +171,19 @@
   .palette-name {
     flex: 1;
     font-family: var(--font-display, 'Fraunces', Georgia, serif);
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 400;
     color: var(--color-text, #e8e0d0);
   }
   .palette-grip {
     color: var(--color-text-muted, #6b7280);
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1;
     letter-spacing: -1px;
     user-select: none;
   }
   .palette-empty {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text-muted, #6b7280);
     font-style: italic;
     padding: 4px 10px;
@@ -196,7 +196,7 @@
     width: 18px;
     height: 18px;
     line-height: 1;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     padding: 0;

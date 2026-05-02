@@ -657,7 +657,7 @@
 		border-radius: 4px;
 		padding: 5px 10px;
 		font-family: var(--font-ui, 'Inter', sans-serif);
-		font-size: 11px;
+		font-size: 12px;
 		font-weight: 500;
 		cursor: pointer;
 		transition: color 0.12s, border-color 0.12s, background 0.12s;
@@ -673,7 +673,7 @@
 	}
 	.scrub-toggle {
 		font-family: var(--font-ui, 'Inter', sans-serif);
-		font-size: 11px;
+		font-size: 12px;
 		font-weight: 500;
 		color: var(--color-text-muted, #6b7280);
 		background: transparent;
@@ -715,7 +715,7 @@
 		border: 1px solid var(--color-border, #2a2d35);
 		color: var(--color-text-muted, #6b7280);
 		font-family: var(--font-ui, 'Inter', sans-serif);
-		font-size: 11px;
+		font-size: 12px;
 		font-weight: 600;
 		line-height: 1;
 		cursor: pointer;
@@ -741,7 +741,7 @@
 		border-radius: 6px;
 		padding: 10px 12px;
 		font-family: var(--font-ui, 'Inter', sans-serif);
-		font-size: 11px;
+		font-size: 12px;
 		line-height: 1.45;
 		color: var(--color-text-muted, #6b7280);
 		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
@@ -778,7 +778,7 @@
 	.row-empty {
 		padding: 24px;
 		color: var(--color-text-muted, #6b7280);
-		font-size: 11px;
+		font-size: 12px;
 		text-align: center;
 		font-style: italic;
 	}
@@ -800,7 +800,7 @@
 		transform: translateX(-50%);
 		background: #ef4444;
 		color: #fff;
-		font-size: 12px;
+		font-size: 13px;
 		padding: 8px 16px;
 		border-radius: 6px;
 		max-width: 80%;

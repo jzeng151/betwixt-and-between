@@ -72,7 +72,7 @@
 		color: var(--color-text, #e8e0d0);
 		padding: 10px 32px 10px 14px;
 		border-radius: 6px;
-		font-size: 12px;
+		font-size: 13px;
 		font-family: var(--font-ui, 'Inter', sans-serif);
 		max-width: 480px;
 		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
@@ -89,7 +89,7 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		font-size: 11px;
+		font-size: 12px;
 		color: var(--color-text-muted, #6b7280);
 	}
 	.toast-draft-quote {
@@ -107,7 +107,7 @@
 		border: none;
 		border-radius: 3px;
 		padding: 3px 8px;
-		font-size: 10px;
+		font-size: 11px;
 		font-weight: 600;
 		cursor: pointer;
 		font-family: inherit;
@@ -122,7 +122,7 @@
 		background: transparent;
 		border: none;
 		color: var(--color-text-muted, #6b7280);
-		font-size: 14px;
+		font-size: 15px;
 		line-height: 1;
 		cursor: pointer;
 		padding: 2px 4px;

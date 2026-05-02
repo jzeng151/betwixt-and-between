@@ -64,7 +64,7 @@
 
   .empty-tagline {
     font-family: var(--font-ui);
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-text-muted);
     letter-spacing: 0.04em;
     pointer-events: none;
@@ -97,7 +97,7 @@
 
   .tutorial-heading {
     font-family: var(--font-display);
-    font-size: 20px;
+    font-size: 21px;
     color: var(--color-text);
   }
 
@@ -112,7 +112,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--color-text-muted);
   }
 
@@ -122,7 +122,7 @@
   }
 
   .t-icon {
-    font-size: 16px;
+    font-size: 17px;
     width: 24px;
     text-align: center;
     flex-shrink: 0;
@@ -136,7 +136,7 @@
     border-radius: 6px;
     padding: 8px 20px;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: opacity 0.15s;

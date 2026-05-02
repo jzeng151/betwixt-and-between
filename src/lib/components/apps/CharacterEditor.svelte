@@ -1038,7 +1038,7 @@
     border-radius: 6px;
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     padding: 6px 10px;
     outline: none;
   }
@@ -1051,7 +1051,7 @@
     border-radius: 6px;
     color: #fff;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     padding: 6px 10px;
     cursor: pointer;
     white-space: nowrap;
@@ -1060,7 +1060,7 @@
 
   .create-error {
     margin: 4px 0 0;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-rel-rival);
     font-family: var(--font-ui);
   }
@@ -1072,7 +1072,7 @@
     border-radius: 6px;
     color: var(--color-text-muted);
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     padding: 6px 10px;
     cursor: pointer;
     white-space: nowrap;
@@ -1092,7 +1092,7 @@
     border-radius: 4px;
     color: #fff;
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     padding: 6px 12px;
     cursor: pointer;
     white-space: nowrap;
@@ -1108,7 +1108,7 @@
     border-radius: 4px;
     padding: 6px 12px;
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     cursor: pointer;
     white-space: nowrap;
   }
@@ -1134,7 +1134,7 @@
 
   .bulk-confirm-msg {
     flex: 1;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text);
     font-family: var(--font-ui);
   }
@@ -1169,7 +1169,7 @@
     background: color-mix(in srgb, var(--color-accent) 18%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
     color: var(--color-accent);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     font-family: var(--font-ui);
     display: flex;
@@ -1204,7 +1204,7 @@
   }
 
   .char-name {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--color-text);
     overflow: hidden;
@@ -1220,7 +1220,7 @@
   }
 
   .char-affiliation {
-    font-size: 9px;
+    font-size: 10px;
     color: var(--color-text-muted);
     font-family: var(--font-ui);
     white-space: nowrap;
@@ -1228,7 +1228,7 @@
 
   .char-role-badge {
     display: inline-block;
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.04em;
     color: var(--rc);
@@ -1241,14 +1241,14 @@
   }
 
   .char-arrow {
-    font-size: 14px;
+    font-size: 15px;
     color: var(--color-text-muted);
     flex-shrink: 0;
   }
 
   .empty {
     color: var(--color-text-muted);
-    font-size: 12px;
+    font-size: 13px;
     text-align: center;
     padding: 32px 0;
   }
@@ -1292,7 +1292,7 @@
   }
 
   .avatar-lg-initials {
-    font-size: 16px;
+    font-size: 17px;
     font-weight: 600;
     font-family: var(--font-ui);
     color: var(--color-accent);
@@ -1317,7 +1317,7 @@
     background: none;
     border: none;
     padding: 0;
-    font-size: 9px;
+    font-size: 10px;
     font-family: var(--font-ui);
     color: var(--color-text-muted);
     cursor: pointer;
@@ -1375,7 +1375,7 @@
     color: var(--color-text-muted);
     border-radius: 4px;
     padding: 4px 10px;
-    font-size: 10px;
+    font-size: 11px;
     font-family: var(--font-ui);
     cursor: pointer;
   }
@@ -1414,14 +1414,14 @@
 
   .entity-name {
     font-family: var(--font-display);
-    font-size: 18px;
+    font-size: 19px;
     font-weight: 400;
     color: var(--color-text);
   }
 
   .role-badge {
     display: inline-block;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.04em;
     color: var(--rc, var(--color-accent));
@@ -1442,14 +1442,14 @@
 
 
   .hfield-empty {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--color-text-muted);
     font-style: italic;
     font-family: var(--font-ui);
   }
 
   .hfield-text {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text-muted);
     font-family: var(--font-ui);
   }
@@ -1460,7 +1460,7 @@
     border-radius: 5px;
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     padding: 2px 6px;
     outline: none;
     cursor: pointer;
@@ -1473,7 +1473,7 @@
     border-bottom: 1px solid var(--color-accent);
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     outline: none;
     padding: 0;
     width: 90px;
@@ -1486,7 +1486,7 @@
   }
 
   .section-label {
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.12em;
@@ -1506,7 +1506,7 @@
     justify-content: center;
     padding: 3px 9px;
     border-radius: 20px;
-    font-size: 13px;
+    font-size: 14px;
     font-family: var(--font-ui);
     color: var(--color-text-muted);
     background: transparent;
@@ -1571,7 +1571,7 @@
   .picker-item:hover { background: var(--color-surface); }
 
   .picker-name {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--color-text);
     flex: 1;
     min-width: 0;
@@ -1581,7 +1581,7 @@
   }
 
   .picker-type {
-    font-size: 9px;
+    font-size: 10px;
     color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.08em;
@@ -1589,7 +1589,7 @@
   }
 
   .picker-empty {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text-muted);
     padding: 6px 8px;
     font-family: var(--font-ui);
@@ -1609,7 +1609,7 @@
   }
 
   .field-label {
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.12em;
@@ -1626,7 +1626,7 @@
   .field-edit-btn {
     background: none;
     border: none;
-    font-size: 10px;
+    font-size: 11px;
     font-family: var(--font-ui);
     color: var(--color-text-muted);
     cursor: pointer;
@@ -1636,7 +1636,7 @@
   .field-edit-btn:hover { color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
 
   .field-display {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--color-text);
     font-family: var(--font-ui);
     line-height: 1.5;
@@ -1651,7 +1651,7 @@
     border-radius: 6px;
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.5;
     padding: 6px 10px;
     width: 100%;
@@ -1661,8 +1661,8 @@
   .field-textarea:focus { outline: 2px solid var(--color-accent); outline-offset: 0; border-color: var(--color-accent); }
 
 
-  .save-error { color: var(--color-rel-rival); font-size: 11px; }
-  .muted { color: var(--color-text-muted); font-size: 12px; }
+  .save-error { color: var(--color-rel-rival); font-size: 12px; }
+  .muted { color: var(--color-text-muted); font-size: 13px; }
   .center { text-align: center; padding: 40px 0; }
 
   /* Timeline color picker */
@@ -1693,7 +1693,7 @@
     border-radius: 5px;
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     padding: 3px 6px;
     width: 80px;
     outline: none;
@@ -1758,7 +1758,7 @@
 
   .color-collision {
     margin: 4px 0 0;
-    font-size: 11px;
+    font-size: 12px;
     font-family: var(--font-ui);
     color: var(--color-text-muted);
     font-style: italic;
@@ -1770,10 +1770,10 @@
     align-items: center;
     gap: 8px;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     color: var(--color-text);
   }
-  .display-text { font-size: 12px; color: var(--color-text); }
+  .display-text { font-size: 13px; color: var(--color-text); }
   .display-muted { color: var(--color-text-muted); font-style: italic; }
   .swatch-display {
     width: 16px;
@@ -1783,7 +1783,7 @@
 
   .hex-error {
     color: var(--color-rel-rival);
-    font-size: 10px;
+    font-size: 11px;
     font-family: var(--font-ui);
     margin: 0;
   }
@@ -1805,7 +1805,7 @@
     margin: 0;
   }
   .radio-text {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text);
     font-family: var(--font-ui);
   }
@@ -1815,7 +1815,7 @@
     border-radius: 5px;
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     padding: 3px 8px;
     margin-left: 22px;
     margin-top: 2px;
@@ -1838,7 +1838,7 @@
     border: none;
     border-radius: 4px;
     padding: 3px 10px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     font-family: var(--font-ui);
     text-transform: uppercase;
@@ -1853,7 +1853,7 @@
     border: 1px solid var(--color-border);
     border-radius: 4px;
     padding: 3px 10px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     font-family: var(--font-ui);
     text-transform: uppercase;
@@ -1879,7 +1879,7 @@
     color: #ef4444;
     border-radius: 4px;
     padding: 6px 10px;
-    font-size: 11px;
+    font-size: 12px;
     font-family: var(--font-ui);
     cursor: pointer;
   }
@@ -1891,7 +1891,7 @@
     gap: 8px;
   }
   .delete-confirm-msg {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--color-text);
     font-family: var(--font-ui);
   }
@@ -1902,7 +1902,7 @@
   }
   .delete-error {
     color: #ef4444;
-    font-size: 10px;
+    font-size: 11px;
     font-family: var(--font-ui);
   }
 

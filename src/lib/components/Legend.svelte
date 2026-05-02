@@ -128,7 +128,7 @@
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		font-family: var(--font-ui);
-		font-size: 12px;
+		font-size: 13px;
 		min-width: 160px;
 		pointer-events: auto;
 	}
@@ -143,7 +143,7 @@
 	.legend-heading {
 		margin: 0;
 		color: var(--color-text-muted);
-		font-size: 10px;
+		font-size: 11px;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
@@ -157,7 +157,7 @@
 		border: 1px solid var(--color-border);
 		color: var(--color-text-muted);
 		font-family: var(--font-ui);
-		font-size: 11px;
+		font-size: 12px;
 		font-weight: 600;
 		line-height: 1;
 		cursor: pointer;

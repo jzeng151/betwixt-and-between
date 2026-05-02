@@ -540,7 +540,7 @@
     border-radius: 50%;
     border: none;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1;
     display: flex;
     align-items: center;
@@ -603,7 +603,7 @@
     background: var(--color-surface-2);
     border: 1px solid var(--color-border);
     color: var(--color-text-muted);
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1;
     cursor: pointer;
     display: flex;
@@ -638,7 +638,7 @@
     border: 1px solid var(--color-border);
     border-radius: 4px;
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text-muted);
     pointer-events: none;
   }
@@ -679,7 +679,7 @@
     max-width: 360px;
     margin: 0;
     font-family: var(--font-ui);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.5;
   }
 
@@ -694,7 +694,7 @@
     border: 1.5px dashed var(--color-border);
     border-radius: 6px;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     opacity: 0.5;
   }
 
@@ -720,7 +720,7 @@
   .rel-form-heading {
     margin: 0;
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -734,14 +734,14 @@
     padding: 4px 6px;
     border-radius: 4px;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .rel-form-error {
     margin: 0;
     color: var(--color-rel-rival);
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.3;
   }
 
@@ -758,7 +758,7 @@
     background: var(--color-surface);
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     cursor: pointer;
   }
 

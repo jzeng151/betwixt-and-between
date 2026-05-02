@@ -704,7 +704,7 @@
 
   .fg-mode-label {
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -717,7 +717,7 @@
     padding: 4px 8px;
     border-radius: 4px;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .fg-chips {
@@ -738,7 +738,7 @@
     color: white;
     border-radius: 12px;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.2;
   }
 
@@ -753,7 +753,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1;
     padding: 0;
   }
@@ -765,7 +765,7 @@
   .chip-empty {
     color: var(--color-text-muted);
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     font-style: italic;
   }
 
@@ -783,7 +783,7 @@
     background: var(--color-surface);
     color: var(--color-text-muted);
     cursor: pointer;
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1;
     flex-shrink: 0;
   }
@@ -835,7 +835,7 @@
     border: 1px solid var(--color-border);
     background: var(--color-surface);
     color: var(--color-text);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1;
     font-weight: 600;
     display: flex;
@@ -865,7 +865,7 @@
     border: 1px solid var(--color-border);
     border-radius: 4px;
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text-muted);
     white-space: nowrap;
     pointer-events: none;
@@ -882,7 +882,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     pointer-events: none;
@@ -899,7 +899,7 @@
     border-radius: 12px;
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     z-index: 6;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   }
@@ -912,7 +912,7 @@
     justify-content: center;
     color: var(--color-text-muted);
     font-family: var(--font-ui);
-    font-size: 13px;
+    font-size: 14px;
     pointer-events: none;
   }
 </style>

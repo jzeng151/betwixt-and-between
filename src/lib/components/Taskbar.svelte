@@ -131,7 +131,7 @@
     border: none;
     border-radius: 8px;
     color: var(--color-text-muted);
-    font-size: 10px;
+    font-size: 11px;
     font-family: var(--font-ui);
     transition: background 0.12s, color 0.12s;
     cursor: pointer;
@@ -146,12 +146,12 @@
   }
 
   .dock-icon {
-    font-size: 18px;
+    font-size: 19px;
     line-height: 1;
   }
 
   .dock-label {
-    font-size: 9px;
+    font-size: 10px;
     letter-spacing: 0.02em;
   }
 
@@ -172,7 +172,7 @@
     right: 4px;
     background: var(--color-accent);
     color: var(--color-surface);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     width: 14px;
     height: 14px;
@@ -203,7 +203,7 @@
     background: transparent;
     border: none;
     color: var(--color-text);
-    font-size: 11px;
+    font-size: 12px;
     font-family: var(--font-ui);
     padding: 6px 10px;
     border-radius: 6px;

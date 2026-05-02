@@ -54,7 +54,7 @@
 html, body {
   height: 100%;
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text);
   background: var(--color-desktop);
   overflow: hidden;
@@ -80,7 +80,7 @@ button {
   padding: 3px 10px;
   border-radius: 20px;
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   background: color-mix(in srgb, var(--chip-color) 13%, transparent);
   color: var(--chip-color);
@@ -120,7 +120,7 @@ button {
   border: none;
   border-radius: 50%;
   color: var(--chip-color);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   opacity: 0.55;
   cursor: pointer;

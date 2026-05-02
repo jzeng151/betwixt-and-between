@@ -540,7 +540,7 @@
 					x={mx}
 					y={my - 5}
 					fill={edge.color}
-					font-size="9"
+					font-size="10"
 					text-anchor="middle"
 					opacity={edge.dimmed ? '0.15' : '0.75'}
 					font-family="Inter, Segoe UI, sans-serif">{edge.label}</text
@@ -657,7 +657,7 @@
 		box-shadow: 0 0 12px color-mix(in srgb, var(--nc) 12%, transparent);
 		cursor: grab;
 		font-family: var(--font-ui);
-		font-size: 12px;
+		font-size: 13px;
 		color: var(--nc);
 		white-space: nowrap;
 		transition: opacity 200ms ease;
@@ -682,7 +682,7 @@
 	   reads as one unit but the type chip doesn't fight the name. */
 	.node-type {
 		color: color-mix(in srgb, var(--nc) 70%, var(--color-text-muted));
-		font-size: 10px;
+		font-size: 11px;
 	}
 
 	.gc-overlay-host {
