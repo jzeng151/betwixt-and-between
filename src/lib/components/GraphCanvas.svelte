@@ -46,6 +46,10 @@
 		width?: number;
 		/** Render an arrowhead at the `to` end. Defaults to false. */
 		arrow?: boolean;
+		/** Story-time start (inclusive). null/undefined = no lower bound (visible from T=0). */
+		startPosition?: number | null;
+		/** Story-time end (exclusive). null/undefined = no upper bound (always visible past start). */
+		endPosition?: number | null;
 	}
 
 	export interface NodePosition {

@@ -3,6 +3,7 @@ import { db } from '$lib/server/db/index.js';
 import { relationships, entities } from '$lib/server/db/schema.js';
 import { RelationshipType } from '$lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
+import { resolveRelationshipBounds } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -17,7 +18,7 @@ export const GET: RequestHandler = async ({ url }) => {
 
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json();
-	const { fromId, toId, type, label } = body;
+	const { fromId, toId, type, label, startActId, startSceneId, endActId, endSceneId, revealedAtPosition } = body;
 
 	if (!RelationshipType.includes(type)) {
 		error(400, 'Invalid relationship type');
@@ -38,9 +39,36 @@ export const POST: RequestHandler = async ({ request }) => {
 		error(400, 'appears_in is no longer a writable relationship type — use /api/intervals');
 	}
 
+	let startPosition: number | null = null;
+	let endPosition: number | null = null;
+	try {
+		const bounds = await resolveRelationshipBounds(db, {
+			startActId: startActId ?? null,
+			startSceneId: startSceneId ?? null,
+			endActId: endActId ?? null,
+			endSceneId: endSceneId ?? null
+		});
+		startPosition = bounds.startPosition;
+		endPosition = bounds.endPosition;
+	} catch (err) {
+		error(400, (err as Error).message);
+	}
+
 	const [created] = await db
 		.insert(relationships)
-		.values({ fromId, toId, type, label: label ?? null })
+		.values({
+			fromId,
+			toId,
+			type,
+			label: label ?? null,
+			startActId: startActId ?? null,
+			startSceneId: startSceneId ?? null,
+			endActId: endActId ?? null,
+			endSceneId: endSceneId ?? null,
+			startPosition,
+			endPosition,
+			revealedAtPosition: revealedAtPosition ?? null
+		})
 		.returning();
 
 	return json(created, { status: 201 });

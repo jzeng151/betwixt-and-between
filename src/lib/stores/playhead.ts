@@ -45,3 +45,28 @@ export const playhead = createPlayheadStore();
 export function intervalContainsT(start: number, end: number, t: number): boolean {
 	return start <= t && t < end;
 }
+
+export interface TemporalEdge {
+	startPosition?: number | null;
+	endPosition?: number | null;
+}
+
+/**
+ * Returns true if an edge with optional temporal bounds should be visible
+ * at story-time T.
+ *
+ * Rules:
+ *   - t === null (scrubber idle): always true
+ *   - both bounds null/undefined (timeless edge): always true
+ *   - otherwise: true iff startPosition <= t < endPosition
+ *     NULL on one side = unbounded on that side (0 for start, Infinity for end)
+ */
+export function isEdgeVisibleAtT(edge: TemporalEdge, t: number | null): boolean {
+	if (t === null) return true;
+	if (edge.startPosition == null && edge.endPosition == null) return true;
+	return intervalContainsT(
+		edge.startPosition ?? 0,
+		edge.endPosition ?? Infinity,
+		t
+	);
+}
