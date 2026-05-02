@@ -67,7 +67,7 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
-			const data = JSON.parse(ents.find((e: any) => e.id === sc.id).data || '{}');
+			const data = (ents.find((e: any) => e.id === sc.id).data ?? {});
 			expect(data.goal).toBe('Establish the threat');
 		}).toPass({ timeout: 3000 });
 	});
@@ -104,7 +104,7 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
-			const data = JSON.parse(ents.find((e: any) => e.id === sc.id).data || '{}');
+			const data = (ents.find((e: any) => e.id === sc.id).data ?? {});
 			expect(data.sensoryAnchor).toBe('Smell of damp moss');
 			// Stored as number or numeric string — accept either
 			expect(String(data.wordCountTarget)).toBe('1500');

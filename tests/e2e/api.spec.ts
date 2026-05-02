@@ -73,7 +73,7 @@ test.describe('Entities API', () => {
 	});
 
 	test('GET /:id returns 404 for unknown id', async ({ request }) => {
-		const res = await request.get('/api/entities/does-not-exist');
+		const res = await request.get('/api/entities/00000000-0000-0000-0000-000000000000');
 		expect(res.status()).toBe(404);
 	});
 
@@ -99,11 +99,11 @@ test.describe('Entities API', () => {
 		});
 		expect(res.status()).toBe(200);
 		const body = await res.json();
-		expect(JSON.parse(body.data).body).toBe('# Hello');
+		expect(body.data.body).toBe('# Hello');
 	});
 
 	test('PATCH /:id returns 404 for unknown id', async ({ request }) => {
-		const res = await request.patch('/api/entities/does-not-exist', {
+		const res = await request.patch('/api/entities/00000000-0000-0000-0000-000000000000', {
 			data: { name: 'Anything' }
 		});
 		expect(res.status()).toBe(404);
@@ -119,7 +119,7 @@ test.describe('Entities API', () => {
 	});
 
 	test('DELETE /:id returns 404 for unknown id', async ({ request }) => {
-		const res = await request.delete('/api/entities/does-not-exist');
+		const res = await request.delete('/api/entities/00000000-0000-0000-0000-000000000000');
 		expect(res.status()).toBe(404);
 	});
 
@@ -208,14 +208,14 @@ test.describe('Relationships API', () => {
 
 	test('POST rejects ghost fromId', async ({ request }) => {
 		const res = await request.post('/api/relationships', {
-			data: { fromId: 'ghost-id', toId: locId, type: 'located_at' }
+			data: { fromId: '00000000-0000-0000-0000-000000000000', toId: locId, type: 'located_at' }
 		});
 		expect(res.status()).toBe(400);
 	});
 
 	test('POST rejects ghost toId', async ({ request }) => {
 		const res = await request.post('/api/relationships', {
-			data: { fromId: charId, toId: 'ghost-id', type: 'located_at' }
+			data: { fromId: charId, toId: '00000000-0000-0000-0000-000000000000', type: 'located_at' }
 		});
 		expect(res.status()).toBe(400);
 	});
@@ -243,7 +243,7 @@ test.describe('Relationships API', () => {
 	});
 
 	test('DELETE /:id returns 404 for unknown id', async ({ request }) => {
-		const res = await request.delete('/api/relationships/does-not-exist');
+		const res = await request.delete('/api/relationships/00000000-0000-0000-0000-000000000000');
 		expect(res.status()).toBe(404);
 	});
 });
@@ -297,7 +297,7 @@ test.describe('Canvas Positions API', () => {
 
 	test('PUT returns 400 for unknown entityId', async ({ request }) => {
 		const res = await request.put('/api/canvas-positions', {
-			data: { entityId: 'ghost-id', x: 0, y: 0 }
+			data: { entityId: '00000000-0000-0000-0000-000000000000', x: 0, y: 0 }
 		});
 		expect(res.status()).toBe(400);
 	});

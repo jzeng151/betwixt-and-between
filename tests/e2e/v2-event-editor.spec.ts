@@ -111,7 +111,7 @@ test.describe('V2 Event editor (D5 + D4 multi-POV)', () => {
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
-			const data = JSON.parse(ents.find((e: any) => e.id === ev.id).data || '{}');
+			const data = (ents.find((e: any) => e.id === ev.id).data ?? {});
 			expect(data.outcome).toBe('yes-but');
 		}).toPass({ timeout: 3000 });
 	});

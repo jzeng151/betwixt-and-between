@@ -335,7 +335,7 @@ Locked by `/plan-design-review` + `/plan-eng-review` on 2026-04-29. Decision log
 - [x] **`windows.ts` store** — add `'entity-detail'` to `AppId` union; migrate `ENTITY_APP[Act]`, `ENTITY_APP[Event]`, `ENTITY_APP[Scene]` from `'timeline'` → `'entity-detail'` (Character/Location/Note unchanged); add `findOpenEditorFor(entityId)` helper for the mutex check. (D10-extension/19A)
 - [x] **Inline confirmation row in side panel header** — "↗ Move to window" click transforms button to "Move to standalone window? [Cancel] [Move]" (mirrors `ActsHeader` delete-confirm pattern). On Move: close side panel, open pop-out window. (D2/2B-i) — implemented inside EntityDetail's `popout-confirm` UI
 - [x] **Toast component update** — `Toast.svelte` (or equivalent) gains "draft preview" mode showing truncated text (~80 chars) + "Copy to clipboard" button + 8s dismiss timer. Fired by EntityDetail on confirmed-delete-while-editing. (D16/14A) — new `Toast.svelte` + `editable-drafts.ts` drafts bus + Timeline host wiring
-- [ ] **E2E specs** (Lane C completes the suite):
+- [x] **E2E specs** (Lane C completes the suite):
   - `tests/e2e/v2-act-editor.spec.ts` — open editor, type, blur saves, retry on save error
   - `tests/e2e/v2-event-editor.spec.ts` — POV multi-picker selects multiple characters; outcome picklist
   - `tests/e2e/v2-scene-editor.spec.ts` — open scene editor, edit fields, autosave (T3-pulled-in)

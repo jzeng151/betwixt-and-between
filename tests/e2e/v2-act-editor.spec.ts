@@ -72,7 +72,7 @@ test.describe('V2 Act editor (D2/2B-i + D5 + D14)', () => {
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
 			const a = ents.find((e: any) => e.id === a0.id);
-			const data = JSON.parse(a.data || '{}');
+			const data = (a.data ?? {});
 			expect(data.synopsis).toBe('Ellie escapes the city in the opening act.');
 		}).toPass({ timeout: 3000 });
 	});
@@ -98,7 +98,7 @@ test.describe('V2 Act editor (D2/2B-i + D5 + D14)', () => {
 		// Server still has original
 		const ents = await (await request.get('/api/entities')).json();
 		const a = ents.find((e: any) => e.id === a0.id);
-		const data = JSON.parse(a.data || '{}');
+		const data = (a.data ?? {});
 		expect(data.synopsis).toBe('original');
 	});
 
@@ -138,7 +138,7 @@ test.describe('V2 Act editor (D2/2B-i + D5 + D14)', () => {
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
-			const data = JSON.parse(ents.find((e: any) => e.id === a0.id).data || '{}');
+			const data = (ents.find((e: any) => e.id === a0.id).data ?? {});
 			expect(data.synopsis).toBe('attempt one');
 		}).toPass({ timeout: 3000 });
 	});

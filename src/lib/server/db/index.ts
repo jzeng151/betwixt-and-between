@@ -19,6 +19,11 @@ if (!/^postgres(ql)?:\/\//.test(env.DATABASE_URL)) {
 }
 
 // FKs are enforced by default in pg — no PRAGMA foreign_keys = ON needed.
-const client = postgres(env.DATABASE_URL, { prepare: false });
+// PGlite's TCP socket only handles one connection at a time; cap the pool to 1
+// in E2E mode to avoid "Failed query" errors from concurrent connection attempts.
+const client = postgres(env.DATABASE_URL, {
+	prepare: false,
+	...(env.BETWIXT_E2E_PGLITE === '1' ? { max: 1 } : {})
+});
 
 export const db = drizzle(client, { schema });

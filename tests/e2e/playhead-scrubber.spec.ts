@@ -96,6 +96,11 @@ test.describe('Playhead scrubber', () => {
 	test('Story Graph nodes dim when the entity is out of scope', async ({ page, request }) => {
 		const { ellie, damien } = await seed(request);
 		const tlWin = await openTimeline(page);
+		// Wait for Timeline to finish loading both interval bars before proceeding.
+		// StoryGraph reads the same intervalsStore singleton; without this wait the
+		// store may still be empty when the scrubber activates, leaving outOfScope
+		// empty and no nodes dimmed.
+		await expect(tlWin.locator('.bar-wrapper')).toHaveCount(2);
 
 		await page.click('button[title="Story Graph"]');
 		const sgWin = page.locator('.window[aria-label="Story Graph"]');
@@ -104,12 +109,23 @@ test.describe('Playhead scrubber', () => {
 		// Idle — neither node dimmed
 		await expect(sgWin.locator('.node.node-out-of-scope')).toHaveCount(0);
 
-		// Activate scrubber and scrub to T = 0.5 (middle of Act A → Ellie active, Damien out)
-		await tlWin.locator('.scrub-toggle').click();
-		const rowsBox = await tlWin.locator('.rows').boundingBox();
+		// Activate scrubber. Use dispatchEvent (not click/force) so the Story Graph
+		// window physically overlapping the Timeline doesn't intercept the event.
+		await tlWin.locator('.scrub-toggle').dispatchEvent('click');
+		const rows = tlWin.locator('.rows');
+		const rowsBox = await rows.boundingBox();
 		if (!rowsBox) throw new Error('rows box');
-		await page.mouse.click(rowsBox.x + rowsBox.width * 0.25, rowsBox.y + 30);
-		await page.waitForTimeout(150);
+
+		// Scrub to T≈0.5 via dispatchEvent so the overlay cannot intercept.
+		// clientX/Y are required for clickTrackToScrub's position calculation.
+		await rows.dispatchEvent('click', {
+			bubbles: true,
+			cancelable: true,
+			clientX: rowsBox.x + rowsBox.width * 0.25,
+			clientY: rowsBox.y + 30
+		});
+		// Confirm the scrub registered before checking Story Graph state
+		await expect(tlWin.locator('.scrub-toggle')).toContainText('Time = 0.50');
 
 		// Damien dimmed, Ellie not
 		const ellieNode = sgWin.locator('.node').filter({ hasText: 'Ellie' });
@@ -118,8 +134,13 @@ test.describe('Playhead scrubber', () => {
 		await expect(ellieNode).not.toHaveClass(/node-out-of-scope/);
 
 		// Scrub to T = 1.5 (middle of Act B) → swap
-		await page.mouse.click(rowsBox.x + rowsBox.width * 0.75, rowsBox.y + 30);
-		await page.waitForTimeout(150);
+		await rows.dispatchEvent('click', {
+			bubbles: true,
+			cancelable: true,
+			clientX: rowsBox.x + rowsBox.width * 0.75,
+			clientY: rowsBox.y + 30
+		});
+		await expect(tlWin.locator('.scrub-toggle')).toContainText('Time = 1.50');
 		await expect(ellieNode).toHaveClass(/node-out-of-scope/);
 		await expect(damienNode).not.toHaveClass(/node-out-of-scope/);
 	});

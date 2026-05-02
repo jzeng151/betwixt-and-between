@@ -17,21 +17,17 @@ async function openTimeline(page: Page) {
 }
 
 async function openStoryGraph(page: Page) {
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+	await page.goto('/');
 	await page.click('button[title="Story Graph"]');
 	const win = page.locator('.window[aria-label="Story Graph"]').first();
 	await expect(win).toBeVisible();
 	return win;
 }
 
-// Skipped: these tests drive clicks on Story Graph nodes to verify
-// entity-detail window routing. The Story Graph surface is being
-// refined separately in Phase 1B (TODOS Section 14 Phase 1B —
-// Focused Graph + view-modes work) and the node selector contract
-// (data-entity-id, click → openEntity) is in flux. The routing
-// underneath — windows.ts ENTITY_APP map for Act/Event/Scene →
-// 'entity-detail' and the findOpenEditorFor mutex — is covered by
-// stores-windows + navigation-entity-detail unit tests.
-test.describe.fixme('V2 Act routing (D10-extension / 19A)', () => {
+// Phase 1B is complete. GraphCanvas nodes have data-entity-id and openEntity
+// is wired to onNodeOpen (double-click). Tests use dblclick to match that contract.
+test.describe('V2 Act routing (D10-extension / 19A)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
 	});
@@ -47,7 +43,7 @@ test.describe.fixme('V2 Act routing (D10-extension / 19A)', () => {
 		const sg = await openStoryGraph(page);
 		// EntityLink in story graph for the act
 		const node = sg.locator(`[data-entity-id="${a.id}"]`).first();
-		await node.click();
+		await node.dblclick();
 
 		// A standalone entity-detail window opens (not just a tab inside the timeline)
 		await expect(page.locator('.window[aria-label="Act A"]')).toBeVisible({ timeout: 3000 });
@@ -73,7 +69,8 @@ test.describe.fixme('V2 Act routing (D10-extension / 19A)', () => {
 		});
 
 		const sg = await openStoryGraph(page);
-		await sg.locator(`[data-entity-id="${ev.id}"]`).first().click();
+		// dispatchEvent bypasses the sg-legend-wrap overlay that intercepts dblclicks
+		await sg.locator(`[data-entity-id="${ev.id}"]`).first().dispatchEvent('dblclick');
 		await expect(page.locator('.window[aria-label="Battle"] .entity-detail')).toBeVisible({
 			timeout: 3000
 		});
@@ -89,13 +86,16 @@ test.describe.fixme('V2 Act routing (D10-extension / 19A)', () => {
 
 		// Open via story graph first → standalone entity-detail window
 		const sg = await openStoryGraph(page);
-		await sg.locator(`[data-entity-id="${a.id}"]`).first().click();
+		await sg.locator(`[data-entity-id="${a.id}"]`).first().dblclick();
 		const popout = page.locator('.window[aria-label="Act A"]');
 		await expect(popout).toBeVisible({ timeout: 3000 });
 		const initialZ = await popout.evaluate((el) => Number((el as HTMLElement).style.zIndex || '0'));
 
-		// Now click the same act in the Timeline window's header
-		const tl = await openTimeline(page);
+		// Open Timeline via taskbar click WITHOUT re-navigating — page.goto would destroy
+		// the pop-out window since it resets all window state.
+		await page.click('button[title="Timeline"]');
+		const tl = page.locator('.window[aria-label="Timeline"]');
+		await expect(tl).toBeVisible();
 		await tl.locator(`.act-col-header[data-entity-id="${a.id}"]`).click();
 
 		// Side panel must NOT open inside the timeline window — pop-out is focused instead
@@ -113,7 +113,7 @@ test.describe.fixme('V2 Act routing (D10-extension / 19A)', () => {
 		).json();
 
 		const sg = await openStoryGraph(page);
-		await sg.locator(`[data-entity-id="${c.id}"]`).first().click();
+		await sg.locator(`[data-entity-id="${c.id}"]`).first().dblclick();
 		// Character still uses the existing character-editor surface
 		await expect(page.locator('.window[aria-label="Ellie"]')).toBeVisible({ timeout: 3000 });
 		// And NOT the entity-detail surface (D10-extension preserves Character routing)
