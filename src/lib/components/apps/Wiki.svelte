@@ -168,7 +168,7 @@
     gap: 12px;
     padding: 40px 0;
     color: var(--color-text-muted);
-    font-size: 12px;
+    font-size: 13px;
     text-align: center;
   }
 
@@ -178,7 +178,7 @@
     color: var(--color-text);
     border-radius: 6px;
     padding: 7px 14px;
-    font-size: 11px;
+    font-size: 12px;
     font-family: var(--font-ui);
     cursor: pointer;
   }
@@ -220,7 +220,7 @@
     border-radius: 5px;
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: 11px;
     padding: 4px 6px;
     outline: none;
   }
@@ -232,7 +232,7 @@
     color: var(--color-accent);
     border-radius: 5px;
     padding: 3px 7px;
-    font-size: 14px;
+    font-size: 15px;
     font-family: var(--font-ui);
     cursor: pointer;
     flex-shrink: 0;
@@ -249,7 +249,7 @@
     border-radius: 5px;
     padding: 5px 8px;
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text-muted);
     cursor: pointer;
     overflow: hidden;
@@ -268,7 +268,7 @@
   }
 
   .empty-sidebar {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text-muted);
     padding: 8px 0;
     text-align: center;
@@ -294,7 +294,7 @@
 
   .note-title {
     font-family: var(--font-display);
-    font-size: 18px;
+    font-size: 19px;
     font-weight: 400;
     color: var(--color-text);
     flex: 1;
@@ -311,7 +311,7 @@
     border: 1px solid var(--color-border);
     color: var(--color-text-muted);
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: 11px;
     padding: 3px 8px;
     cursor: pointer;
   }
@@ -330,7 +330,7 @@
     border: none;
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.6;
     resize: none;
     min-height: 160px;
@@ -342,7 +342,7 @@
     flex: 1;
     min-height: 160px;
     font-family: var(--font-ui);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.7;
     color: var(--color-text);
     overflow-y: auto;
@@ -358,12 +358,12 @@
     margin: 0.8em 0 0.3em;
   }
   :global(.markdown-preview p) { margin: 0 0 0.6em; }
-  :global(.markdown-preview p.preview-empty) { color: var(--color-text-muted); font-size: 12px; }
+  :global(.markdown-preview p.preview-empty) { color: var(--color-text-muted); font-size: 13px; }
   :global(.markdown-preview code) {
     background: var(--color-surface-2);
     border-radius: 3px;
     padding: 1px 5px;
-    font-size: 11px;
+    font-size: 12px;
   }
   :global(.markdown-preview pre) {
     background: var(--color-surface-2);
@@ -384,10 +384,10 @@
 
   .no-selection {
     color: var(--color-text-muted);
-    font-size: 12px;
+    font-size: 13px;
     padding: 40px 0;
     text-align: center;
   }
 
-  .err { color: var(--color-rel-rival); font-size: 11px; }
+  .err { color: var(--color-rel-rival); font-size: 12px; }
 </style>

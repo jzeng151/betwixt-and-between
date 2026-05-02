@@ -198,7 +198,7 @@
 
   .win-title {
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.06em;

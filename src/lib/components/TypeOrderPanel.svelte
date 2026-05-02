@@ -93,14 +93,14 @@
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		font-family: var(--font-ui);
-		font-size: 12px;
+		font-size: 13px;
 		min-width: 180px;
 	}
 
 	.type-order-heading {
 		margin: 0;
 		color: var(--color-text-muted);
-		font-size: 11px;
+		font-size: 12px;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
@@ -148,7 +148,7 @@
 	 */
 	.grip {
 		color: var(--color-text-muted);
-		font-size: 14px;
+		font-size: 15px;
 		line-height: 1;
 		letter-spacing: -2px;
 		pointer-events: none;
@@ -167,7 +167,7 @@
 		color: white;
 		cursor: pointer;
 		font-family: inherit;
-		font-size: 12px;
+		font-size: 13px;
 	}
 
 	.apply-btn:hover {

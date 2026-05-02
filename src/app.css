@@ -23,6 +23,18 @@
   --color-rel-other:  #94a3b8;
   --color-rel-pov:    #a78bfa;
 
+  /* Per-type node defaults for the graph apps. Separate namespace
+     from --color-rel-* so edge vs node coloring stays decoupled.
+     Picked so each type reads as a distinct hue family AND none
+     collides with any --color-rel-* edge color (which would make a
+     node and a nearby edge look like the same thing). */
+  --color-type-character: #c8942a;  /* amber — protagonist accent */
+  --color-type-location:  #15803d;  /* forest green — earth/place */
+  --color-type-event:     #d946ef;  /* magenta — pivotal beat */
+  --color-type-act:       #8b5cf6;  /* deep violet — structural */
+  --color-type-scene:     #38bdf8;  /* sky blue — moment */
+  --color-type-note:      #a8a29e;  /* warm grey — annotation */
+
   /* Typography */
   --font-ui:      'Inter', 'Segoe UI', sans-serif;
   --font-display: 'Fraunces', Georgia, serif;
@@ -42,7 +54,7 @@
 html, body {
   height: 100%;
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text);
   background: var(--color-desktop);
   overflow: hidden;
@@ -58,6 +70,31 @@ button {
   outline-offset: 2px;
 }
 
+/* Scrollbars — Firefox + modern Chromium (121+) standard. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+/* Scrollbars — WebKit (Safari + older Chromium) pseudo-element fallback. */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* EntityLink chip — outer span owns the visual frame, inner buttons
    (the name + optional × delete) sit inside. The × lives flush right
    inside the chip border instead of as a sibling element. */
@@ -68,7 +105,7 @@ button {
   padding: 3px 10px;
   border-radius: 20px;
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   background: color-mix(in srgb, var(--chip-color) 13%, transparent);
   color: var(--chip-color);
@@ -108,7 +145,7 @@ button {
   border: none;
   border-radius: 50%;
   color: var(--chip-color);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   opacity: 0.55;
   cursor: pointer;

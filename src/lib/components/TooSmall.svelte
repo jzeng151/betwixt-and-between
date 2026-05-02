@@ -17,12 +17,12 @@
 
   .app-name {
     font-family: var(--font-display);
-    font-size: 20px;
+    font-size: 21px;
     color: var(--color-text);
   }
 
   .message {
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1.6;
   }
 </style>

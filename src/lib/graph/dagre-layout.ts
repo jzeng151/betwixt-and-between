@@ -100,13 +100,22 @@ export async function layoutByType(input: LayoutByTypeInput): Promise<LayoutResu
 	const extraTypes = [...nodesByType.keys()].filter((t) => !typeOrder.includes(t));
 	const orderedTypes = [...presentInOrder, ...extraTypes];
 
-	// Dynamic-import keeps the ~80KB bundle cost off the page-load path.
-	// Vite resolves this at build time so the chunk lands as a separate JS
-	// file pulled on first call.
-	const dagre = await import('dagre');
-
-	const RANKSEP = 80; // vertical gap between type bands
-	const NODESEP = 40; // horizontal gap within a rank
+	// Per-type horizontal pack. Earlier rounds tried `dagre per-type` to
+	// get smart intra-type X ordering, but that required clamping all
+	// same-type nodes to a single Y line — and dagre's LR layout
+	// frequently puts unrelated nodes at the SAME rank (X), which after
+	// the Y-clamp produced perfect overlap at one coordinate. The
+	// cascade complaint was real: rank-sharing nodes ended up stacked
+	// at one X.
+	//
+	// We trade dagre's edge-crossing minimization for a deterministic
+	// left-to-right pack: each node gets its own X slot at
+	// `xCursor += width + NODE_GAP`. No overlap is possible because
+	// every node lives at a distinct X. Iteration order = entity store
+	// order; if a smarter intra-type ordering becomes a feature ask, it
+	// belongs upstream of this layout.
+	const NODE_GAP = 60; // horizontal gap between adjacent nodes within a type
+	const TYPE_BAND_GAP = 140; // vertical gap between type bands
 
 	const raw: LayoutResult[] = [];
 	let rankYCursor = 0;
@@ -115,35 +124,16 @@ export async function layoutByType(input: LayoutByTypeInput): Promise<LayoutResu
 		const rankNodes = nodesByType.get(type)!;
 		const rankHeight = Math.max(...rankNodes.map((n) => n.height));
 
-		// Run dagre on just this rank's subgraph. Edges among same-rank
-		// nodes only — cross-rank edges are visible in the canvas but don't
-		// influence per-rank X. LR layout to lay nodes left-to-right within
-		// the rank.
-		const sameRank = new Set(rankNodes.map((n) => n.id));
-		const g = new dagre.graphlib.Graph();
-		g.setGraph({ rankdir: 'LR', nodesep: NODESEP, marginx: 0, marginy: 0 });
-		g.setDefaultEdgeLabel(() => ({}));
+		let xCursor = 0;
 		for (const n of rankNodes) {
-			g.setNode(n.id, { label: n.id, width: n.width, height: n.height });
-		}
-		for (const e of edges) {
-			if (sameRank.has(e.fromId) && sameRank.has(e.toId)) {
-				g.setEdge(e.fromId, e.toId);
-			}
-		}
-		dagre.layout(g);
-
-		// Read X from dagre, override Y to the rank cursor. Convert from
-		// dagre's center-coords to our top-left coord system.
-		for (const n of rankNodes) {
-			const dn = g.node(n.id) as { x: number; y: number; width: number; height: number };
 			raw.push({
 				id: n.id,
-				x: dn.x - dn.width / 2,
+				x: xCursor,
 				y: rankYCursor
 			});
+			xCursor += n.width + NODE_GAP;
 		}
-		rankYCursor += rankHeight + RANKSEP;
+		rankYCursor += rankHeight + TYPE_BAND_GAP;
 	}
 
 	// Note: cross-rank edges are visualized in the canvas but don't

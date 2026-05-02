@@ -156,7 +156,7 @@
     flex-direction: column;
     min-width: 160px;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     z-index: 100;
   }
 

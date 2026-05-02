@@ -21,6 +21,15 @@
 		id: string;
 		type: string;
 		name: string;
+		/**
+		 * Optional per-node color override. When set, takes precedence
+		 * over the type-default in `NODE_COLOR`. Drives `--nc` on the
+		 * node element so border + active-state styling pick up the
+		 * custom color. Used by StoryGraph + FocusedGraph to surface
+		 * the user-picked timeline color (or the auto-cycle color for
+		 * Characters without a custom one) on the graph.
+		 */
+		color?: string;
 	}
 
 	export interface GraphEdge {
@@ -30,6 +39,13 @@
 		color: string;
 		label: string;
 		dimmed: boolean;
+		/** SVG `stroke-dasharray` value, e.g. `'4 3'` for dashed,
+		 *  `'2 3'` for dotted. Omit / null for solid. */
+		dasharray?: string | null;
+		/** Stroke width in px. Defaults to 1.5. */
+		width?: number;
+		/** Render an arrowhead at the `to` end. Defaults to false. */
+		arrow?: boolean;
 	}
 
 	export interface NodePosition {
@@ -79,6 +95,11 @@
 		    Cancels any in-progress connect-drag automatically (per the locked
 		    C3 UX collision rule). */
 		onContextMenu?: (id: string, clientX: number, clientY: number) => void;
+		/** When false, suppresses the per-edge label `<text>` element.
+		    Defaults to true for back-compat. Hosts wire a toggle UI to
+		    flip this — useful for dense graphs where edge labels stack
+		    on top of each other and become noise. */
+		showEdgeLabels?: boolean;
 	}
 
 	let {
@@ -92,11 +113,20 @@
 		onConnect,
 		onNodeOpen,
 		onNodePositionChange,
-		onContextMenu
+		onContextMenu,
+		showEdgeLabels = true
 	}: Props = $props();
 
 	const NODE_W = 120;
 	const NODE_H = 32;
+
+	// Per-instance marker id. Multiple GraphCanvas instances coexist
+	// in the same document (StoryGraph + N FocusedGraph windows); a
+	// hardcoded `id="gc-arrow"` would duplicate, and on any instance
+	// closing its <defs>, surviving instances' `marker-end="url(#…)"`
+	// references would dangle and arrowheads would silently disappear.
+	// `crypto.randomUUID()` runs once per component init.
+	const arrowMarkerId = `gc-arrow-${crypto.randomUUID().slice(0, 8)}`;
 
 	// ── Viewport transform ─────────────────────────────────────────────────────
 	let panX = $state(0);
@@ -271,8 +301,13 @@
 			maxY = Math.max(...ys) + NODE_H;
 		const contentW = maxX - minX + 80,
 			contentH = maxY - minY + 80;
-		// Clamp zoom: 0.7 minimum keeps text readable, 2 maximum avoids over-scaling
-		const z = Math.min(2, Math.max(0.7, Math.min((vw - 40) / contentW, (vh - 40) / contentH)));
+		// Clamp zoom: 0.2 minimum matches the wheel-zoom floor so an
+		// auto-fit can always shrink to contain the full bounding box.
+		// (Previously 0.7, which left wide layouts clipped — FG windows
+		// inheriting StoryGraph-spread positions would render edges
+		// through the viewport center while nodes sat offscreen.)
+		// 2× max avoids over-scaling tight layouts.
+		const z = Math.min(2, Math.max(0.2, Math.min((vw - 40) / contentW, (vh - 40) / contentH)));
 		zoom = z;
 		panX = (vw - contentW * z) / 2 - (minX - 40) * z;
 		panY = (vh - contentH * z) / 2 - (minY - 40) * z;
@@ -440,6 +475,18 @@
 		fitView(nodePos);
 	}
 
+	/**
+	 * Clear all internal positions. The auto-place `$effect` re-runs and
+	 * fills any "missing" nodes (which is now all of them) with grid
+	 * defaults. Hosts use this for a "reset to unstructured state"
+	 * affordance — the user wants to discard the current layout and
+	 * start over from the canvas's natural fallback.
+	 */
+	export function resetPositions() {
+		nodePos = {};
+		seededFromServer = false;
+	}
+
 	// Public-via-snippet method: overlay UI calls this to start a connection drag.
 	export function startConnect(e: PointerEvent, fromId: string) {
 		e.stopPropagation();
@@ -463,6 +510,25 @@
 >
 	<!-- Edge SVG fills the viewport in screen coords — no transform needed -->
 	<svg class="edges" aria-hidden="true">
+		<!-- One arrowhead marker, color-inheriting via context-stroke so a
+		     single marker definition works for every relationship type
+		     instead of N markers in defs. SVG 2 feature; supported in
+		     Chrome 119+ / Firefox 121+ / Safari 16.2+. Fallback renders
+		     black, which is wrong but still visible. -->
+		<defs>
+			<marker
+				id={arrowMarkerId}
+				viewBox="0 0 10 10"
+				refX="10"
+				refY="5"
+				markerWidth="6"
+				markerHeight="6"
+				orient="auto"
+				markerUnits="strokeWidth"
+			>
+				<path d="M0,0 L10,5 L0,10 z" fill="context-stroke" />
+			</marker>
+		</defs>
 		{#each screenEdges as edge (edge.id)}
 			{@const mx = (edge.x1 + edge.x2) / 2}
 			{@const my = (edge.y1 + edge.y2) / 2}
@@ -472,18 +538,22 @@
 				x2={edge.x2}
 				y2={edge.y2}
 				stroke={edge.color}
-				stroke-width="1.5"
+				stroke-width={edge.width ?? 1.5}
 				stroke-opacity={edge.dimmed ? '0.1' : '0.45'}
+				stroke-dasharray={edge.dasharray ?? undefined}
+				marker-end={edge.arrow ? `url(#${arrowMarkerId})` : undefined}
 			/>
-			<text
-				x={mx}
-				y={my - 5}
-				fill={edge.color}
-				font-size="9"
-				text-anchor="middle"
-				opacity={edge.dimmed ? '0.15' : '0.75'}
-				font-family="Inter, Segoe UI, sans-serif">{edge.label}</text
-			>
+			{#if showEdgeLabels}
+				<text
+					x={mx}
+					y={my - 5}
+					fill={edge.color}
+					font-size="10"
+					text-anchor="middle"
+					opacity={edge.dimmed ? '0.15' : '0.75'}
+					font-family="Inter, Segoe UI, sans-serif">{edge.label}</text
+				>
+			{/if}
 		{/each}
 		{#if connecting && connectLineStart}
 			<line
@@ -507,7 +577,7 @@
 		{#each nodes as node (node.id)}
 			{@const p = nodePos[node.id]}
 			{#if p}
-				{@const nc = NODE_COLOR[node.type as keyof typeof NODE_COLOR] ?? 'var(--color-accent)'}
+				{@const nc = node.color ?? NODE_COLOR[node.type as keyof typeof NODE_COLOR] ?? 'var(--color-accent)'}
 				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 				<div
 					class="node"
@@ -579,26 +649,31 @@
 		height: 0;
 	}
 
+	/* Mirrors the timeline bar styling (IntervalBar.svelte): 18%
+	   translucent fill of the entity color, 50% translucent stroke,
+	   name text in the full entity color. Same entity now reads as
+	   the same color across Timeline + StoryGraph + FocusedGraph. */
 	.node {
 		position: absolute;
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		padding: 5px 10px;
-		background: var(--color-surface-2);
-		border: 1.5px solid color-mix(in srgb, var(--nc) 40%, transparent);
+		background: color-mix(in srgb, var(--nc) 18%, transparent);
+		border: 1.5px solid color-mix(in srgb, var(--nc) 50%, transparent);
 		border-radius: 6px;
 		box-shadow: 0 0 12px color-mix(in srgb, var(--nc) 12%, transparent);
 		cursor: grab;
 		font-family: var(--font-ui);
-		font-size: 12px;
-		color: var(--color-text);
+		font-size: 13px;
+		color: var(--nc);
 		white-space: nowrap;
 		transition: opacity 200ms ease;
 	}
 
 	.node-active {
 		border-color: var(--nc);
+		background: color-mix(in srgb, var(--nc) 28%, transparent);
 		box-shadow: 0 0 16px color-mix(in srgb, var(--nc) 30%, transparent);
 	}
 
@@ -608,11 +683,14 @@
 
 	.node-name {
 		font-weight: 600;
+		color: var(--nc);
 	}
 
+	/* Type label sits as a quieter tint of the same color so the node
+	   reads as one unit but the type chip doesn't fight the name. */
 	.node-type {
-		color: var(--color-text-muted);
-		font-size: 10px;
+		color: color-mix(in srgb, var(--nc) 70%, var(--color-text-muted));
+		font-size: 11px;
 	}
 
 	.gc-overlay-host {

@@ -392,7 +392,7 @@
 		border-radius: 4px;
 		padding: 6px 10px;
 		font-family: var(--font-ui, 'Inter', sans-serif);
-		font-size: 11px;
+		font-size: 12px;
 		font-weight: 400;
 		white-space: nowrap;
 		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);

@@ -217,7 +217,7 @@
   }
   .bar-name {
     font-family: var(--font-display, 'Fraunces', Georgia, serif);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     pointer-events: none;
   }
@@ -238,7 +238,7 @@
   }
   .bar-note {
     font-family: var(--font-ui, 'Inter', sans-serif);
-    font-size: 10px;
+    font-size: 11px;
     pointer-events: none;
   }
 </style>

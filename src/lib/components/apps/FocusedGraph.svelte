@@ -6,15 +6,12 @@
   import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
   import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
-  import { REL_COLOR, REL_TYPES } from '$lib/relationship-colors.js';
+  import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
   import { DEFAULT_TYPE_ORDER } from '$lib/graph/defaults.js';
-  import {
-    sharedNeighbors,
-    oneHopUnion,
-    reachable,
-    type Edge as TraversalEdge
-  } from '$lib/graph/traversal.js';
+  import type { Edge as TraversalEdge } from '$lib/graph/traversal.js';
+  import { computeVisibleSet } from '$lib/graph/visible-set.js';
+  import { radialLayout } from '$lib/graph/radial-layout.js';
   import GraphCanvas, {
     type GraphNode,
     type GraphEdge,
@@ -42,26 +39,16 @@
     $relationships.map((r) => ({ fromId: r.fromId, toId: r.toId, type: r.type }))
   );
 
-  // Structural ids (Act + Scene) so traversal skips through them by default.
-  // Per B2 spec: includeStructural defaults to false to avoid huge appears_in
-  // / caused_by fan-outs from dominating the result set.
-  const structuralIds = $derived(
-    new Set(
-      $entities.filter((e) => e.type === 'Act' || e.type === 'Scene').map((e) => e.id)
-    )
-  );
-
   // ── Visible set (traversal output) ────────────────────────────────────────
   // Per C6 invariant: visibility is determined ONLY by viewMode + focalSet +
   // edges. Scrubber dimming layers ON TOP via dimmedNodes prop; it does NOT
-  // alter this set. Layout-by-type (C5) will read this same visibleSet.
-  const visibleSet = $derived.by(() => {
-    if (focalSetIds.size === 0) return new Set<string>();
-    const opts = { includeStructural: false, structuralIds };
-    if (viewMode === 'shared') return sharedNeighbors(focalSetIds, edgeList, opts);
-    if (viewMode === 'reachable') return reachable(focalSetIds, edgeList, opts);
-    return oneHopUnion(focalSetIds, edgeList, opts);
-  });
+  // alter this set. Layout-by-type (C5) reads this same visibleSet. The
+  // mode→traversal-options mapping lives in `computeVisibleSet` so the rule
+  // is unit-testable. All modes walk undirected (a focal Character reaches
+  // scenes that are `pov_of` THEM); 'reachable' is 2-hop, not transitive.
+  const visibleSet = $derived.by(() =>
+    computeVisibleSet(viewMode, focalSetIds, edgeList)
+  );
 
   // Display set: visible neighbors UNION the focal set itself. Focal nodes
   // always render even if no edges connect them (otherwise an empty
@@ -111,9 +98,39 @@
     enabledRelTypes = next;
   }
 
+  // Set of rel types that have at least one edge between two displayed
+  // entities, BEFORE the Legend filter. Drives Legend's per-row dim
+  // for absent types so the user sees which connections actually exist
+  // on this view (e.g. opening FG on 2 Characters connected only by
+  // `rivals` dims every other row in the legend).
+  const presentRelTypes = $derived.by(() => {
+    const s = new Set<RelationshipType>();
+    for (const r of $relationships) {
+      if (displayEntityIds.has(r.fromId) && displayEntityIds.has(r.toId)) {
+        s.add(r.type);
+      }
+    }
+    return s;
+  });
+
   // ── GraphCanvas inputs ────────────────────────────────────────────────────
+
+  // Character cycle index — same ordering the Timeline uses (filter
+  // to Characters, position within that list). Lets graph node colors
+  // match the Timeline bars for Characters without a custom data.color.
+  const characterIndexById = $derived.by(() => {
+    const m = new Map<string, number>();
+    $entities.filter((e) => e.type === 'Character').forEach((e, i) => m.set(e.id, i));
+    return m;
+  });
+
   const graphNodes = $derived<GraphNode[]>(
-    displayEntities.map((e) => ({ id: e.id, type: e.type, name: e.name }))
+    displayEntities.map((e) => ({
+      id: e.id,
+      type: e.type,
+      name: e.name,
+      color: nodeColorFor(e, characterIndexById.get(e.id))
+    }))
   );
 
   // Single source of truth for "edges currently in the graph": both endpoints
@@ -130,14 +147,20 @@
   );
 
   const graphEdges = $derived<GraphEdge[]>(
-    visibleRelationships.map((r) => ({
-      id: r.id,
-      fromId: r.fromId,
-      toId: r.toId,
-      color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
-      label: r.label ?? r.type.replace(/_/g, ' '),
-      dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId)
-    }))
+    visibleRelationships.map((r) => {
+      const style = REL_EDGE_STYLE[r.type];
+      return {
+        id: r.id,
+        fromId: r.fromId,
+        toId: r.toId,
+        color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
+        label: r.label ?? r.type.replace(/_/g, ' '),
+        dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId),
+        dasharray: style.dasharray,
+        width: style.width,
+        arrow: style.arrow
+      };
+    })
   );
 
   // Reference to the canvas for out-of-band position updates (reseed) +
@@ -155,9 +178,23 @@
   // shift step. Mirrors via onNodePositionChange + the initial seed.
   let currentPositions = $state<Record<string, NodePosition>>({});
 
+  // Seed-from-state flags. `winMapLoaded` flips true after onMount's
+  // fetch settles; `radialSeeded` flips true once we've laid out a
+  // first-open radial seed. Both gate the $effect below so the radial
+  // pass runs ONCE (when winMap is empty AND displayEntities is
+  // populated) and then never again — subsequent changes to the focal
+  // set would otherwise re-snap user-dragged positions back to the
+  // ring.
+  let winMapLoaded = $state(false);
+  let radialSeeded = $state(false);
+
   onMount(() => {
     void (async () => {
-      // Per-window state (Lane A endpoint) wins for any entity it knows.
+      // FG canvas is independent of StoryGraph: each FG window has
+      // its own per-window state (Lane A). We don't inherit the
+      // StoryGraph seed (`/api/canvas-positions`) because that
+      // canvas is much wider than an FG window and produced offscreen-
+      // clipping or unreadably-zoomed-out fits.
       const winRes = await fetch(`/api/canvas-positions/window/${windowId}`).catch(() => null);
       type WinRow = {
         entityId: string;
@@ -171,26 +208,33 @@
       const winMap = Object.fromEntries(
         winRows.map((r) => [r.entityId, { x: r.x, y: r.y, w: r.width, h: r.height }])
       );
-      // Pinned column → pinnedSet.
       pinnedSet = new Set(winRows.filter((r) => r.pinned === 1).map((r) => r.entityId));
-      // Per-entity fallback (the seed layer that StoryGraph also reads).
-      const entRes = await fetch('/api/canvas-positions').catch(() => null);
-      type EntRow = {
-        entityId: string;
-        x: number;
-        y: number;
-        width: number;
-        height: number;
-      };
-      const entRows: EntRow[] = entRes?.ok ? await entRes.json() : [];
-      const entMap = Object.fromEntries(
-        entRows.map((r) => [r.entityId, { x: r.x, y: r.y, w: r.width, h: r.height }])
-      );
-      // Merge: per-window wins for any node it knows.
-      initialPositions = { ...entMap, ...winMap };
-      currentPositions = { ...initialPositions };
+
+      if (winRows.length > 0) {
+        // Subsequent open — restore saved positions immediately.
+        // Skip the radial-seed effect by marking it already done.
+        initialPositions = winMap;
+        currentPositions = { ...initialPositions };
+        radialSeeded = true;
+      }
+      winMapLoaded = true;
     })();
   });
+
+  // First-open radial seed: laid out once when displayEntityIds settles.
+  // Replaces GraphCanvas's grid auto-place fallback for the FG case,
+  // which produced a cascade-row look (focal + neighbors strung along
+  // a single line at y=60). Radial reads as a graph: focal at center,
+  // neighbors on a ring around it.
+  $effect(() => {
+    if (radialSeeded || !winMapLoaded) return;
+    if (displayEntityIds.size === 0) return;
+    const positions = radialLayout(focalSetIds, [...displayEntityIds]);
+    initialPositions = positions;
+    currentPositions = { ...positions };
+    radialSeeded = true;
+  });
+
 
   // ── Position persistence (per-node debounce; per-window endpoint) ─────────
   // Greptile P2 on PR #12: see StoryGraph for the same fix rationale. Per-node
@@ -302,10 +346,12 @@
 
         // Build inputs from the current visible set. Notes excluded as in
         // graphNodes; edges already filtered by displayEntityIds + Legend.
+        // Over-estimate per-node rendered width: name @ ~9px/char +
+        // 100px constant covers padding, gap, and the type-tag suffix.
         const layoutNodes = displayEntities.map((e) => ({
           id: e.id,
           type: e.type,
-          width: 120,
+          width: Math.max(180, e.name.length * 9 + 100),
           height: 32
         }));
         // Reuse the same predicate that drives graphEdges — keeps the
@@ -463,8 +509,19 @@
 
   // Settings panel toggle (C7 panel anchored to the header).
   let settingsOpen = $state(false);
+  let legendOpen = $state(true);
+  let edgeLabelsVisible = $state(true);
   const currentTypeOrder = $derived<EntityType[]>(win?.typeOrder ?? DEFAULT_TYPE_ORDER);
 </script>
+
+<svelte:window
+  onclick={(e) => {
+    if (!settingsOpen) return;
+    const t = e.target as HTMLElement | null;
+    if (t?.closest('.fg-settings') || t?.closest('.fg-settings-btn')) return;
+    settingsOpen = false;
+  }}
+/>
 
 <div class="fg">
   <header class="fg-header">
@@ -474,9 +531,9 @@
         value={viewMode}
         onchange={(e) => setMode((e.currentTarget as HTMLSelectElement).value as FocusedGraphMode)}
       >
-        <option value="their_worlds">Their worlds (1-hop)</option>
-        <option value="shared">Shared (intersection)</option>
-        <option value="reachable">Reachable (full graph)</option>
+        <option value="their_worlds">Immediate connections</option>
+        <option value="shared">Intersections</option>
+        <option value="reachable">All</option>
       </select>
     </label>
     <div class="fg-chips">
@@ -497,6 +554,22 @@
     </div>
     <button
       class="fg-settings-btn"
+      title="Reset view (discard layout, return to default)"
+      aria-label="Reset view"
+      onclick={() => {
+        // Clear local + canvas positions and the radial-seeded flag.
+        // The radial-seed $effect then re-runs and lays focals at
+        // the canvas center with peripherals on a ring around it —
+        // the FG's "default" unstructured state. Session-scoped:
+        // server keeps the user's last-saved positions for reload.
+        initialPositions = {};
+        currentPositions = {};
+        radialSeeded = false;
+        canvas?.resetPositions();
+      }}
+    >↻</button>
+    <button
+      class="fg-settings-btn"
       class:open={settingsOpen}
       title="Layout settings"
       aria-label="Toggle layout settings"
@@ -506,6 +579,11 @@
   </header>
 
   <div class="fg-canvas">
+    {#if viewMode === 'shared' && focalSetIds.size < 2}
+      <div class="fg-mode-hint" role="note">
+        Pick a second focal to see what they have in common.
+      </div>
+    {/if}
     <GraphCanvas
       bind:this={canvas}
       nodes={graphNodes}
@@ -515,6 +593,7 @@
       onNodeOpen={openEntity}
       {onNodePositionChange}
       onContextMenu={(id, x, y) => (contextMenu = { entityId: id, x, y })}
+      showEdgeLabels={edgeLabelsVisible}
     >
       {#snippet emptyState()}
         <div class="fg-empty">
@@ -531,11 +610,45 @@
           >📌</span>
         {/if}
       {/snippet}
+
+      {#snippet nodeOverlay({ id })}
+        {#if !focalSetIds.has(id)}
+          <button
+            type="button"
+            class="add-focal-btn"
+            title="Add to focal set"
+            aria-label="Add to focal set"
+            onclick={(e) => {
+              e.stopPropagation();
+              addToFocalSet(id);
+            }}
+          >+</button>
+        {/if}
+      {/snippet}
     </GraphCanvas>
 
-    <!-- Legend: bottom-left, always-on (toggleable) -->
-    <div class="fg-legend">
-      <Legend enabled={enabledRelTypes} onToggle={toggleRelType} />
+    <!-- Legend stack: toggle button + (when open) Legend above it.
+         Toggle stays at bottom-left whether the legend is open or
+         closed; legend renders ABOVE the button when shown. -->
+    <div class="fg-legend-wrap">
+      {#if legendOpen}
+        <Legend
+          enabled={enabledRelTypes}
+          onToggle={toggleRelType}
+          presentTypes={presentRelTypes}
+          {edgeLabelsVisible}
+          onToggleEdgeLabels={() => (edgeLabelsVisible = !edgeLabelsVisible)}
+        />
+      {/if}
+      <button
+        type="button"
+        class="fg-settings-btn fg-legend-btn"
+        class:open={legendOpen}
+        title={legendOpen ? 'Hide legend' : 'Show legend'}
+        aria-label={legendOpen ? 'Hide legend' : 'Show legend'}
+        aria-pressed={legendOpen}
+        onclick={() => (legendOpen = !legendOpen)}
+      >☰</button>
     </div>
 
     <!-- Settings panel: bottom-right, toggle via header gear -->
@@ -591,7 +704,7 @@
 
   .fg-mode-label {
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -604,7 +717,7 @@
     padding: 4px 8px;
     border-radius: 4px;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .fg-chips {
@@ -625,7 +738,7 @@
     color: white;
     border-radius: 12px;
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.2;
   }
 
@@ -640,7 +753,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1;
     padding: 0;
   }
@@ -652,7 +765,7 @@
   .chip-empty {
     color: var(--color-text-muted);
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     font-style: italic;
   }
 
@@ -670,7 +783,7 @@
     background: var(--color-surface);
     color: var(--color-text-muted);
     cursor: pointer;
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1;
     flex-shrink: 0;
   }
@@ -681,12 +794,22 @@
     border-color: var(--color-accent);
   }
 
-  .fg-legend {
+  /* Bottom-left legend stack: toggle button + (when open) Legend
+     above it. Button stays in the same position whether the legend
+     is open or closed. */
+  .fg-legend-wrap {
     position: absolute;
     bottom: 12px;
     left: 12px;
     z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
     pointer-events: auto;
+  }
+  .fg-legend-btn {
+    align-self: flex-start;
   }
 
   .fg-settings {
@@ -695,6 +818,57 @@
     right: 12px;
     z-index: 5;
     pointer-events: auto;
+  }
+
+  /* Hover-only "+" badge on non-focal nodes for click-to-extend.
+     Top-right corner; pin badge sits at top-left so the two never
+     collide. Renders inside the overlay slot which GraphCanvas only
+     mounts when the node is hovered. */
+  .add-focal-btn {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: 14px;
+    line-height: 1;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+    transition: background 0.1s, border-color 0.1s, color 0.1s;
+  }
+  .add-focal-btn:hover {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-surface);
+  }
+
+  /* Mode-specific hint banner (e.g. shared mode needs ≥2 focals to
+     differ from immediate-connections). Floats above the canvas at
+     the top, doesn't block interaction since it's a thin strip. */
+  .fg-mode-hint {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 4;
+    padding: 4px 10px;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    pointer-events: none;
   }
 
   .pin-badge {
@@ -708,7 +882,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     pointer-events: none;
@@ -725,7 +899,7 @@
     border-radius: 12px;
     color: var(--color-text);
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 13px;
     z-index: 6;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   }
@@ -738,7 +912,7 @@
     justify-content: center;
     color: var(--color-text-muted);
     font-family: var(--font-ui);
-    font-size: 13px;
+    font-size: 14px;
     pointer-events: none;
   }
 </style>

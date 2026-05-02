@@ -5,6 +5,102 @@ Investigation reports for non-obvious bugs. Each entry follows the
 
 ---
 
+## 2026-05-02 — StoryGraph / FocusedGraph cascade overlap after Layout-by-type
+
+**Symptom:** running "Layout by type" against the seeded *Prestige*
+dataset produced rows of nodes stacked shoulder-to-shoulder with
+labels overlapping each other. Rows themselves nearly touched
+vertically. Pressing the reset button repainted the same overlap or
+did nothing visible. Files involved:
+`src/lib/graph/dagre-layout.ts`,
+`src/lib/components/apps/StoryGraph.svelte`,
+`src/lib/components/apps/FocusedGraph.svelte`.
+
+**Root cause:** `dagre.setGraph({ rankdir: 'LR', ... })` with no
+explicit `ranksep` was the surface symptom — dagre's default
+`ranksep: 50` is the horizontal gap between ranks in LR mode, and
+50 px is dwarfed by 180–220 px wide nodes. But that was secondary.
+
+The architectural bug: dagre LR per-type frequently puts unrelated
+nodes at the **same rank** (same X coordinate) when the intra-type
+edge graph is sparse or directionally lopsided. Many Characters in
+*The Prestige* shared rank=0 because they had no *incoming* intra-
+Character edges in the directed subgraph passed to dagre. dagre
+distinguished rank-sharing nodes by stacking them vertically within
+their shared rank — and then the post-process `Y = rankYCursor`
+clamp in `dagre-layout.ts` wiped that vertical separation out,
+leaving multiple nodes at one (X, Y) coordinate. Perfect overlap.
+No amount of `ranksep` tuning could fix it because the information
+dagre used to spread rank-sharing nodes was being thrown away on
+purpose by the type-band post-process.
+
+**Why two patches missed it.** The first round bumped per-node
+width estimates from `120 → max(140, name.length * 7 + 40)` and
+`nodesep` from 40 → 60, on the assumption that under-allotted width
+caused adjacent ranks to overlap. The second round went further:
+width `max(180, name.length * 9 + 100)`, `nodesep: 60 → 80`,
+between-type-band gap 80 → 140. Both rounds were tuning the wrong
+axis. `nodesep` in LR rankdir is the **vertical** spacing between
+same-rank nodes, not the horizontal between-column gap. The code
+comments next to `nodesep` even read `// horizontal gap within a
+rank`, which was simply wrong and had persisted unverified across
+prior commits because dense graphs (every node has incoming edges)
+hide the bug — every node lands at its own rank, the post-process
+clamp loses no information.
+
+**Fix.** Replace per-type dagre with a deterministic left-to-right
+pack in `dagre-layout.ts`:
+
+```ts
+let xCursor = 0;
+for (const n of rankNodes) {
+  raw.push({ id: n.id, x: xCursor, y: rankYCursor });
+  xCursor += n.width + 60;
+}
+rankYCursor += rankHeight + 140;
+```
+
+Every node lands at a distinct X. No overlap is geometrically
+possible. Iteration order = entity store order. The runtime `import('dagre')`
+inside the per-type loop is gone; the file kept its name for caller
+ergonomics. Tradeoff accepted: lose dagre's edge-crossing
+minimization for intra-type edges. For Prestige's density that
+didn't help anyway — rank-sharing nodes ended up on top of each
+other regardless. Smarter intra-type ordering (BFS from a focal,
+alphabetical, manual user reorder) is a future feature, not a
+regression.
+
+**Followup — reset button.** After the layout fix, reset (↻) was
+briefly wired to re-run `layoutByType` so any stale cascaded
+positions still in the DB could be overwritten by the corrected
+algorithm. User feedback said reset should instead return to the
+unstructured default state — a way to discard the layout and start
+fresh visually. Re-bound: a new `resetPositions()` method on
+`GraphCanvas` clears `nodePos` and re-arms `seededFromServer`. SG's
+reset clears local `initialPositions` and calls it; FG additionally
+clears `radialSeeded` so the radial-seed `$effect` re-runs for a
+fresh ring layout. Session-scoped — server keeps the user's
+last-saved positions for reload.
+
+**Structural lesson.** When you need to layer one constraint on top
+of a layout library's output, pick exactly one axis the post-process
+controls and configure the layout for the OTHER axis. Don't
+post-process Y while configuring `rankdir: LR` (which is
+fundamentally an X-rank layout) — the library has no way to know
+its own Y output is going to get clobbered, and it'll happily
+collapse multiple nodes onto your single Y line. If you need to
+clamp both axes, write the layout yourself.
+
+Tactical lesson: when tuning a spacing constant doesn't fix a layout
+bug after two rounds, **stop tuning** and trace the data flow.
+"Bump it higher next time" was the wrong reaction twice; three
+iterations on the same surface is the architectural smell the
+investigate skill warns about.
+
+**Status:** DONE.
+
+---
+
 ## 2026-04-30 — Act / scene column misalignment under resize
 
 **Symptom:** dragging an act's resize handle caused the act header column

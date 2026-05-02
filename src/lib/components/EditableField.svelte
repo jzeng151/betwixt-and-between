@@ -359,13 +359,13 @@
 	   inputs. Layout matches the editor so toggling between view/edit doesn't
 	   shift the page. */
 	.readonly-text {
-		font-size: 13px;
+		font-size: 14px;
 		color: var(--color-text, #e8e0d0);
 		min-height: 22px;
 		padding: 4px 0;
 	}
 	.readonly-textarea {
-		font-size: 13px;
+		font-size: 14px;
 		line-height: 1.45;
 		color: var(--color-text, #e8e0d0);
 		white-space: pre-wrap;
@@ -373,7 +373,7 @@
 		min-height: 22px;
 	}
 	.readonly-empty {
-		font-size: 13px;
+		font-size: 14px;
 		color: var(--color-text-muted, #6b7280);
 		font-style: italic;
 		padding: 4px 0;
@@ -397,7 +397,7 @@
 		justify-content: space-between;
 	}
 	.field-label {
-		font-size: 9px;
+		font-size: 10px;
 		font-weight: 600;
 		color: var(--color-text-muted, #6b7280);
 		text-transform: uppercase;
@@ -411,7 +411,7 @@
 		border-radius: 4px;
 		padding: 7px 10px;
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);
-		font-size: 13px;
+		font-size: 14px;
 		outline: none;
 		resize: vertical;
 		width: 100%;
@@ -419,7 +419,7 @@
 	.field-textarea {
 		min-height: 64px;
 		font-family: var(--font-ui, 'Inter', sans-serif);
-		font-size: 12px;
+		font-size: 13px;
 		line-height: 1.5;
 	}
 	.field-input:focus,
@@ -457,13 +457,13 @@
 		border-radius: 12px;
 		padding: 3px 8px;
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);
-		font-size: 12px;
+		font-size: 13px;
 	}
 	.chip-remove {
 		background: transparent;
 		border: none;
 		color: var(--color-text-muted, #6b7280);
-		font-size: 14px;
+		font-size: 15px;
 		line-height: 1;
 		cursor: pointer;
 		padding: 0;
@@ -481,7 +481,7 @@
 		border-radius: 12px;
 		padding: 3px 8px;
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);
-		font-size: 11px;
+		font-size: 12px;
 		cursor: pointer;
 	}
 	.picker-candidate:hover {
@@ -490,7 +490,7 @@
 	}
 	.field-error {
 		color: #ef4444;
-		font-size: 11px;
+		font-size: 12px;
 		margin-top: 4px;
 	}
 	.retry {
@@ -500,7 +500,7 @@
 		color: #ef4444;
 		border-radius: 3px;
 		padding: 2px 6px;
-		font-size: 10px;
+		font-size: 11px;
 		cursor: pointer;
 	}
 </style>

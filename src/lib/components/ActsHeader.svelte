@@ -654,7 +654,7 @@
 		border: 1px dashed var(--color-text-muted, #6b7280);
 		color: var(--color-text-muted, #6b7280);
 		border-radius: 4px;
-		font-size: 13px;
+		font-size: 14px;
 		line-height: 1;
 		padding: 0 6px;
 		height: 22px;
@@ -676,7 +676,7 @@
 		border-radius: 4px;
 		padding: 4px 6px;
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);
-		font-size: 12px;
+		font-size: 13px;
 		outline: none;
 	}
 	.insert-error {
@@ -684,7 +684,7 @@
 		bottom: -14px;
 		left: 0;
 		right: 0;
-		font-size: 9px;
+		font-size: 10px;
 		color: #ef4444;
 		text-align: center;
 	}
@@ -744,7 +744,7 @@
 		opacity: 0;
 		cursor: grab;
 		color: var(--color-text-muted, #6b7280);
-		font-size: 11px;
+		font-size: 12px;
 		letter-spacing: -1px;
 		user-select: none;
 		padding: 2px 1px;
@@ -791,7 +791,7 @@
 	}
 	.act-name {
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);
-		font-size: 16px;
+		font-size: 17px;
 		font-weight: 500;
 		color: var(--color-text, #e8e0d0);
 		min-width: 0;
@@ -804,7 +804,7 @@
 		border: none;
 		color: var(--color-text-muted, #6b7280);
 		cursor: pointer;
-		font-size: 14px;
+		font-size: 15px;
 		line-height: 1;
 		padding: 2px 4px;
 		border-radius: 3px;
@@ -820,7 +820,7 @@
 	}
 
 	.act-meta {
-		font-size: 10px;
+		font-size: 11px;
 		color: var(--color-text-muted, #6b7280);
 		min-width: 0;
 		overflow: hidden;
@@ -838,7 +838,7 @@
 		border: none;
 		color: var(--color-text-muted, #6b7280);
 		cursor: pointer;
-		font-size: 10px;
+		font-size: 11px;
 		padding: 0;
 		font-family: inherit;
 		text-decoration: underline dotted;
@@ -869,7 +869,7 @@
 		border-radius: 4px;
 		color: var(--color-text, #e8e0d0);
 		font-family: var(--font-ui, 'Inter', sans-serif);
-		font-size: 11px;
+		font-size: 12px;
 		padding: 4px 6px;
 		resize: none;
 		width: 100%;
@@ -879,7 +879,7 @@
 		outline: 2px solid var(--color-accent, #c8942a);
 	}
 	.scene-error {
-		font-size: 10px;
+		font-size: 11px;
 		color: #ef4444;
 	}
 	.scene-form-btns {
@@ -895,7 +895,7 @@
 		padding: 4px 0;
 	}
 	.delete-confirm-msg {
-		font-size: 10px;
+		font-size: 11px;
 		color: var(--color-text, #e8e0d0);
 	}
 	.delete-confirm-btns {
@@ -909,7 +909,7 @@
 		padding: 4px 0;
 	}
 	.reparent-label {
-		font-size: 10px;
+		font-size: 11px;
 		color: var(--color-text-muted, #6b7280);
 		margin-bottom: 2px;
 	}
@@ -917,7 +917,7 @@
 		display: flex;
 		align-items: center;
 		gap: 5px;
-		font-size: 10px;
+		font-size: 11px;
 		color: var(--color-text, #e8e0d0);
 		cursor: pointer;
 	}
@@ -937,7 +937,7 @@
 		border-radius: 4px;
 		color: #0d0f14;
 		cursor: pointer;
-		font-size: 10px;
+		font-size: 11px;
 		font-family: inherit;
 		font-weight: 600;
 		padding: 3px 8px;
@@ -958,7 +958,7 @@
 		border-radius: 4px;
 		color: var(--color-text-muted, #6b7280);
 		cursor: pointer;
-		font-size: 10px;
+		font-size: 11px;
 		font-family: inherit;
 		padding: 3px 8px;
 	}
@@ -972,7 +972,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 11px;
+		font-size: 12px;
 		color: var(--color-text-muted, #6b7280);
 		font-style: italic;
 	}
@@ -999,7 +999,7 @@
 	.scene-cell {
 		flex: 1;
 		border-right: 1px dashed rgba(42, 45, 53, 0.6);
-		font-size: 9px;
+		font-size: 10px;
 		color: var(--color-text-muted, #6b7280);
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
@@ -1028,7 +1028,7 @@
 	}
 	.scenes-act-empty {
 		flex: 1;
-		font-size: 9px;
+		font-size: 10px;
 		color: var(--color-text-muted, #6b7280);
 		font-style: italic;
 		opacity: 0.5;
@@ -1044,7 +1044,7 @@
 		transform: translateX(-50%);
 		background: #ef4444;
 		color: #fff;
-		font-size: 11px;
+		font-size: 12px;
 		padding: 6px 12px;
 		border-radius: 4px;
 		z-index: 100;

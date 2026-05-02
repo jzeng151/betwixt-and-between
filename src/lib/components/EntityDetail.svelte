@@ -268,7 +268,7 @@
 		gap: 8px;
 	}
 	.entity-detail-eyebrow {
-		font-size: 9px;
+		font-size: 10px;
 		font-weight: 600;
 		color: var(--color-text-muted, #6b7280);
 		text-transform: uppercase;
@@ -285,7 +285,7 @@
 		border: none;
 		border-radius: 4px;
 		padding: 3px 10px;
-		font-size: 10px;
+		font-size: 11px;
 		font-weight: 600;
 		font-family: var(--font-ui, 'Inter', sans-serif);
 		text-transform: uppercase;
@@ -307,7 +307,7 @@
 		border-radius: 4px;
 		width: 24px;
 		height: 22px;
-		font-size: 12px;
+		font-size: 13px;
 		cursor: pointer;
 		padding: 0;
 		display: inline-flex;
@@ -323,19 +323,19 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		font-size: 11px;
+		font-size: 12px;
 		color: var(--color-text, #e8e0d0);
 	}
 	.entity-detail-title {
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);
-		font-size: 18px;
+		font-size: 19px;
 		font-weight: 500;
 		margin-top: 4px;
 	}
 	.entity-detail-stub {
 		padding: 24px 18px;
 		color: var(--color-text-muted, #6b7280);
-		font-size: 12px;
+		font-size: 13px;
 		font-style: italic;
 		text-align: center;
 	}
@@ -354,19 +354,19 @@
 		color: #ef4444;
 		border-radius: 4px;
 		padding: 6px 10px;
-		font-size: 11px;
+		font-size: 12px;
 		cursor: pointer;
 	}
 	.btn-delete:hover {
 		border-color: #ef4444;
 	}
 	.view-footer-hint {
-		font-size: 10px;
+		font-size: 11px;
 		color: var(--color-text-muted, #6b7280);
 		font-style: italic;
 	}
 	.save-status {
-		font-size: 10px;
+		font-size: 11px;
 		color: var(--color-text-muted, #6b7280);
 		font-style: italic;
 	}
@@ -377,7 +377,7 @@
 		gap: 8px;
 	}
 	.delete-confirm-msg {
-		font-size: 12px;
+		font-size: 13px;
 	}
 	.delete-confirm-btns {
 		display: flex;
@@ -390,7 +390,7 @@
 		border: none;
 		border-radius: 4px;
 		padding: 6px 12px;
-		font-size: 11px;
+		font-size: 12px;
 		cursor: pointer;
 	}
 	.btn-danger:disabled {
@@ -403,7 +403,7 @@
 		color: var(--color-text-muted, #6b7280);
 		border-radius: 4px;
 		padding: 6px 12px;
-		font-size: 11px;
+		font-size: 12px;
 		cursor: pointer;
 	}
 	.btn-primary {
@@ -412,12 +412,12 @@
 		border: none;
 		border-radius: 4px;
 		padding: 4px 10px;
-		font-size: 11px;
+		font-size: 12px;
 		font-weight: 600;
 		cursor: pointer;
 	}
 	.delete-error {
 		color: #ef4444;
-		font-size: 10px;
+		font-size: 11px;
 	}
 </style>
