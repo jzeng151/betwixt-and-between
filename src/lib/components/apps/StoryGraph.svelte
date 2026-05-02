@@ -337,6 +337,62 @@
     }
   }
 
+  // ── Delete confirmation (right-click path) ────────────────────────────────
+  // Right-click Delete is a destructive cascade: the entity goes, plus every
+  // relationship involving it, every interval involving it, and (for Acts)
+  // every child Scene. Single-click destruction is too easy to misfire on,
+  // so the menu's "Delete…" entry opens a modal listing the exact blast
+  // radius before the user confirms. Cancel closes; Delete actually runs.
+  let deleteConfirm = $state<{
+    id: string;
+    name: string;
+    type: string;
+    relCount: number;
+    intervalCount: number;
+    childSceneCount: number;
+  } | null>(null);
+  let deleting = $state(false);
+  let deleteError = $state('');
+
+  function openDeleteConfirm(id: string) {
+    const entity = $entities.find((e) => e.id === id);
+    if (!entity) return;
+    const relCount = $relationships.filter(
+      (r) => r.fromId === id || r.toId === id
+    ).length;
+    const intervalCount = $intervalsStore.filter(
+      (iv) => iv.entityId === id || iv.startActId === id || iv.endActId === id
+    ).length;
+    const childSceneCount =
+      entity.type === 'Act'
+        ? $entities.filter((e) => e.type === 'Scene' && e.parentId === id).length
+        : 0;
+    deleteConfirm = {
+      id,
+      name: entity.name,
+      type: entity.type,
+      relCount,
+      intervalCount,
+      childSceneCount
+    };
+    deleting = false;
+    deleteError = '';
+  }
+
+  async function confirmDelete() {
+    if (!deleteConfirm) return;
+    deleting = true;
+    deleteError = '';
+    try {
+      await entities.deleteEntity(deleteConfirm.id);
+      deleteConfirm = null;
+    } catch {
+      deleteError = "Couldn't delete. The server rejected the request.";
+    } finally {
+      deleting = false;
+    }
+  }
+
   // ── Right-click context menu ───────────────────────────────────────────────
   // Locked menu items per Phase 1B C3:
   //   Open in window, View connections, Open Focused Graph, Edit, Delete,
@@ -355,8 +411,8 @@
         onSelect: () => windowStore.openFocusedGraph([id], 'their_worlds')
       },
       {
-        label: 'Delete',
-        onSelect: () => entities.deleteEntity(id)
+        label: 'Delete…',
+        onSelect: () => openDeleteConfirm(id)
       }
     ];
   });
@@ -528,6 +584,79 @@
     y={contextMenu.y}
     onClose={() => (contextMenu = null)}
   />
+{/if}
+
+{#if deleteConfirm}
+  <!-- Backdrop click cancels (matches OS modal convention). -->
+  <div
+    class="delete-backdrop"
+    role="presentation"
+    onclick={() => (deleteConfirm = null)}
+    onkeydown={(e) => e.key === 'Escape' && (deleteConfirm = null)}
+  ></div>
+  <div class="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+    <h2 id="delete-title" class="delete-title">
+      Delete <strong>{deleteConfirm.name}</strong>?
+    </h2>
+    <p class="delete-lead">
+      This <strong>permanently</strong> removes the entity and everything that
+      references it. There is no undo.
+    </p>
+    <ul class="delete-impact">
+      <li>
+        <span class="impact-icon">✕</span>
+        <span>The {deleteConfirm.type} <strong>{deleteConfirm.name}</strong></span>
+      </li>
+      {#if deleteConfirm.relCount > 0}
+        <li>
+          <span class="impact-icon">✕</span>
+          <span>
+            {deleteConfirm.relCount}
+            relationship{deleteConfirm.relCount === 1 ? '' : 's'} involving it
+            (allies, rivals, mentors, locations, POVs, etc.)
+          </span>
+        </li>
+      {/if}
+      {#if deleteConfirm.intervalCount > 0}
+        <li>
+          <span class="impact-icon">✕</span>
+          <span>
+            {deleteConfirm.intervalCount}
+            timeline interval{deleteConfirm.intervalCount === 1 ? '' : 's'}
+            involving it (presence on the timeline disappears)
+          </span>
+        </li>
+      {/if}
+      {#if deleteConfirm.childSceneCount > 0}
+        <li class="impact-warn">
+          <span class="impact-icon">⚠</span>
+          <span>
+            <strong
+              >{deleteConfirm.childSceneCount} child
+              Scene{deleteConfirm.childSceneCount === 1 ? '' : 's'}</strong
+            > inside this Act — deleted along with the Act.
+          </span>
+        </li>
+      {/if}
+    </ul>
+    {#if deleteError}
+      <p class="delete-error" role="alert">{deleteError}</p>
+    {/if}
+    <div class="delete-actions">
+      <button
+        type="button"
+        class="delete-cancel"
+        disabled={deleting}
+        onclick={() => (deleteConfirm = null)}
+      >Cancel</button>
+      <button
+        type="button"
+        class="delete-confirm-btn"
+        disabled={deleting}
+        onclick={confirmDelete}
+      >{deleting ? 'Deleting…' : `Delete ${deleteConfirm.type}`}</button>
+    </div>
+  </div>
 {/if}
 
 <style>
@@ -772,4 +901,122 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
+
+  /* ── Delete-cascade confirmation modal ────────────────────────────────── */
+  .delete-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 100;
+    cursor: pointer;
+  }
+  .delete-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 101;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    padding: 22px 24px;
+    width: min(440px, calc(100vw - 48px));
+    color: var(--color-text);
+    font-family: var(--font-ui);
+  }
+  .delete-title {
+    margin: 0 0 8px;
+    font-family: var(--font-display, var(--font-ui));
+    font-size: 19px;
+    font-weight: 500;
+    color: var(--color-text);
+    line-height: 1.3;
+  }
+  .delete-title strong {
+    color: var(--color-text);
+    font-weight: 600;
+  }
+  .delete-lead {
+    margin: 0 0 14px;
+    font-size: 13px;
+    color: var(--color-text-muted);
+    line-height: 1.5;
+  }
+  .delete-lead strong {
+    color: #ef4444;
+    font-weight: 600;
+  }
+  .delete-impact {
+    list-style: none;
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .delete-impact li {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--color-text);
+  }
+  .delete-impact .impact-icon {
+    font-size: 11px;
+    color: #ef4444;
+    line-height: 1.4;
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+  }
+  .delete-impact .impact-warn {
+    color: #fbbf24;
+  }
+  .delete-impact .impact-warn .impact-icon {
+    color: #fbbf24;
+  }
+  .delete-error {
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, #ef4444 12%, transparent);
+    border: 1px solid color-mix(in srgb, #ef4444 40%, transparent);
+    border-radius: 4px;
+    font-size: 12px;
+    color: #ef4444;
+  }
+  .delete-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .delete-cancel {
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    border-radius: 4px;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-family: var(--font-ui);
+    cursor: pointer;
+  }
+  .delete-cancel:hover { color: var(--color-text); border-color: var(--color-text); }
+  .delete-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+  .delete-confirm-btn {
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-family: var(--font-ui);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .delete-confirm-btn:hover { background: #dc2626; }
+  .delete-confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
