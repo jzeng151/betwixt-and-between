@@ -56,7 +56,6 @@
 		rows?: number;
 		picklistOptions?: PicklistOption[];
 		swatchOptions?: SwatchOption[];
-		// Multi-entity-picker props.
 		relationshipType?: RelationshipType;
 		targetEntityType?: EntityType;
 		/** Optional explicit list of currently-linked entity ids (for tests
@@ -82,7 +81,6 @@
 		readOnly = false
 	}: Props = $props();
 
-	// Current entity from store.
 	const entity = $derived(($entities as Entity[]).find((e) => e.id === entityId));
 
 	// entity.data is jsonb (object) post-T8a; no parse needed.
@@ -91,8 +89,7 @@
 		typeof data[field] === 'string' ? (data[field] as string) : ''
 	);
 
-	// Local draft state for textarea / single-line. Synced from store value
-	// when the field isn't actively focused.
+	// Draft: synced from store when not focused.
 	let draft = $state('');
 	let focused = $state(false);
 	let saveError = $state<string | null>(null);
@@ -102,9 +99,9 @@
 		if (!focused) draft = currentValue;
 	});
 
-	// Track in-flight drafts so the EntityDetail draft-preview toast
-	// (D16/14A) can recover the user's last-typed text if the entity is
-	// deleted from another window mid-edit.
+	/* Track in-flight drafts so the EntityDetail draft-preview toast (D16/14A)
+	   can recover the user's last-typed text if the entity is deleted
+	   from another window mid-edit. */
 	$effect(() => {
 		if (focused && draft && draft !== currentValue) {
 			setDraft(entityId, field, draft);
@@ -177,8 +174,7 @@
 		}
 	}
 
-	// Multi-entity-picker: derive linked ids from relationships unless
-	// explicitly provided via currentIds.
+	// Derive linked ids from relationships unless currentIds was explicitly provided.
 	const linkedIds = $derived.by(() => {
 		if (Array.isArray(currentIds)) return currentIds;
 		if (!relationshipType) return [] as string[];

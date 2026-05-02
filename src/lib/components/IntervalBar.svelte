@@ -61,7 +61,6 @@
   const showName = $derived(widthClass !== 'tiny');
   const showNote = $derived(widthClass === 'normal' && note != null && note.trim() !== '');
 
-  // Bar geometry — body sits inside the 56px row at y=10, height 36.
   const BODY_Y = 10;
   const BODY_H = 36;
   const PAD_X = $derived(widthClass === 'tiny' ? 0 : widthClass === 'narrow' ? 6 : 10);
@@ -106,7 +105,6 @@
     </clipPath>
   </defs>
 
-  <!-- Body -->
   <rect
     x="0"
     y={BODY_Y}
@@ -158,7 +156,6 @@
     {/if}
   {/each}
 
-  <!-- Name -->
   {#if showName}
     <text
       class="bar-name"
@@ -172,7 +169,6 @@
     </text>
   {/if}
 
-  <!-- Note -->
   {#if showNote}
     <text
       class="bar-note"
@@ -187,7 +183,6 @@
     </text>
   {/if}
 
-  <!-- Focus ring -->
   {#if focused}
     <rect
       class="focus-ring"

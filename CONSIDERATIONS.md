@@ -364,7 +364,7 @@ Visual mockup locked at `~/.gstack/projects/jzeng151-betwixt-and-between/designs
 
 **1. Row label column dropped.**
 
-V1 timeline put each character's name in a 140px column at the start of every row. The palette sidebar already shows the same names. Dropping the row labels saves ~140px of horizontal real estate per row and eliminates the duplication. Bars now stand as first-class objects on the timeline grid, not "things inside a labeled row."
+V1 timeline put each character's name in a 140px column at the start of every row. The palette sidebar already shows the same names. Dropping the row labels saves ~140px of horizontal real estate per row and eliminates the duplication. Bars are now first-class objects on the timeline grid, not "things inside a labeled row."
 
 **2. Bars carry their own identifier — entity name + optional note snippet.**
 

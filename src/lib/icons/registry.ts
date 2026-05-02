@@ -46,23 +46,19 @@ export interface IconEntry {
 
 // Order within each category drives picker layout.
 const CHARACTER_ICONS: IconEntry[] = [
-  // Heroes — protagonist / ally archetypes
   { id: 'lucide:sword',     label: 'Warrior',  category: 'Heroes',    component: Sword },
   { id: 'lucide:shield',    label: 'Defender', category: 'Heroes',    component: Shield },
   { id: 'lucide:crown',     label: 'Royal',    category: 'Heroes',    component: Crown },
   { id: 'lucide:book-open', label: 'Scholar',  category: 'Heroes',    component: BookOpen },
 
-  // Villains — antagonist / threat archetypes
   { id: 'lucide:skull',     label: 'Tyrant',   category: 'Villains',  component: Skull },
   { id: 'lucide:flame',     label: 'Destroyer',category: 'Villains',  component: Flame },
   { id: 'lucide:bone',      label: 'Beast',    category: 'Villains',  component: Bone },
 
-  // Mystics — magic / unseen archetypes
   { id: 'lucide:wand-sparkles', label: 'Mage',  category: 'Mystics', component: WandSparkles },
   { id: 'lucide:moon',          label: 'Seer',  category: 'Mystics', component: Moon },
   { id: 'lucide:eye',           label: 'Spy',   category: 'Mystics', component: Eye },
 
-  // Wanderers — common / supporting archetypes
   { id: 'lucide:compass',    label: 'Explorer', category: 'Wanderers', component: Compass },
   { id: 'lucide:footprints', label: 'Traveler', category: 'Wanderers', component: Footprints },
   { id: 'lucide:bird',       label: 'Messenger',category: 'Wanderers', component: Bird },

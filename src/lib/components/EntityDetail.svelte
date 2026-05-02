@@ -35,11 +35,9 @@
 
 	interface Props {
 		entityId: string | null;
-		/** Called when the user clicks "↗ Move to window" — host opens a
-		 *  popout window. Skipped when this is itself a popout. */
+		/** Called when the user clicks "↗ Move to window". */
 		onMoveToWindow?: () => void;
-		/** Called when the user clicks Close on the side-panel chrome.
-		 *  No-op for popout-window hosts (they have their own close). */
+		/** Called when the user clicks Close on the side-panel chrome. */
 		onClose?: () => void;
 		/** Called when the entity is deleted from the store while this
 		 *  surface is mounted. Host shows the draft-preview toast. The
@@ -77,21 +75,16 @@
 			lastSeenId = entity.id;
 			lastSeenName = entity.name;
 		} else if (lastSeenId === entityId && entityId != null && onEntityVanished) {
-			// Entity we were just rendering is now gone from the store. Likely
-			// confirmed-delete from another window or via the act-header `×`.
+			// Entity vanished from store (deleted elsewhere or via act-header ×).
 			onEntityVanished(lastSeenName);
 			lastSeenId = null;
 		}
 	});
 
-	// View/edit mode (Block 5). Default 'view' so opening an entity is a
-	// read-first flow; click Edit to switch to the editable form. Resets
-	// to `initialMode` whenever entityId changes so freshly-created
-	// entities can land directly in 'edit'.
+	// View/edit mode (Block 5). Default 'view'; resets to initialMode on entityId change.
 	let mode = $state<'view' | 'edit'>('view');
 	$effect(() => {
-		// Reset on entityId or initialMode change. Reading both props here
-		// (vs. destructured-at-mount) keeps the effect reactive in Svelte 5.
+		// Reactive on both props so entityId change resets mode in Svelte 5.
 		void entityId;
 		mode = initialMode;
 	});
@@ -214,7 +207,6 @@
 
 		<div class="entity-detail-footer">
 			{#if mode === 'view'}
-				<!-- Empty footer in view mode — destructive actions live in edit mode. -->
 				<span class="view-footer-hint">Click Edit to modify.</span>
 			{:else if confirmingDelete}
 				<div class="delete-confirm">

@@ -53,20 +53,10 @@ import { entities, intervals } from './db/schema.js';
 import { actRange, sceneRange } from '$lib/timeline-v2-helpers.js';
 
 /**
- * Polymorphic DB handle. Helpers accept either the top-level db or a
- * transaction context — both expose the same query API thanks to Drizzle's
- * PgTransaction extending BasePgDatabase. Locked 2026-04-29 in /plan-eng-review
- * (Issue 11A/17A) — closes the PR 1 tech-debt note that used to live at the
- * top of writeInterval. Migrated from sqlite to postgres-js + pglite in T8a
- * (2026-05-01) — see CONSIDERATIONS.md [2026-05-01].
- *
- * Callers wrap in `db.transaction(async (tx) => { await writeInterval(tx, ...) })`
- * to get atomic write semantics. drizzle-orm/postgres-js supports async tx
- * callbacks natively, so the helper chain stays async and the previously-
- * deferred T1 sync conversion is no longer required.
- *
- * Union covers both production (postgres-js → Neon) and tests (pglite). Their
- * Drizzle adapters expose identical query APIs.
+ * Polymorphic DB handle: accepts the top-level db or a transaction context.
+ * Locked 2026-04-29 in /plan-eng-review (Issue 11A/17A). Union covers
+ * postgres-js (Neon, production) and pglite (tests) — both expose identical
+ * Drizzle query APIs.
  */
 export type Db =
 	| PostgresJsDatabase<typeof schema>
@@ -118,21 +108,13 @@ export interface ComputeIntervalPositionsResult {
 	endPosition: number;
 }
 
-/** Float epsilon for position equality. SQLite REAL is IEEE 754 double; 1e-9 is safe. */
+/** Float epsilon for position equality checks (IEEE 754 double; 1e-9 is safe). */
 export const POSITION_EPSILON = 1e-9;
 
 // =============================================================================
 // FK-derivation: looks up Act/Scene entities and computes positions.
 // =============================================================================
 
-/**
- * Look up an Act entity's index in the global story-time axis.
- *
- *   act_index = rank of this Act among all root-level Acts ordered by `position`.
- *
- * Throws if the entity is not found, not type='Act', or has a non-NULL parent_id
- * (Acts at root level only).
- */
 /**
  * One-shot cache for recompute helpers (D20/16A). Reading O(intervals × acts)
  * via repeated actIndexOf/sceneIndexOf on every row turns Act/Scene mutations
@@ -163,7 +145,6 @@ export async function buildRecomputeCache(db: DB): Promise<RecomputeCache> {
 		.from(entities)
 		.where(eq(entities.type, 'Scene'))
 		.orderBy(entities.position, entities.createdAt);
-	// Group scenes by parent act to compute sceneIndex / sceneCount.
 	const byAct = new Map<string, string[]>();
 	for (const s of allScenes) {
 		if (!s.parentId) continue;
@@ -455,22 +436,8 @@ export async function writeInterval(
 		}
 	}
 
-	// Same-entity overlap rejection (CONSIDERATIONS.md → /plan-eng-review
-	// resolutions item 1.2, locked 2026-04-28). Must run AFTER position
-	// derivation but BEFORE the insert.
-	//
-	// **Atomicity** (revisited 2026-04-29): better-sqlite3's `db.transaction()`
-	// requires a SYNCHRONOUS callback (it throws on a returned Promise). Since
-	// our helper chain is async/await for Drizzle compatibility, we cannot
-	// wrap the body in `tx.transaction(async (tx) => ...)` without first
-	// converting every helper to sync. That sync refactor is tracked as
-	// TODO T1 (Phase 1.6 follow-up). Until T1 ships, the connection-level
-	// serialization in better-sqlite3 keeps each individual `.insert()` /
-	// `.update()` atomic; the read-modify-write window between FK validation
-	// and the final write is open only to concurrent writers in another
-	// process — better-sqlite3's single-connection-per-process model makes
-	// that impossible today. Future-Turso replica lag is the genuine risk
-	// that T1 will close.
+	/* Same-entity overlap rejection (CONSIDERATIONS.md → /plan-eng-review item 1.2,
+	   locked 2026-04-28). Must run after position derivation, before the insert. */
 	await assertNoOverlap(db, input.entityId, derived.startPosition, derived.endPosition);
 
 	const [created] = await db
@@ -672,7 +639,6 @@ export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<n
 
 	let updated = 0;
 	for (const row of affected) {
-		// Branch on scene FK presence per the locked semantic.
 		let newStart = row.startPosition;
 		let newEnd = row.endPosition;
 
@@ -712,8 +678,7 @@ export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<n
  */
 export async function recomputeAllIntervals(db: DB): Promise<number> {
 	const all = await db.select().from(intervals);
-	// Single act + scene index map for the whole pass — every row's FK
-	// resolution is O(1) instead of issuing fresh queries (D20/16A).
+	// Build one-shot FK cache (D20/16A).
 	const cache = await buildRecomputeCache(db);
 	let updated = 0;
 
@@ -730,13 +695,12 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 				cache
 			);
 
-			// Per the locked semantic, fraction-positioned rows (no scene FK on a
-			// side) keep their position frozen across Scene reorders. But for
-			// ACT reorders, every row's act_index can shift, so even
-			// fraction-positioned rows need their integer part updated.
-			//
-			// Strategy: if the row has NO scene FK on a side, preserve the
-			// fractional offset within the act but update the integer part.
+			/* Per the locked semantic, fraction-positioned rows (no scene FK on a side)
+			   keep their position frozen across Scene reorders. For ACT reorders, every
+			   row's act_index can shift, so even fraction-positioned rows need their
+			   integer part updated.
+			   Strategy: if a side has no scene FK, preserve the fractional offset within
+			   the act but update the integer part. */
 			let newStart = derived.startPosition;
 			let newEnd = derived.endPosition;
 
@@ -772,8 +736,6 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 				.where(eq(intervals.id, row.id));
 			updated++;
 		} catch (err) {
-			// Surface but don't swallow; caller decides whether to abort the
-			// containing transaction.
 			throw new Error(
 				`recomputeAllIntervals failed on interval ${row.id}: ${(err as Error).message}`
 			);
@@ -824,7 +786,6 @@ export async function splitInterval(
 		);
 	}
 
-	// Build acts and scenesByActId for FK resolution at the split point.
 	const actRows = await db
 		.select({ id: entities.id })
 		.from(entities)
@@ -866,7 +827,6 @@ export async function splitInterval(
 		.where(eq(intervals.id, intervalId))
 		.returning();
 
-	// Insert new (right half).
 	const [right] = await db
 		.insert(intervals)
 		.values({
@@ -931,7 +891,6 @@ export async function moveSceneToAct(
 
 	const oldActId = scene.parentId;
 
-	// Cascade: bump siblings in target act at position >= newPosition.
 	await db
 		.update(entities)
 		.set({
@@ -945,7 +904,6 @@ export async function moveSceneToAct(
 			)
 		);
 
-	// Update scene's parent_id and position.
 	await db
 		.update(entities)
 		.set({
@@ -954,7 +912,6 @@ export async function moveSceneToAct(
 		})
 		.where(eq(entities.id, sceneId));
 
-	// Update intervals' act FKs for any interval anchored to this scene.
 	await db
 		.update(intervals)
 		.set({
@@ -968,7 +925,6 @@ export async function moveSceneToAct(
 		})
 		.where(eq(intervals.endSceneId, sceneId));
 
-	// Recompute both old and new parent acts.
 	if (oldActId !== newActId) {
 		await recomputeIntervalsForAct(db, oldActId);
 	}

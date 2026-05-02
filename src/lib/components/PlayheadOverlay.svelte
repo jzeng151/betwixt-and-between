@@ -1,13 +1,6 @@
 <!--
-  PlayheadOverlay — vertical line at the current $playhead position over a
-  track of width `trackWidthPx` covering `actCount` acts.
-
-  Renders only when $playhead is non-null. Click anywhere on the track
-  scrubs to that position; click+drag on the line moves it.
-
-  Parent supplies the absolute-positioned container (the `.rows` div in
-  Timeline.svelte). The overlay is meant to sit on top, pointer-events
-  on the line itself.
+  PlayheadOverlay — vertical scrub line at the current $playhead position.
+  Parent must supply an absolute-positioned container (.rows in Timeline.svelte).
 -->
 <script lang="ts">
 	import { playhead } from '$lib/stores/playhead.js';

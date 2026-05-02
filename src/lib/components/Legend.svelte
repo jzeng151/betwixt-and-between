@@ -25,10 +25,7 @@
 		 *  glance which connections actually exist in this view. Optional;
 		 *  if omitted, all types are treated as present. */
 		presentTypes?: Set<RelationshipType>;
-		/** Edge-label visibility on the host canvas; the small `Aa` button
-		 *  in this header flips it. Optional — when omitted the button is
-		 *  hidden so the Legend stays a pure relationship filter for hosts
-		 *  that don't render edge labels. */
+		/** When provided, shows the Aa toggle for hosts that render edge labels. */
 		edgeLabelsVisible?: boolean;
 		onToggleEdgeLabels?: () => void;
 	}
@@ -41,10 +38,9 @@
 		onToggleEdgeLabels
 	}: Props = $props();
 
-	// Per-instance marker id — multiple Legend instances (StoryGraph +
-	// N FocusedGraph windows) coexist in the document; a hardcoded id
-	// would collide and arrowheads could vanish when one instance
-	// closes. `crypto.randomUUID()` runs once per component init.
+	/* Per-instance marker id — multiple Legend instances coexist in the
+	   document; a hardcoded id would collide and arrowheads could vanish
+	   when one instance closes. crypto.randomUUID() runs once per init. */
 	const arrowMarkerId = `legend-arrow-${crypto.randomUUID().slice(0, 8)}`;
 </script>
 

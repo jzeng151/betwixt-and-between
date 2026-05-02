@@ -18,7 +18,7 @@
 		/** Currently selected entity id (Act or Scene). Used to render the
 		 *  amber top-border on the selected act column header. (D2/2B-i) */
 		selectedEntityId?: string | null;
-		/** Per-act flex weights (parallel to `acts`). Drives column widths. */
+		/** Per-act flex weights (parallel to `acts`). */
 		weights?: number[];
 		/** Per-act pixel widths (parallel to `acts`). Used directly as
 		 *  flex-basis on both .acts-header and .scenes-row so the two rows
@@ -30,10 +30,9 @@
 		onSelectAct?: (actId: string) => void;
 		/** Click on a scene cell selects the scene. */
 		onSelectScene?: (sceneId: string) => void;
-		/** Live preview during act-resize drag. Map of actId → new weight. */
+		/** Live weight preview during act-resize drag. */
 		onWeightPreview?: (updates: Record<string, number>) => void;
-		/** Final commit on mouseup. Map of actId → final weight (only the
-		 *  acts whose weight changed). */
+		/** Weight commit on mouseup (only changed acts). */
 		onWeightCommit?: (updates: Record<string, number>) => void;
 	}
 	let {
@@ -92,7 +91,6 @@
 					if (!res.ok) throw new Error(await res.text());
 				});
 			}
-			// Reload entities to reflect new scenes in the store.
 			await entities.load();
 			expandingActId = null;
 			sceneNamesInput = '';
@@ -134,7 +132,6 @@
 		} else {
 			reparentTarget = '__delete__';
 		}
-		// Count intervals that reference this act (either endpoint).
 		deleteCount = $intervalsStore.filter(
 			(iv) => iv.startActId === act.id || iv.endActId === act.id
 		).length;
@@ -331,9 +328,9 @@
 	}
 
 	// ── Act-width resize ─────────────────────────────────────────────────────
-	// Drag handle on the right edge of each act header (except last) shifts
-	// flex weight from the right neighbor to this act (or vice versa).
-	// Total weight is preserved so other acts don't reflow.
+	/* Drag handle on the right edge of each act header (except last) shifts
+	   flex weight from the right neighbor to this act (or vice versa).
+	   Total weight is preserved so other acts don't reflow. */
 	let widthDrag: {
 		idx: number;
 		startX: number;
@@ -352,11 +349,11 @@
 		(e.target as HTMLElement).setPointerCapture(e.pointerId);
 	}
 
-	// Pixel floor that matches the CSS min-width on .act-col-header and
-	// .scenes-act below. Keeping JS + CSS in sync prevents the scenes row
-	// from shrinking past where the act header stops (scenes have lower
-	// natural min-content than the padded act header, so without an
-	// explicit floor on both the rows desync visually).
+	/* Pixel floor that matches the CSS min-width on .act-col-header and
+	   .scenes-act below. Keeping JS + CSS in sync prevents the scenes row
+	   from shrinking past where the act header stops (scenes have lower
+	   natural min-content than the padded act header, so without an
+	   explicit floor on both the rows desync visually). */
 	const MIN_ACT_PX = 60;
 
 	function moveWidthDrag(e: PointerEvent) {
@@ -396,7 +393,6 @@
 	}
 </script>
 
-<!-- Acts header -->
 <div class="acts-header">
 	{#each acts as act, actIdx (act.id)}
 		{@const sceneCount = scenesByActId.get(act.id)?.length ?? 0}
@@ -416,16 +412,14 @@
 			ondrop={(e) => actDrop(e, actIdx)}
 			ondragleave={() => { if (actDropTarget?.idx === actIdx) actDropTarget = null; }}
 			onclick={(e) => {
-				// Don't hijack clicks on inner buttons / inputs / textareas
-				// or the drag grip / width-resize handle.
+				/* Don't hijack clicks on inner buttons, inputs, textareas, the drag grip, or width-resize handle. */
 				const t = e.target as HTMLElement;
 				if (t.closest('button, input, textarea, .act-grip, .insert-overlay, .width-handle')) return;
 				onSelectAct?.(act.id);
 			}}
 		>
 			{#if actIdx < acts.length - 1}
-				<!-- Right-edge handle for resizing this act vs. its neighbor.
-				     Hidden until act-col-header hovered. -->
+				<!-- Right-edge handle for resizing this act vs. its neighbor. Hidden until hover. -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					class="width-handle"
@@ -436,9 +430,7 @@
 					onpointerup={endWidthDrag}
 				></div>
 			{/if}
-			<!-- Insert-between overlay on the act's LEFT boundary. Hover reveals
-			     the + button; clicking expands an inline name input. Absolute
-			     so it doesn't take flex space (D6/5A + alignment fix). -->
+			<!-- Insert-between overlay on the act's LEFT boundary. Absolute so it doesn't take flex space (D6/5A). -->
 			<div class="insert-overlay" class:active={insertingAtIdx === actIdx}>
 				{#if insertingAtIdx === actIdx}
 					<!-- svelte-ignore a11y_autofocus -->
@@ -569,7 +561,6 @@
 </div>
 
 
-<!-- Scenes row -->
 {#if acts.length > 0}
 	<div class="scenes-row">
 		{#each acts as act, sceneActIdx (act.id)}
@@ -626,9 +617,7 @@
 		box-sizing: border-box;
 	}
 
-	/* Insert-between overlay — absolute child of each act-col-header,
-	   positioned over the LEFT boundary so it doesn't take flex space.
-	   Hover reveals the + button; activation expands to an inline name input. */
+	/* Insert-between overlay — absolute child of each act-col-header, positioned over the LEFT boundary so it doesn't take flex space. */
 	.insert-overlay {
 		position: absolute;
 		top: 0;
@@ -829,7 +818,6 @@
 		text-align: center;
 	}
 
-	/* Break-into-scenes button */
 	.break-btn {
 		display: block;
 		width: 100%;
@@ -843,11 +831,7 @@
 		font-family: inherit;
 		text-decoration: underline dotted;
 		transition: color 0.15s;
-		/* display: block + width: 100% makes the button flow with parent
-		   width instead of using its content's intrinsic width. min-width: 0
-		   removes the flex automatic-min-size floor; overflow + ellipsis
-		   handle the visual truncation when the column is narrower than
-		   the label. */
+		/* min-width: 0 removes the flex automatic-min-size floor so the column can shrink; overflow + ellipsis handle visual truncation. */
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -857,7 +841,6 @@
 		color: var(--color-accent, #c8942a);
 	}
 
-	/* Scene name form */
 	.scene-form {
 		display: flex;
 		flex-direction: column;
@@ -887,7 +870,6 @@
 		gap: 6px;
 	}
 
-	/* Delete confirmation */
 	.delete-confirm {
 		display: flex;
 		flex-direction: column;

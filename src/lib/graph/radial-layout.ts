@@ -50,11 +50,8 @@ export function radialLayout(
   const focals = displayIds.filter((id) => focalIds.has(id));
   const peripheral = displayIds.filter((id) => !focalIds.has(id));
 
-  // Outer-ring radius: ~22 canvas units of arc per peripheral node
-  // (gives ~1.4 × NODE_W of arc length, leaving a small visual gap).
-  // Clamp to MIN_RING_R below and a soft upper bound above so very
-  // dense focal sets don't fly offscreen — overlap is acceptable in
-  // the extreme case; user can drag.
+  // ~22 canvas units of arc per node gives ~1.4× NODE_W of spacing.
+  // Clamped to [MIN_RING_R, 280].
   const ringR = Math.max(
     MIN_RING_R,
     Math.min(280, peripheral.length * 22)
@@ -80,7 +77,6 @@ export function radialLayout(
     return positions;
   }
 
-  // Place focals (1 → at center; N>1 → small inner ring).
   if (focals.length === 1) {
     positions[focals[0]] = { x: CENTER_X, y: CENTER_Y, w: NODE_W, h: NODE_H };
   } else {
@@ -95,7 +91,6 @@ export function radialLayout(
     });
   }
 
-  // Place peripheral on the outer ring.
   peripheral.forEach((id, i) => {
     const a = angleSlice(peripheral.length, i, ringOffset);
     positions[id] = {

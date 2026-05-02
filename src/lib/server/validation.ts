@@ -1,9 +1,6 @@
 /**
  * Shared input validation helpers for server route handlers.
- *
- * Keep this file small and pure — no DB imports, no SvelteKit imports. The
- * helpers here run on every request hot-path; they should be cheap to call
- * and trivial to tree-shake.
+ * No DB imports, no SvelteKit imports.
  */
 
 /**

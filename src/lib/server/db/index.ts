@@ -18,9 +18,7 @@ if (!/^postgres(ql)?:\/\//.test(env.DATABASE_URL)) {
 	);
 }
 
-// postgres-js client. Single shared connection pool for the SvelteKit Node
-// process. FKs are enforced by default in pg — no equivalent of sqlite's
-// `PRAGMA foreign_keys = ON` needed.
+// FKs are enforced by default in pg — no PRAGMA foreign_keys = ON needed.
 const client = postgres(env.DATABASE_URL, { prepare: false });
 
 export const db = drizzle(client, { schema });

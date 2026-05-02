@@ -184,7 +184,6 @@
   }
   .action-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
 
-  /* Two-panel layout */
   .wiki-layout {
     display: flex;
     height: 100%;
@@ -192,7 +191,6 @@
     overflow: hidden;
   }
 
-  /* Sidebar */
   .wiki-sidebar {
     width: 130px;
     flex-shrink: 0;
@@ -274,7 +272,6 @@
     text-align: center;
   }
 
-  /* Editor */
   .wiki-editor {
     flex: 1;
     display: flex;
@@ -337,7 +334,6 @@
     outline: none;
   }
 
-  /* Markdown preview */
   .markdown-preview {
     flex: 1;
     min-height: 160px;

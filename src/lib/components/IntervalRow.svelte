@@ -65,7 +65,7 @@
 
 	let rowEl: HTMLDivElement | null = $state(null);
 
-	// Local resize state for live preview — null when not resizing.
+	// Live resize preview state; null when not resizing.
 	type ResizeState = {
 		intervalId: string;
 		edge: 'start' | 'end';
@@ -74,10 +74,9 @@
 	};
 	let resizing: ResizeState | null = $state(null);
 
-	// Local translate state — drag the body of a bar to shift it
-	// temporally without changing its duration (T5). Distinguished from a
-	// click by the `moved` flag (4 px threshold) so a small click still
-	// fires onSelect.
+	/* Local translate state — drag the bar body to shift it temporally
+	   without changing duration (T5). The `moved` flag (4px threshold)
+	   distinguishes drag from click so onSelect still fires for taps. */
 	type TranslateState = {
 		intervalId: string;
 		startX: number;
@@ -90,7 +89,6 @@
 	let translating: TranslateState | null = $state(null);
 	const TRANSLATE_THRESHOLD = 4;
 
-	// Scene count lookup for smartSnap — reads current acts/scenesByActId.
 	function sceneCountFor(actIdx: number): number {
 		const act = acts[actIdx];
 		if (!act) return 0;
@@ -149,9 +147,8 @@
 			if (edge === 'start') {
 				const fks = positionToStartFKs(previewStart, acts, scenesByActId);
 				if (!fks) { resizing = null; return; }
-				// fks.startPosition is canonicalized — when the resolver picks an
-				// integer-aligned boundary, the position snaps to it. Otherwise
-				// it's the raw fractional position, carrying the precision.
+				/* fks.startPosition is canonicalized — integer-aligned boundaries snap
+				   to exact positions; otherwise carries the raw fractional precision. */
 				patch = fks;
 			} else {
 				const fks = positionToEndFKs(previewEnd, acts, scenesByActId);
@@ -174,8 +171,8 @@
 
 	// ── Bar translation (T5) ──────────────────────────────────────────────
 	function startTranslate(e: PointerEvent, iv: Interval) {
-		// Left button only; bail if scrubbing (scrub mode is exclusive) or
-		// the click started on a resize / hairline-split target.
+		/* Left button only; bail if scrubbing (scrub mode is exclusive) or
+		   the click started on a resize or hairline-split target. */
 		if (e.button !== 0) return;
 		if ($playhead != null) return;
 		const target = e.target as HTMLElement;
@@ -226,15 +223,14 @@
 		if (!t) return;
 		onLockRelease();
 		if (!t.moved) {
-			// Treat as click — selection. Clear state immediately.
+			// Not a drag — treat as click for selection.
 			translating = null;
 			onSelect?.(entity.id, t.intervalId);
 			return;
 		}
-		// Hold the `translating` preview through the in-flight PATCH so
-		// the bar doesn't snap back to its old position while we wait —
-		// only clear AFTER the store has the new value (or rolled back on
-		// error). Mirrors the edge-resize pattern in startResize/onUp.
+		/* Hold the `translating` preview through the in-flight PATCH so the bar
+		   doesn't snap back while we wait — clear AFTER the store updates (or
+		   rolls back on error). Mirrors the edge-resize pattern in startResize. */
 		const startFKs = positionToStartFKs(t.previewStart, acts, scenesByActId);
 		const endFKs = positionToEndFKs(t.previewEnd, acts, scenesByActId);
 		if (!startFKs || !endFKs) {
@@ -257,7 +253,7 @@
 		}
 	}
 
-	// Re-render when track width changes (pxForFractionalSpan closes over it).
+	// Force re-render when trackWidthPx changes (pxForRange closes over it).
 	$effect(() => {
 		void trackWidthPx;
 	});

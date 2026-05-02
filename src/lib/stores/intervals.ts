@@ -2,13 +2,8 @@ import { writable } from 'svelte/store';
 
 /**
  * Client-side store for the intervals API.
- *
- * Mirrors the pattern in stores/entities.ts and stores/relationships.ts:
- *   - writable list, optimistic CRUD helpers, rollback-via-load on failure.
- *
- * The shape matches what /api/intervals/+server.ts returns (Drizzle row).
- * Position values are REAL numbers on the global story-time axis;
- * see CONSIDERATIONS.md → "Premise 4" for the math.
+ * Shape matches /api/intervals rows. Position values are REAL numbers on the
+ * global story-time axis; see CONSIDERATIONS.md → "Premise 4" for the math.
  */
 
 export type Interval = {

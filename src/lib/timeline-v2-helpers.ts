@@ -6,11 +6,6 @@
  * the width-breakpoint contract.
  */
 
-/**
- * Returns the position-axis range [start, end) for an Act with given index.
- *
- *   actIndex (i) → [i, i + 1)
- */
 export function actRange(actIndex: number): { start: number; end: number } {
 	return { start: actIndex, end: actIndex + 1 };
 }
@@ -86,8 +81,7 @@ export type WidthClass = 'tiny' | 'narrow' | 'normal';
  *   width < 40px → 'tiny' (no text; tooltip-only identification)
  *
  * Boundaries are exclusive at the upper end for `tiny`/`narrow` to keep the
- * thresholds unambiguous. A bar exactly 40px wide is `narrow`; exactly 100px
- * wide is `normal`.
+ * thresholds unambiguous.
  */
 export function widthClassForBar(widthPx: number): WidthClass {
 	if (widthPx < 40) return 'tiny';
@@ -146,7 +140,6 @@ export function presenceLabel(
 				return `Act ${startActIdx}, scenes ${startSceneIdx}–${endSceneIdx - 1} of ${m}`;
 			}
 		}
-		// Pure fraction
 		if (startFrac === 0 && endFrac === 1) return `Act ${startActIdx}`;
 		if (startFrac === 0) return `first ${Math.round(endFrac * 100)}% of Act ${startActIdx}`;
 		if (endFrac === 1) return `last ${Math.round((1 - startFrac) * 100)}% of Act ${startActIdx}`;
@@ -215,11 +208,7 @@ export function colorFor(entity: EntityForHelpers, idx: number): string {
 	return CHARACTER_COLORS[idx % CHARACTER_COLORS.length];
 }
 
-/**
- * Truncate to ~30 chars on whole-line basis: returns the first non-empty
- * line, with an ellipsis if it exceeds 30 chars. Returns null when the
- * source value is missing or contains no non-empty line.
- */
+/** Returns the first non-empty line, truncated with ellipsis at 30 chars. Null if missing. */
 function firstLineSnippet(value: unknown): string | null {
 	if (typeof value !== 'string' || !value) return null;
 	const firstLine = value

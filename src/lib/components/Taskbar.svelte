@@ -25,11 +25,10 @@
     windows: typeof $windowStore;
   };
 
-  // ── Hover popover state ────────────────────────────────────────────────────
-  // Hovering a dock group surfaces a list of all windows in that group; click
-  // any item to raise that window. ~200ms close timer lets the cursor travel
-  // from icon → popover via the visual gap without the popover dismissing
-  // mid-bridge. Clicking the icon ALSO toggles (touch / keyboard fallback).
+  /* Hovering a dock group surfaces a list of all windows in that group; click
+     any item to raise that window. ~200ms close timer lets the cursor travel
+     from icon → popover via the visual gap without premature dismissal.
+     Clicking the icon also toggles (touch / keyboard fallback). */
   const HOVER_CLOSE_MS = 200;
   let hoveredAppId: AppId | null = $state(null);
   let closeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -58,9 +57,7 @@
     hoveredAppId = null;
   }
 
-  // Cleanup on unmount: cancel any pending close-delay timer so it
-  // doesn't fire after the component is gone and try to mutate
-  // hoveredAppId on a dead instance.
+  // Cancel pending close-delay timer on unmount.
   $effect(() => () => {
     if (closeTimer) {
       clearTimeout(closeTimer);
@@ -68,26 +65,18 @@
     }
   });
 
-  // Character cycle index — same indexing used by Timeline + graph apps so
-  // a character's swatch in the popover matches the color it gets on the
-  // Timeline bar / Story Graph node.
+  // Character index — must match Timeline/graph indexing so swatches align.
   const characterIndexById = $derived.by(() => {
     const m = new Map<string, number>();
     $entities.filter((e) => e.type === 'Character').forEach((e, i) => m.set(e.id, i));
     return m;
   });
 
-  // FocusedGraph windows are surfaced UNDER the Story Graph dock group
-  // (no separate dock entry) since they're a derivative graph view, not
-  // a top-level app the user would launch from scratch. The popover
-  // distinguishes them per-row via a different icon glyph + subtitle.
   const APP_PARENT: Partial<Record<AppId, AppId>> = {
     'focused-graph': 'story-graph'
   };
 
-  // Per-window-type icon override for the popover. Single-focal Story
-  // Graph windows render with the dock glyph (🕸); FG windows get 🎯
-  // so users can tell them apart inside the shared group.
+  // FocusedGraph windows get a different icon (🎯) to distinguish them in the shared group.
   const PICKER_ICON: Partial<Record<AppId, string>> = {
     'focused-graph': '🎯'
   };
@@ -135,9 +124,7 @@
       map.set(app.id, { appId: app.id, label: app.label, icon: app.icon, windows: [] });
     }
     for (const win of $windowStore) {
-      // Resolve a window to the dock group it should appear in. Most
-      // windows go to their own appId; child appIds (e.g. focused-graph)
-      // get hoisted to their parent (story-graph).
+      // Child appIds (e.g. focused-graph) are hoisted to their parent dock group.
       const targetAppId = (APP_PARENT[win.appId as AppId] ?? win.appId) as AppId;
       const group = map.get(targetAppId);
       if (group) group.windows.push(win);
@@ -225,8 +212,7 @@
   </div>
 </div>
 
-<!-- Close popover on outside click (touch / keyboard fallback). Hover
-     events handle the mouse case via scheduleClose. -->
+<!-- Close popover on outside click (touch/keyboard fallback). -->
 <svelte:window onclick={(e) => {
   if (!(e.target as HTMLElement).closest('.dock-item-wrap')) dismissNow();
 }} />
@@ -371,9 +357,7 @@
     flex-shrink: 0;
   }
 
-  /* Per-entity color swatch — Character entries get the same color as
-     their Timeline bar / graph node via nodeColorFor. Other entity
-     types may render swatches too; harmless if absent. */
+  /* Per-entity color swatch — same color as the Timeline bar / graph node. */
   .picker-swatch {
     width: 4px;
     height: 22px;

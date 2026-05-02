@@ -161,7 +161,7 @@ EntityLink chip pattern:
 - [x] `src/lib/components/apps/StoryGraph.svelte` — tldraw canvas inside a Window
 - [x] On window open: fetch entities + canvas_positions from API, build tldraw snapshot, call `editor.store.loadSnapshot(snapshot)`
 - [x] On node move (tldraw interaction): write new x/y to `/api/canvas-positions`
-- [x] On edge create (tldraw interaction): animate edge into place, then immediately show an inline relationship mini-form overlaid on the edge midpoint — type dropdown (allies/rivals/mentor/family/caused_by/located_at/appears_in) + optional label text field + Save/Cancel. On Save: write relationship to `/api/relationships` with type + label, update edge label in tldraw. On Cancel: delete the edge. This is the core 'aha moment' interaction — the connection becomes semantically meaningful in the same gesture it's drawn.
+- [x] On edge create (tldraw interaction): animate edge into place, then immediately show an inline relationship mini-form overlaid on the edge midpoint — type dropdown (allies/rivals/mentor/family/caused_by/located_at/appears_in) + optional label text field + Save/Cancel. On Save: write relationship to `/api/relationships` with type + label, update edge label in tldraw. On Cancel: delete the edge. This is the core 'aha moment' — you draw the edge and label it in one gesture.
 - [x] Subscribe to `$entities` store: on change, call `editor.updateShapes([...])` for modified entities
 - [x] On entity delete: remove shape from tldraw on next render (handled by store subscription)
 - [x] Pin tldraw version in `package.json` — do not upgrade without re-testing `loadSnapshot()`
@@ -207,7 +207,7 @@ Every window is a wiki page. Connections are primary, fields are secondary.
 
 ---
 
-## Interaction States (all windows)
+## Interaction states (all windows)
 
 | Window | Empty state | Loading | Error / save fail |
 |--------|-------------|---------|-------------------|
@@ -220,7 +220,7 @@ Every window is a wiki page. Connections are primary, fields are secondary.
 
 ---
 
-## Testing Checklist
+## Testing checklist
 
 - [x] Vitest: all data layer tests pass (`npm run test`)
 - [x] Playwright: window manager E2E tests pass (`npx playwright test`)
@@ -265,7 +265,7 @@ Schema is the load-bearing piece. Ship first, derisk everything else.
 
 ### 11. PR 2 — V2 Timeline UI
 
-**Note:** PR 2 details are deliberately exploratory — final scope locked at its own /plan-eng-review pass before implementation begins.
+**Note:** PR 2 scope was exploratory. Lock it at its own /plan-eng-review before starting.
 
 - [x] V2 timeline component at `src/lib/components/apps/Timeline.svelte` (V2 became THE timeline on 2026-04-28; original file was `TimelineV2.svelte` until V1 retirement). SVG rendering, intervals as `<rect>` elements positioned via `start_position` / `end_position`. Visual reference: `~/.gstack/projects/jzeng151-betwixt-and-between/designs/v2-timeline-20260428/v2-timeline-mockup-v2.html`.
 - [x] **No row-label column.** Bars carry entity name (Fraunces 13px) on first line, optional notes snippet (Inter 10px, opacity 0.75) on second line. Width breakpoints: `>=100px` shows name+note, `40-100px` shows name only, `<40px` is a colored sliver with tooltip-only identification.
@@ -445,7 +445,7 @@ Z4 (`<GraphCanvas>` extraction) is a single-author critical path: it blocks all 
 - Hard-filter view modes (scrubber changes traversal set). Soft-filter is the locked semantic.
 - Migrating existing StoryGraph from `canvas_positions` to `window_canvas_state` — StoryGraph keeps using the seed table; FG windows use per-window state.
 
-**Phase 1B graph QoL polish (post-Lane-C):** Three follow-up commits on `feat/graph-qol` adding ergonomic improvements that fell out of Lane C usage. None of these were on the locked Lane C list — all opportunistic polish.
+**Phase 1B graph QoL polish (post-Lane-C):** Three follow-up commits on `feat/graph-qol` — none on the locked Lane C list, all opportunistic.
 
 - [x] **Pin badge + reseed / refit on `<GraphCanvas>` + window-close cleanup + isolation tests** — **DONE** in commit `cb9ce8f`.
   - Added `nodeBadge` snippet to `<GraphCanvas>` (always-visible chrome, separate from hover-only `nodeOverlay`). FocusedGraph renders 📌 for pinned nodes via this snippet.
@@ -467,7 +467,7 @@ Z4 (`<GraphCanvas>` extraction) is a single-author critical path: it blocks all 
 
 Surfaced 2026-05-01 while seeding *The Prestige* — see
 `scripts/seed/prestige.ts`. The current data model is **static**: a
-relationship row exists or it doesn't. Real stories have identities
+relationship row exists or it doesn't. Stories have identities
 and allegiances that **change across story-time**.
 
 Examples in *The Prestige* alone:

@@ -37,8 +37,7 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	if (name !== undefined) updates.name = name.trim();
 	if (data !== undefined) updates.data = data;
 
-	// parentId change (Scene cross-act move). Defer to moveSceneToAct primitive
-	// for the full cascade (interval FK fix-up + recompute both parents).
+	// parentId change for Scenes: delegate to moveSceneToAct.
 	if (parentId !== undefined && parentId !== entity.parentId) {
 		if (entity.type !== 'Scene') {
 			error(400, 'parentId can only be changed for Scene entities');
@@ -69,9 +68,7 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 		const oldPos = entity.position;
 		didPositionCascade = true;
 
-		// Build the sibling-set predicate per the generalized cascade primitive
-		// (CONSIDERATIONS D18). For Acts: parent_id IS NULL AND type='Act'.
-		// For Scenes: parent_id = entity.parentId AND type='Scene'.
+		// Sibling-set predicate for the generalized cascade primitive (D18).
 		const siblingFilter =
 			entity.type === 'Act'
 				? and(eq(entities.type, 'Act'), isNull(entities.parentId))
@@ -80,7 +77,6 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 		if (oldPos === null) {
 			// Position was null — treat as appending at the end. Just set it.
 		} else if (position < oldPos) {
-			// Bump siblings in [position, oldPos) by +1.
 			await db
 				.update(entities)
 				.set({
@@ -95,7 +91,6 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 					)
 				);
 		} else {
-			// position > oldPos — bump siblings in (oldPos, position] by -1.
 			await db
 				.update(entities)
 				.set({
@@ -150,7 +145,6 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 	const moveScenesTo = url.searchParams.get('moveScenesTo');
 
 	if (moveScenesTo && entity.type === 'Act') {
-		// Validate target act.
 		if (moveScenesTo === params.id) {
 			error(400, 'moveScenesTo target must differ from the act being deleted');
 		}
@@ -162,7 +156,7 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 			error(400, `moveScenesTo target must be an Act (got type='${target.type}')`);
 		}
 
-		// Find scenes to reparent + count target's existing scenes for offset.
+		// Count target's existing scenes to compute append offset.
 		const sourceScenes = await db
 			.select()
 			.from(entities)
@@ -184,7 +178,6 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 					position: offset + i,
 				})
 				.where(eq(entities.id, scene.id));
-			// Update intervals anchored to this scene.
 			await db
 				.update(intervalsTable)
 				.set({
@@ -243,15 +236,13 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 						await db.delete(intervalsTable).where(eq(intervalsTable.id, iv.id));
 						continue;
 					}
-					// Use the ordered-list index, not the stored `position`
-					// column. The interval-position system is built on
-					// `actIndexOf`'s rank-in-query-order; if `entities.position`
-					// ever drifts from a dense 0-based layout (null position
-					// row, manual DB edit, cascade bug) the column-based math
-					// would silently rescope to the wrong story-time slot.
-					// prevAct's index in the pre-delete ordering = deletedIdx-1,
-					// which equals its post-delete index too (deleting a later
-					// row doesn't shift earlier rows). end-of-prevAct = idx + 1.
+					/* Use the ordered-list index, not the stored `position` column — the
+					   interval-position system is built on actIndexOf's rank-in-query-order.
+					   If `entities.position` drifts (null row, manual DB edit, cascade bug),
+					   column-based math would silently rescope to the wrong story-time slot.
+					   prevAct's index in the pre-delete ordering = deletedIdx-1, which equals
+					   its post-delete index too (deleting a later row doesn't shift earlier
+					   rows). end-of-prevAct = idx + 1. */
 					const newEndPos = deletedIdx;
 					await db
 						.update(intervalsTable)
@@ -269,10 +260,9 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 						await db.delete(intervalsTable).where(eq(intervalsTable.id, iv.id));
 						continue;
 					}
-					// nextAct's pre-delete index = deletedIdx+1; post-delete it
-					// shifts down to deletedIdx because the deleted act is gone.
-					// Using the post-delete index here means recomputeAllIntervals
-					// (which runs after) finds no drift to correct.
+					/* nextAct's pre-delete index = deletedIdx+1; post-delete it shifts down
+					   to deletedIdx because the deleted act is removed. Using the post-delete
+					   index means recomputeAllIntervals finds no drift to correct. */
 					const newStartPos = deletedIdx;
 					await db
 						.update(intervalsTable)
@@ -287,9 +277,7 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 		}
 	}
 
-	// Now delete the entity. FK CASCADE handles remaining scenes (and any
-	// intervals still anchored to this act, which by now should only be
-	// the unsalvageable fully-contained ones we already deleted above).
+	// FK CASCADE removes remaining scenes and any fully-contained intervals already deleted above.
 	await db.delete(entities).where(eq(entities.id, params.id));
 
 	// Recompute survivors. Act delete shifts every act's index; recompute all.

@@ -2,13 +2,10 @@
   import { clampToViewport } from './context-menu-clamp.js';
 
   interface Item {
-    /** Display label */
     label: string;
-    /** Optional icon (emoji or single character — keep it simple). */
+    /** Icon glyph — keep to a single emoji or char. */
     icon?: string;
-    /** Optional disabled state (renders dimmed, not clickable). */
     disabled?: boolean;
-    /** Click handler. */
     onSelect: () => void;
   }
 
@@ -25,16 +22,16 @@
   let menuEl: HTMLDivElement | undefined = $state();
   let buttonEls: (HTMLButtonElement | null)[] = $state([]);
   let pos = $state({ x: 0, y: 0 });
-  // Index of the focused item. Initialized to first non-disabled.
+  // Focused item index; starts at first non-disabled item.
   let focusIndex = $state(0);
 
   function selectItem(i: number) {
     const item = items[i];
     if (!item || item.disabled) return;
     item.onSelect();
-    // Close after select. The component owns dismiss for Escape and
-    // click-outside; selection should follow the same shape so callsites
-    // don't have to wrap every onSelect with an explicit close.
+    /* Close after select. The component owns dismiss for Escape and click-outside;
+       selection should follow the same shape so callsites don't have to wrap
+       every onSelect with an explicit close. */
     onClose();
   }
 
@@ -50,8 +47,7 @@
       .filter((i) => i >= 0);
     if (enabledIdxs.length === 0) return;
     const cur = enabledIdxs.indexOf(focusIndex);
-    // If focusIndex isn't on an enabled item (shouldn't happen but be safe),
-    // pick the first/last based on direction.
+    // focusIndex isn't on an enabled item — fall back to first/last by direction.
     const nextOrdinal =
       cur === -1
         ? delta === 1
@@ -84,9 +80,8 @@
     }
   }
 
-  // Mount: clamp to viewport (one pass), auto-focus first enabled item.
-  // Reads of x/y/items here are intentionally one-shot (mount-only) — the
-  // component is destroyed and remounted at a fresh anchor for each open.
+  // Mount: clamp to viewport, auto-focus first enabled item.
+  // x/y/items reads are one-shot (component remounts on each open).
   $effect(() => {
     if (!menuEl) return;
     const firstEnabled = items.findIndex((it) => !it.disabled);
@@ -105,7 +100,6 @@
     }
   });
 
-  // Click-outside: pointerdown anywhere outside the menu closes it.
   $effect(() => {
     function onPointerDown(e: PointerEvent) {
       if (!menuEl) return;
