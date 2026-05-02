@@ -58,6 +58,16 @@
     hoveredAppId = null;
   }
 
+  // Cleanup on unmount: cancel any pending close-delay timer so it
+  // doesn't fire after the component is gone and try to mutate
+  // hoveredAppId on a dead instance.
+  $effect(() => () => {
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+    }
+  });
+
   // Character cycle index — same indexing used by Timeline + graph apps so
   // a character's swatch in the popover matches the color it gets on the
   // Timeline bar / Story Graph node.

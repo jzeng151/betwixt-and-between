@@ -40,6 +40,12 @@
 		edgeLabelsVisible,
 		onToggleEdgeLabels
 	}: Props = $props();
+
+	// Per-instance marker id — multiple Legend instances (StoryGraph +
+	// N FocusedGraph windows) coexist in the document; a hardcoded id
+	// would collide and arrowheads could vanish when one instance
+	// closes. `crypto.randomUUID()` runs once per component init.
+	const arrowMarkerId = `legend-arrow-${crypto.randomUUID().slice(0, 8)}`;
 </script>
 
 <div class="legend">
@@ -63,7 +69,7 @@
 	<svg class="legend-defs" aria-hidden="true">
 		<defs>
 			<marker
-				id="legend-arrow"
+				id={arrowMarkerId}
 				viewBox="0 0 10 10"
 				refX="10"
 				refY="5"
@@ -108,7 +114,7 @@
 							stroke={REL_COLOR[type]}
 							stroke-width={style.width}
 							stroke-dasharray={style.dasharray ?? undefined}
-							marker-end={style.arrow ? 'url(#legend-arrow)' : undefined}
+							marker-end={style.arrow ? `url(#${arrowMarkerId})` : undefined}
 						/>
 					</svg>
 					<span class="label">{type.replace(/_/g, ' ')}</span>

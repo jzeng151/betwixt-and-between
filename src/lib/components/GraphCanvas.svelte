@@ -120,6 +120,14 @@
 	const NODE_W = 120;
 	const NODE_H = 32;
 
+	// Per-instance marker id. Multiple GraphCanvas instances coexist
+	// in the same document (StoryGraph + N FocusedGraph windows); a
+	// hardcoded `id="gc-arrow"` would duplicate, and on any instance
+	// closing its <defs>, surviving instances' `marker-end="url(#…)"`
+	// references would dangle and arrowheads would silently disappear.
+	// `crypto.randomUUID()` runs once per component init.
+	const arrowMarkerId = `gc-arrow-${crypto.randomUUID().slice(0, 8)}`;
+
 	// ── Viewport transform ─────────────────────────────────────────────────────
 	let panX = $state(0);
 	let panY = $state(0);
@@ -509,7 +517,7 @@
 		     black, which is wrong but still visible. -->
 		<defs>
 			<marker
-				id="gc-arrow"
+				id={arrowMarkerId}
 				viewBox="0 0 10 10"
 				refX="10"
 				refY="5"
@@ -533,7 +541,7 @@
 				stroke-width={edge.width ?? 1.5}
 				stroke-opacity={edge.dimmed ? '0.1' : '0.45'}
 				stroke-dasharray={edge.dasharray ?? undefined}
-				marker-end={edge.arrow ? 'url(#gc-arrow)' : undefined}
+				marker-end={edge.arrow ? `url(#${arrowMarkerId})` : undefined}
 			/>
 			{#if showEdgeLabels}
 				<text

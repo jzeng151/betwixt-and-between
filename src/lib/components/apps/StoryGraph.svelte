@@ -117,8 +117,8 @@
   const visibleRelationships = $derived(
     $relationships.filter(
       (r) =>
-        displayEntities.some((e) => e.id === r.fromId) &&
-        displayEntities.some((e) => e.id === r.toId) &&
+        displayEntityIdSet.has(r.fromId) &&
+        displayEntityIdSet.has(r.toId) &&
         enabledRelTypes.has(r.type)
     )
   );
@@ -465,6 +465,15 @@
      FG settings flow but the panel hangs from the toggle instead of
      anchoring at the bottom corner. -->
 <svelte:window
+  onkeydown={(e) => {
+    // Escape dismisses the delete-confirm modal. Bound at the window
+    // level because the backdrop div has role="presentation" and no
+    // tabindex, so it never receives keyboard focus and an
+    // element-level handler would never fire.
+    if (e.key === 'Escape' && deleteConfirm && !deleting) {
+      deleteConfirm = null;
+    }
+  }}
   onclick={(e) => {
     if (!settingsOpen) return;
     const t = e.target as HTMLElement | null;
@@ -587,12 +596,13 @@
 {/if}
 
 {#if deleteConfirm}
-  <!-- Backdrop click cancels (matches OS modal convention). -->
+  <!-- Backdrop click cancels (matches OS modal convention). Escape is
+       handled by the svelte:window onkeydown above, NOT here — this
+       div is role="presentation" and never receives keyboard focus. -->
   <div
     class="delete-backdrop"
     role="presentation"
     onclick={() => (deleteConfirm = null)}
-    onkeydown={(e) => e.key === 'Escape' && (deleteConfirm = null)}
   ></div>
   <div class="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
     <h2 id="delete-title" class="delete-title">
