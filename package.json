@@ -16,7 +16,8 @@
     "db:studio": "drizzle-kit studio",
     "test:unit": "vitest",
     "test": "npm run test:unit -- --run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "seed": "tsx scripts/seed/cli.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.5",
