@@ -19,14 +19,11 @@ npm run db:migrate
 npm run dev
 ```
 
-`DATABASE_URL` shapes:
+`DATABASE_URL` shape:
 
 ```
 # Neon dev branch (recommended)
 DATABASE_URL=postgres://user:pass@ep-xxxxx.region.aws.neon.tech/dbname
-
-# Local docker (offline fallback — see docker-compose.yml)
-DATABASE_URL=postgres://dev:dev@localhost:5432/betwixt
 ```
 
 ## Database
@@ -43,13 +40,6 @@ baseline migration `drizzle/0000_strong_martin_li.sql` includes a
 hand-added `bump_updated_at()` BEFORE UPDATE trigger that keeps
 `updated_at` fresh on every UPDATE — application code does not set this
 column.
-
-### Local Postgres via docker-compose
-
-```sh
-docker compose up -d
-DATABASE_URL=postgres://dev:dev@localhost:5432/betwixt npm run db:migrate
-```
 
 ## Building
 
@@ -89,7 +79,10 @@ between schema and migration is caught at test time, not at deploy time.
 
 E2E tests build and serve a production preview (`npm run build && npm
 run preview`) on port 4173, then run serially (`workers: 1`) because all
-tests share a single Postgres database.
+tests share a single Postgres database. The DB itself is an in-process
+PGlite served over a localhost socket — `tests/e2e/global-setup.ts`
+boots it, applies migrations, and stamps `DATABASE_URL` for the spawned
+preview, so e2e never touches Neon (or anything you have in `.env`).
 
 ```sh
 # Install Playwright browsers (once)
