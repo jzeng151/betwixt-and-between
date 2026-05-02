@@ -23,6 +23,18 @@
   --color-rel-other:  #94a3b8;
   --color-rel-pov:    #a78bfa;
 
+  /* Per-type node defaults for the graph apps. Separate namespace
+     from --color-rel-* so edge vs node coloring stays decoupled.
+     Picked so each type reads as a distinct hue family AND none
+     collides with any --color-rel-* edge color (which would make a
+     node and a nearby edge look like the same thing). */
+  --color-type-character: #c8942a;  /* amber — protagonist accent */
+  --color-type-location:  #15803d;  /* forest green — earth/place */
+  --color-type-event:     #d946ef;  /* magenta — pivotal beat */
+  --color-type-act:       #8b5cf6;  /* deep violet — structural */
+  --color-type-scene:     #38bdf8;  /* sky blue — moment */
+  --color-type-note:      #a8a29e;  /* warm grey — annotation */
+
   /* Typography */
   --font-ui:      'Inter', 'Segoe UI', sans-serif;
   --font-display: 'Fraunces', Georgia, serif;

@@ -20,6 +20,18 @@ export interface TraversalOptions {
 	 */
 	includeStructural?: boolean;
 	structuralIds?: Set<string>;
+	/**
+	 * If true, every edge is walked in both directions regardless of its
+	 * type's `DIRECTION` policy. Useful for "everything connected to me
+	 * somehow" views (e.g. FocusedGraph's `reachable` mode), where a
+	 * focal Character should reach a Scene that is `pov_of` THEM — not
+	 * just nodes the Character points AT.
+	 *
+	 * Default false: directed edges walk only in their declared
+	 * direction, which is the correct semantic for causal views like
+	 * "downstream of cause X" or "transitive mentees of Y."
+	 */
+	undirected?: boolean;
 }
 
 /**
@@ -52,10 +64,11 @@ function buildAdjacency(
 		}
 		s.add(to);
 	};
+	const undirected = opts?.undirected === true;
 	for (const e of edges) {
 		if (!isWalkable(e, opts)) continue;
 		add(e.fromId, e.toId);
-		if (DIRECTION[e.type] === 'symmetric') {
+		if (undirected || DIRECTION[e.type] === 'symmetric') {
 			add(e.toId, e.fromId);
 		}
 	}
