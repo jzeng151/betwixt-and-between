@@ -54,6 +54,12 @@ export default async function globalSetup() {
 	// authenticate, but postgres-js insists the URL has user/pass.
 	const [, port] = server.getServerConn().split(':');
 	const dbUrl = `postgres://test:test@127.0.0.1:${port}/postgres`;
+	// Stamping DATABASE_URL on the parent process only propagates to the
+	// preview because Playwright re-spawns the webServer command on every
+	// test run. If `reuseExistingServer` in playwright.config.ts is ever
+	// flipped to `!process.env.CI` (or any truthy value), a stale preview
+	// on port 4173 would silently keep its prior DATABASE_URL and bypass
+	// this stamp entirely. The two settings are coupled — change with care.
 	process.env.DATABASE_URL = dbUrl;
 	process.env.BETWIXT_E2E_PGLITE = '1';
 

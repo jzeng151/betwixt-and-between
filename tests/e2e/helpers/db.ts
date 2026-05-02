@@ -12,6 +12,14 @@ import type { APIRequestContext } from '@playwright/test';
  * The check below is a sentinel for the case where someone runs this
  * helper outside Playwright (e.g., importing it from a node script).
  * If the setup hook never ran, refuse to wipe anything.
+ *
+ * Caveat: the sentinel only protects code that imports from THIS file.
+ * The 17 legacy specs that still define their own inline `clearAll`
+ * are not protected — they rely on global-setup pinning DATABASE_URL.
+ * If a future spec is written that bypasses Playwright's globalSetup
+ * (e.g. an ad-hoc node script copying the inline pattern), it could
+ * still wipe whatever DB the env points at. Migrating those specs to
+ * this shared helper is tracked as a follow-up.
  */
 export async function clearAll(request: APIRequestContext): Promise<void> {
 	if (process.env.BETWIXT_E2E_PGLITE !== '1') {

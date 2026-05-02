@@ -71,7 +71,7 @@ All tests live under `tests/`, split into three buckets by use pattern. Two Vite
 ```
 tests/
   unit/           Pure logic, no DB, no I/O. Mocked fetch where needed.
-  integration/    DB-backed (in-memory SQLite via tests/helpers/test-db.ts)
+  integration/    DB-backed (in-process PGlite via tests/helpers/test-db.ts)
                   or handler-level via vi.mock of $lib/server/db/index.js.
   e2e/            Playwright against the running preview server.
   helpers/        Shared fixtures: test-db.ts (createTestDb, seedActs, SCHEMA_DDL).
@@ -84,7 +84,7 @@ tests/
 | All Vitest | `npm test` | Both projects above |
 | E2E | `npm run test:e2e` | Playwright tests against `npm run preview` |
 
-E2E tests build and serve a production preview (`npm run build && npm run preview`) on port 4173. Tests run serially (`workers: 1`) because they share a single SQLite database and each `beforeEach` clears state.
+E2E tests build and serve a production preview (`npm run build && npm run preview`) on port 4173, with `tests/e2e/global-setup.ts` booting an in-process PGlite over a localhost socket and stamping `DATABASE_URL` before the preview spawns. Tests run serially (`workers: 1`) because they share a single PGlite instance and each `beforeEach` clears state.
 
 **Coverage as of Phase 1A PR 1**: 215 Vitest tests (83 unit + 132 integration) across 17 files, plus 53 Playwright tests across 4 e2e specs. Critical regression cases for the appears_in hijack, polymorphic FK type-safety, migration idempotency, malformed-row policy, and Delete-Act cascade are all in `tests/integration/`.
 
