@@ -1,4 +1,5 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { clearAll } from './helpers/db';
 
 // Regression for the delete-confirmation modal Escape-dismiss path.
 // Greptile flagged that an earlier version attached `onkeydown` to the
@@ -8,11 +9,6 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
 // someone moving it back onto the backdrop.
 
 test.use({ storageState: { cookies: [], origins: [] } });
-
-async function clearAll(request: APIRequestContext) {
-	const ents: Array<{ id: string }> = await (await request.get('/api/entities')).json();
-	for (const e of ents) await request.delete(`/api/entities/${e.id}`);
-}
 
 async function openStoryGraph(page: Page) {
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
