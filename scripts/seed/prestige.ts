@@ -481,9 +481,9 @@ export const PRESTIGE: SeedStory = {
       summary: 'First meeting at the lab. Tesla treats the commission as physics; Angier treats it as desperation.'
     },
     {
-      name: 'The cat test',
+      name: 'Witnessing the apparatus',
       parentAct: "Act 4: Rupert Angier's Journal",
-      summary: 'A cat is sent through the apparatus. There are now two cats — but one is wrong. Angier orders construction completed anyway.'
+      summary: "Angier's account of the cat test: he sees what the device does, and what it costs, and orders construction completed anyway."
     },
     {
       name: 'Edison closes in',
@@ -678,7 +678,7 @@ export const PRESTIGE: SeedStory = {
     { from: 'After Julia', to: 'Rupert Angier', type: 'pov_of' },
     { from: 'The decision to go to America', to: 'Rupert Angier', type: 'pov_of' },
     { from: 'Tesla in Colorado', to: 'Rupert Angier', type: 'pov_of' },
-    { from: 'The cat test', to: 'Rupert Angier', type: 'pov_of' },
+    { from: 'Witnessing the apparatus', to: 'Rupert Angier', type: 'pov_of' },
     { from: 'Edison closes in', to: 'Rupert Angier', type: 'pov_of' },
     { from: "'In a Flash' on stage", to: 'Rupert Angier', type: 'pov_of' },
     { from: 'The vault accumulates', to: 'Rupert Angier', type: 'pov_of' },

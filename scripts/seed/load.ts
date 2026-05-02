@@ -70,6 +70,36 @@ export async function loadStory(story: SeedStory, opts: LoadOptions): Promise<Lo
   const log = (msg: string) => verbose && console.log(`  ${msg}`);
   const seedKey = story.metadata.seedKey;
 
+  // Names must be unique across ALL entity types within a single seed
+  // file because relationships/intervals reference entities by name.
+  // `resolveEntityId` walks the type maps in priority order, so a
+  // cross-type collision would silently bind to the first match. Catch
+  // it here with a clear error instead of producing wrong-but-valid
+  // foreign-key wiring.
+  {
+    const seen = new Map<string, string>(); // name → "Type"
+    const declare = (name: string, kind: string) => {
+      const prior = seen.get(name);
+      if (prior && prior !== kind) {
+        throw new Error(
+          `Seed name collision: '${name}' is declared as both ${prior} and ${kind}. ` +
+            `Names must be unique across all entity types within a seed file.`
+        );
+      }
+      if (prior) {
+        throw new Error(
+          `Seed name collision: '${name}' is declared twice as ${kind}.`
+        );
+      }
+      seen.set(name, kind);
+    };
+    for (const a of story.acts) declare(a.name, 'Act');
+    for (const l of story.locations) declare(l.name, 'Location');
+    for (const c of story.characters) declare(c.name, 'Character');
+    for (const e of story.events) declare(e.name, 'Event');
+    for (const s of story.scenes ?? []) declare(s.name, 'Scene');
+  }
+
   // ── Phase 1: clean prior seed rows ─────────────────────────────────
   log(`scanning for prior _seed='${seedKey}' rows…`);
   const allEntities = await jfetch<EntityRow[]>(`${baseUrl}/api/entities`);
@@ -78,11 +108,18 @@ export async function loadStory(story: SeedStory, opts: LoadOptions): Promise<Lo
     return d._seed === seedKey;
   });
   log(`deleting ${stale.length} stale rows (cascades to relationships, intervals)…`);
-  // DELETE serially. The schema cascades on entity FKs, so we don't need
-  // to delete relationships/intervals separately. Order doesn't matter
-  // among entities since cascade handles cross-references.
+  // DELETE serially. parent_id between Acts and child Scenes has
+  // ON DELETE CASCADE, so deleting an Act first cascade-removes its
+  // Scenes; the loop's subsequent DELETE on those Scenes returns 404.
+  // We treat 404 as success — the row is already gone, which is what
+  // the loop is trying to achieve. Anything else still aborts.
   for (const e of stale) {
-    await jfetch(`${baseUrl}/api/entities/${e.id}`, { method: 'DELETE' });
+    try {
+      await jfetch(`${baseUrl}/api/entities/${e.id}`, { method: 'DELETE' });
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (!msg.includes('404')) throw err;
+    }
   }
   const deleted = stale.length;
 
@@ -197,6 +234,15 @@ export async function loadStory(story: SeedStory, opts: LoadOptions): Promise<Lo
     );
   }
 
+  // Relationship and interval rows are NOT tagged with `_seed` because
+  // those tables have no `data` column (schema.ts: relationships has
+  // fromId/toId/label/type only; intervals has entity_id/act_ids/
+  // positions only). Cleanup relies on the cascade behavior already
+  // declared in the schema: every FK from these tables to `entities`
+  // is `onDelete: cascade`, so deleting any seeded entity removes its
+  // relationships and intervals automatically. This is the correct
+  // cleanup strategy for these tables — adding tagging would require
+  // a migration and gain nothing.
   log(`creating ${story.relationships.length} relationships…`);
   for (const r of story.relationships) {
     const fromId = resolveEntityId(r.from);
