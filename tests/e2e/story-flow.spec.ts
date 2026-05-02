@@ -21,13 +21,20 @@ test.describe('Story flow', () => {
 		const listWin = page.locator('.window[aria-label="Characters"]');
 		await expect(listWin).toBeVisible();
 
-		const nameInput = listWin.locator('input[placeholder="Character name…"]');
-		await expect(nameInput).toBeVisible();
-		await nameInput.fill('Elara Voss');
-		await nameInput.press('Enter');
+		// "+ New" creates "New Character" and opens a per-character detail window in edit mode
+		await listWin.locator('button.create-btn').click();
 
-		// Creation opens a separate detail window titled with the character's name
+		// Window title starts as "New Character"; rename it via the forceEditing InlineEdit
+		const newCharWin = page.locator('.window[aria-label="New Character"]');
+		await expect(newCharWin).toBeVisible({ timeout: 5000 });
+		await page.locator('.inline-edit-input').fill('Elara Voss');
+		await page.locator('.inline-edit-input').press('Enter');
+
+		// After rename the window aria-label updates to the new name
 		const detailWin = page.locator('.window[aria-label="Elara Voss"]');
+		await expect(detailWin).toBeVisible({ timeout: 5000 });
+		// Toggle to view mode so entity-name renders as text (edit mode shows an input)
+		await detailWin.locator('.mode-toggle').click();
 		await expect(detailWin.locator('.entity-name')).toContainText('Elara Voss', { timeout: 5000 });
 
 		expect(Date.now() - start).toBeLessThan(30_000);
@@ -38,18 +45,19 @@ test.describe('Story flow', () => {
 		const listWin = page.locator('.window[aria-label="Characters"]');
 		await expect(listWin).toBeVisible();
 
-		await listWin.locator('input[placeholder="Character name…"]').fill('Original Name');
-		await listWin.locator('input[placeholder="Character name…"]').press('Enter');
-
-		// Scope to the char-detail div to stay stable across title changes
+		// "+ New" creates "New Character" and opens the detail window in edit mode
+		await listWin.locator('button.create-btn').click();
 		const charDetail = page.locator('.char-detail');
+
+		// Window opens in edit mode with forceEditing InlineEdit visible; set initial name
+		await page.locator('.inline-edit-input').fill('Original Name');
+		await page.locator('.inline-edit-input').press('Enter');
+
+		// Toggle to view mode so the name renders as static text, then assert
+		await charDetail.locator('.mode-toggle').click();
 		await expect(charDetail.locator('.entity-name')).toContainText('Original Name', { timeout: 5000 });
 
-		// Block 5: char-detail opens in view mode → toggle to edit. With
-		// forceEditing on InlineEdit, the title input renders directly so
-		// no pencil click is needed; just type and press Enter, then
-		// toggle back to view mode so the title renders as visible text
-		// for the assertion.
+		// Back to edit mode, rename, toggle back to view, assert update
 		await charDetail.locator('.mode-toggle').click();
 		await page.locator('.inline-edit-input').fill('Renamed Character');
 		await page.locator('.inline-edit-input').press('Enter');

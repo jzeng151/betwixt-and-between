@@ -56,12 +56,14 @@ test.describe('Timeline palette', () => {
 
 		await chip.dragTo(win.locator('.rows'), { targetPosition: { x: dropX - rowsBox.x, y: 20 } });
 
-		// New interval should exist for ellie spanning Act 0 [0, 1)
-		const intervals = await (await request.get('/api/intervals')).json();
-		const ellieInts = intervals.filter((i: any) => i.entityId === ellie.id);
-		expect(ellieInts).toHaveLength(1);
-		expect(ellieInts[0].startActId).toBe(a0.id);
-		expect(ellieInts[0].endActId).toBe(a0.id);
+		// handleDrop is async — wait for the interval to appear server-side
+		await expect(async () => {
+			const intervals = await (await request.get('/api/intervals')).json();
+			const ellieInts = intervals.filter((i: any) => i.entityId === ellie.id);
+			expect(ellieInts).toHaveLength(1);
+			expect(ellieInts[0].startActId).toBe(a0.id);
+			expect(ellieInts[0].endActId).toBe(a0.id);
+		}).toPass({ timeout: 3000 });
 
 		// Bar should render in the timeline
 		await expect(win.locator('.bar-wrapper')).toHaveCount(1);
@@ -89,8 +91,10 @@ test.describe('Timeline palette', () => {
 		const chip = win.locator(`.palette-item[data-entity-id="${battle.id}"]`);
 		await chip.dragTo(win.locator('.rows'), { targetPosition: { x: 100, y: 80 } });
 
-		const intervals = await (await request.get('/api/intervals')).json();
-		expect(intervals.find((i: any) => i.entityId === battle.id)).toBeTruthy();
+		await expect(async () => {
+			const intervals = await (await request.get('/api/intervals')).json();
+			expect(intervals.find((i: any) => i.entityId === battle.id)).toBeTruthy();
+		}).toPass({ timeout: 3000 });
 
 		// Two rows now (ellie + battle)
 		await expect(win.locator('.bar-wrapper')).toHaveCount(2);

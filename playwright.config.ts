@@ -1,10 +1,13 @@
 import { defineConfig, devices } from '@playwright/test';
+import { PGLITE_URL } from './tests/e2e/pglite-config.js';
 
-// e2e specs run against a transient in-process PGlite (Postgres-WASM)
-// served over the wire protocol on a free localhost port. globalSetup
-// boots it, applies migrations, and stamps process.env.DATABASE_URL
-// before the preview server spawns — so the preview can ONLY ever see
-// the test DB, regardless of whatever DATABASE_URL is in .env.
+// webServer.env is injected into the preview subprocess at spawn time —
+// before the subprocess calls server.init() / loadEnv(). If DATABASE_URL
+// were set only in globalSetup (which runs AFTER the webServer plugin),
+// the preview would have already initialised its db singleton with the
+// Neon URL from .env and would silently wipe your real database on every
+// test run.
+
 export default defineConfig({
 	globalSetup: './tests/e2e/global-setup.ts',
 	webServer: {
@@ -17,7 +20,13 @@ export default defineConfig({
 		// so reusing a stale preview from a previous run would point at
 		// a dead socket.
 		reuseExistingServer: false,
-		timeout: 60_000
+		timeout: 60_000,
+		// These land in the subprocess's process.env before vite preview
+		// calls loadEnv(), so they override the Neon URL in .env.
+		env: {
+			DATABASE_URL: PGLITE_URL,
+			BETWIXT_E2E_PGLITE: '1'
+		}
 	},
 	testDir: 'tests/e2e',
 	// Tests share a single PGlite instance, so they must run serially

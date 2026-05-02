@@ -581,6 +581,7 @@
 				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 				<div
 					class="node"
+					data-entity-id={node.id}
 					class:node-active={hoveredNodeId === node.id || draggingNode?.id === node.id}
 					class:node-out-of-scope={dimmedNodes.has(node.id)}
 					style="left:{p.x}px; top:{p.y}px; --nc:{nc}"

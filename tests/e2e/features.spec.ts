@@ -121,14 +121,11 @@ test.describe('Characters', () => {
 
 		const detailWin = page.locator('.window[aria-label="Elara"]');
 		await expect(detailWin).toBeVisible();
-		// Block 5: char detail opens in view mode — hfield-pencil is hidden.
-		// Toggle to edit before interacting with the inline pencils.
+		// Existing characters open in view mode — toggle to edit to access hfield-select
 		await detailWin.locator('.mode-toggle').click();
-
-		// Hover to reveal the pencil, force-click since opacity:0 until hover
-		await detailWin.locator('.header-meta').hover();
-		await detailWin.locator('button[title="Edit role"]').click({ force: true });
 		await detailWin.locator('.hfield-select').selectOption('Antagonist');
+		// Toggle back to view mode to see the role badge
+		await detailWin.locator('.mode-toggle').click();
 
 		await expect(detailWin.locator('.role-badge')).toHaveText('Antagonist', { timeout: 3000 });
 	});
@@ -144,12 +141,12 @@ test.describe('Characters', () => {
 
 		const detailWin = page.locator('.window[aria-label="Elara"]');
 		await expect(detailWin).toBeVisible();
+		// Existing characters open in view mode — toggle to edit to access hfield-input
 		await detailWin.locator('.mode-toggle').click();
-
-		await detailWin.locator('.header-meta').hover();
-		await detailWin.locator('button[title="Edit affiliation"]').click({ force: true });
 		await detailWin.locator('.hfield-input').fill('The Conclave');
-		await detailWin.locator('.hfield-input').press('Enter');
+		await detailWin.locator('.hfield-input').blur();
+		// Toggle back to view mode to see the affiliation text
+		await detailWin.locator('.mode-toggle').click();
 
 		await expect(detailWin.locator('.hfield-text')).toHaveText('The Conclave', { timeout: 3000 });
 	});
@@ -165,15 +162,19 @@ test.describe('Characters', () => {
 
 		const detailWin = page.locator('.window[aria-label="Elara"]');
 		await expect(detailWin).toBeVisible();
+		// Existing characters open in view mode — toggle to edit to see full affordances
+		await detailWin.locator('.mode-toggle').click();
 
-		// Four field-header sections: Timeline color, Show on timeline, Motivation,
-		// Notes. Role lives in the header, not here.
-		const headers = detailWin.locator('.details .field-header');
-		await expect(headers).toHaveCount(4);
-		await expect(headers.nth(0)).toContainText('Timeline color');
-		await expect(headers.nth(1)).toContainText('Show on timeline');
-		await expect(headers.nth(2)).toContainText('Motivation');
-		await expect(headers.nth(3)).toContainText('Notes');
+		// Four label sections: Timeline color, Show on timeline, Motivation, Notes.
+		// The first two use div.field-header > span.field-label; the latter two use
+		// label.field-label directly. All share the .field-label class.
+		// Role lives in the window header, not here.
+		const labels = detailWin.locator('.details .field-label');
+		await expect(labels).toHaveCount(4);
+		await expect(labels.nth(0)).toContainText('Timeline color');
+		await expect(labels.nth(1)).toContainText('Show on timeline');
+		await expect(labels.nth(2)).toContainText('Motivation');
+		await expect(labels.nth(3)).toContainText('Notes');
 
 		// New feature affordances actually render (color swatches + radio group)
 		await expect(detailWin.locator('.details .swatch')).toHaveCount(8);

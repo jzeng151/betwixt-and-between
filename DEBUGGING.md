@@ -5,6 +5,71 @@ Investigation reports for non-obvious bugs. Each entry follows the
 
 ---
 
+## 2026-05-02 — E2E tests wiping the Neon production database
+
+**Symptom:** After running `npm run test:e2e`, the Neon dev database was
+cleared and contained only a single character named "Elara". This happened
+repeatedly — every e2e run silently destroyed real data.
+
+**Root cause:** Playwright's execution order is **webServer plugin first,
+then globalSetup**. The preview subprocess is spawned (and calls
+`server.init()` / Vite's `loadEnv()`) *before* `global-setup.ts` runs.
+`loadEnv()` reads `DATABASE_URL` from `.env` (the Neon URL) and passes it
+to SvelteKit's `set_private_env()`, locking in the Neon connection for the
+lifetime of that preview process.
+
+The `process.env.DATABASE_URL = pgliteUrl` stamp in `global-setup.ts` runs
+too late — it lands in the Playwright orchestrator process, not in the
+already-running preview subprocess. The documented assumption in
+`global-setup.ts` ("stamps process.env.DATABASE_URL before the preview
+server spawns") was wrong about the execution order.
+
+With the preview pointing at Neon, every test's `clearEntities()` in
+`beforeEach` wiped real data. The last test that ran before the suite failed
+left one entity ("Elara") behind, explaining the consistent residue.
+
+Confirmed via `node_modules/playwright/lib/runner/tasks.js`:
+```
+tasks.push(
+    ...createPluginSetupTasks(config),   // webServer runs here
+    ...config.globalSetups.map(...)      // globalSetup runs after
+);
+```
+
+And `node_modules/playwright/lib/plugins/webServerPlugin.js`:
+```js
+env: {
+    ...DEFAULT_ENVIRONMENT_VARIABLES,
+    ...process.env,           // process.env at spawn time — before globalSetup
+    ...this._options.env      // webServer.env from playwright.config.ts
+}
+```
+
+**Fix.** Three files:
+
+- `tests/e2e/pglite-config.ts` (new) — single source of truth for
+  `PGLITE_PORT = 54329` and `PGLITE_URL`. Fixed port is required because
+  `playwright.config.ts` is evaluated before globalSetup runs and cannot
+  read a dynamically-assigned port.
+- `playwright.config.ts` — adds `webServer.env: { DATABASE_URL: PGLITE_URL,
+  BETWIXT_E2E_PGLITE: '1' }`. These are injected into the subprocess's
+  `process.env` at spawn time, before `loadEnv()` runs. Vite's `loadEnv`
+  iterates `process.env` after env files, so the fixed URL overrides `.env`.
+- `tests/e2e/global-setup.ts` — binds PGlite to `PGLITE_PORT` (54329) instead
+  of `port: 0`. Keeps `process.env` stamps for Playwright's worker env-diff
+  propagation mechanism (workers inherit keys that changed during globalSetup).
+
+**Why the original approach seemed sound.** The `webServer.env` option and
+Playwright's plugin-before-globalSetup ordering are not prominently documented.
+The `vite preview` → `loadEnv()` → `set_private_env()` chain that makes
+`$env/dynamic/private` immune to `process.env` mutations is a SvelteKit
+implementation detail. Both facts had to be true simultaneously for the
+stamp to fail silently rather than loudly.
+
+**Status:** DONE.
+
+---
+
 ## 2026-05-02 — StoryGraph / FocusedGraph cascade overlap after Layout-by-type
 
 **Symptom:** running "Layout by type" against the seeded *Prestige*
