@@ -16,7 +16,8 @@
     "db:studio": "drizzle-kit studio",
     "test:unit": "vitest",
     "test": "npm run test:unit -- --run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "seed": "tsx scripts/seed/cli.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.5",
@@ -33,6 +34,7 @@
     "jsdom": "^29.1.0",
     "svelte": "^5.55.2",
     "svelte-check": "^4.4.6",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vite": "^8.0.7",
     "vitest": "^4.1.3"

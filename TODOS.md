@@ -463,6 +463,29 @@ Z4 (`<GraphCanvas>` extraction) is a single-author critical path: it blocks all 
 
 ---
 
+## Future feature: temporal identity & relationships
+
+Surfaced 2026-05-01 while seeding *The Prestige* — see
+`scripts/seed/prestige.ts`. The current data model is **static**: a
+relationship row exists or it doesn't. Real stories have identities
+and allegiances that **change across story-time**.
+
+Examples in *The Prestige* alone:
+- Olivia Svenson is `allied_with` Angier in Act 2 → switches sides → `allied_with` Borden by Act 3. Both are true at different points; today the seed picks one arbitrarily and the graph misrepresents the trajectory.
+- Rupert Angier is privately `Lord Caldlow` from birth, but the noble identity is **secret** until the Caldlow vault scene in Act 5. A reader who hasn't reached Act 5 should not see the alias.
+- Borden's twin pact: Frederick Borden is `allied_with` Alfred Borden privately throughout, but the alliance is invisible to all other characters. The graph today has no concept of "visible to whom."
+
+Pending design (no PR):
+
+- **Temporal validity on relationships:** add optional `start_act_id` / `end_act_id` (or `start_position` / `end_position` once intervals' positioning system is generalized) to relationship rows. NULL = "always true."
+- **Spotlight integration:** when the timeline scrubber sits at story-time `t`, the StoryGraph hides relationships whose `[start_act, end_act]` interval doesn't contain `t`. This subsumes the current static-graph view (every rel is "always true") as the special case.
+- **Reveal gating:** distinct from temporal validity — a relationship can be true the whole novel but only revealed at a specific story moment. Probably a separate `revealed_at_event_id` field. Out of scope for v1.
+- **Identity aliases:** tracked as a new entity-pair table (`entity_aliases (primary_id, alias_id, revealed_at_event_id)`)? Or as a relationship type (`aka`)? Open question.
+
+Big feature. Re-visit when the seeded *Prestige* dataset surfaces concrete UX pain that the static graph can't represent.
+
+---
+
 ## Generic icon registry — extension
 
 `src/lib/icons/registry.ts` ships **character-only** archetype icons in
