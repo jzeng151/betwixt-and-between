@@ -70,6 +70,31 @@ button {
   outline-offset: 2px;
 }
 
+/* Scrollbars — Firefox + modern Chromium (121+) standard. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+/* Scrollbars — WebKit (Safari + older Chromium) pseudo-element fallback. */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* EntityLink chip — outer span owns the visual frame, inner buttons
    (the name + optional × delete) sit inside. The × lives flush right
    inside the chip border instead of as a sibling element. */
