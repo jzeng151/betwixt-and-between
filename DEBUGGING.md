@@ -5,6 +5,66 @@ Investigation reports for non-obvious bugs. Each entry follows the
 
 ---
 
+## 2026-05-02 — FocusedGraph view-mode select dismissed immediately on click
+
+**Symptom:** Clicking the "View" `<select>` dropdown in the Focused Graph
+header caused the dropdown to flash open for a split second and then
+immediately dismiss, making it impossible to change the view mode. The user
+observed it was reliably triggered by adding an entity to the focal set and
+then clicking the select before the UI settled.
+
+**Root cause:** The `svelte:window onclick` handler that implements
+"click outside to close" for the settings panel (`settingsOpen`):
+
+```svelte
+<svelte:window
+  onclick={(e) => {
+    if (!settingsOpen) return;
+    const t = e.target as HTMLElement | null;
+    if (t?.closest('.fg-settings') || t?.closest('.fg-settings-btn')) return;
+    settingsOpen = false;
+  }}
+/>
+```
+
+The exclusion list only covered `.fg-settings` (the panel itself) and
+`.fg-settings-btn` (the gear button). The `.fg-mode` `<label>` containing
+the `<select>` was not excluded. When the user clicked the `<select>` while
+`settingsOpen` was `true`, the window handler fired, set `settingsOpen =
+false`, and Svelte synchronously removed the `.fg-settings` panel from the
+DOM. That DOM mutation — occurring while the browser was processing the
+same click that opened the native `<select>` dropdown — caused the browser
+to dismiss the dropdown.
+
+**Why "add entity then click select" triggered it.** The `+` add-to-focal
+button uses `e.stopPropagation()`, so clicking it does not close the settings
+panel. If the settings panel was already open when the user clicked `+`, it
+remained open. The very next click on the `<select>` then hit the handler.
+The user perceived adding an entity as the trigger; the actual condition was
+the settings panel being open at that moment.
+
+**Fix.** Add `.fg-mode` to the exclusion list:
+
+```svelte
+if (t?.closest('.fg-settings') || t?.closest('.fg-settings-btn') || t?.closest('.fg-mode')) return;
+```
+
+One line in `src/lib/components/apps/FocusedGraph.svelte`. Clicking the
+view-mode select no longer triggers `settingsOpen = false`; the settings
+panel remains open until the user clicks inside the canvas or the gear
+button. Full E2E suite: 117 passed, 2 intentional skips, no regressions.
+
+**Structural lesson.** Native `<select>` dropdowns are sensitive to DOM
+mutations that occur between mousedown and the dropdown opening. Any
+`svelte:window onclick` handler that mutates the DOM must exclude every
+interactive element in the component — not just the panel being toggled and
+its own trigger button. When adding new header controls, audit the exclusion
+list.
+
+**Status:** DONE.
+
+---
+
 ## 2026-05-02 — E2E tests wiping the Neon production database
 
 **Symptom:** After running `npm run test:e2e`, the Neon dev database was

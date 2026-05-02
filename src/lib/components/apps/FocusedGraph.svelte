@@ -518,7 +518,7 @@
   onclick={(e) => {
     if (!settingsOpen) return;
     const t = e.target as HTMLElement | null;
-    if (t?.closest('.fg-settings') || t?.closest('.fg-settings-btn')) return;
+    if (t?.closest('.fg-settings') || t?.closest('.fg-settings-btn') || t?.closest('.fg-mode')) return;
     settingsOpen = false;
   }}
 />
