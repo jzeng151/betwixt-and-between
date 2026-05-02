@@ -81,8 +81,10 @@ test.describe('V2 Scene rename (InlineEdit on scene name in EntityDetail)', () =
 		await nameInput.press('Enter');
 
 		// Server still has original name
-		const ents = await (await request.get('/api/entities')).json();
-		const scene = ents.find((e: any) => e.id === sc.id);
-		expect(scene?.name).toBe('Keep This Name');
+		await expect(async () => {
+			const ents = await (await request.get('/api/entities')).json();
+			const scene = ents.find((e: any) => e.id === sc.id);
+			expect(scene?.name).toBe('Keep This Name');
+		}).toPass({ timeout: 3000 });
 	});
 });

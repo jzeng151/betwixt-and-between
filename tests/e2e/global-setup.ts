@@ -44,7 +44,18 @@ export default async function globalSetup() {
 	}
 
 	const server = new PGLiteSocketServer({ db, host: '127.0.0.1', port: PGLITE_PORT });
-	await server.start();
+	try {
+		await server.start();
+	} catch (err: unknown) {
+		if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+			throw new Error(
+				`PGlite socket port ${PGLITE_PORT} is already in use.\n` +
+				`A previous test run may not have cleaned up. Free it with:\n` +
+				`  lsof -ti :${PGLITE_PORT} | xargs kill`
+			);
+		}
+		throw err;
+	}
 	// Stamp process.env so Playwright propagates these to worker processes
 	// via its env-diff mechanism (workers get any keys that changed between
 	// _startingEnv and process.env after globalSetup). The preview subprocess
