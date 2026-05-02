@@ -7,15 +7,6 @@ async function clearAll(request: APIRequestContext) {
 	for (const e of ents) await request.delete(`/api/entities/${e.id}`);
 }
 
-async function openTimeline(page: Page) {
-	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-	await page.goto('/');
-	await page.click('button[title="Timeline"]');
-	const win = page.locator('.window[aria-label="Timeline"]');
-	await expect(win).toBeVisible();
-	return win;
-}
-
 async function openStoryGraph(page: Page) {
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 	await page.goto('/');
