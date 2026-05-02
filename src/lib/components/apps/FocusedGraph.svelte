@@ -533,7 +533,7 @@
       >
         <option value="their_worlds">Immediate connections</option>
         <option value="shared">Intersections</option>
-        <option value="reachable">Reachable</option>
+        <option value="reachable">All</option>
       </select>
     </label>
     <div class="fg-chips">
