@@ -625,39 +625,50 @@
   // Plain Set (not $state) so writes don't trigger reactive re-runs.
   let snappedAliasIds = new Set<string>();
   $effect(() => {
+    // Capture reactive deps synchronously (registers tracking, snapshots values).
     const t = $playhead;
-    const updates: Record<string, NodePosition> = {};
-    for (const alias of $entityAliases) {
-      const id = alias.aliasEntityId;
-      const isRevealed =
-        t !== null &&
-        !outOfScope.has(id) &&
-        (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
-      if (isRevealed && !snappedAliasIds.has(id)) {
-        // Alias entering scope: full position swap.
-        // Alias → primary's position; primary → alias's position (becomes ghost trail).
-        const primaryPos = canvas?.getPosition(alias.primaryEntityId) ?? initialPositions[alias.primaryEntityId];
-        const aliasPos = canvas?.getPosition(id);
-        if (primaryPos) updates[id] = { x: primaryPos.x, y: primaryPos.y, w: primaryPos.w, h: primaryPos.h };
-        if (aliasPos) updates[alias.primaryEntityId] = { x: aliasPos.x, y: aliasPos.y, w: aliasPos.w, h: aliasPos.h };
-      } else if (!isRevealed && snappedAliasIds.has(id)) {
-        // Alias exiting scope: full position swap back.
-        // Primary → alias's current position; alias → primary's current position.
-        const primaryPos = canvas?.getPosition(alias.primaryEntityId);
-        const aliasPos = canvas?.getPosition(id);
-        if (aliasPos) updates[alias.primaryEntityId] = { x: aliasPos.x, y: aliasPos.y, w: aliasPos.w, h: aliasPos.h };
-        if (primaryPos) updates[id] = { x: primaryPos.x, y: primaryPos.y, w: primaryPos.w, h: primaryPos.h };
-        snappedAliasIds.delete(id);
-      } else if (!isRevealed) {
-        snappedAliasIds.delete(id);
+    const aliases = $entityAliases;
+    const scope = outOfScope;
+    // Defer position reads/writes to a microtask so:
+    // (a) GraphCanvas's auto-placement effect has run first — getPosition()
+    //     returns valid coords for nodes that just entered `nodes`.
+    // (b) Reading and writing nodePos (via getPosition/reseed) happens outside
+    //     the reactive tracking scope — no read-write cycle, no
+    //     effect_update_depth_exceeded error.
+    queueMicrotask(() => {
+      const updates: Record<string, NodePosition> = {};
+      const newlySnapped = new Set<string>();
+      for (const alias of aliases) {
+        const id = alias.aliasEntityId;
+        const isRevealed =
+          t !== null &&
+          !scope.has(id) &&
+          (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
+        if (isRevealed && !snappedAliasIds.has(id)) {
+          // Alias entering scope: full position swap.
+          // Alias → primary's position; primary → alias's position (becomes ghost trail).
+          const primaryPos = canvas?.getPosition(alias.primaryEntityId) ?? initialPositions[alias.primaryEntityId];
+          const aliasPos = canvas?.getPosition(id);
+          if (primaryPos) updates[id] = { x: primaryPos.x, y: primaryPos.y, w: primaryPos.w, h: primaryPos.h };
+          if (aliasPos) updates[alias.primaryEntityId] = { x: aliasPos.x, y: aliasPos.y, w: aliasPos.w, h: aliasPos.h };
+          newlySnapped.add(id);
+        } else if (!isRevealed && snappedAliasIds.has(id)) {
+          // Alias exiting scope: full position swap back.
+          // Primary → alias's current position; alias → primary's current position.
+          const primaryPos = canvas?.getPosition(alias.primaryEntityId);
+          const aliasPos = canvas?.getPosition(id);
+          if (aliasPos) updates[alias.primaryEntityId] = { x: aliasPos.x, y: aliasPos.y, w: aliasPos.w, h: aliasPos.h };
+          if (primaryPos) updates[id] = { x: primaryPos.x, y: primaryPos.y, w: primaryPos.w, h: primaryPos.h };
+          snappedAliasIds.delete(id);
+        } else if (!isRevealed) {
+          snappedAliasIds.delete(id);
+        }
       }
-    }
-    if (Object.keys(updates).length > 0) {
-      canvas?.reseed(updates, { fit: false });
-      for (const alias of $entityAliases) {
-        if (updates[alias.aliasEntityId]) snappedAliasIds.add(alias.aliasEntityId);
+      if (Object.keys(updates).length > 0) {
+        canvas?.reseed(updates, { fit: false });
+        for (const id of newlySnapped) snappedAliasIds.add(id);
       }
-    }
+    });
   });
 
   // ── Right-click context menu ───────────────────────────────────────────────
