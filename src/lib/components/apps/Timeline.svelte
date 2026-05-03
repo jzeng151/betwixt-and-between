@@ -638,41 +638,43 @@
 			ondrop={handleDrop}
 			onclick={clickTrackToScrub}
 		>
-			{#if !loaded}
-				<div class="row-empty">Loading…</div>
-			{:else if rowEntities.length === 0 && acts.length > 0}
-				<div class="row-empty drop-hint">
-					{#if N > 0}
-						Drag a character or event from the palette onto the timeline to begin.
-					{:else}
-						No presences yet. Add acts to begin your story.
-					{/if}
-				</div>
-			{/if}
+			<div class="rows-inner">
+				{#if !loaded}
+					<div class="row-empty">Loading…</div>
+				{:else if rowEntities.length === 0 && acts.length > 0}
+					<div class="row-empty drop-hint">
+						{#if N > 0}
+							Drag a character or event from the palette onto the timeline to begin.
+						{:else}
+							No presences yet. Add acts to begin your story.
+						{/if}
+					</div>
+				{/if}
 
-			{#each rowEntities as entity, idx (entity.id)}
-				<IntervalRow
-					{entity}
-					intervals={intervalsByEntityId.get(entity.id) ?? []}
-					{idx}
-					{trackWidthPx}
-					actCount={N}
-					{acts}
-					{scenesByActId}
-					{colorFor}
-					{dataNoteSnippet}
-					{tooltipFor}
-					{posToFrac}
-					{fracToPos}
-					{pxForRange}
-					onLockAcquire={() => { interactionLock = true; }}
-					onLockRelease={() => { interactionLock = false; }}
-					onError={showError}
-					onSelect={(id) => selectFromTimeline(id)}
-				/>
-			{/each}
+				{#each rowEntities as entity, idx (entity.id)}
+					<IntervalRow
+						{entity}
+						intervals={intervalsByEntityId.get(entity.id) ?? []}
+						{idx}
+						{trackWidthPx}
+						actCount={N}
+						{acts}
+						{scenesByActId}
+						{colorFor}
+						{dataNoteSnippet}
+						{tooltipFor}
+						{posToFrac}
+						{fracToPos}
+						{pxForRange}
+						onLockAcquire={() => { interactionLock = true; }}
+						onLockRelease={() => { interactionLock = false; }}
+						onError={showError}
+						onSelect={(id) => selectFromTimeline(id)}
+					/>
+				{/each}
 
-			<PlayheadOverlay {trackWidthPx} actCount={N} {posToFrac} />
+				<PlayheadOverlay {trackWidthPx} actCount={N} {posToFrac} />
+			</div>
 		</div>
 
 		<!-- Error toast -->
@@ -866,7 +868,6 @@
 
 	.rows {
 		flex: 1;
-		position: relative;
 		overflow-y: auto;
 		/* Always reserve the scrollbar gutter so .rows content-box width
 		   doesn't jump when row count crosses the overflow threshold. The
@@ -874,6 +875,10 @@
 		   .acts-header / .scenes-row so bars and act columns stay aligned. */
 		scrollbar-gutter: stable;
 		transition: background 0.1s ease;
+	}
+	.rows-inner {
+		position: relative;
+		min-height: 100%;
 	}
 	.rows.drag-over {
 		background: rgba(200, 148, 42, 0.04);
