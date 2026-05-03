@@ -195,8 +195,19 @@
   const renderedEntityIds = $derived.by(() => {
     if (!$hideOutOfScope) return displayEntityIdSet;
     const inScope = new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)));
-    if (!showGhostTrails || $playhead === null) return inScope;
     const t = $playhead;
+    // When an alias relationship is active, keep both pair members rendered so
+    // the inactive one appears dimmed rather than disappearing entirely.
+    // This is independent of showGhostTrails — alias stacking is always on.
+    if (t !== null) {
+      for (const alias of $entityAliases) {
+        if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
+        if (!inScope.has(alias.primaryEntityId) && !inScope.has(alias.aliasEntityId)) continue;
+        if (displayEntityIdSet.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
+        if (displayEntityIdSet.has(alias.aliasEntityId)) inScope.add(alias.aliasEntityId);
+      }
+    }
+    if (!showGhostTrails || t === null) return inScope;
     const nearEnoughScene = (lo: number, hi: number) =>
       sortedSceneStarts.length > 0
         ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2

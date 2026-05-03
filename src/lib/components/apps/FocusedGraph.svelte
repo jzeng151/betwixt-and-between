@@ -172,8 +172,16 @@
   const renderedEntityIds = $derived.by(() => {
     if (!$hideOutOfScope) return displayEntityIds;
     const inScope = new Set([...displayEntityIds].filter((id) => !outOfScope.has(id)));
-    if (!showGhostTrails || $playhead === null) return inScope;
     const t = $playhead;
+    if (t !== null) {
+      for (const alias of $entityAliases) {
+        if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
+        if (!inScope.has(alias.primaryEntityId) && !inScope.has(alias.aliasEntityId)) continue;
+        if (displayEntityIds.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
+        if (displayEntityIds.has(alias.aliasEntityId)) inScope.add(alias.aliasEntityId);
+      }
+    }
+    if (!showGhostTrails || t === null) return inScope;
     const nearEnoughScene = (lo: number, hi: number) =>
       sortedSceneStarts.length > 0
         ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2
