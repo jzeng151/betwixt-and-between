@@ -78,20 +78,44 @@
   );
 
   // ── Out-of-scope at playhead (same shape as StoryGraph) ───────────────────
+  // Stable interval map — only rebuilds when intervals change, not on scrubs.
+  const entityIntervalMap = $derived.by(() => {
+    const m = new Map<string, Array<{ startPosition: number; endPosition: number }>>();
+    for (const iv of $intervalsStore) {
+      const list = m.get(iv.entityId) ?? [];
+      list.push(iv);
+      m.set(iv.entityId, list);
+    }
+    return m;
+  });
+
   const outOfScope = $derived.by(() => {
     const set = new Set<string>();
     if ($playhead == null) return set;
     const t = $playhead;
-    const byEntity = new Map<string, typeof $intervalsStore>();
-    for (const iv of $intervalsStore) {
-      const list = byEntity.get(iv.entityId) ?? [];
-      list.push(iv);
-      byEntity.set(iv.entityId, list);
+
+    const actPositionById = new Map<string, number>();
+    for (const e of $entities) {
+      if (e.type === 'Act' && e.position != null) actPositionById.set(e.id, e.position);
     }
-    for (const [entityId, ivs] of byEntity) {
+
+    for (const [entityId, ivs] of entityIntervalMap) {
       const active = ivs.some((iv) => intervalContainsT(iv.startPosition, iv.endPosition, t));
       if (!active) set.add(entityId);
     }
+
+    for (const e of displayEntities) {
+      if (e.type === 'Act' && e.position != null) {
+        if (!intervalContainsT(e.position, e.position + 1, t)) set.add(e.id);
+      }
+      if (e.parentId != null) {
+        const actPos = actPositionById.get(e.parentId);
+        if (actPos != null && !intervalContainsT(actPos, actPos + 1, t)) {
+          set.add(e.id);
+        }
+      }
+    }
+
     return set;
   });
 
@@ -175,16 +199,27 @@
       const style = REL_EDGE_STYLE[r.type];
       const mystery = isMysteryEdgeAtT(r, t);
 
-      // Ghost mode: ±2-act window, mystery takes precedence, timeless edges never ghost
+      // Ghost mode: show edges near the playhead window that aren't currently active.
+      // Trigger: edge is out of window OR at least one endpoint is out of scope.
+      // For edges with explicit bounds: use those bounds for proximity.
+      // For timeless edges: derive proximity from endpoint intervals.
       let ghostMode: 'past' | 'future' | null = null;
-      if (showGhostTrails && t !== null && !mystery && !inWindow
-          && !outOfScope.has(r.fromId) && !outOfScope.has(r.toId)) {
-        if (!(r.startPosition == null && r.endPosition == null)) {
-          const nearStart = r.startPosition != null && Math.abs(r.startPosition - t) <= 2;
-          const nearEnd = r.endPosition != null && Math.abs(r.endPosition - t) <= 2;
-          if (nearStart || nearEnd) {
-            if (r.startPosition != null && r.startPosition > t) ghostMode = 'future';
-            else if (r.endPosition != null && r.endPosition <= t) ghostMode = 'past';
+      if (showGhostTrails && t !== null && !mystery) {
+        const endpointOutOfScope = outOfScope.has(r.fromId) || outOfScope.has(r.toId);
+        if (!inWindow || endpointOutOfScope) {
+          if (r.startPosition != null || r.endPosition != null) {
+            const nearStart = r.startPosition != null && Math.abs(r.startPosition - t) <= 2;
+            const nearEnd = r.endPosition != null && Math.abs(r.endPosition - t) <= 2;
+            if (nearStart || nearEnd) {
+              ghostMode = r.startPosition != null && r.startPosition > t ? 'future' : 'past';
+            }
+          } else {
+            outer: for (const endpointId of [r.fromId, r.toId]) {
+              for (const iv of entityIntervalMap.get(endpointId) ?? []) {
+                if (iv.endPosition <= t && t - iv.endPosition <= 2) { ghostMode = 'past'; break outer; }
+                if (iv.startPosition > t && iv.startPosition - t <= 2) { ghostMode = 'future'; break outer; }
+              }
+            }
           }
         }
       }

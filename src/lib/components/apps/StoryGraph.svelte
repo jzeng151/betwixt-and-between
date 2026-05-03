@@ -81,23 +81,57 @@
   );
 
   // ── Playhead scope ─────────────────────────────────────────────────────────
-  // An entity is "out of scope" at T iff it has at least one interval AND
-  // none of its intervals contain T. Entities without intervals (Locations,
-  // Acts, Scenes, unplaced Characters/Events) are always considered in-scope.
+  // Stable map of entityId → intervals. Rebuilds only when intervals change,
+  // not on every playhead scrub — used by ghost trail proximity checks.
+  const entityIntervalMap = $derived.by(() => {
+    const m = new Map<string, Array<{ startPosition: number; endPosition: number }>>();
+    for (const iv of $intervalsStore) {
+      const list = m.get(iv.entityId) ?? [];
+      list.push(iv);
+      m.set(iv.entityId, list);
+    }
+    return m;
+  });
+
+  // An entity is "out of scope" at T when:
+  //   - It has intervals and none contain T (characters/events placed on timeline), OR
+  //   - It has a parentId pointing to an Act whose position interval does not contain T
+  //     (Scenes belong to exactly one Act and are only in-scope during that Act).
   const outOfScope = $derived.by(() => {
     const set = new Set<string>();
     if ($playhead == null) return set;
     const t = $playhead;
-    const byEntity = new Map<string, typeof $intervalsStore>();
-    for (const iv of $intervalsStore) {
-      const list = byEntity.get(iv.entityId) ?? [];
-      list.push(iv);
-      byEntity.set(iv.entityId, list);
+
+    // Build act-position lookup from all entities
+    const actPositionById = new Map<string, number>();
+    for (const e of $entities) {
+      if (e.type === 'Act' && e.position != null) actPositionById.set(e.id, e.position);
     }
+
+    // Interval-based out-of-scope (characters etc. placed on the timeline)
+    const byEntity = entityIntervalMap;
     for (const [entityId, ivs] of byEntity) {
       const active = ivs.some((iv) => intervalContainsT(iv.startPosition, iv.endPosition, t));
       if (!active) set.add(entityId);
     }
+
+    // Act scoping: Acts are only in scope at their own position
+    for (const e of displayEntities) {
+      if (e.type === 'Act' && e.position != null) {
+        if (!intervalContainsT(e.position, e.position + 1, t)) set.add(e.id);
+      }
+    }
+
+    // Parent-act scoping: Scenes are out of scope outside their parent Act's position
+    for (const e of displayEntities) {
+      if (e.parentId != null) {
+        const actPos = actPositionById.get(e.parentId);
+        if (actPos != null && !intervalContainsT(actPos, actPos + 1, t)) {
+          set.add(e.id);
+        }
+      }
+    }
+
     return set;
   });
 
@@ -153,16 +187,28 @@
       const style = REL_EDGE_STYLE[r.type];
       const mystery = isMysteryEdgeAtT(r, t);
 
-      // Ghost mode: ±2-act window, mystery takes precedence, timeless edges never ghost
+      // Ghost mode: show edges near the playhead window that aren't currently active.
+      // Trigger: edge is out of window OR at least one endpoint is out of scope.
+      // For edges with explicit bounds: use those bounds for proximity.
+      // For timeless edges: derive proximity from endpoint intervals.
       let ghostMode: 'past' | 'future' | null = null;
-      if (showGhostTrails && t !== null && !mystery && !inWindow
-          && !outOfScope.has(r.fromId) && !outOfScope.has(r.toId)) {
-        if (!(r.startPosition == null && r.endPosition == null)) {
-          const nearStart = r.startPosition != null && Math.abs(r.startPosition - t) <= 2;
-          const nearEnd = r.endPosition != null && Math.abs(r.endPosition - t) <= 2;
-          if (nearStart || nearEnd) {
-            if (r.startPosition != null && r.startPosition > t) ghostMode = 'future';
-            else if (r.endPosition != null && r.endPosition <= t) ghostMode = 'past';
+      if (showGhostTrails && t !== null && !mystery) {
+        const endpointOutOfScope = outOfScope.has(r.fromId) || outOfScope.has(r.toId);
+        if (!inWindow || endpointOutOfScope) {
+          if (r.startPosition != null || r.endPosition != null) {
+            const nearStart = r.startPosition != null && Math.abs(r.startPosition - t) <= 2;
+            const nearEnd = r.endPosition != null && Math.abs(r.endPosition - t) <= 2;
+            if (nearStart || nearEnd) {
+              ghostMode = r.startPosition != null && r.startPosition > t ? 'future' : 'past';
+            }
+          } else {
+            // Timeless edge: scan endpoint intervals for proximity within ±2 acts
+            outer: for (const endpointId of [r.fromId, r.toId]) {
+              for (const iv of entityIntervalMap.get(endpointId) ?? []) {
+                if (iv.endPosition <= t && t - iv.endPosition <= 2) { ghostMode = 'past'; break outer; }
+                if (iv.startPosition > t && iv.startPosition - t <= 2) { ghostMode = 'future'; break outer; }
+              }
+            }
           }
         }
       }
