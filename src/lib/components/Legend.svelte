@@ -122,19 +122,19 @@
 		{/each}
 		{#if showGhostTrails}
 			<li class="legend-row">
-				<div class="legend-static">
+				<div class="legend-toggle on">
 					<svg class="swatch" viewBox="0 0 14 8" aria-hidden="true">
 						<line x1="0" y1="4" x2="14" y2="4" stroke="var(--color-rel-other)" stroke-width="1.5" stroke-dasharray="8 3" stroke-opacity="0.40" />
 					</svg>
-					<span class="label-static">ghost · past</span>
+					<span class="label">Past</span>
 				</div>
 			</li>
 			<li class="legend-row">
-				<div class="legend-static">
+				<div class="legend-toggle on">
 					<svg class="swatch" viewBox="0 0 14 8" aria-hidden="true">
 						<line x1="0" y1="4" x2="14" y2="4" stroke="var(--color-rel-other)" stroke-width="1.5" stroke-dasharray="2 5" stroke-opacity="0.28" />
 					</svg>
-					<span class="label-static">ghost · future</span>
+					<span class="label">Future</span>
 				</div>
 			</li>
 		{/if}
@@ -271,7 +271,6 @@
 		padding: 3px 6px;
 	}
 
-	.label-static,
 	.label-aka {
 		font-style: italic;
 		font-size: inherit;
