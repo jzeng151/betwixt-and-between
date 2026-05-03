@@ -124,6 +124,10 @@
     return ranges;
   });
 
+  const sortedSceneStarts = $derived(
+    [...sceneRanges.values()].map((r) => r.start).sort((a, b) => a - b)
+  );
+
   const outOfScope = $derived.by(() => {
     const set = new Set<string>();
     if ($playhead == null) return set;
@@ -207,6 +211,15 @@
     return m;
   });
 
+  const nodeColorById = $derived.by(() => {
+    const m = new Map<string, string>();
+    for (const e of displayEntities) {
+      const color = nodeColorFor(e, characterIndexById.get(e.id));
+      if (color) m.set(e.id, color);
+    }
+    return m;
+  });
+
   const graphNodes = $derived<GraphNode[]>(
     displayEntities
       .filter((e) => renderedEntityIds.has(e.id))
@@ -239,25 +252,28 @@
       const style = REL_EDGE_STYLE[r.type];
       const mystery = isMysteryEdgeAtT(r, t);
 
-      // Ghost mode: show edges near the playhead window that aren't currently active.
-      // Trigger: edge is out of window OR at least one endpoint is out of scope.
-      // For edges with explicit bounds: use those bounds for proximity.
-      // For timeless edges: derive proximity from endpoint intervals.
+      // Ghost mode: show edges near the playhead that aren't currently active.
+      // Proximity is scene-granular: ≤2 scene boundaries between the interval
+      // edge and T. Falls back to ≤1 act when no scenes exist.
       let ghostMode: 'past' | 'future' | null = null;
       if (showGhostTrails && t !== null && !mystery) {
         const endpointOutOfScope = outOfScope.has(r.fromId) || outOfScope.has(r.toId);
         if (!inWindow || endpointOutOfScope) {
+          const nearEnough = (lo: number, hi: number) =>
+            sortedSceneStarts.length > 0
+              ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2
+              : hi - lo <= 1;
           if (r.startPosition != null || r.endPosition != null) {
-            const nearStart = r.startPosition != null && Math.abs(r.startPosition - t) <= 2;
-            const nearEnd = r.endPosition != null && Math.abs(r.endPosition - t) <= 2;
+            const nearStart = r.startPosition != null && nearEnough(Math.min(r.startPosition, t), Math.max(r.startPosition, t));
+            const nearEnd = r.endPosition != null && nearEnough(Math.min(r.endPosition, t), Math.max(r.endPosition, t));
             if (nearStart || nearEnd) {
               ghostMode = r.startPosition != null && r.startPosition > t ? 'future' : 'past';
             }
           } else {
             outer: for (const endpointId of [r.fromId, r.toId]) {
               for (const iv of entityIntervalMap.get(endpointId) ?? []) {
-                if (iv.endPosition <= t && t - iv.endPosition <= 2) { ghostMode = 'past'; break outer; }
-                if (iv.startPosition > t && iv.startPosition - t <= 2) { ghostMode = 'future'; break outer; }
+                if (iv.endPosition <= t && nearEnough(iv.endPosition, t)) { ghostMode = 'past'; break outer; }
+                if (iv.startPosition > t && nearEnough(t, iv.startPosition)) { ghostMode = 'future'; break outer; }
               }
             }
           }
@@ -267,11 +283,16 @@
       // Legend hard filter: skip disabled types unless they're showing as a ghost trail
       if (!enabledRelTypes.has(r.type) && ghostMode === null) continue;
       if (!inWindow && hardFilter && ghostMode === null) continue;
+      const ghostEntityId = ghostMode !== null
+        ? (outOfScope.has(r.fromId) ? r.fromId : r.toId)
+        : null;
       edges.push({
         id: r.id,
         fromId: r.fromId,
         toId: r.toId,
-        color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
+        color: ghostEntityId !== null
+          ? (nodeColorById.get(ghostEntityId) ?? REL_COLOR[r.type] ?? 'var(--color-rel-other)')
+          : (REL_COLOR[r.type] ?? 'var(--color-rel-other)'),
         label: r.label ?? r.type.replace(/_/g, ' '),
         dimmed: !mystery && !ghostMode && (outOfScope.has(r.fromId) || outOfScope.has(r.toId) || (!inWindow && !hardFilter)),
         dasharray: style.dasharray,

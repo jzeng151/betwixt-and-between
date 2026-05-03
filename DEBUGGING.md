@@ -342,3 +342,54 @@ group has an authoritative width that all sibling rows must match."
 **Status:** DONE.
 
 ---
+
+## Ghost trails never appearing in StoryGraph / FocusedGraph
+
+**Date:** 2026-05-03  
+**Branch:** feat/spotlight-integration  
+**Status:** FIXED (commit 6e312ee)
+
+### Symptoms
+
+Ghost trails (faint dashed edges for entities near but outside the current playhead window) never appeared in either graph view, regardless of playhead position or which relationship types were visible.
+
+### Root cause 1 — `intervalsStore` never loaded (primary)
+
+`StoryGraph.svelte` and `FocusedGraph.svelte` both import `$intervalsStore` and use it to build `entityIntervalMap`, but neither component called `intervalsStore.load()`. The Timeline component loads intervals in its own `onMount`, so the store only had data if Timeline happened to be mounted first.
+
+With an empty `$intervalsStore`:
+- `entityIntervalMap` was empty
+- Characters/Events/Locations were never added to `outOfScope` (only Acts and Scenes were, via position math)
+- `endpointOutOfScope` was always `false` for character relationships
+- The ghost trail trigger `if (!inWindow || endpointOutOfScope)` evaluated to `if (false || false)` for every timeless edge — never entering the ghost trail block
+
+**Fix:** Added `onMount(() => { intervalsStore.load(); })` to both components.
+
+### Root cause 2 — `hideOutOfScope` blocking ghost trail edges (secondary)
+
+When `hideOutOfScope` was ON, out-of-scope entities were stripped from `renderedEntityIds`. Because `visibleRelationships` filters to edges whose both endpoints are in `renderedEntityIds`, those edges were removed before the `graphEdges` ghost trail loop could process them.
+
+**Fix:** `renderedEntityIds` now re-includes "nearby-ghost" entities (those whose intervals are within ±2 scene boundaries of T) when both `showGhostTrails` and `hideOutOfScope` are ON. This keeps their nodes and edges in the pipeline so ghost trail logic can fire.
+
+### Data flow (correct path, post-fix)
+
+```
+$intervalsStore (loaded in onMount)
+  → entityIntervalMap: entityId → [{startPosition, endPosition}]
+  → outOfScope: entities with no active interval at T
+  → renderedEntityIds: all entities, or in-scope + nearby-ghost
+      (when hideOutOfScope=ON and showGhostTrails=ON)
+  → visibleRelationships: edges with both endpoints rendered
+  → graphEdges loop:
+      endpointOutOfScope = outOfScope.has(fromId) || outOfScope.has(toId)
+      if (!inWindow || endpointOutOfScope):
+        count scene boundaries between interval edge and T (≤2 → ghost)
+        → ghostMode = 'past' | 'future'
+      → edge color = out-of-scope endpoint's node color
+```
+
+### Key invariant
+
+`showGhostTrails` defaults to `false` — the checkbox in the Settings panel (⚙) must be enabled. The playhead must also be active (`$playhead !== null`).
+
+---

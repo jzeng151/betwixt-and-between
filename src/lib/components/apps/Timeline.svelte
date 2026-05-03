@@ -155,6 +155,35 @@
 	// Max story-time position: the playback upper bound for play/stepForward.
 	const maxT = $derived(acts.length);
 
+	// Sorted snap positions for scene-granular stepping: act starts + scene
+	// sub-boundaries within each act. Acts with no scenes contribute only their
+	// start; acts with m scenes add m-1 interior points (k/m for k=1..m-1).
+	const sceneBoundaries = $derived.by(() => {
+		const pts: number[] = [];
+		acts.forEach((act, i) => {
+			pts.push(i);
+			const scenes = scenesByActId.get(act.id) ?? [];
+			const m = scenes.length;
+			for (let k = 1; k < m; k++) pts.push(i + k / m);
+		});
+		pts.push(N);
+		return pts; // already sorted: acts are sorted, subdivisions are fractional
+	});
+
+	function stepForwardScene() {
+		playhead.pause();
+		const cur = $playhead ?? 0;
+		const next = sceneBoundaries.find((b) => b > cur + 1e-9);
+		if (next !== undefined) playhead.scrubTo(Math.min(next, maxT));
+	}
+
+	function stepBackScene() {
+		playhead.pause();
+		const cur = $playhead ?? 0;
+		const prev = [...sceneBoundaries].reverse().find((b) => b < cur - 1e-9);
+		if (prev !== undefined) playhead.scrubTo(Math.max(prev, 0));
+	}
+
 	// ── Per-act weights for variable-width acts ──────────────────────────────
 	// Each Act's data.timelineWeight (default 1) controls its share of the
 	// timeline track. posToFrac/fracToPos translate story-time positions
@@ -433,11 +462,11 @@
 				break;
 			case 'ArrowLeft':
 				e.preventDefault();
-				playhead.stepBack();
+				stepBackScene();
 				break;
 			case 'ArrowRight':
 				e.preventDefault();
-				playhead.stepForward(maxT);
+				stepForwardScene();
 				break;
 			case 'ArrowUp': {
 				e.preventDefault();
@@ -510,9 +539,9 @@
 					<div class="media-controls">
 						<button
 							class="media-btn"
-							title="Step back one act"
+							title="Step back one scene"
 							aria-label="Step back"
-							onclick={() => playhead.stepBack()}
+							onclick={() => stepBackScene()}
 						>⏮</button>
 						<button
 							class="media-btn media-play"
@@ -523,9 +552,9 @@
 						>{$isPlaying ? '⏸' : '▶'}</button>
 						<button
 							class="media-btn"
-							title="Step forward one act"
+							title="Step forward one scene"
 							aria-label="Step forward"
-							onclick={() => playhead.stepForward(maxT)}
+							onclick={() => stepForwardScene()}
 						>⏭</button>
 						<select
 							class="speed-select"
