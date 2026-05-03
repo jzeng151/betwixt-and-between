@@ -177,7 +177,7 @@
       for (const alias of $entityAliases) {
         if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
         if (!inScope.has(alias.aliasEntityId)) continue;
-        if (displayEntityIds.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
+        inScope.delete(alias.primaryEntityId);
       }
     }
     if (!showGhostTrails || t === null) return inScope;

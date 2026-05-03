@@ -196,16 +196,15 @@
     if (!$hideOutOfScope) return displayEntityIdSet;
     const inScope = new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)));
     const t = $playhead;
-    // When the alias interval is active, keep the primary visible (dimmed) even
-    // if the primary's own interval has ended — so both stack at the same position.
-    // Gate: (1) alias reveal threshold crossed, (2) alias's OWN interval is active
-    // (i.e., alias already in inScope by its own interval). This prevents a ghost
-    // node appearing at the alias's auto-placed position before the interval starts.
+    // When the alias's interval is active and the reveal threshold has been crossed,
+    // hide the primary so the alias renders as a clean in-place replacement.
+    // Both have overlapping intervals in Act 4; without this the primary stacks
+    // on top of the alias at the same canvas position.
     if (t !== null) {
       for (const alias of $entityAliases) {
         if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
         if (!inScope.has(alias.aliasEntityId)) continue;
-        if (displayEntityIdSet.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
+        inScope.delete(alias.primaryEntityId);
       }
     }
     if (!showGhostTrails || t === null) return inScope;
