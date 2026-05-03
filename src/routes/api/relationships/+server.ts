@@ -54,22 +54,32 @@ export const POST: RequestHandler = async ({ request }) => {
 		error(400, (err as Error).message);
 	}
 
-	const [created] = await db
-		.insert(relationships)
-		.values({
-			fromId,
-			toId,
-			type,
-			label: label ?? null,
-			startActId: startActId ?? null,
-			startSceneId: startSceneId ?? null,
-			endActId: endActId ?? null,
-			endSceneId: endSceneId ?? null,
-			startPosition,
-			endPosition,
-			revealedAtPosition: revealedAtPosition ?? null
-		})
-		.returning();
+	let created;
+	try {
+		[created] = await db
+			.insert(relationships)
+			.values({
+				fromId,
+				toId,
+				type,
+				label: label ?? null,
+				startActId: startActId ?? null,
+				startSceneId: startSceneId ?? null,
+				endActId: endActId ?? null,
+				endSceneId: endSceneId ?? null,
+				startPosition,
+				endPosition,
+				revealedAtPosition: revealedAtPosition ?? null
+			})
+			.returning();
+	} catch (err) {
+		const code = (err as { code?: string }).code ?? '';
+		const msg = (err as Error).message ?? '';
+		if (code === '23505' || msg.includes('unique') || msg.includes('duplicate')) {
+			error(409, 'A relationship with these temporal bounds already exists');
+		}
+		throw err;
+	}
 
 	return json(created, { status: 201 });
 };
