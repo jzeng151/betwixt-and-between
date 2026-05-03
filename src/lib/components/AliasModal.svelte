@@ -11,16 +11,24 @@
     position: number | null;
   }
 
+  interface Scene {
+    id: string;
+    name: string;
+    actId: string;
+    position: number;
+  }
+
   interface Props {
     /** The entity being registered as an alias (right-clicked node). */
     entity: Entity;
     allEntities: Entity[];
     acts: Act[];
+    scenes?: Scene[];
     onSave: (primaryEntityId: string, revealedAtPosition: number | null) => Promise<void>;
     onClose: () => void;
   }
 
-  let { entity, allEntities, acts, onSave, onClose }: Props = $props();
+  let { entity, allEntities, acts, scenes = [], onSave, onClose }: Props = $props();
 
   // Same-type candidates, excluding the entity itself and any already-alias pairs
   // (server enforces uniqueness; modal just shows the sensible picker)
@@ -97,6 +105,9 @@
           <option value="">Always visible</option>
           {#each acts as act, i}
             <option value={i}>{act.name}</option>
+            {#each scenes.filter((s) => s.actId === act.id) as scene}
+              <option value={scene.position}>  ↳ {scene.name}</option>
+            {/each}
           {/each}
         </select>
       </div>

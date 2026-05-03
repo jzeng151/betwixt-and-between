@@ -133,6 +133,15 @@
     [...sceneRanges.values()].map((r) => r.start).sort((a, b) => a - b)
   );
 
+  const scenesForReveal = $derived.by(() => {
+    const result: { id: string; name: string; actId: string; position: number }[] = [];
+    for (const [id, range] of sceneRanges) {
+      const e = $entities.find((en) => en.id === id);
+      if (e?.parentId) result.push({ id, name: e.name, actId: e.parentId, position: range.start });
+    }
+    return result.sort((a, b) => a.position - b.position);
+  });
+
   const outOfScope = $derived.by(() => {
     const set = new Set<string>();
     if ($playhead == null) return set;
@@ -361,6 +370,7 @@
 
   onMount(() => {
     intervalsStore.load();
+    entityAliases.load();
     void (async () => {
       // FG canvas is independent of StoryGraph: each FG window has
       // its own per-window state (Lane A). We don't inherit the
@@ -887,6 +897,7 @@
     <EditRelationshipModal
       relationship={rel}
       {acts}
+      scenes={scenesForReveal}
       onSave={async (fields) => {
         await relationships.updateRelationship(rel.id, fields);
         editRelMenu = null;
@@ -901,6 +912,7 @@
     entity={aliasModal.entity}
     allEntities={$entities}
     {acts}
+    scenes={scenesForReveal}
     onSave={async (primaryEntityId, revealedAtPosition) => {
       await entityAliases.createAlias(primaryEntityId, aliasModal!.entity.id, revealedAtPosition);
       aliasModal = null;

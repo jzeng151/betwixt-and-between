@@ -9,9 +9,17 @@
     position: number | null;
   }
 
+  interface Scene {
+    id: string;
+    name: string;
+    actId: string;
+    position: number;
+  }
+
   interface Props {
     relationship: Relationship;
     acts: Act[];
+    scenes?: Scene[];
     onSave: (fields: {
       type: RelationshipType;
       label: string | null;
@@ -22,7 +30,7 @@
     onClose: () => void;
   }
 
-  let { relationship, acts, onSave, onClose }: Props = $props();
+  let { relationship, acts, scenes = [], onSave, onClose }: Props = $props();
 
   let editType = $state<RelationshipType>('allied_with');
   let editLabel = $state('');
@@ -130,6 +138,9 @@
         <option value="">Always visible</option>
         {#each acts as act, i}
           <option value={i}>{act.name}</option>
+          {#each scenes.filter((s) => s.actId === act.id) as scene}
+            <option value={scene.position}>  ↳ {scene.name}</option>
+          {/each}
         {/each}
       </select>
     </div>

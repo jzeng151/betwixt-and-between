@@ -22,7 +22,7 @@
   import AliasModal from '$lib/components/AliasModal.svelte';
   import Legend from '$lib/components/Legend.svelte';
 
-  onMount(() => { intervalsStore.load(); });
+  onMount(() => { intervalsStore.load(); entityAliases.load(); });
 
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
@@ -148,6 +148,16 @@
       }
     }
     return ranges;
+  });
+
+  // Scenes with their story-time start positions, for the "Revealed at" dropdowns.
+  const scenesForReveal = $derived.by(() => {
+    const result: { id: string; name: string; actId: string; position: number }[] = [];
+    for (const [id, range] of sceneRanges) {
+      const e = $entities.find((en) => en.id === id);
+      if (e?.parentId) result.push({ id, name: e.name, actId: e.parentId, position: range.start });
+    }
+    return result.sort((a, b) => a.position - b.position);
   });
 
   // Sorted scene start positions for ghost trail proximity (scene-granular window).
@@ -872,6 +882,7 @@
     <EditRelationshipModal
       relationship={rel}
       {acts}
+      scenes={scenesForReveal}
       onSave={async (fields) => {
         await relationships.updateRelationship(rel.id, fields);
         editRelMenu = null;
@@ -886,6 +897,7 @@
     entity={aliasModal.entity}
     allEntities={$entities}
     {acts}
+    scenes={scenesForReveal}
     onSave={async (primaryEntityId, revealedAtPosition) => {
       await entityAliases.createAlias(primaryEntityId, aliasModal!.entity.id, revealedAtPosition);
       aliasModal = null;
