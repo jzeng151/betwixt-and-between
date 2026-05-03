@@ -635,6 +635,69 @@ export const PRESTIGE: SeedStory = {
     { character: 'Alley', fromAct: 'Act 3: Obsession', toAct: 'Act 4: The Prestige' },
 
     // Gerald Root — Act 3 only
-    { character: 'Gerald Root', fromAct: 'Act 3: Obsession', toAct: 'Act 3: Obsession' }
+    { character: 'Gerald Root', fromAct: 'Act 3: Obsession', toAct: 'Act 3: Obsession' },
+
+    // Events — placed at the scene where each occurs
+    {
+      character: 'Julia drowns in the water tank',
+      fromAct: 'Act 1: The Pledge',
+      toAct: 'Act 1: The Pledge',
+      fromScene: 'The knot',
+      toScene: 'The knot'
+    },
+    {
+      character: 'Borden debuts The Transported Man',
+      fromAct: 'Act 2: The Turn',
+      toAct: 'Act 2: The Turn',
+      fromScene: 'The Transported Man',
+      toScene: 'The Transported Man'
+    },
+    {
+      character: 'The bullet catch sabotage',
+      fromAct: 'Act 2: The Turn',
+      toAct: 'Act 2: The Turn',
+      fromScene: 'The bullet catch',
+      toScene: 'The bullet catch'
+    },
+    {
+      character: "Borden destroys Angier's Transported Man",
+      fromAct: 'Act 2: The Turn',
+      toAct: 'Act 2: The Turn'
+    },
+    {
+      character: 'Olivia defects to Borden',
+      fromAct: 'Act 3: Obsession',
+      toAct: 'Act 3: Obsession',
+      fromScene: 'Olivia chooses Borden',
+      toScene: 'Olivia chooses Borden'
+    },
+    {
+      character: 'Sarah takes her life',
+      fromAct: 'Act 3: Obsession',
+      toAct: 'Act 3: Obsession',
+      fromScene: "Sarah's last morning",
+      toScene: "Sarah's last morning"
+    },
+    {
+      character: 'Tesla builds the duplicating machine',
+      fromAct: 'Act 3: Obsession',
+      toAct: 'Act 4: The Prestige',
+      fromScene: 'The journey to Colorado',
+      toScene: 'The machine is completed'
+    },
+    {
+      character: 'Angier debuts The Real Transported Man',
+      fromAct: 'Act 4: The Prestige',
+      toAct: 'Act 4: The Prestige',
+      fromScene: 'The Real Transported Man',
+      toScene: 'The Real Transported Man'
+    },
+    {
+      character: 'Borden witnesses the drowning',
+      fromAct: 'Act 4: The Prestige',
+      toAct: 'Act 4: The Prestige',
+      fromScene: 'Below the stage',
+      toScene: 'Below the stage'
+    }
   ]
 };

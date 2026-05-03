@@ -263,8 +263,8 @@ export async function loadStory(story: SeedStory, opts: LoadOptions): Promise<Lo
   // ── Phase 4: intervals ─────────────────────────────────────────────
   log(`creating ${story.intervals.length} intervals…`);
   for (const iv of story.intervals) {
-    const entityId = idByCharacterName.get(iv.character);
-    if (!entityId) throw new Error(`Interval .character='${iv.character}' is not a seeded character`);
+    const entityId = resolveEntityId(iv.character);
+    if (!entityId) throw new Error(`Interval .character='${iv.character}' did not resolve to any seeded entity`);
     const startActId = idByActName.get(iv.fromAct);
     if (!startActId) throw new Error(`Interval .fromAct='${iv.fromAct}' is not a seeded act`);
     const endActId = idByActName.get(iv.toAct);
