@@ -196,15 +196,16 @@
     if (!$hideOutOfScope) return displayEntityIdSet;
     const inScope = new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)));
     const t = $playhead;
-    // When an alias relationship is active, keep both pair members rendered so
-    // the inactive one appears dimmed rather than disappearing entirely.
-    // This is independent of showGhostTrails — alias stacking is always on.
+    // When the alias interval is active, keep the primary visible (dimmed) even
+    // if the primary's own interval has ended — so both stack at the same position.
+    // Gate: (1) alias reveal threshold crossed, (2) alias's OWN interval is active
+    // (i.e., alias already in inScope by its own interval). This prevents a ghost
+    // node appearing at the alias's auto-placed position before the interval starts.
     if (t !== null) {
       for (const alias of $entityAliases) {
         if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
-        if (!inScope.has(alias.primaryEntityId) && !inScope.has(alias.aliasEntityId)) continue;
+        if (!inScope.has(alias.aliasEntityId)) continue;
         if (displayEntityIdSet.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
-        if (displayEntityIdSet.has(alias.aliasEntityId)) inScope.add(alias.aliasEntityId);
       }
     }
     if (!showGhostTrails || t === null) return inScope;
