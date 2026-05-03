@@ -556,15 +556,13 @@
 			{@const isGhost = !isMystery && (edge.ghostMode === 'past' || edge.ghostMode === 'future')}
 			{@const strokeColor = isMystery
 				? 'var(--color-rel-mystery)'
-				: isGhost
-					? 'var(--color-text-muted)'
-					: edge.color}
+				: edge.color}
 			{@const strokeOpacity = isMystery
 				? 0.2
 				: isGhost
 					? edge.ghostMode === 'past'
-						? 0.18
-						: 0.12
+						? 0.40
+						: 0.28
 					: edge.dimmed
 						? 0.1
 						: 0.45}
@@ -572,8 +570,8 @@
 				? '2 4'
 				: isGhost
 					? edge.ghostMode === 'past'
-						? '6 4'
-						: '2 6'
+						? '8 3'
+						: '2 5'
 					: (edge.dasharray ?? undefined)}
 			{@const mx = (edge.x1 + edge.x2) / 2}
 			{@const my = (edge.y1 + edge.y2) / 2}

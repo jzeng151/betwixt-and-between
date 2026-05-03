@@ -156,7 +156,8 @@
 
       // Ghost mode: ±2-act window, mystery takes precedence, timeless edges never ghost
       let ghostMode: 'past' | 'future' | null = null;
-      if (showGhostTrails && t !== null && !mystery && !inWindow) {
+      if (showGhostTrails && t !== null && !mystery && !inWindow
+          && !outOfScope.has(r.fromId) && !outOfScope.has(r.toId)) {
         if (!(r.startPosition == null && r.endPosition == null)) {
           const nearStart = r.startPosition != null && Math.abs(r.startPosition - t) <= 2;
           const nearEnd = r.endPosition != null && Math.abs(r.endPosition - t) <= 2;
