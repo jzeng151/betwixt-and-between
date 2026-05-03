@@ -652,6 +652,7 @@
       presentTypes={presentRelTypes}
       {edgeLabelsVisible}
       onToggleEdgeLabels={() => (edgeLabelsVisible = !edgeLabelsVisible)}
+      {showGhostTrails}
     />
   {/if}
   <button

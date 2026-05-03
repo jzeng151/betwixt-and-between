@@ -28,6 +28,8 @@
 		/** When provided, shows the Aa toggle for hosts that render edge labels. */
 		edgeLabelsVisible?: boolean;
 		onToggleEdgeLabels?: () => void;
+		/** When true, adds static past/future ghost trail rows to the legend. */
+		showGhostTrails?: boolean;
 	}
 
 	let {
@@ -35,7 +37,8 @@
 		onToggle,
 		presentTypes,
 		edgeLabelsVisible,
-		onToggleEdgeLabels
+		onToggleEdgeLabels,
+		showGhostTrails
 	}: Props = $props();
 
 	/* Per-instance marker id — multiple Legend instances coexist in the
@@ -117,8 +120,26 @@
 				</button>
 			</li>
 		{/each}
+		{#if showGhostTrails}
+			<li class="legend-row">
+				<div class="legend-static">
+					<svg class="swatch" viewBox="0 0 14 8" aria-hidden="true">
+						<line x1="0" y1="4" x2="14" y2="4" stroke="var(--color-rel-other)" stroke-width="1.5" stroke-dasharray="8 3" stroke-opacity="0.40" />
+					</svg>
+					<span class="label-static">ghost · past</span>
+				</div>
+			</li>
+			<li class="legend-row">
+				<div class="legend-static">
+					<svg class="swatch" viewBox="0 0 14 8" aria-hidden="true">
+						<line x1="0" y1="4" x2="14" y2="4" stroke="var(--color-rel-other)" stroke-width="1.5" stroke-dasharray="2 5" stroke-opacity="0.28" />
+					</svg>
+					<span class="label-static">ghost · future</span>
+				</div>
+			</li>
+		{/if}
 		<li class="legend-row">
-			<div class="legend-alias">
+			<div class="legend-static">
 				<svg class="swatch" viewBox="0 0 14 8" aria-hidden="true">
 					<line x1="0" y1="4" x2="14" y2="4" stroke="var(--color-rel-other)" stroke-width="1" stroke-dasharray="1 2" />
 				</svg>
@@ -243,14 +264,14 @@
 		text-transform: capitalize;
 	}
 
-	.legend-alias {
+	.legend-static {
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		padding: 3px 6px;
-		opacity: 0.7;
 	}
 
+	.label-static,
 	.label-aka {
 		font-style: italic;
 		font-size: inherit;
