@@ -2,7 +2,7 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-  import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT } from '$lib/stores/playhead.js';
+  import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/stores/playhead.js';
   import { windowStore } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
@@ -66,14 +66,18 @@
     new Set([...$entityAliases.map((a) => a.primaryEntityId), ...$entityAliases.map((a) => a.aliasEntityId)])
   );
 
+  const displayEntityIdSet = $derived(new Set(displayEntities.map((e) => e.id)));
+
   const graphNodes = $derived<GraphNode[]>(
-    displayEntities.map((e) => ({
-      id: e.id,
-      type: e.type,
-      name: e.name,
-      color: nodeColorFor(e, characterIndexById.get(e.id)),
-      aliasMember: aliasEntityIds.has(e.id)
-    }))
+    displayEntities
+      .filter((e) => renderedEntityIds.has(e.id))
+      .map((e) => ({
+        id: e.id,
+        type: e.type,
+        name: e.name,
+        color: nodeColorFor(e, characterIndexById.get(e.id)),
+        aliasMember: aliasEntityIds.has(e.id)
+      }))
   );
 
   // ── Playhead scope ─────────────────────────────────────────────────────────
@@ -97,6 +101,12 @@
     return set;
   });
 
+  const renderedEntityIds = $derived(
+    $hideOutOfScope
+      ? new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)))
+      : displayEntityIdSet
+  );
+
   // ── Legend state (rel-type hard filter) ───────────────────────────────────
   // Toggle off a type → those edges disappear from the graph entirely.
   // Pairs cleanly with scrubber dimming (the SOFT filter): a hidden type
@@ -113,13 +123,6 @@
     enabledRelTypes = next;
   }
 
-  // Set of rel types that have at least one edge between two displayed
-  // entities, computed BEFORE applying the Legend filter. Drives the
-  // Legend's per-row dim/italic treatment for absent types so the
-  // user sees at a glance which connections actually exist on this
-  // graph. NOT filtered by enabledRelTypes — otherwise toggling a type
-  // off would dim it twice and prevent the user from re-enabling.
-  const displayEntityIdSet = $derived(new Set(displayEntities.map((e) => e.id)));
   const presentRelTypes = $derived.by(() => {
     const s = new Set<RelationshipType>();
     for (const r of $relationships) {
@@ -137,8 +140,8 @@
   const visibleRelationships = $derived(
     $relationships.filter(
       (r) =>
-        displayEntityIdSet.has(r.fromId) &&
-        displayEntityIdSet.has(r.toId) &&
+        renderedEntityIds.has(r.fromId) &&
+        renderedEntityIds.has(r.toId) &&
         enabledRelTypes.has(r.type)
     )
   );
@@ -183,7 +186,7 @@
     }
     // Alias edges: dashed "aka" line per pair where both endpoints are visible
     for (const alias of $entityAliases) {
-      if (!displayEntityIdSet.has(alias.primaryEntityId) || !displayEntityIdSet.has(alias.aliasEntityId)) continue;
+      if (!renderedEntityIds.has(alias.primaryEntityId) || !renderedEntityIds.has(alias.aliasEntityId)) continue;
       if (alias.revealedAtPosition != null && t != null && t < alias.revealedAtPosition) continue;
       edges.push({
         id: `alias-${alias.id}`,
@@ -620,6 +623,10 @@
       <label class="sg-settings-row">
         <span>Ghost trails</span>
         <input type="checkbox" bind:checked={showGhostTrails} />
+      </label>
+      <label class="sg-settings-row">
+        <span>Hide out of scope</span>
+        <input type="checkbox" checked={$hideOutOfScope} onchange={() => hideOutOfScope.set(!$hideOutOfScope)} />
       </label>
     </div>
   {/if}

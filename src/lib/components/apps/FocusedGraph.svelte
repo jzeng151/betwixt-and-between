@@ -3,7 +3,7 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-  import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT } from '$lib/stores/playhead.js';
+  import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/stores/playhead.js';
   import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
@@ -95,13 +95,11 @@
     return set;
   });
 
-  let hideOutOfScope = $state(false);
-
   // When hideOutOfScope is on, strip out-of-scope ids from the rendered set so
   // those nodes (and their edges) disappear entirely instead of just dimming.
   // When the playhead is idle outOfScope is empty, so hiding is a no-op.
   const renderedEntityIds = $derived(
-    hideOutOfScope
+    $hideOutOfScope
       ? new Set([...displayEntityIds].filter((id) => !outOfScope.has(id)))
       : displayEntityIds
   );
@@ -753,7 +751,7 @@
         </label>
         <label class="fg-settings-row">
           <span>Hide out of scope</span>
-          <input type="checkbox" bind:checked={hideOutOfScope} />
+          <input type="checkbox" checked={$hideOutOfScope} onchange={() => hideOutOfScope.set(!$hideOutOfScope)} />
         </label>
       </div>
     {/if}

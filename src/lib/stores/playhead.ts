@@ -20,6 +20,9 @@ export const isPlaying = { subscribe: _isPlaying.subscribe };
 /** Positions per second during auto-play. Writable so Timeline's speed selector can set it. */
 export const playbackSpeed = writable(0.5);
 
+/** When true, out-of-scope nodes are removed from both graphs instead of dimmed. */
+export const hideOutOfScope = writable(false);
+
 function createPlayheadStore() {
 	const { subscribe, set } = writable<number | null>(null);
 	let _interval: ReturnType<typeof setInterval> | null = null;
