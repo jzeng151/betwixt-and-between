@@ -647,8 +647,12 @@
   }
 
   // ── Alias position swap ────────────────────────────────────────────────────
+  // When an alias enters scope: snap it to the primary's current canvas
+  // position so the two entities stack at the same spot.
+  // When the alias exits scope: snap the primary to the alias's current
+  // position — so if the alias was dragged while in scope, the primary picks
+  // up at that spot rather than teleporting back to its pre-alias location.
   let snappedAliasIds = new Set<string>();
-  const swapPositions = new Map<string, NodePosition>();
   $effect(() => {
     const t = $playhead;
     const updates: Record<string, NodePosition> = {};
@@ -659,16 +663,14 @@
         !outOfScope.has(id) &&
         (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
       if (isRevealed && !snappedAliasIds.has(id)) {
+        // Alias entering scope: snap to primary's position.
         const pos = canvas?.getPosition(alias.primaryEntityId) ?? currentPositions[alias.primaryEntityId] ?? initialPositions[alias.primaryEntityId];
-        if (pos) {
-          updates[id] = { ...pos };
-          swapPositions.set(id, { ...pos });
-        }
+        if (pos) updates[id] = { x: pos.x, y: pos.y, w: pos.w, h: pos.h };
       } else if (!isRevealed && snappedAliasIds.has(id)) {
-        const pos = swapPositions.get(id);
-        if (pos) updates[alias.primaryEntityId] = { ...pos };
+        // Alias exiting scope: snap primary to alias's current position.
+        const pos = canvas?.getPosition(id);
+        if (pos) updates[alias.primaryEntityId] = { x: pos.x, y: pos.y, w: pos.w, h: pos.h };
         snappedAliasIds.delete(id);
-        swapPositions.delete(id);
       } else if (!isRevealed) {
         snappedAliasIds.delete(id);
       }
