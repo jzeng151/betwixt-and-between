@@ -48,14 +48,24 @@ export const POST: RequestHandler = async ({ request }) => {
 		error(409, 'Alias already exists for this primary entity pair');
 	}
 
-	const [created] = await db
-		.insert(entityAliases)
-		.values({
-			primaryEntityId,
-			aliasEntityId,
-			revealedAtPosition: revealedAtPosition ?? null
-		})
-		.returning();
+	let created;
+	try {
+		[created] = await db
+			.insert(entityAliases)
+			.values({
+				primaryEntityId,
+				aliasEntityId,
+				revealedAtPosition: revealedAtPosition ?? null
+			})
+			.returning();
+	} catch (err) {
+		const code = (err as { code?: string }).code ?? '';
+		const msg = (err as Error).message ?? '';
+		if (code === '23505' || msg.includes('unique') || msg.includes('duplicate')) {
+			error(409, 'Alias already exists for this primary entity pair');
+		}
+		throw err;
+	}
 
 	return json(created, { status: 201 });
 };

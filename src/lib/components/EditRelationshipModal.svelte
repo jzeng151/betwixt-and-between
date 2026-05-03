@@ -24,8 +24,6 @@
 
   let { relationship, acts, onSave, onClose }: Props = $props();
 
-  // Match start/end act by position — the store type carries positions, not FK ids.
-  // $effect initializes on mount and re-syncs if the relationship prop changes.
   let editType = $state<RelationshipType>('allied_with');
   let editLabel = $state('');
   let editStartActId = $state('');
@@ -35,8 +33,8 @@
   $effect(() => {
     editType = relationship.type;
     editLabel = relationship.label ?? '';
-    editStartActId = acts.find((a) => a.position === relationship.startPosition)?.id ?? '';
-    editEndActId = acts.find((a) => a.position === relationship.endPosition)?.id ?? '';
+    editStartActId = relationship.startActId ?? '';
+    editEndActId = relationship.endActId ?? '';
     editRevealedAtPosition = relationship.revealedAtPosition;
   });
   let saving = $state(false);

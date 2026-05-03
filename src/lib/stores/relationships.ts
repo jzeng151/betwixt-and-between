@@ -7,6 +7,8 @@ export type Relationship = {
 	toId: string;
 	type: RelationshipType;
 	label: string | null;
+	startActId: string | null;
+	endActId: string | null;
 	startPosition: number | null;
 	endPosition: number | null;
 	revealedAtPosition: number | null;
