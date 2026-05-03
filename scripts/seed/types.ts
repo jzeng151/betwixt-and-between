@@ -59,6 +59,15 @@ export interface SeedScene {
   summary?: string;
 }
 
+export interface SeedAlias {
+  /** The canonical (primary) entity by name. */
+  primary: string;
+  /** The alias entity by name. */
+  alias: string;
+  /** Act name at which this alias is revealed. Omit for always visible. */
+  revealedAtAct?: string;
+}
+
 export interface SeedRelationship {
   from: string; // entity name
   to: string; // entity name
@@ -84,6 +93,7 @@ export interface SeedStory {
   characters: SeedCharacter[];
   events: SeedEvent[];
   scenes?: SeedScene[];
+  aliases?: SeedAlias[];
   relationships: SeedRelationship[];
   intervals: SeedInterval[];
 }

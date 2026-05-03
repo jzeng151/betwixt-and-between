@@ -5,10 +5,6 @@
 // story's chronological spine; the film itself is non-linear (nested
 // diary readings), but the underlying timeline is linear.
 //
-// Entity aliases to set via the UI after seeding:
-//   Fallon → Frederick Borden  (revealed Act 5)
-//   Lord Caldlow → Robert Angier  (revealed Act 4)
-//
 // The twin pair (Alfred / Frederick) and the Caldlow alias are the
 // primary test cases for the spotlight revealedAtPosition system.
 import type { SeedStory } from './types.js';
@@ -426,6 +422,11 @@ export const PRESTIGE: SeedStory = {
       summary:
         "Frederick Borden — free now that Alfred is dead — follows Angier into the estate vault. The vault is full of water tanks. Each holds a drowned copy of Angier, perfectly preserved. Frederick shoots Angier and watches him die. 'Now you're looking at me,' Borden says. 'Were you watching closely?'"
     }
+  ],
+
+  aliases: [
+    { primary: 'Robert Angier', alias: 'Lord Caldlow', revealedAtAct: 'Act 4: The Prestige' },
+    { primary: 'Frederick Borden', alias: 'Fallon', revealedAtAct: 'Act 5: The Secret' }
   ],
 
   relationships: [

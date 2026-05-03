@@ -80,6 +80,7 @@ async function main() {
   console.log(`    ${counts.scenes} scenes`);
   console.log(`    ${counts.relationships} relationships`);
   console.log(`    ${counts.intervals} intervals`);
+  console.log(`    ${counts.aliases} aliases`);
   const total =
     counts.acts +
     counts.locations +
@@ -87,7 +88,8 @@ async function main() {
     counts.events +
     counts.scenes +
     counts.relationships +
-    counts.intervals;
+    counts.intervals +
+    counts.aliases;
   console.log(`  ${total} rows total\n`);
   console.log(`  Open ${baseUrl} to see the result.`);
 }
