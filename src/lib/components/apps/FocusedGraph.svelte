@@ -95,6 +95,17 @@
     return set;
   });
 
+  let hideOutOfScope = $state(false);
+
+  // When hideOutOfScope is on, strip out-of-scope ids from the rendered set so
+  // those nodes (and their edges) disappear entirely instead of just dimming.
+  // When the playhead is idle outOfScope is empty, so hiding is a no-op.
+  const renderedEntityIds = $derived(
+    hideOutOfScope
+      ? new Set([...displayEntityIds].filter((id) => !outOfScope.has(id)))
+      : displayEntityIds
+  );
+
   // ── Legend state (C4) ──────────────────────────────────────────────────────
   // Hard filter: toggling a type off hides those edges entirely (vs. scrubber
   // dimming which is a soft visual filter). In-memory per-window for v1; if
@@ -135,13 +146,15 @@
   });
 
   const graphNodes = $derived<GraphNode[]>(
-    displayEntities.map((e) => ({
-      id: e.id,
-      type: e.type,
-      name: e.name,
-      color: nodeColorFor(e, characterIndexById.get(e.id)),
-      aliasMember: aliasEntityIds.has(e.id)
-    }))
+    displayEntities
+      .filter((e) => renderedEntityIds.has(e.id))
+      .map((e) => ({
+        id: e.id,
+        type: e.type,
+        name: e.name,
+        color: nodeColorFor(e, characterIndexById.get(e.id)),
+        aliasMember: aliasEntityIds.has(e.id)
+      }))
   );
 
   // Single source of truth for "edges currently in the graph": both endpoints
@@ -151,8 +164,8 @@
   const visibleRelationships = $derived(
     $relationships.filter(
       (r) =>
-        displayEntityIds.has(r.fromId) &&
-        displayEntityIds.has(r.toId) &&
+        renderedEntityIds.has(r.fromId) &&
+        renderedEntityIds.has(r.toId) &&
         enabledRelTypes.has(r.type)
     )
   );
@@ -197,7 +210,7 @@
     }
     // Alias edges: dashed "aka" line per pair where both endpoints are visible
     for (const alias of $entityAliases) {
-      if (!displayEntityIds.has(alias.primaryEntityId) || !displayEntityIds.has(alias.aliasEntityId)) continue;
+      if (!renderedEntityIds.has(alias.primaryEntityId) || !renderedEntityIds.has(alias.aliasEntityId)) continue;
       if (alias.revealedAtPosition != null && t != null && t < alias.revealedAtPosition) continue;
       edges.push({
         id: `alias-${alias.id}`,
@@ -737,6 +750,10 @@
         <label class="fg-settings-row">
           <span>Ghost trails</span>
           <input type="checkbox" bind:checked={showGhostTrails} />
+        </label>
+        <label class="fg-settings-row">
+          <span>Hide out of scope</span>
+          <input type="checkbox" bind:checked={hideOutOfScope} />
         </label>
       </div>
     {/if}
