@@ -3,7 +3,7 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-  import { playhead, intervalContainsT, isEdgeVisibleAtT } from '$lib/stores/playhead.js';
+  import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT } from '$lib/stores/playhead.js';
   import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
@@ -18,6 +18,7 @@
     type NodePosition
   } from '$lib/components/GraphCanvas.svelte';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
   import Legend from '$lib/components/Legend.svelte';
 
@@ -33,6 +34,9 @@
 
   // ── Traversal inputs ──────────────────────────────────────────────────────
   const focalSetIds = $derived(new Set(focalSet));
+  const acts = $derived(
+    $entities.filter((e) => e.type === 'Act').sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+  );
 
   // Edge list for traversal helpers (B2 contract).
   const edgeList = $derived<TraversalEdge[]>(
@@ -153,6 +157,7 @@
       const inWindow = isEdgeVisibleAtT(r, t);
       if (!inWindow && hardFilter) continue;
       const style = REL_EDGE_STYLE[r.type];
+      const mystery = isMysteryEdgeAtT(r, t);
       edges.push({
         id: r.id,
         fromId: r.fromId,
@@ -164,7 +169,8 @@
         width: style.width,
         arrow: style.arrow,
         startPosition: r.startPosition,
-        endPosition: r.endPosition
+        endPosition: r.endPosition,
+        mysteryMode: mystery
       });
     }
     return edges;
@@ -475,6 +481,7 @@
   // set" affordance so the user can grow the focal selection without going
   // back to StoryGraph.
   let contextMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
+  let editRelMenu = $state<{ relationshipId: string; x: number; y: number } | null>(null);
 
   function addToFocalSet(id: string) {
     if (focalSetIds.has(id)) return;
@@ -601,6 +608,7 @@
       onNodeOpen={openEntity}
       {onNodePositionChange}
       onContextMenu={(id, x, y) => (contextMenu = { entityId: id, x, y })}
+      onEdgeContextMenu={(id, x, y) => (editRelMenu = { relationshipId: id, x, y })}
       showEdgeLabels={edgeLabelsVisible}
     >
       {#snippet emptyState()}
@@ -693,6 +701,21 @@
     y={contextMenu.y}
     onClose={() => (contextMenu = null)}
   />
+{/if}
+
+{#if editRelMenu}
+  {@const rel = $relationships.find((r) => r.id === editRelMenu!.relationshipId)}
+  {#if rel}
+    <EditRelationshipModal
+      relationship={rel}
+      {acts}
+      onSave={async (fields) => {
+        await relationships.updateRelationship(rel.id, fields);
+        editRelMenu = null;
+      }}
+      onClose={() => (editRelMenu = null)}
+    />
+  {/if}
 {/if}
 
 <style>

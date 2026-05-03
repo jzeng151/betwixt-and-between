@@ -50,6 +50,10 @@
 		startPosition?: number | null;
 		/** Story-time end (exclusive). null/undefined = no upper bound (always visible past start). */
 		endPosition?: number | null;
+		/** Edge exists but hasn't been revealed to the reader at the current playhead position. */
+		mysteryMode?: boolean;
+		/** Edge is outside the current temporal window (±2 acts). 'past' = ended, 'future' = not yet started. */
+		ghostMode?: 'past' | 'future' | null;
 	}
 
 	export interface NodePosition {
@@ -104,6 +108,10 @@
 		    flip this — useful for dense graphs where edge labels stack
 		    on top of each other and become noise. */
 		showEdgeLabels?: boolean;
+		/** Fires on right-click of an edge. clientX/clientY are BROWSER-VIEWPORT
+		    coords so a `position: fixed` ContextMenu lands at the cursor.
+		    The id is the GraphEdge id (relationship id). */
+		onEdgeContextMenu?: (id: string, clientX: number, clientY: number) => void;
 	}
 
 	let {
@@ -118,7 +126,8 @@
 		onNodeOpen,
 		onNodePositionChange,
 		onContextMenu,
-		showEdgeLabels = true
+		showEdgeLabels = true,
+		onEdgeContextMenu
 	}: Props = $props();
 
 	const NODE_W = 120;
@@ -454,6 +463,12 @@
 		onContextMenu?.(id, e.clientX, e.clientY);
 	}
 
+	function onEdgeContextMenuHandler(e: MouseEvent, id: string) {
+		e.preventDefault();
+		e.stopPropagation();
+		onEdgeContextMenu?.(id, e.clientX, e.clientY);
+	}
+
 	/**
 	 * Force-merge external position updates into the canvas's internal nodePos
 	 * and re-fit. Used by hosts that mutate positions out-of-band (e.g.
@@ -534,6 +549,29 @@
 			</marker>
 		</defs>
 		{#each screenEdges as edge (edge.id)}
+			{@const isMystery = edge.mysteryMode === true}
+			{@const isGhost = !isMystery && (edge.ghostMode === 'past' || edge.ghostMode === 'future')}
+			{@const strokeColor = isMystery
+				? 'var(--color-rel-mystery)'
+				: isGhost
+					? 'var(--color-text-muted)'
+					: edge.color}
+			{@const strokeOpacity = isMystery
+				? 0.2
+				: isGhost
+					? edge.ghostMode === 'past'
+						? 0.18
+						: 0.12
+					: edge.dimmed
+						? 0.1
+						: 0.45}
+			{@const strokeDash = isMystery
+				? '2 4'
+				: isGhost
+					? edge.ghostMode === 'past'
+						? '6 4'
+						: '2 6'
+					: (edge.dasharray ?? undefined)}
 			{@const mx = (edge.x1 + edge.x2) / 2}
 			{@const my = (edge.y1 + edge.y2) / 2}
 			<line
@@ -541,13 +579,29 @@
 				y1={edge.y1}
 				x2={edge.x2}
 				y2={edge.y2}
-				stroke={edge.color}
+				stroke={strokeColor}
 				stroke-width={edge.width ?? 1.5}
-				stroke-opacity={edge.dimmed ? '0.1' : '0.45'}
-				stroke-dasharray={edge.dasharray ?? undefined}
-				marker-end={edge.arrow ? `url(#${arrowMarkerId})` : undefined}
+				stroke-opacity={strokeOpacity}
+				stroke-dasharray={strokeDash}
+				marker-end={edge.arrow && !isMystery ? `url(#${arrowMarkerId})` : undefined}
+				pointer-events="none"
 			/>
-			{#if showEdgeLabels}
+			<!-- Invisible wider hit-area for right-click. Always rendered so the
+			     pointer-events layer doesn't depend on a prop check in the loop. -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<line
+				x1={edge.x1}
+				y1={edge.y1}
+				x2={edge.x2}
+				y2={edge.y2}
+				stroke="currentColor"
+				stroke-width="10"
+				stroke-opacity="0"
+				pointer-events="stroke"
+				oncontextmenu={(e) => onEdgeContextMenuHandler(e, edge.id)}
+				onpointerdown={(e) => e.stopPropagation()}
+			/>
+			{#if showEdgeLabels && !isMystery && !isGhost}
 				<text
 					x={mx}
 					y={my - 5}
@@ -645,7 +699,6 @@
 		inset: 0;
 		width: 100%;
 		height: 100%;
-		pointer-events: none;
 	}
 
 	.canvas {

@@ -9,6 +9,7 @@ export type Relationship = {
 	label: string | null;
 	startPosition: number | null;
 	endPosition: number | null;
+	revealedAtPosition: number | null;
 };
 
 function createRelationshipStore() {
@@ -25,7 +26,7 @@ function createRelationshipStore() {
 		toId: string,
 		type: RelationshipType,
 		label?: string,
-		opts?: { startActId?: string; endActId?: string }
+		opts?: { startActId?: string; endActId?: string; revealedAtPosition?: number | null }
 	): Promise<Relationship> {
 		const res = await fetch('/api/relationships', {
 			method: 'POST',
@@ -36,6 +37,27 @@ function createRelationshipStore() {
 		const created: Relationship = await res.json();
 		update((all) => [...all, created]);
 		return created;
+	}
+
+	async function updateRelationship(
+		id: string,
+		fields: {
+			type?: RelationshipType;
+			label?: string | null;
+			startActId?: string | null;
+			endActId?: string | null;
+			revealedAtPosition?: number | null;
+		}
+	): Promise<Relationship> {
+		const res = await fetch(`/api/relationships/${id}`, {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(fields)
+		});
+		if (!res.ok) throw new Error(await res.text());
+		const updated: Relationship = await res.json();
+		update((all) => all.map((r) => (r.id === id ? updated : r)));
+		return updated;
 	}
 
 	async function deleteRelationship(id: string): Promise<void> {
@@ -54,7 +76,7 @@ function createRelationshipStore() {
 		}
 	}
 
-	return { subscribe, load, createRelationship, deleteRelationship };
+	return { subscribe, load, createRelationship, updateRelationship, deleteRelationship };
 }
 
 export const relationships = createRelationshipStore();

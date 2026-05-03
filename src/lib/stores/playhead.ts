@@ -61,6 +61,20 @@ export interface TemporalEdge {
  *   - otherwise: true iff startPosition <= t < endPosition
  *     NULL on one side = unbounded on that side (0 for start, Infinity for end)
  */
+/**
+ * Returns true if the relationship is in mystery mode at story-time T:
+ * the edge exists but hasn't been revealed to the reader yet.
+ * Uses Relationship directly (not TemporalEdge) because only relationships
+ * carry revealedAtPosition.
+ */
+export function isMysteryEdgeAtT(
+	edge: { revealedAtPosition?: number | null },
+	t: number | null
+): boolean {
+	if (t === null) return false;
+	return edge.revealedAtPosition != null && t < edge.revealedAtPosition;
+}
+
 export function isEdgeVisibleAtT(edge: TemporalEdge, t: number | null): boolean {
 	if (t === null) return true;
 	if (edge.startPosition == null && edge.endPosition == null) return true;

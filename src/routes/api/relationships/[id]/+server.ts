@@ -11,6 +11,7 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 
 	const body = await request.json();
 	const {
+		type,
 		label,
 		startActId,
 		startSceneId,
@@ -58,6 +59,7 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 		startPosition,
 		endPosition
 	};
+	if (type !== undefined) patch.type = type;
 	if (label !== undefined) patch.label = label ?? null;
 	if (revealedAtPosition !== undefined) patch.revealedAtPosition = revealedAtPosition ?? null;
 

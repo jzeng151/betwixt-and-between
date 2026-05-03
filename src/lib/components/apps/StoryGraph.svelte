@@ -2,7 +2,7 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-  import { playhead, intervalContainsT, isEdgeVisibleAtT } from '$lib/stores/playhead.js';
+  import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT } from '$lib/stores/playhead.js';
   import { windowStore } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
@@ -16,6 +16,7 @@
     type NodePosition
   } from '$lib/components/GraphCanvas.svelte';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import Legend from '$lib/components/Legend.svelte';
 
   // ── Relationship form ──────────────────────────────────────────────────────
@@ -23,14 +24,18 @@
   let relLabel = $state('');
   let relStartActId = $state('');
   let relEndActId = $state('');
+  let relRevealedAtPosition = $state<number | null>(null);
   let saving = $state(false);
   let pending = $state<{ fromId: string; toId: string; sx: number; sy: number } | null>(null);
 
   // First × click arms delete; second click on same node confirms.
   let confirmDeleteId = $state<string | null>(null);
 
-  // Right-click context menu state.
+  // Right-click context menu state (nodes).
   let contextMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
+
+  // Edge right-click → edit relationship modal.
+  let editRelMenu = $state<{ relationshipId: string; x: number; y: number } | null>(null);
 
   // Reference to the canvas so the per-node overlay UI can trigger connect drags.
   let canvas: GraphCanvas;
@@ -135,6 +140,7 @@
       const inWindow = isEdgeVisibleAtT(r, t);
       if (!inWindow && hardFilter) continue;
       const style = REL_EDGE_STYLE[r.type];
+      const mystery = isMysteryEdgeAtT(r, t);
       edges.push({
         id: r.id,
         fromId: r.fromId,
@@ -146,7 +152,8 @@
         width: style.width,
         arrow: style.arrow,
         startPosition: r.startPosition,
-        endPosition: r.endPosition
+        endPosition: r.endPosition,
+        mysteryMode: mystery
       });
     }
     return edges;
@@ -302,6 +309,7 @@
     relType = 'allied_with';
     relStartActId = '';
     relEndActId = '';
+    relRevealedAtPosition = null;
     saveError = '';
   }
 
@@ -314,22 +322,27 @@
     saving = true;
     saveError = '';
     try {
-      const temporalOpts =
-        relStartActId && relEndActId
-          ? { startActId: relStartActId, endActId: relEndActId }
-          : undefined;
+      const temporalOpts: { startActId?: string; endActId?: string; revealedAtPosition?: number | null } = {};
+      if (relStartActId && relEndActId) {
+        temporalOpts.startActId = relStartActId;
+        temporalOpts.endActId = relEndActId;
+      }
+      if (relRevealedAtPosition !== null) {
+        temporalOpts.revealedAtPosition = relRevealedAtPosition;
+      }
       await relationships.createRelationship(
         pending.fromId,
         pending.toId,
         relType,
         relLabel.trim() || undefined,
-        temporalOpts
+        Object.keys(temporalOpts).length ? temporalOpts : undefined
       );
       pending = null;
       relLabel = '';
       relType = 'allied_with';
       relStartActId = '';
       relEndActId = '';
+      relRevealedAtPosition = null;
     } catch (err) {
       // Surface the failure (was previously silently swallowed). Most
       // common cause: a relationship of this type between this pair
@@ -454,6 +467,7 @@
   onNodeOpen={openEntity}
   onNodePositionChange={onNodePositionChange}
   onContextMenu={(id, x, y) => (contextMenu = { entityId: id, x, y })}
+  onEdgeContextMenu={(id, x, y) => (editRelMenu = { relationshipId: id, x, y })}
   showEdgeLabels={edgeLabelsVisible}
 >
   {#snippet emptyState()}
@@ -632,6 +646,26 @@
         </div>
       </div>
     {/if}
+    {#if acts.length > 0}
+      <details class="rel-form-advanced">
+        <summary>Advanced</summary>
+        <div class="rel-form-temporal-row">
+          <span class="rel-form-temporal-label">Revealed at</span>
+          <select
+            value={relRevealedAtPosition}
+            onchange={(e) => {
+              const v = (e.currentTarget as HTMLSelectElement).value;
+              relRevealedAtPosition = v ? Number(v) : null;
+            }}
+          >
+            <option value="">Always visible</option>
+            {#each acts as act}
+              <option value={act.position}>{act.name}</option>
+            {/each}
+          </select>
+        </div>
+      </details>
+    {/if}
     {#if saveError}
       <p class="rel-form-error" role="alert">{saveError}</p>
     {/if}
@@ -651,6 +685,21 @@
     y={contextMenu.y}
     onClose={() => (contextMenu = null)}
   />
+{/if}
+
+{#if editRelMenu}
+  {@const rel = $relationships.find((r) => r.id === editRelMenu!.relationshipId)}
+  {#if rel}
+    <EditRelationshipModal
+      relationship={rel}
+      {acts}
+      onSave={async (fields) => {
+        await relationships.updateRelationship(rel.id, fields);
+        editRelMenu = null;
+      }}
+      onClose={() => (editRelMenu = null)}
+    />
+  {/if}
 {/if}
 
 {#if deleteConfirm}
@@ -953,6 +1002,23 @@
   }
   .rel-form-temporal-row select {
     flex: 1;
+  }
+
+  .rel-form-advanced {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--color-text-muted);
+  }
+  .rel-form-advanced summary {
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 0;
+  }
+  .rel-form-advanced .rel-form-temporal-row {
+    margin-top: 6px;
+  }
+  .rel-form-advanced .rel-form-temporal-label {
+    width: 52px;
   }
 
   .sg-settings-row {
