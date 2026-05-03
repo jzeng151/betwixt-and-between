@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { db } from '$lib/server/db/index.js';
 import { entityAliases, entities } from '$lib/server/db/schema.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -40,9 +40,11 @@ export const POST: RequestHandler = async ({ request }) => {
 		.select()
 		.from(entityAliases)
 		.where(
-			eq(entityAliases.primaryEntityId, primaryEntityId)
-		)
-		.then((rows) => rows.filter((r) => r.aliasEntityId === aliasEntityId));
+			and(
+				eq(entityAliases.primaryEntityId, primaryEntityId),
+				eq(entityAliases.aliasEntityId, aliasEntityId)
+			)
+		);
 
 	if (dup) {
 		error(409, 'Alias already exists for this primary entity pair');

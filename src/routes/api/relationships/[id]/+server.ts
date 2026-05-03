@@ -20,11 +20,16 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 		revealedAtPosition
 	} = body;
 
-	// Merge incoming temporal FKs with existing ones (undefined means keep existing)
+	// Merge incoming temporal FKs with existing ones (undefined means keep existing).
+	// Scenes are children of acts — clearing an act FK must also clear its scene FK.
 	const mergedStartActId = startActId !== undefined ? (startActId ?? null) : rel.startActId;
-	const mergedStartSceneId = startSceneId !== undefined ? (startSceneId ?? null) : rel.startSceneId;
+	const mergedStartSceneId = mergedStartActId === null
+		? null
+		: (startSceneId !== undefined ? (startSceneId ?? null) : rel.startSceneId);
 	const mergedEndActId = endActId !== undefined ? (endActId ?? null) : rel.endActId;
-	const mergedEndSceneId = endSceneId !== undefined ? (endSceneId ?? null) : rel.endSceneId;
+	const mergedEndSceneId = mergedEndActId === null
+		? null
+		: (endSceneId !== undefined ? (endSceneId ?? null) : rel.endSceneId);
 
 	let startPosition: number | null = rel.startPosition;
 	let endPosition: number | null = rel.endPosition;
