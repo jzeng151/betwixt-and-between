@@ -698,6 +698,14 @@ export const PRESTIGE: SeedStory = {
       toAct: 'Act 4: The Prestige',
       fromScene: 'Below the stage',
       toScene: 'Below the stage'
-    }
+    },
+
+    // Locations
+    { character: 'London', fromAct: 'Act 1: The Pledge', toAct: 'Act 5: The Secret' },
+    { character: 'The Orpheum Theatre', fromAct: 'Act 2: The Turn', toAct: 'Act 4: The Prestige' },
+    { character: 'Colorado Springs', fromAct: 'Act 3: Obsession', toAct: 'Act 4: The Prestige' },
+    { character: "Tesla's Laboratory", fromAct: 'Act 3: Obsession', toAct: 'Act 4: The Prestige' },
+    { character: "Lord Caldlow's Estate", fromAct: 'Act 4: The Prestige', toAct: 'Act 5: The Secret' },
+    { character: 'Newgate Prison', fromAct: 'Act 5: The Secret', toAct: 'Act 5: The Secret' }
   ]
 };
