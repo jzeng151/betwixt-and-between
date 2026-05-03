@@ -93,42 +93,60 @@
     return m;
   });
 
+  // Fractional sub-ranges for Scenes within their parent Act's [pos, pos+1) window.
+  // Rebuilds only when $entities changes. Scenes sorted by explicit position if set,
+  // otherwise by $entities list order (= creation order from the seed).
+  const sceneRanges = $derived.by(() => {
+    const ranges = new Map<string, { start: number; end: number }>();
+    const actPositionById = new Map<string, number>();
+    for (const e of $entities) {
+      if (e.type === 'Act' && e.position != null) actPositionById.set(e.id, e.position);
+    }
+    const scenesByAct = new Map<string, Array<{ id: string; position: number | null }>>();
+    for (const e of $entities) {
+      if (e.type === 'Scene' && e.parentId != null) {
+        const list = scenesByAct.get(e.parentId) ?? [];
+        list.push({ id: e.id, position: e.position ?? null });
+        scenesByAct.set(e.parentId, list);
+      }
+    }
+    for (const [actId, scenes] of scenesByAct) {
+      const actPos = actPositionById.get(actId);
+      if (actPos == null) continue;
+      const sorted = [...scenes].sort((a, b) => {
+        if (a.position != null && b.position != null) return a.position - b.position;
+        if (a.position != null) return -1;
+        if (b.position != null) return 1;
+        return 0;
+      });
+      const n = sorted.length;
+      for (let i = 0; i < n; i++) {
+        ranges.set(sorted[i].id, { start: actPos + i / n, end: actPos + (i + 1) / n });
+      }
+    }
+    return ranges;
+  });
+
   // An entity is "out of scope" at T when:
-  //   - It has intervals and none contain T (characters/events placed on timeline), OR
-  //   - It has a parentId pointing to an Act whose position interval does not contain T
-  //     (Scenes belong to exactly one Act and are only in-scope during that Act).
+  //   - It has intervals and none contain T (characters/events on the timeline)
+  //   - It is an Act whose position window does not contain T
+  //   - It is a Scene whose fractional sub-range within its Act does not contain T
   const outOfScope = $derived.by(() => {
     const set = new Set<string>();
     if ($playhead == null) return set;
     const t = $playhead;
 
-    // Build act-position lookup from all entities
-    const actPositionById = new Map<string, number>();
-    for (const e of $entities) {
-      if (e.type === 'Act' && e.position != null) actPositionById.set(e.id, e.position);
-    }
-
-    // Interval-based out-of-scope (characters etc. placed on the timeline)
-    const byEntity = entityIntervalMap;
-    for (const [entityId, ivs] of byEntity) {
+    for (const [entityId, ivs] of entityIntervalMap) {
       const active = ivs.some((iv) => intervalContainsT(iv.startPosition, iv.endPosition, t));
       if (!active) set.add(entityId);
     }
 
-    // Act scoping: Acts are only in scope at their own position
     for (const e of displayEntities) {
       if (e.type === 'Act' && e.position != null) {
         if (!intervalContainsT(e.position, e.position + 1, t)) set.add(e.id);
-      }
-    }
-
-    // Parent-act scoping: Scenes are out of scope outside their parent Act's position
-    for (const e of displayEntities) {
-      if (e.parentId != null) {
-        const actPos = actPositionById.get(e.parentId);
-        if (actPos != null && !intervalContainsT(actPos, actPos + 1, t)) {
-          set.add(e.id);
-        }
+      } else if (e.type === 'Scene') {
+        const range = sceneRanges.get(e.id);
+        if (range != null && !intervalContainsT(range.start, range.end, t)) set.add(e.id);
       }
     }
 

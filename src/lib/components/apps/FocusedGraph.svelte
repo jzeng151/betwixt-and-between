@@ -89,15 +89,41 @@
     return m;
   });
 
-  const outOfScope = $derived.by(() => {
-    const set = new Set<string>();
-    if ($playhead == null) return set;
-    const t = $playhead;
-
+  const sceneRanges = $derived.by(() => {
+    const ranges = new Map<string, { start: number; end: number }>();
     const actPositionById = new Map<string, number>();
     for (const e of $entities) {
       if (e.type === 'Act' && e.position != null) actPositionById.set(e.id, e.position);
     }
+    const scenesByAct = new Map<string, Array<{ id: string; position: number | null }>>();
+    for (const e of $entities) {
+      if (e.type === 'Scene' && e.parentId != null) {
+        const list = scenesByAct.get(e.parentId) ?? [];
+        list.push({ id: e.id, position: e.position ?? null });
+        scenesByAct.set(e.parentId, list);
+      }
+    }
+    for (const [actId, scenes] of scenesByAct) {
+      const actPos = actPositionById.get(actId);
+      if (actPos == null) continue;
+      const sorted = [...scenes].sort((a, b) => {
+        if (a.position != null && b.position != null) return a.position - b.position;
+        if (a.position != null) return -1;
+        if (b.position != null) return 1;
+        return 0;
+      });
+      const n = sorted.length;
+      for (let i = 0; i < n; i++) {
+        ranges.set(sorted[i].id, { start: actPos + i / n, end: actPos + (i + 1) / n });
+      }
+    }
+    return ranges;
+  });
+
+  const outOfScope = $derived.by(() => {
+    const set = new Set<string>();
+    if ($playhead == null) return set;
+    const t = $playhead;
 
     for (const [entityId, ivs] of entityIntervalMap) {
       const active = ivs.some((iv) => intervalContainsT(iv.startPosition, iv.endPosition, t));
@@ -107,12 +133,9 @@
     for (const e of displayEntities) {
       if (e.type === 'Act' && e.position != null) {
         if (!intervalContainsT(e.position, e.position + 1, t)) set.add(e.id);
-      }
-      if (e.parentId != null) {
-        const actPos = actPositionById.get(e.parentId);
-        if (actPos != null && !intervalContainsT(actPos, actPos + 1, t)) {
-          set.add(e.id);
-        }
+      } else if (e.type === 'Scene') {
+        const range = sceneRanges.get(e.id);
+        if (range != null && !intervalContainsT(range.start, range.end, t)) set.add(e.id);
       }
     }
 
