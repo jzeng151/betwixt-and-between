@@ -629,7 +629,7 @@
       }
     }
     if (Object.keys(updates).length > 0) {
-      canvas?.reseed(updates);
+      canvas?.reseed(updates, { fit: false });
       for (const id of Object.keys(updates)) snappedAliasIds.add(id);
     }
   });

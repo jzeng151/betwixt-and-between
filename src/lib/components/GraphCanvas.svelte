@@ -486,13 +486,13 @@
 		return nodePos[id];
 	}
 
-	export function reseed(positions: Record<string, NodePosition>) {
+	export function reseed(positions: Record<string, NodePosition>, { fit = true }: { fit?: boolean } = {}) {
 		const merged = { ...nodePos };
 		for (const [id, p] of Object.entries(positions)) {
 			merged[id] = { ...merged[id], ...p };
 		}
 		nodePos = merged;
-		queueMicrotask(() => fitView(nodePos));
+		if (fit) queueMicrotask(() => fitView(nodePos));
 	}
 
 	/** Re-center the viewport on the current set of nodes (e.g. after a host
