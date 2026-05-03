@@ -419,14 +419,39 @@
 		};
 	});
 
+	const SPEED_STEPS = [0.25, 0.5, 1, 2];
+
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key !== ' ') return;
-		const t = e.target as HTMLElement;
-		if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return;
+		const target = e.target as HTMLElement;
+		if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) return;
 		if ($playhead == null) return;
-		e.preventDefault();
-		if ($isPlaying) playhead.pause();
-		else playhead.play(maxT);
+		switch (e.key) {
+			case ' ':
+				e.preventDefault();
+				if ($isPlaying) playhead.pause();
+				else playhead.play(maxT);
+				break;
+			case 'ArrowLeft':
+				e.preventDefault();
+				playhead.stepBack();
+				break;
+			case 'ArrowRight':
+				e.preventDefault();
+				playhead.stepForward(maxT);
+				break;
+			case 'ArrowUp': {
+				e.preventDefault();
+				const idx = SPEED_STEPS.indexOf($playbackSpeed);
+				playbackSpeed.set(SPEED_STEPS[Math.min(idx + 1, SPEED_STEPS.length - 1)] ?? SPEED_STEPS[SPEED_STEPS.length - 1]);
+				break;
+			}
+			case 'ArrowDown': {
+				e.preventDefault();
+				const idx = SPEED_STEPS.indexOf($playbackSpeed);
+				playbackSpeed.set(SPEED_STEPS[Math.max(idx - 1, 0)] ?? SPEED_STEPS[0]);
+				break;
+			}
+		}
 	}
 
 	function clickTrackToScrub(e: MouseEvent) {
