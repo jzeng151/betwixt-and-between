@@ -63,11 +63,21 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	if (label !== undefined) patch.label = label ?? null;
 	if (revealedAtPosition !== undefined) patch.revealedAtPosition = revealedAtPosition ?? null;
 
-	const [updated] = await db
-		.update(relationships)
-		.set(patch)
-		.where(eq(relationships.id, params.id))
-		.returning();
+	let updated;
+	try {
+		[updated] = await db
+			.update(relationships)
+			.set(patch)
+			.where(eq(relationships.id, params.id))
+			.returning();
+	} catch (err) {
+		const code = (err as { code?: string }).code ?? '';
+		const msg = (err as Error).message ?? '';
+		if (code === '23505' || msg.includes('unique') || msg.includes('duplicate')) {
+			error(409, 'A relationship with these temporal bounds already exists');
+		}
+		throw err;
+	}
 
 	return json(updated);
 };

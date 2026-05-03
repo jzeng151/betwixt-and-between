@@ -1087,8 +1087,8 @@ export async function recomputeRelationshipBoundsAll(db: DB): Promise<number> {
 				row.endPosition !== null &&
 				Math.abs(endPosition - row.endPosition) > POSITION_EPSILON;
 			// Also handle case where position was null and now needs a value
-			const startChanged = startPosition !== row.startPosition && (startDrift || startPosition !== row.startPosition);
-			const endChanged = endPosition !== row.endPosition && (endDrift || endPosition !== row.endPosition);
+			const startChanged = (startPosition === null) !== (row.startPosition === null) || startDrift;
+			const endChanged = (endPosition === null) !== (row.endPosition === null) || endDrift;
 
 			if (!startChanged && !endChanged) continue;
 

@@ -179,11 +179,15 @@
     const inScope = new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)));
     if (!showGhostTrails || $playhead === null) return inScope;
     const t = $playhead;
+    const nearEnoughScene = (lo: number, hi: number) =>
+      sortedSceneStarts.length > 0
+        ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2
+        : hi - lo <= 1;
     for (const [entityId, ivs] of entityIntervalMap) {
       if (!outOfScope.has(entityId)) continue;
       for (const iv of ivs) {
-        if ((iv.endPosition <= t && t - iv.endPosition <= 2) ||
-            (iv.startPosition > t && iv.startPosition - t <= 2)) {
+        if ((iv.endPosition <= t && nearEnoughScene(iv.endPosition, t)) ||
+            (iv.startPosition > t && nearEnoughScene(t, iv.startPosition))) {
           inScope.add(entityId);
           break;
         }
