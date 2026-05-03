@@ -6,9 +6,10 @@
   import TooSmall from '$lib/components/TooSmall.svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
+  import { entityAliases } from '$lib/stores/entity-aliases.js';
 
   onMount(async () => {
-    await Promise.all([entities.load(), relationships.load()]);
+    await Promise.all([entities.load(), relationships.load(), entityAliases.load()]);
   });
 </script>
 

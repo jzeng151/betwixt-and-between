@@ -13,7 +13,7 @@
 -->
 
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { entities, type Entity } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore, type Interval } from '$lib/stores/intervals.js';
 	import Palette from '$lib/components/Palette.svelte';
@@ -22,7 +22,7 @@
 	import PlayheadOverlay from '$lib/components/PlayheadOverlay.svelte';
 	import EntityDetail from '$lib/components/EntityDetail.svelte';
 	import Toast from '$lib/components/Toast.svelte';
-	import { playhead } from '$lib/stores/playhead.js';
+	import { playhead, isPlaying, playbackSpeed } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
 	import { getDraftPreview, clearAllDraftsFor } from '$lib/stores/editable-drafts.js';
 	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
@@ -42,6 +42,10 @@
 		} finally {
 			loaded = true;
 		}
+	});
+
+	onDestroy(() => {
+		playhead.pause();
 	});
 
 	// ── Interaction lock — blocks palette drops while edge-resize is active ──
@@ -148,6 +152,8 @@
 	});
 
 	const N = $derived(acts.length);
+	// Max story-time position: the playback upper bound for play/stepForward.
+	const maxT = $derived(acts.length);
 
 	// ── Per-act weights for variable-width acts ──────────────────────────────
 	// Each Act's data.timelineWeight (default 1) controls its share of the
@@ -413,6 +419,16 @@
 		};
 	});
 
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key !== ' ') return;
+		const t = e.target as HTMLElement;
+		if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return;
+		if ($playhead == null) return;
+		e.preventDefault();
+		if ($isPlaying) playhead.pause();
+		else playhead.play(maxT);
+	}
+
 	function clickTrackToScrub(e: MouseEvent) {
 		// Only scrub when the playhead is active. Idle = let drag handlers run.
 		if ($playhead == null) return;
@@ -425,6 +441,8 @@
 		playhead.scrubTo(Math.max(0, Math.min(t, N)));
 	}
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="tl2">
 	<Palette
@@ -463,6 +481,41 @@
 						<span class="scrub-pos">Time = {$playhead.toFixed(2)}</span>
 					{/if}
 				</button>
+				{#if $playhead != null}
+					<div class="media-controls">
+						<button
+							class="media-btn"
+							title="Step back one act"
+							aria-label="Step back"
+							onclick={() => playhead.stepBack()}
+						>⏮</button>
+						<button
+							class="media-btn media-play"
+							class:playing={$isPlaying}
+							title={$isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+							aria-label={$isPlaying ? 'Pause' : 'Play'}
+							onclick={() => ($isPlaying ? playhead.pause() : playhead.play(maxT))}
+						>{$isPlaying ? '⏸' : '▶'}</button>
+						<button
+							class="media-btn"
+							title="Step forward one act"
+							aria-label="Step forward"
+							onclick={() => playhead.stepForward(maxT)}
+						>⏭</button>
+						<select
+							class="speed-select"
+							value={$playbackSpeed}
+							onchange={(e) => playbackSpeed.set(Number((e.currentTarget as HTMLSelectElement).value))}
+							title="Playback speed"
+							aria-label="Playback speed"
+						>
+							<option value={0.25}>¼×</option>
+							<option value={0.5}>½×</option>
+							<option value={1}>1×</option>
+							<option value={2}>2×</option>
+						</select>
+					</div>
+				{/if}
 				<div class="spotlight-help-wrap" bind:this={spotlightHelpWrapEl}>
 					<button
 						type="button"
@@ -807,5 +860,49 @@
 		text-align: center;
 		pointer-events: none;
 		z-index: 10;
+	}
+
+	.media-controls {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+	}
+
+	.media-btn {
+		width: 26px;
+		height: 26px;
+		padding: 0;
+		border: 1px solid var(--color-border, #2a2d35);
+		border-radius: 4px;
+		background: transparent;
+		color: var(--color-text-muted, #6b7280);
+		font-size: 11px;
+		line-height: 1;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		transition: color 0.12s, border-color 0.12s, background 0.12s;
+	}
+	.media-btn:hover {
+		color: var(--color-text, #e8e0d0);
+		border-color: var(--color-text-muted, #6b7280);
+	}
+	.media-btn.media-play.playing {
+		color: var(--color-accent, #c8942a);
+		border-color: var(--color-accent, #c8942a);
+		background: rgba(200, 148, 42, 0.08);
+	}
+
+	.speed-select {
+		height: 26px;
+		background: transparent;
+		border: 1px solid var(--color-border, #2a2d35);
+		border-radius: 4px;
+		color: var(--color-text-muted, #6b7280);
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		font-size: 11px;
+		padding: 0 4px;
+		cursor: pointer;
 	}
 </style>

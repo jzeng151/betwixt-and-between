@@ -17,6 +17,8 @@
   } from '$lib/components/GraphCanvas.svelte';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
+  import { entityAliases } from '$lib/stores/entity-aliases.js';
+  import AliasModal from '$lib/components/AliasModal.svelte';
   import Legend from '$lib/components/Legend.svelte';
 
   // ── Relationship form ──────────────────────────────────────────────────────
@@ -36,6 +38,9 @@
 
   // Edge right-click → edit relationship modal.
   let editRelMenu = $state<{ relationshipId: string; x: number; y: number } | null>(null);
+
+  // Right-click → alias modal.
+  let aliasModal = $state<{ entity: { id: string; type: string; name: string } } | null>(null);
 
   // Reference to the canvas so the per-node overlay UI can trigger connect drags.
   let canvas: GraphCanvas;
@@ -57,12 +62,17 @@
     return m;
   });
 
+  const aliasEntityIds = $derived(
+    new Set([...$entityAliases.map((a) => a.primaryEntityId), ...$entityAliases.map((a) => a.aliasEntityId)])
+  );
+
   const graphNodes = $derived<GraphNode[]>(
     displayEntities.map((e) => ({
       id: e.id,
       type: e.type,
       name: e.name,
-      color: nodeColorFor(e, characterIndexById.get(e.id))
+      color: nodeColorFor(e, characterIndexById.get(e.id)),
+      aliasMember: aliasEntityIds.has(e.id)
     }))
   );
 
@@ -138,25 +148,57 @@
     const edges: GraphEdge[] = [];
     for (const r of visibleRelationships) {
       const inWindow = isEdgeVisibleAtT(r, t);
-      if (!inWindow && hardFilter) continue;
       const style = REL_EDGE_STYLE[r.type];
       const mystery = isMysteryEdgeAtT(r, t);
+
+      // Ghost mode: ±2-act window, mystery takes precedence, timeless edges never ghost
+      let ghostMode: 'past' | 'future' | null = null;
+      if (showGhostTrails && t !== null && !mystery && !inWindow) {
+        if (!(r.startPosition == null && r.endPosition == null)) {
+          const nearStart = r.startPosition != null && Math.abs(r.startPosition - t) <= 2;
+          const nearEnd = r.endPosition != null && Math.abs(r.endPosition - t) <= 2;
+          if (nearStart || nearEnd) {
+            if (r.startPosition != null && r.startPosition > t) ghostMode = 'future';
+            else if (r.endPosition != null && r.endPosition <= t) ghostMode = 'past';
+          }
+        }
+      }
+
+      if (!inWindow && hardFilter && ghostMode === null) continue;
       edges.push({
         id: r.id,
         fromId: r.fromId,
         toId: r.toId,
         color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
         label: r.label ?? r.type.replace(/_/g, ' '),
-        dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId) || (!inWindow && !hardFilter),
+        dimmed: !mystery && !ghostMode && (outOfScope.has(r.fromId) || outOfScope.has(r.toId) || (!inWindow && !hardFilter)),
         dasharray: style.dasharray,
         width: style.width,
         arrow: style.arrow,
         startPosition: r.startPosition,
         endPosition: r.endPosition,
-        mysteryMode: mystery
+        mysteryMode: mystery,
+        ghostMode
       });
     }
-    return edges;
+    // Alias edges: dashed "aka" line per pair where both endpoints are visible
+    for (const alias of $entityAliases) {
+      if (!displayEntityIdSet.has(alias.primaryEntityId) || !displayEntityIdSet.has(alias.aliasEntityId)) continue;
+      if (alias.revealedAtPosition != null && t != null && t < alias.revealedAtPosition) continue;
+      edges.push({
+        id: `alias-${alias.id}`,
+        fromId: alias.primaryEntityId,
+        toId: alias.aliasEntityId,
+        color: 'var(--color-rel-other)',
+        label: 'aka',
+        dimmed: false,
+        dasharray: '1 2',
+        width: 1,
+        arrow: false
+      });
+    }
+    // Ghost edges emitted first → render behind normal edges in SVG
+    return [...edges.filter((e) => e.ghostMode), ...edges.filter((e) => !e.ghostMode)];
   });
 
   // ── Position seed ─────────────────────────────────────────────────────────
@@ -209,6 +251,7 @@
   let typeOrder = $state<EntityType[]>([...DEFAULT_TYPE_ORDER]);
   let settingsOpen = $state(false);
   let hardFilter = $state(true);
+  let showGhostTrails = $state(false);
   let legendOpen = $state(true);
   let edgeLabelsVisible = $state(true);
   let layoutLock = Promise.resolve();
@@ -450,6 +493,14 @@
         onSelect: () => windowStore.openFocusedGraph([id], 'their_worlds')
       },
       {
+        label: 'Mark as alias of…',
+        onSelect: () => {
+          const entity = $entities.find((e) => e.id === id);
+          if (entity) aliasModal = { entity };
+          contextMenu = null;
+        }
+      },
+      {
         label: 'Delete…',
         onSelect: () => openDeleteConfirm(id)
       }
@@ -565,6 +616,10 @@
           <option value="hard">Hide edges</option>
           <option value="soft">Dim edges</option>
         </select>
+      </label>
+      <label class="sg-settings-row">
+        <span>Ghost trails</span>
+        <input type="checkbox" bind:checked={showGhostTrails} />
       </label>
     </div>
   {/if}
@@ -700,6 +755,19 @@
       onClose={() => (editRelMenu = null)}
     />
   {/if}
+{/if}
+
+{#if aliasModal}
+  <AliasModal
+    entity={aliasModal.entity}
+    allEntities={$entities}
+    {acts}
+    onSave={async (primaryEntityId, revealedAtPosition) => {
+      await entityAliases.createAlias(primaryEntityId, aliasModal!.entity.id, revealedAtPosition);
+      aliasModal = null;
+    }}
+    onClose={() => (aliasModal = null)}
+  />
 {/if}
 
 {#if deleteConfirm}

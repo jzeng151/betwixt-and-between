@@ -30,6 +30,9 @@
 		 * Characters without a custom one) on the graph.
 		 */
 		color?: string;
+		/** Entity is a member of an alias pair (primary or alias side).
+		 *  Renders a dashed border to signal constructed identity. */
+		aliasMember?: boolean;
 	}
 
 	export interface GraphEdge {
@@ -642,6 +645,7 @@
 					data-entity-id={node.id}
 					class:node-active={hoveredNodeId === node.id || draggingNode?.id === node.id}
 					class:node-out-of-scope={dimmedNodes.has(node.id)}
+					class:node-alias-member={node.aliasMember}
 					style="left:{p.x}px; top:{p.y}px; --nc:{nc}"
 					onpointerdown={(e) => onNodePointerDown(e, node.id)}
 					ondblclick={(e) => onNodeDblClick(e, node.id)}
@@ -737,6 +741,10 @@
 
 	.node-out-of-scope {
 		opacity: 0.18;
+	}
+
+	.node-alias-member {
+		border-style: dashed;
 	}
 
 	.node-name {

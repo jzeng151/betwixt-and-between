@@ -117,6 +117,14 @@
 				</button>
 			</li>
 		{/each}
+		<li class="legend-row">
+			<div class="legend-alias">
+				<svg class="swatch" viewBox="0 0 14 8" aria-hidden="true">
+					<line x1="0" y1="4" x2="14" y2="4" stroke="var(--color-rel-other)" stroke-width="1" stroke-dasharray="1 2" />
+				</svg>
+				<span class="label-aka">aka</span>
+			</div>
+		</li>
 	</ul>
 </div>
 
@@ -233,5 +241,19 @@
 
 	.label {
 		text-transform: capitalize;
+	}
+
+	.legend-alias {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 3px 6px;
+		opacity: 0.7;
+	}
+
+	.label-aka {
+		font-style: italic;
+		font-size: inherit;
+		color: var(--color-text-muted);
 	}
 </style>

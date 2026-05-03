@@ -6,14 +6,10 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url }) => {
 	const primaryEntityId = url.searchParams.get('primaryEntityId');
-	if (!primaryEntityId) {
-		error(400, 'primaryEntityId query parameter is required');
-	}
 
-	const rows = await db
-		.select()
-		.from(entityAliases)
-		.where(eq(entityAliases.primaryEntityId, primaryEntityId));
+	const rows = primaryEntityId
+		? await db.select().from(entityAliases).where(eq(entityAliases.primaryEntityId, primaryEntityId))
+		: await db.select().from(entityAliases);
 
 	return json(rows);
 };
@@ -34,6 +30,10 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	const [alias] = await db.select().from(entities).where(eq(entities.id, aliasEntityId));
 	if (!alias) error(400, 'aliasEntityId entity not found');
+
+	if (primary.type !== alias.type) {
+		error(422, `Cannot alias entities of different types: ${primary.type} vs ${alias.type}`);
+	}
 
 	// Check for duplicate before insert to return 409 vs a generic DB error
 	const [dup] = await db

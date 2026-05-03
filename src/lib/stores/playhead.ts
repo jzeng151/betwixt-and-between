@@ -13,8 +13,16 @@ import { writable, get } from 'svelte/store';
  * (Story Graph, World Map) subscribe read-only and react.
  */
 
+const _isPlaying = writable(false);
+/** Whether the playhead is currently auto-advancing. Read-only to consumers. */
+export const isPlaying = { subscribe: _isPlaying.subscribe };
+
+/** Positions per second during auto-play. Writable so Timeline's speed selector can set it. */
+export const playbackSpeed = writable(0.5);
+
 function createPlayheadStore() {
 	const { subscribe, set } = writable<number | null>(null);
+	let _interval: ReturnType<typeof setInterval> | null = null;
 
 	/** Activate the playhead at the given story-time position. */
 	function scrubTo(t: number) {
@@ -22,18 +30,56 @@ function createPlayheadStore() {
 		set(t);
 	}
 
-	/** Toggle activation. If currently null, activate at `defaultT` (or 0). */
+	/** Toggle activation. If currently null, activate at `defaultT` (or 0). Stops playback. */
 	function toggle(defaultT = 0) {
 		const cur = get({ subscribe });
-		set(cur == null ? Math.max(0, defaultT) : null);
+		if (cur != null) { pause(); set(null); }
+		else set(Math.max(0, defaultT));
 	}
 
-	/** Idle the playhead. Subscribers go back to "show everything." */
+	/** Idle the playhead. Subscribers go back to "show everything." Stops playback. */
 	function dismiss() {
+		pause();
 		set(null);
 	}
 
-	return { subscribe, scrubTo, toggle, dismiss };
+	/** Start auto-advancing the playhead. Stops at maxT. */
+	function play(maxT: number) {
+		if (maxT <= 0) return;
+		if (get({ subscribe }) == null) set(0);
+		_isPlaying.set(true);
+		if (_interval) clearInterval(_interval);
+		_interval = setInterval(() => {
+			const speed = get(playbackSpeed);
+			const t = get({ subscribe });
+			if (t == null) { pause(); return; }
+			const next = t + speed * 0.1;
+			if (next >= maxT) { set(maxT); pause(); return; }
+			set(next);
+		}, 100);
+	}
+
+	/** Stop auto-advancing without dismissing the playhead. */
+	function pause() {
+		_isPlaying.set(false);
+		if (_interval) { clearInterval(_interval); _interval = null; }
+	}
+
+	/** Pause and jump forward by one act position. */
+	function stepForward(maxT: number) {
+		pause();
+		const cur = get({ subscribe }) ?? 0;
+		scrubTo(Math.min(Math.floor(cur) + 1, maxT));
+	}
+
+	/** Pause and jump back by one act position. */
+	function stepBack() {
+		pause();
+		const cur = get({ subscribe }) ?? 0;
+		scrubTo(Math.max(Math.ceil(cur) - 1, 0));
+	}
+
+	return { subscribe, scrubTo, toggle, dismiss, play, pause, stepForward, stepBack };
 }
 
 export const playhead = createPlayheadStore();

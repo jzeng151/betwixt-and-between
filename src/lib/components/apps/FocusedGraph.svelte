@@ -21,6 +21,8 @@
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
   import Legend from '$lib/components/Legend.svelte';
+  import { entityAliases } from '$lib/stores/entity-aliases.js';
+  import AliasModal from '$lib/components/AliasModal.svelte';
 
   interface Props {
     windowId: string;
@@ -70,6 +72,10 @@
   // drops those today, but matching the node-filter shape keeps the two
   // derivations consistent (Greptile P2 follow-up from PR #12).
   const displayEntityIds = $derived(new Set(displayEntities.map((e) => e.id)));
+
+  const aliasEntityIds = $derived(
+    new Set([...$entityAliases.map((a) => a.primaryEntityId), ...$entityAliases.map((a) => a.aliasEntityId)])
+  );
 
   // ── Out-of-scope at playhead (same shape as StoryGraph) ───────────────────
   const outOfScope = $derived.by(() => {
@@ -133,7 +139,8 @@
       id: e.id,
       type: e.type,
       name: e.name,
-      color: nodeColorFor(e, characterIndexById.get(e.id))
+      color: nodeColorFor(e, characterIndexById.get(e.id)),
+      aliasMember: aliasEntityIds.has(e.id)
     }))
   );
 
@@ -155,25 +162,57 @@
     const edges: GraphEdge[] = [];
     for (const r of visibleRelationships) {
       const inWindow = isEdgeVisibleAtT(r, t);
-      if (!inWindow && hardFilter) continue;
       const style = REL_EDGE_STYLE[r.type];
       const mystery = isMysteryEdgeAtT(r, t);
+
+      // Ghost mode: ±2-act window, mystery takes precedence, timeless edges never ghost
+      let ghostMode: 'past' | 'future' | null = null;
+      if (showGhostTrails && t !== null && !mystery && !inWindow) {
+        if (!(r.startPosition == null && r.endPosition == null)) {
+          const nearStart = r.startPosition != null && Math.abs(r.startPosition - t) <= 2;
+          const nearEnd = r.endPosition != null && Math.abs(r.endPosition - t) <= 2;
+          if (nearStart || nearEnd) {
+            if (r.startPosition != null && r.startPosition > t) ghostMode = 'future';
+            else if (r.endPosition != null && r.endPosition <= t) ghostMode = 'past';
+          }
+        }
+      }
+
+      if (!inWindow && hardFilter && ghostMode === null) continue;
       edges.push({
         id: r.id,
         fromId: r.fromId,
         toId: r.toId,
         color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
         label: r.label ?? r.type.replace(/_/g, ' '),
-        dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId) || (!inWindow && !hardFilter),
+        dimmed: !mystery && !ghostMode && (outOfScope.has(r.fromId) || outOfScope.has(r.toId) || (!inWindow && !hardFilter)),
         dasharray: style.dasharray,
         width: style.width,
         arrow: style.arrow,
         startPosition: r.startPosition,
         endPosition: r.endPosition,
-        mysteryMode: mystery
+        mysteryMode: mystery,
+        ghostMode
       });
     }
-    return edges;
+    // Alias edges: dashed "aka" line per pair where both endpoints are visible
+    for (const alias of $entityAliases) {
+      if (!displayEntityIds.has(alias.primaryEntityId) || !displayEntityIds.has(alias.aliasEntityId)) continue;
+      if (alias.revealedAtPosition != null && t != null && t < alias.revealedAtPosition) continue;
+      edges.push({
+        id: `alias-${alias.id}`,
+        fromId: alias.primaryEntityId,
+        toId: alias.aliasEntityId,
+        color: 'var(--color-rel-other)',
+        label: 'aka',
+        dimmed: false,
+        dasharray: '1 2',
+        width: 1,
+        arrow: false
+      });
+    }
+    // Ghost edges emitted first → render behind normal edges in SVG
+    return [...edges.filter((e) => e.ghostMode), ...edges.filter((e) => !e.ghostMode)];
   });
 
   // Reference to the canvas for out-of-band position updates (reseed) +
@@ -482,6 +521,7 @@
   // back to StoryGraph.
   let contextMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
   let editRelMenu = $state<{ relationshipId: string; x: number; y: number } | null>(null);
+  let aliasModal = $state<{ entity: { id: string; type: string; name: string } } | null>(null);
 
   function addToFocalSet(id: string) {
     if (focalSetIds.has(id)) return;
@@ -518,12 +558,21 @@
       label: 'Layout by type',
       onSelect: () => void layoutByType()
     });
+    items.push({
+      label: 'Mark as alias of…',
+      onSelect: () => {
+        const entity = $entities.find((e) => e.id === id);
+        if (entity) aliasModal = { entity };
+        contextMenu = null;
+      }
+    });
     return items;
   });
 
   // Settings panel toggle (C7 panel anchored to the header).
   let settingsOpen = $state(false);
   let hardFilter = $state(true);
+  let showGhostTrails = $state(false);
   let legendOpen = $state(true);
   let edgeLabelsVisible = $state(true);
   const currentTypeOrder = $derived<EntityType[]>(win?.typeOrder ?? DEFAULT_TYPE_ORDER);
@@ -685,6 +734,10 @@
             <option value="soft">Dim edges</option>
           </select>
         </label>
+        <label class="fg-settings-row">
+          <span>Ghost trails</span>
+          <input type="checkbox" bind:checked={showGhostTrails} />
+        </label>
       </div>
     {/if}
 
@@ -716,6 +769,19 @@
       onClose={() => (editRelMenu = null)}
     />
   {/if}
+{/if}
+
+{#if aliasModal}
+  <AliasModal
+    entity={aliasModal.entity}
+    allEntities={$entities}
+    {acts}
+    onSave={async (primaryEntityId, revealedAtPosition) => {
+      await entityAliases.createAlias(primaryEntityId, aliasModal!.entity.id, revealedAtPosition);
+      aliasModal = null;
+    }}
+    onClose={() => (aliasModal = null)}
+  />
 {/if}
 
 <style>
