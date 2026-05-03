@@ -46,10 +46,11 @@ function createPlayheadStore() {
 		set(null);
 	}
 
-	/** Start auto-advancing the playhead. Stops at maxT. */
+	/** Start auto-advancing the playhead. Stops at maxT. Resets to 0 if already at the end. */
 	function play(maxT: number) {
 		if (maxT <= 0) return;
-		if (get({ subscribe }) == null) set(0);
+		const cur = get({ subscribe });
+		if (cur == null || cur >= maxT) set(0);
 		_isPlaying.set(true);
 		if (_interval) clearInterval(_interval);
 		_interval = setInterval(() => {
