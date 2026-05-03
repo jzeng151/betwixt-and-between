@@ -532,11 +532,13 @@
           fromId: r.fromId,
           toId: r.toId
         }));
-        const positionsForCentroid = Object.entries(currentPositions).map(([id, p]) => ({
-          id,
-          x: p.x,
-          y: p.y
-        }));
+        // Only include currently-visible entities. currentPositions accumulates
+        // stale entries from prior display states; stale pinned positions skew
+        // pinnedCentroid and shift the unpinned cluster away from visible pins.
+        const displayEntityIdSet = new Set(displayEntities.map((e) => e.id));
+        const positionsForCentroid = Object.entries(currentPositions)
+          .filter(([id]) => displayEntityIdSet.has(id))
+          .map(([id, p]) => ({ id, x: p.x, y: p.y }));
 
         const newPositions = await runLayout({
           nodes: layoutNodes,
