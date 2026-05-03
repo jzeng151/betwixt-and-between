@@ -352,6 +352,7 @@
   // canceling a different node's pending PUT.
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function onNodePositionChange(id: string, p: NodePosition) {
+    initialPositions = { ...initialPositions, [id]: p };
     const existing = saveTimers.get(id);
     if (existing) clearTimeout(existing);
     saveTimers.set(
@@ -603,6 +604,29 @@
       deleting = false;
     }
   }
+
+  // ── Alias position snap ────────────────────────────────────────────────────
+  // When an alias entity enters renderedEntityIds, snap it to the primary
+  // entity's current canvas position so the reveal reads as in-place substitution.
+  // Plain Set (not $state) so writes don't trigger reactive re-runs.
+  let snappedAliasIds = new Set<string>();
+  $effect(() => {
+    const updates: Record<string, NodePosition> = {};
+    for (const alias of $entityAliases) {
+      const id = alias.aliasEntityId;
+      const inScope = renderedEntityIds.has(id);
+      if (inScope && !snappedAliasIds.has(id)) {
+        const pos = initialPositions[alias.primaryEntityId];
+        if (pos) updates[id] = { ...pos };
+      } else if (!inScope) {
+        snappedAliasIds.delete(id);
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      canvas?.reseed(updates);
+      for (const id of Object.keys(updates)) snappedAliasIds.add(id);
+    }
+  });
 
   // ── Right-click context menu ───────────────────────────────────────────────
   // Locked menu items per Phase 1B C3:

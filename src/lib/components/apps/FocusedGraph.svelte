@@ -646,6 +646,26 @@
     return $entities.find((e) => e.id === id)?.name ?? '(deleted)';
   }
 
+  // ── Alias position snap ────────────────────────────────────────────────────
+  let snappedAliasIds = new Set<string>();
+  $effect(() => {
+    const updates: Record<string, NodePosition> = {};
+    for (const alias of $entityAliases) {
+      const id = alias.aliasEntityId;
+      const inScope = renderedEntityIds.has(id);
+      if (inScope && !snappedAliasIds.has(id)) {
+        const pos = currentPositions[alias.primaryEntityId] ?? initialPositions[alias.primaryEntityId];
+        if (pos) updates[id] = { ...pos };
+      } else if (!inScope) {
+        snappedAliasIds.delete(id);
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      canvas?.reseed(updates);
+      for (const id of Object.keys(updates)) snappedAliasIds.add(id);
+    }
+  });
+
   // ── Right-click context menu ───────────────────────────────────────────────
   // FG variant per Phase 1B C3: focal nodes get "Remove from focal set"
   // instead of "Open Focused Graph"; non-focal nodes get an "Add to focal
