@@ -646,8 +646,9 @@
     return $entities.find((e) => e.id === id)?.name ?? '(deleted)';
   }
 
-  // ── Alias position snap ────────────────────────────────────────────────────
+  // ── Alias position swap ────────────────────────────────────────────────────
   let snappedAliasIds = new Set<string>();
+  const swapPositions = new Map<string, NodePosition>();
   $effect(() => {
     const t = $playhead;
     const updates: Record<string, NodePosition> = {};
@@ -659,14 +660,24 @@
         (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
       if (isRevealed && !snappedAliasIds.has(id)) {
         const pos = canvas?.getPosition(alias.primaryEntityId) ?? currentPositions[alias.primaryEntityId] ?? initialPositions[alias.primaryEntityId];
-        if (pos) updates[id] = { ...pos };
+        if (pos) {
+          updates[id] = { ...pos };
+          swapPositions.set(id, { ...pos });
+        }
+      } else if (!isRevealed && snappedAliasIds.has(id)) {
+        const pos = swapPositions.get(id);
+        if (pos) updates[alias.primaryEntityId] = { ...pos };
+        snappedAliasIds.delete(id);
+        swapPositions.delete(id);
       } else if (!isRevealed) {
         snappedAliasIds.delete(id);
       }
     }
     if (Object.keys(updates).length > 0) {
       canvas?.reseed(updates, { fit: false });
-      for (const id of Object.keys(updates)) snappedAliasIds.add(id);
+      for (const alias of $entityAliases) {
+        if (updates[alias.aliasEntityId]) snappedAliasIds.add(alias.aliasEntityId);
+      }
     }
   });
 

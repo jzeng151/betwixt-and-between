@@ -605,32 +605,45 @@
     }
   }
 
-  // ── Alias position snap ────────────────────────────────────────────────────
-  // When an alias entity enters renderedEntityIds, snap it to the primary
-  // entity's current canvas position so the reveal reads as in-place substitution.
-  // Plain Set (not $state) so writes don't trigger reactive re-runs.
+  // ── Alias position swap ────────────────────────────────────────────────────
+  // When an alias enters scope: snap it to the primary's canvas position and
+  // save that position as the shared swap point.
+  // When the alias exits scope (primary re-enters): snap the primary back to
+  // the same shared position so both entities occupy the same spot in turn.
+  // Plain Set/Map (not $state) so writes don't trigger reactive re-runs.
   let snappedAliasIds = new Set<string>();
+  const swapPositions = new Map<string, NodePosition>();
   $effect(() => {
     const t = $playhead;
     const updates: Record<string, NodePosition> = {};
     for (const alias of $entityAliases) {
       const id = alias.aliasEntityId;
-      // Snap only when spotlight is active, alias is in scope (not a ghost),
-      // and has been revealed (past its revealedAtPosition).
       const isRevealed =
         t !== null &&
         !outOfScope.has(id) &&
         (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
       if (isRevealed && !snappedAliasIds.has(id)) {
+        // Alias entering scope: snap to primary's position and record it.
         const pos = canvas?.getPosition(alias.primaryEntityId) ?? initialPositions[alias.primaryEntityId];
-        if (pos) updates[id] = { ...pos };
+        if (pos) {
+          updates[id] = { ...pos };
+          swapPositions.set(id, { ...pos });
+        }
+      } else if (!isRevealed && snappedAliasIds.has(id)) {
+        // Alias exiting scope: return primary to the shared swap position.
+        const pos = swapPositions.get(id);
+        if (pos) updates[alias.primaryEntityId] = { ...pos };
+        snappedAliasIds.delete(id);
+        swapPositions.delete(id);
       } else if (!isRevealed) {
         snappedAliasIds.delete(id);
       }
     }
     if (Object.keys(updates).length > 0) {
       canvas?.reseed(updates, { fit: false });
-      for (const id of Object.keys(updates)) snappedAliasIds.add(id);
+      for (const alias of $entityAliases) {
+        if (updates[alias.aliasEntityId]) snappedAliasIds.add(alias.aliasEntityId);
+      }
     }
   });
 
