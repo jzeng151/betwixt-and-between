@@ -196,15 +196,15 @@
     if (!$hideOutOfScope) return displayEntityIdSet;
     const inScope = new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)));
     const t = $playhead;
-    // When the alias's interval is active and the reveal threshold has been crossed,
-    // hide the primary so the alias renders as a clean in-place replacement.
-    // Both have overlapping intervals in Act 4; without this the primary stacks
-    // on top of the alias at the same canvas position.
+    // When the alias's interval is active, force-include the primary so it renders
+    // as a ghost trail (dimmed via outOfScope) at the swapped position.
+    // The SNAP effect moves primary to the alias's old position on the same tick,
+    // so primary is visible but displaced — no stacking at the same coordinates.
     if (t !== null) {
       for (const alias of $entityAliases) {
         if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
         if (!inScope.has(alias.aliasEntityId)) continue;
-        inScope.delete(alias.primaryEntityId);
+        if (displayEntityIdSet.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
       }
     }
     if (!showGhostTrails || t === null) return inScope;
@@ -634,13 +634,19 @@
         !outOfScope.has(id) &&
         (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
       if (isRevealed && !snappedAliasIds.has(id)) {
-        // Alias entering scope: snap to primary's position.
-        const pos = canvas?.getPosition(alias.primaryEntityId) ?? initialPositions[alias.primaryEntityId];
-        if (pos) updates[id] = { x: pos.x, y: pos.y, w: pos.w, h: pos.h };
+        // Alias entering scope: full position swap.
+        // Alias → primary's position; primary → alias's position (becomes ghost trail).
+        const primaryPos = canvas?.getPosition(alias.primaryEntityId) ?? initialPositions[alias.primaryEntityId];
+        const aliasPos = canvas?.getPosition(id);
+        if (primaryPos) updates[id] = { x: primaryPos.x, y: primaryPos.y, w: primaryPos.w, h: primaryPos.h };
+        if (aliasPos) updates[alias.primaryEntityId] = { x: aliasPos.x, y: aliasPos.y, w: aliasPos.w, h: aliasPos.h };
       } else if (!isRevealed && snappedAliasIds.has(id)) {
-        // Alias exiting scope: snap primary to alias's current position.
-        const pos = canvas?.getPosition(id);
-        if (pos) updates[alias.primaryEntityId] = { x: pos.x, y: pos.y, w: pos.w, h: pos.h };
+        // Alias exiting scope: full position swap back.
+        // Primary → alias's current position; alias → primary's current position.
+        const primaryPos = canvas?.getPosition(alias.primaryEntityId);
+        const aliasPos = canvas?.getPosition(id);
+        if (aliasPos) updates[alias.primaryEntityId] = { x: aliasPos.x, y: aliasPos.y, w: aliasPos.w, h: aliasPos.h };
+        if (primaryPos) updates[id] = { x: primaryPos.x, y: primaryPos.y, w: primaryPos.w, h: primaryPos.h };
         snappedAliasIds.delete(id);
       } else if (!isRevealed) {
         snappedAliasIds.delete(id);
