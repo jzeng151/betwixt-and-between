@@ -95,8 +95,8 @@
           }}
         >
           <option value="">Always visible</option>
-          {#each acts as act}
-            <option value={act.position}>{act.name}</option>
+          {#each acts as act, i}
+            <option value={i}>{act.name}</option>
           {/each}
         </select>
       </div>
