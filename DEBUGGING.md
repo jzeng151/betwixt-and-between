@@ -5,6 +5,84 @@ Investigation reports for non-obvious bugs. Each entry follows the
 
 ---
 
+## 2026-05-03 — Alias position snap never fires in StoryGraph / FocusedGraph
+
+**Branch:** feat/spotlight-integration  
+**Status:** FIXED (commit a08dad6)
+
+### Symptom
+
+Advancing the playhead past Lord Caldlow's reveal point in the Prestige dataset
+produced no visible snap — Caldlow appeared at a random auto-placed position
+rather than stacking on top of Robert Angier.
+
+### Root cause
+
+`StoryGraph.svelte` intentionally starts with an empty `initialPositions`
+object (no saved positions loaded on mount — the comment reads "fresh hairball
+every time"). Auto-placed nodes get grid positions inside `GraphCanvas`'s
+private `nodePos` state, but those positions are never reflected back into
+`initialPositions` unless the user has manually dragged the node or run
+Layout by Type in the current session.
+
+The snap effect did:
+```ts
+const pos = initialPositions[alias.primaryEntityId];
+if (pos) updates[id] = { ...pos };
+```
+
+Because `initialPositions[angier.id]` was `undefined`, `pos` was falsy, and
+the `if (pos)` guard silently skipped every alias — no `reseed()` call, no
+snap, no error.
+
+### Why it was hard to spot
+
+The effect didn't throw; it just evaluated `if (pos)` as `false` and moved on.
+The only observable symptom was "nothing happened."
+
+### Fix
+
+Added `getPosition(id: string): NodePosition | undefined` to `GraphCanvas.svelte`
+that reads directly from `nodePos`:
+
+```ts
+export function getPosition(id: string): NodePosition | undefined {
+  return nodePos[id];
+}
+```
+
+Both graph components now call `canvas?.getPosition()` as the primary lookup,
+falling back to their stored mirrors:
+
+```ts
+// StoryGraph
+const pos = canvas?.getPosition(alias.primaryEntityId) ?? initialPositions[alias.primaryEntityId];
+
+// FocusedGraph
+const pos = canvas?.getPosition(alias.primaryEntityId) ?? currentPositions[alias.primaryEntityId] ?? initialPositions[alias.primaryEntityId];
+```
+
+This works regardless of whether the user has ever dragged the primary entity.
+
+### Re-seed required
+
+The DB must be re-seeded to get the alias pairs inserted:
+
+```
+npm run seed -- prestige
+```
+
+### Structural lesson
+
+Any "snap to another node's position" feature must query the **canvas's live
+internal position**, not the host component's shadow mirror. Shadow mirrors are
+only populated when the user interacts (drag) or the host runs a layout pass.
+Auto-placed positions are the default for new nodes and live only inside
+`GraphCanvas.nodePos`. The pattern for future host-side position lookups is
+`canvas.getPosition(id) ?? fallback`, never `fallback` alone.
+
+---
+
 ## 2026-05-02 — FocusedGraph view-mode select dismissed immediately on click
 
 **Symptom:** Clicking the "View" `<select>` dropdown in the Focused Graph
