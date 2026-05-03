@@ -77,6 +77,10 @@
     new Set([...$entityAliases.map((a) => a.primaryEntityId), ...$entityAliases.map((a) => a.aliasEntityId)])
   );
 
+  // ── View options (declared before derived scope logic that references them) ──
+  let hardFilter = $state(true);
+  let showGhostTrails = $state(false);
+
   // ── Out-of-scope at playhead (same shape as StoryGraph) ───────────────────
   // Stable interval map — only rebuilds when intervals change, not on scrubs.
   const entityIntervalMap = $derived.by(() => {
@@ -144,12 +148,25 @@
 
   // When hideOutOfScope is on, strip out-of-scope ids from the rendered set so
   // those nodes (and their edges) disappear entirely instead of just dimming.
-  // When the playhead is idle outOfScope is empty, so hiding is a no-op.
-  const renderedEntityIds = $derived(
-    $hideOutOfScope
-      ? new Set([...displayEntityIds].filter((id) => !outOfScope.has(id)))
-      : displayEntityIds
-  );
+  // When showGhostTrails is also on, keep nearby-ghost entities rendered so
+  // their edges can show as ghost trails (they'll be dimmed via dimmedNodes).
+  const renderedEntityIds = $derived.by(() => {
+    if (!$hideOutOfScope) return displayEntityIds;
+    const inScope = new Set([...displayEntityIds].filter((id) => !outOfScope.has(id)));
+    if (!showGhostTrails || $playhead === null) return inScope;
+    const t = $playhead;
+    for (const [entityId, ivs] of entityIntervalMap) {
+      if (!outOfScope.has(entityId)) continue;
+      for (const iv of ivs) {
+        if ((iv.endPosition <= t && t - iv.endPosition <= 2) ||
+            (iv.startPosition > t && iv.startPosition - t <= 2)) {
+          inScope.add(entityId);
+          break;
+        }
+      }
+    }
+    return inScope;
+  });
 
   // ── Legend state (C4) ──────────────────────────────────────────────────────
   // Hard filter: toggling a type off hides those edges entirely (vs. scrubber
@@ -312,6 +329,7 @@
   let radialSeeded = $state(false);
 
   onMount(() => {
+    intervalsStore.load();
     void (async () => {
       // FG canvas is independent of StoryGraph: each FG window has
       // its own per-window state (Lane A). We don't inherit the
@@ -642,8 +660,6 @@
 
   // Settings panel toggle (C7 panel anchored to the header).
   let settingsOpen = $state(false);
-  let hardFilter = $state(true);
-  let showGhostTrails = $state(false);
   let legendOpen = $state(true);
   let edgeLabelsVisible = $state(true);
   const currentTypeOrder = $derived<EntityType[]>(win?.typeOrder ?? DEFAULT_TYPE_ORDER);

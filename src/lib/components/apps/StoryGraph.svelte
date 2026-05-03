@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
@@ -20,6 +21,8 @@
   import { entityAliases } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
   import Legend from '$lib/components/Legend.svelte';
+
+  onMount(() => { intervalsStore.load(); });
 
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
@@ -79,6 +82,10 @@
         aliasMember: aliasEntityIds.has(e.id)
       }))
   );
+
+  // ── View options (declared before derived scope logic that references them) ──
+  let hardFilter = $state(true);
+  let showGhostTrails = $state(false);
 
   // ── Playhead scope ─────────────────────────────────────────────────────────
   // Stable map of entityId → intervals. Rebuilds only when intervals change,
@@ -153,11 +160,23 @@
     return set;
   });
 
-  const renderedEntityIds = $derived(
-    $hideOutOfScope
-      ? new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)))
-      : displayEntityIdSet
-  );
+  const renderedEntityIds = $derived.by(() => {
+    if (!$hideOutOfScope) return displayEntityIdSet;
+    const inScope = new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)));
+    if (!showGhostTrails || $playhead === null) return inScope;
+    const t = $playhead;
+    for (const [entityId, ivs] of entityIntervalMap) {
+      if (!outOfScope.has(entityId)) continue;
+      for (const iv of ivs) {
+        if ((iv.endPosition <= t && t - iv.endPosition <= 2) ||
+            (iv.startPosition > t && iv.startPosition - t <= 2)) {
+          inScope.add(entityId);
+          break;
+        }
+      }
+    }
+    return inScope;
+  });
 
   // ── Legend state (rel-type hard filter) ───────────────────────────────────
   // Toggle off a type → those edges disappear from the graph entirely.
@@ -319,8 +338,6 @@
   // against the full visible set.
   let typeOrder = $state<EntityType[]>([...DEFAULT_TYPE_ORDER]);
   let settingsOpen = $state(false);
-  let hardFilter = $state(true);
-  let showGhostTrails = $state(false);
   let legendOpen = $state(true);
   let edgeLabelsVisible = $state(true);
   let layoutLock = Promise.resolve();
