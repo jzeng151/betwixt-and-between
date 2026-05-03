@@ -25,6 +25,7 @@ import type { RelationshipType } from '$lib/server/db/schema.js';
 export const DIRECTION: Record<RelationshipType, 'directed' | 'symmetric'> = {
 	allied_with: 'symmetric',
 	rivals: 'symmetric',
+	other: 'symmetric',
 	appears_in: 'directed',
 	takes_place_at: 'directed',
 	caused_by: 'directed',

@@ -39,7 +39,8 @@ export const RelationshipType = [
 	'rivals',
 	'mentor_of',
 	'located_at',
-	'pov_of'
+	'pov_of',
+	'other'
 ] as const;
 export type RelationshipType = (typeof RelationshipType)[number];
 
