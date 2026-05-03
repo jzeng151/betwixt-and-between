@@ -141,8 +141,7 @@
     $relationships.filter(
       (r) =>
         renderedEntityIds.has(r.fromId) &&
-        renderedEntityIds.has(r.toId) &&
-        enabledRelTypes.has(r.type)
+        renderedEntityIds.has(r.toId)
     )
   );
 
@@ -168,6 +167,8 @@
         }
       }
 
+      // Legend hard filter: skip disabled types unless they're showing as a ghost trail
+      if (!enabledRelTypes.has(r.type) && ghostMode === null) continue;
       if (!inWindow && hardFilter && ghostMode === null) continue;
       edges.push({
         id: r.id,
