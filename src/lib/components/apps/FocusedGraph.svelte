@@ -658,7 +658,7 @@
         !outOfScope.has(id) &&
         (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
       if (isRevealed && !snappedAliasIds.has(id)) {
-        const pos = currentPositions[alias.primaryEntityId] ?? initialPositions[alias.primaryEntityId];
+        const pos = canvas?.getPosition(alias.primaryEntityId) ?? currentPositions[alias.primaryEntityId] ?? initialPositions[alias.primaryEntityId];
         if (pos) updates[id] = { ...pos };
       } else if (!isRevealed) {
         snappedAliasIds.delete(id);

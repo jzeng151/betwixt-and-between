@@ -482,6 +482,10 @@
 	 * Reassigns nodePos so Svelte 5 $derived deps (screenEdges) invalidate;
 	 * fitView runs on the next microtask so layout effects settle first.
 	 */
+	export function getPosition(id: string): NodePosition | undefined {
+		return nodePos[id];
+	}
+
 	export function reseed(positions: Record<string, NodePosition>) {
 		const merged = { ...nodePos };
 		for (const [id, p] of Object.entries(positions)) {
