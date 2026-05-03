@@ -649,14 +649,18 @@
   // ── Alias position snap ────────────────────────────────────────────────────
   let snappedAliasIds = new Set<string>();
   $effect(() => {
+    const t = $playhead;
     const updates: Record<string, NodePosition> = {};
     for (const alias of $entityAliases) {
       const id = alias.aliasEntityId;
-      const inScope = renderedEntityIds.has(id);
-      if (inScope && !snappedAliasIds.has(id)) {
+      const isRevealed =
+        t !== null &&
+        !outOfScope.has(id) &&
+        (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
+      if (isRevealed && !snappedAliasIds.has(id)) {
         const pos = currentPositions[alias.primaryEntityId] ?? initialPositions[alias.primaryEntityId];
         if (pos) updates[id] = { ...pos };
-      } else if (!inScope) {
+      } else if (!isRevealed) {
         snappedAliasIds.delete(id);
       }
     }
