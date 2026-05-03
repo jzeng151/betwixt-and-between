@@ -3,7 +3,7 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-  import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
+  import { playhead, intervalContainsT, isEdgeVisibleAtT } from '$lib/stores/playhead.js';
   import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
@@ -146,22 +146,29 @@
     )
   );
 
-  const graphEdges = $derived<GraphEdge[]>(
-    visibleRelationships.map((r) => {
+  const graphEdges = $derived.by(() => {
+    const t = $playhead;
+    const edges: GraphEdge[] = [];
+    for (const r of visibleRelationships) {
+      const inWindow = isEdgeVisibleAtT(r, t);
+      if (!inWindow && hardFilter) continue;
       const style = REL_EDGE_STYLE[r.type];
-      return {
+      edges.push({
         id: r.id,
         fromId: r.fromId,
         toId: r.toId,
         color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
         label: r.label ?? r.type.replace(/_/g, ' '),
-        dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId),
+        dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId) || (!inWindow && !hardFilter),
         dasharray: style.dasharray,
         width: style.width,
-        arrow: style.arrow
-      };
-    })
-  );
+        arrow: style.arrow,
+        startPosition: r.startPosition,
+        endPosition: r.endPosition
+      });
+    }
+    return edges;
+  });
 
   // Reference to the canvas for out-of-band position updates (reseed) +
   // refit calls after layout-by-type mutates positions. Set via bind:this.
@@ -509,6 +516,7 @@
 
   // Settings panel toggle (C7 panel anchored to the header).
   let settingsOpen = $state(false);
+  let hardFilter = $state(true);
   let legendOpen = $state(true);
   let edgeLabelsVisible = $state(true);
   const currentTypeOrder = $derived<EntityType[]>(win?.typeOrder ?? DEFAULT_TYPE_ORDER);
@@ -659,6 +667,16 @@
           onChange={setTypeOrder}
           onApply={() => void layoutByType()}
         />
+        <label class="fg-settings-row">
+          <span>Scrubbing</span>
+          <select
+            value={hardFilter ? 'hard' : 'soft'}
+            onchange={(e) => (hardFilter = (e.currentTarget as HTMLSelectElement).value === 'hard')}
+          >
+            <option value="hard">Hide edges</option>
+            <option value="soft">Dim edges</option>
+          </select>
+        </label>
       </div>
     {/if}
 
@@ -818,6 +836,28 @@
     right: 12px;
     z-index: 5;
     pointer-events: auto;
+  }
+  .fg-settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--color-text-muted);
+    cursor: default;
+  }
+  .fg-settings-row select {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-family: var(--font-ui);
+    font-size: 12px;
   }
 
   /* Hover-only "+" badge on non-focal nodes for click-to-extend.

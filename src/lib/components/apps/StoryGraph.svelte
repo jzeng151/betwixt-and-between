@@ -2,7 +2,7 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-  import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
+  import { playhead, intervalContainsT, isEdgeVisibleAtT } from '$lib/stores/playhead.js';
   import { windowStore } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
@@ -21,6 +21,8 @@
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
   let relLabel = $state('');
+  let relStartActId = $state('');
+  let relEndActId = $state('');
   let saving = $state(false);
   let pending = $state<{ fromId: string; toId: string; sx: number; sy: number } | null>(null);
 
@@ -36,6 +38,9 @@
   // ── Store-derived data ─────────────────────────────────────────────────────
   const displayEntities = $derived($entities.filter((e) => e.type !== 'Note'));
   const hasEntities = $derived(displayEntities.length > 0);
+  const acts = $derived(
+    $entities.filter((e) => e.type === 'Act').sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+  );
 
   // Character cycle index — Same ordering the Timeline uses
   // (filter to Characters, position within that list). Lets graph
@@ -123,22 +128,29 @@
     )
   );
 
-  const graphEdges = $derived<GraphEdge[]>(
-    visibleRelationships.map((r) => {
+  const graphEdges = $derived.by(() => {
+    const t = $playhead;
+    const edges: GraphEdge[] = [];
+    for (const r of visibleRelationships) {
+      const inWindow = isEdgeVisibleAtT(r, t);
+      if (!inWindow && hardFilter) continue;
       const style = REL_EDGE_STYLE[r.type];
-      return {
+      edges.push({
         id: r.id,
         fromId: r.fromId,
         toId: r.toId,
         color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
         label: r.label ?? r.type.replace(/_/g, ' '),
-        dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId),
+        dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId) || (!inWindow && !hardFilter),
         dasharray: style.dasharray,
         width: style.width,
-        arrow: style.arrow
-      };
-    })
-  );
+        arrow: style.arrow,
+        startPosition: r.startPosition,
+        endPosition: r.endPosition
+      });
+    }
+    return edges;
+  });
 
   // ── Position seed ─────────────────────────────────────────────────────────
   // StoryGraph defaults to its unstructured "hairball" state on every
@@ -189,6 +201,7 @@
   // against the full visible set.
   let typeOrder = $state<EntityType[]>([...DEFAULT_TYPE_ORDER]);
   let settingsOpen = $state(false);
+  let hardFilter = $state(true);
   let legendOpen = $state(true);
   let edgeLabelsVisible = $state(true);
   let layoutLock = Promise.resolve();
@@ -287,23 +300,36 @@
     pending = null;
     relLabel = '';
     relType = 'allied_with';
+    relStartActId = '';
+    relEndActId = '';
     saveError = '';
   }
 
   async function savePending() {
     if (!pending) return;
+    if ((relStartActId && !relEndActId) || (!relStartActId && relEndActId)) {
+      saveError = 'Set both a start and end act, or neither.';
+      return;
+    }
     saving = true;
     saveError = '';
     try {
+      const temporalOpts =
+        relStartActId && relEndActId
+          ? { startActId: relStartActId, endActId: relEndActId }
+          : undefined;
       await relationships.createRelationship(
         pending.fromId,
         pending.toId,
         relType,
-        relLabel.trim() || undefined
+        relLabel.trim() || undefined,
+        temporalOpts
       );
       pending = null;
       relLabel = '';
       relType = 'allied_with';
+      relStartActId = '';
+      relEndActId = '';
     } catch (err) {
       // Surface the failure (was previously silently swallowed). Most
       // common cause: a relationship of this type between this pair
@@ -516,6 +542,16 @@
         onChange={(next) => (typeOrder = next)}
         onApply={() => void layoutByType()}
       />
+      <label class="sg-settings-row">
+        <span>Scrubbing</span>
+        <select
+          value={hardFilter ? 'hard' : 'soft'}
+          onchange={(e) => (hardFilter = (e.currentTarget as HTMLSelectElement).value === 'hard')}
+        >
+          <option value="hard">Hide edges</option>
+          <option value="soft">Dim edges</option>
+        </select>
+      </label>
     </div>
   {/if}
 </div>
@@ -574,6 +610,28 @@
       bind:value={relLabel}
       autocomplete="off"
     />
+    {#if acts.length > 0}
+      <div class="rel-form-temporal">
+        <div class="rel-form-temporal-row">
+          <span class="rel-form-temporal-label">Starts</span>
+          <select bind:value={relStartActId}>
+            <option value="">Any time</option>
+            {#each acts as act}
+              <option value={act.id}>{act.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="rel-form-temporal-row">
+          <span class="rel-form-temporal-label">Ends</span>
+          <select bind:value={relEndActId}>
+            <option value="">Forever</option>
+            {#each acts as act}
+              <option value={act.id}>{act.name}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+    {/if}
     {#if saveError}
       <p class="rel-form-error" role="alert">{saveError}</p>
     {/if}
@@ -874,6 +932,50 @@
     border-radius: 4px;
     font-family: var(--font-ui);
     font-size: 13px;
+  }
+
+  .rel-form-temporal {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .rel-form-temporal-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .rel-form-temporal-label {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    color: var(--color-text-muted);
+    width: 32px;
+    flex-shrink: 0;
+  }
+  .rel-form-temporal-row select {
+    flex: 1;
+  }
+
+  .sg-settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--color-text-muted);
+    cursor: default;
+  }
+  .sg-settings-row select {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-family: var(--font-ui);
+    font-size: 12px;
   }
 
   .rel-form-error {

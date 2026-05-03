@@ -7,6 +7,8 @@ export type Relationship = {
 	toId: string;
 	type: RelationshipType;
 	label: string | null;
+	startPosition: number | null;
+	endPosition: number | null;
 };
 
 function createRelationshipStore() {
@@ -22,12 +24,13 @@ function createRelationshipStore() {
 		fromId: string,
 		toId: string,
 		type: RelationshipType,
-		label?: string
+		label?: string,
+		opts?: { startActId?: string; endActId?: string }
 	): Promise<Relationship> {
 		const res = await fetch('/api/relationships', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ fromId, toId, type, label: label ?? null })
+			body: JSON.stringify({ fromId, toId, type, label: label ?? null, ...opts })
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Relationship = await res.json();
