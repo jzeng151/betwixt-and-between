@@ -64,7 +64,7 @@
     {:else if win.appId === 'wiki'}
       <Wiki entityId={win.entityId} />
     {:else if win.appId === 'timeline'}
-      <Timeline entityId={win.entityId} />
+      <Timeline />
     {:else if win.appId === 'entity-detail'}
       <EntityDetail
         entityId={win.entityId}

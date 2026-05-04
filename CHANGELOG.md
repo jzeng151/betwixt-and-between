@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-05-04
+
+### Added
+- **Palette search**: filter characters and events by name from the timeline sidebar
+- **Collapsible palette**: hide the entire palette to give the timeline tracks full width; collapse just the Characters section to focus on events
+- **Spotlight position label**: shows the current Act / Scene name instead of a raw decimal value while scrubbing
+- **Cancel button** in Act/Event/Scene editors: discards in-flight field edits without committing
+- **Bar tooltip portal**: hover tooltips on interval bars now escape the timeline's overflow clipping and include the entity's note snippet
+
+### Changed
+- `firstLineSnippet` no longer truncates at 30 chars — bar tooltips now show the full first line with proper wrapping
+- Timeline no longer renders an inline side panel for selected entities; clicks always open a popout window (simpler architecture)
+
+### Fixed
+- Edit / Done button in entity editors no longer auto-resets to view mode when other windows are clicked (Window.svelte focus update was triggering a spurious `$effect` re-run; explicit prev-value guard added)
+
 ## [0.1.0] - 2026-04-25
 
 ### Added

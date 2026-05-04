@@ -141,6 +141,63 @@ list.
 
 **Status:** DONE.
 
+### Follow-up — 2026-05-04: EntityDetail Edit/Done button auto-reset
+
+**Symptom:** Clicking "Edit" in an act/scene/event detail window caused the
+button to immediately revert to "Edit" (i.e. mode snapped back to `'view'`
+before the user could do anything). Only triggered on windows that were not
+already the topmost window.
+
+**Root cause:** Same family as above — a reactive notification causing an
+unintended state reset — but the mechanism was subtler. `Window.svelte` calls
+`windowStore.focus(id)` on every `mousedown` inside the window:
+
+```svelte
+<div class="window" onmousedown={() => windowStore.focus(id)}>
+```
+
+That store write fires *before* the `click` event (mousedown always precedes
+click). It causes the parent's `{#each $windowStore as win}` block to
+re-render, which re-evaluates the children snippet and passes
+`entityId={win.entityId}` to `EntityDetail`. Even though the string value
+is unchanged, Svelte 5's prop signal is set. `EntityDetail`'s mode `$effect`
+tracked `entityId` via `void entityId` and ran unconditionally on any signal
+notification:
+
+```svelte
+$effect(() => {
+    void entityId;   // tracked as dependency
+    mode = initialMode;  // always reset — even if entityId didn't actually change
+});
+```
+
+Svelte 5 schedules effects as microtasks. The sequence was:
+1. `mousedown` → `windowStore.focus()` → entityId signal notified (same value)
+2. `click` → `mode = 'edit'` (sync)
+3. Microtask: entityId `$effect` runs → `mode = 'view'` — clobbers step 2
+
+**Fix.** Track the previous entityId in a plain (non-reactive) variable so the
+effect only resets mode when the entity actually changes:
+
+```svelte
+let mode = $state<'view' | 'edit'>(initialMode);
+let _prevEntityId = entityId;  // plain let — not tracked by the effect
+$effect(() => {
+    if (entityId !== _prevEntityId) {
+        _prevEntityId = entityId;
+        mode = initialMode;
+    }
+});
+```
+
+**Structural lesson.** `void x` in a `$effect` tracks the signal *value*, not
+value *changes*. Any `onmousedown`/`onclick` handler that writes to a store
+will notify downstream prop signals even if the resolved value is identical.
+Effects that need "run when X changes" semantics must guard with an explicit
+previous-value comparison, not a bare `void x` read.
+
+**Status:** DONE.
+
 ---
 
 ## 2026-05-02 — E2E tests wiping the Neon production database

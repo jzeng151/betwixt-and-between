@@ -153,10 +153,10 @@ describe('dataNoteSnippet', () => {
 			})
 		).toBe('First real line');
 	});
-	it('default truncates lines > 30 chars with ellipsis', () => {
+	it('default returns full first line without truncation', () => {
 		const long = 'a'.repeat(40);
 		const r = dataNoteSnippet({ type: 'Character', data: { notes: long } });
-		expect(r).toBe('a'.repeat(30) + '…');
+		expect(r).toBe(long);
 	});
 	it('mode=name-only returns null even when notes exist', () => {
 		expect(
@@ -199,14 +199,14 @@ describe('dataNoteSnippet', () => {
 			})
 		).toBe(null);
 	});
-	it('mode=custom truncates field value > 30 chars', () => {
+	it('mode=custom returns full field value without truncation', () => {
 		const long = 'b'.repeat(50);
 		expect(
 			dataNoteSnippet({
 				type: 'Character',
 				data: { arc: long, timelineLabel: { mode: 'custom', field: 'arc' } }
 			})
-		).toBe('b'.repeat(30) + '…');
+		).toBe(long);
 	});
 });
 

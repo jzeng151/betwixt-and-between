@@ -208,15 +208,15 @@ export function colorFor(entity: EntityForHelpers, idx: number): string {
 	return CHARACTER_COLORS[idx % CHARACTER_COLORS.length];
 }
 
-/** Returns the first non-empty line, truncated with ellipsis at 30 chars. Null if missing. */
+/** Returns the first non-empty line of a string. Null if missing. */
 function firstLineSnippet(value: unknown): string | null {
 	if (typeof value !== 'string' || !value) return null;
-	const firstLine = value
-		.split(/\r?\n/)
-		.map((s) => s.trim())
-		.filter(Boolean)[0];
-	if (!firstLine) return null;
-	return firstLine.length > 30 ? firstLine.slice(0, 30).trimEnd() + '…' : firstLine;
+	return (
+		value
+			.split(/\r?\n/)
+			.map((s) => s.trim())
+			.filter(Boolean)[0] ?? null
+	);
 }
 
 /**

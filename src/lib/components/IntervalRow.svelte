@@ -9,6 +9,7 @@
 
 <script lang="ts">
 	import IntervalBar from '$lib/components/IntervalBar.svelte';
+	import { tooltip } from '$lib/actions/tooltip.js';
 	import {
 		smartSnap,
 		positionToStartFKs,
@@ -285,8 +286,8 @@
 			class="bar-wrapper"
 			class:resizing={resizing?.intervalId === iv.id}
 			class:translating={translating?.intervalId === iv.id && translating.moved}
-			data-tooltip={tooltipFor(entity, iv)}
 			style="left: {leftPct}%; width: {widthPct}%;"
+			use:tooltip={{ text: tooltipFor(entity, iv), maxWidth: trackWidthPx * 0.6 }}
 			onpointerdown={(e) => startTranslate(e, iv)}
 			onpointermove={moveTranslate}
 			onpointerup={endTranslate}
@@ -372,16 +373,11 @@
 	.bar-wrapper.translating {
 		cursor: grabbing;
 	}
-	/* Styled tooltip on bar hover — matches the locked v2 mockup
-	   (mockup CSS lines 311-349). Reads from the wrapper's
-	   `data-tooltip` attribute. Hidden by default; fades in on
-	   :hover and :focus-within so keyboard users see it too. */
-	.bar-wrapper::before {
-		content: attr(data-tooltip);
-		position: absolute;
-		bottom: calc(100% + 4px);
-		left: 50%;
-		transform: translateX(-50%);
+	/* Tooltip is rendered as a fixed-position portal on document.body
+	   (see src/lib/actions/tooltip.ts) to escape .rows overflow clipping. */
+	:global(.tl-bar-tooltip) {
+		position: fixed;
+		transform: translateX(-50%) translateY(-100%);
 		background: var(--color-surface-2, #1c1f28);
 		color: var(--color-text, #e8e0d0);
 		border: 1px solid var(--color-border, #2a2d35);
@@ -390,17 +386,16 @@
 		font-family: var(--font-ui, 'Inter', sans-serif);
 		font-size: 12px;
 		font-weight: 400;
-		white-space: nowrap;
+		white-space: pre-wrap;
+		overflow-wrap: break-word;
 		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-		opacity: 0;
 		pointer-events: none;
-		transition: opacity 0.15s ease;
-		z-index: 5;
+		z-index: 200;
 	}
-	.bar-wrapper::after {
+	:global(.tl-bar-tooltip::after) {
 		content: '';
 		position: absolute;
-		bottom: calc(100% - 1px);
+		top: 100%;
 		left: 50%;
 		transform: translateX(-50%);
 		width: 0;
@@ -408,15 +403,6 @@
 		border-left: 5px solid transparent;
 		border-right: 5px solid transparent;
 		border-top: 5px solid var(--color-border, #2a2d35);
-		opacity: 0;
-		pointer-events: none;
-		transition: opacity 0.15s ease;
-	}
-	.bar-wrapper:hover::before,
-	.bar-wrapper:hover::after,
-	.bar-wrapper:focus-within::before,
-	.bar-wrapper:focus-within::after {
-		opacity: 1;
 	}
 	.bar-wrapper.resizing :global(svg.interval-bar) {
 		box-shadow: 0 0 0 2px rgba(200, 148, 42, 0.45);
