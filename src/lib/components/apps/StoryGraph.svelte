@@ -195,8 +195,19 @@
   const renderedEntityIds = $derived.by(() => {
     if (!$hideOutOfScope) return displayEntityIdSet;
     const inScope = new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)));
-    if (!showGhostTrails || $playhead === null) return inScope;
     const t = $playhead;
+    // When the alias's interval is active, force-include the primary so it renders
+    // as a ghost trail (dimmed via outOfScope) at the swapped position.
+    // The SNAP effect moves primary to the alias's old position on the same tick,
+    // so primary is visible but displaced — no stacking at the same coordinates.
+    if (t !== null) {
+      for (const alias of $entityAliases) {
+        if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
+        if (!inScope.has(alias.aliasEntityId)) continue;
+        if (displayEntityIdSet.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
+      }
+    }
+    if (!showGhostTrails || t === null) return inScope;
     const nearEnoughScene = (lo: number, hi: number) =>
       sortedSceneStarts.length > 0
         ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2
@@ -605,33 +616,59 @@
     }
   }
 
-  // ── Alias position snap ────────────────────────────────────────────────────
-  // When an alias entity enters renderedEntityIds, snap it to the primary
-  // entity's current canvas position so the reveal reads as in-place substitution.
+  // ── Alias position swap ────────────────────────────────────────────────────
+  // When an alias enters scope: snap it to the primary's current canvas
+  // position so the two entities stack at the same spot.
+  // When the alias exits scope: snap the primary to the alias's current
+  // position — so if the alias was dragged while in scope, the primary picks
+  // up at that spot rather than teleporting back to its pre-alias location.
   // Plain Set (not $state) so writes don't trigger reactive re-runs.
   let snappedAliasIds = new Set<string>();
   $effect(() => {
+    // Capture reactive deps synchronously (registers tracking, snapshots values).
     const t = $playhead;
-    const updates: Record<string, NodePosition> = {};
-    for (const alias of $entityAliases) {
-      const id = alias.aliasEntityId;
-      // Snap only when spotlight is active, alias is in scope (not a ghost),
-      // and has been revealed (past its revealedAtPosition).
-      const isRevealed =
-        t !== null &&
-        !outOfScope.has(id) &&
-        (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
-      if (isRevealed && !snappedAliasIds.has(id)) {
-        const pos = initialPositions[alias.primaryEntityId];
-        if (pos) updates[id] = { ...pos };
-      } else if (!isRevealed) {
-        snappedAliasIds.delete(id);
+    const aliases = $entityAliases;
+    const scope = outOfScope;
+    // Defer position reads/writes to a microtask so:
+    // (a) GraphCanvas's auto-placement effect has run first — getPosition()
+    //     returns valid coords for nodes that just entered `nodes`.
+    // (b) Reading and writing nodePos (via getPosition/reseed) happens outside
+    //     the reactive tracking scope — no read-write cycle, no
+    //     effect_update_depth_exceeded error.
+    queueMicrotask(() => {
+      const updates: Record<string, NodePosition> = {};
+      const newlySnapped = new Set<string>();
+      for (const alias of aliases) {
+        const id = alias.aliasEntityId;
+        const isRevealed =
+          t !== null &&
+          !scope.has(id) &&
+          (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
+        if (isRevealed && !snappedAliasIds.has(id)) {
+          // Alias entering scope: full position swap.
+          // Alias → primary's position; primary → alias's position (becomes ghost trail).
+          const primaryPos = canvas?.getPosition(alias.primaryEntityId) ?? initialPositions[alias.primaryEntityId];
+          const aliasPos = canvas?.getPosition(id);
+          if (primaryPos) updates[id] = { x: primaryPos.x, y: primaryPos.y, w: primaryPos.w, h: primaryPos.h };
+          if (aliasPos) updates[alias.primaryEntityId] = { x: aliasPos.x, y: aliasPos.y, w: aliasPos.w, h: aliasPos.h };
+          newlySnapped.add(id);
+        } else if (!isRevealed && snappedAliasIds.has(id)) {
+          // Alias exiting scope: full position swap back.
+          // Primary → alias's current position; alias → primary's current position.
+          const primaryPos = canvas?.getPosition(alias.primaryEntityId);
+          const aliasPos = canvas?.getPosition(id);
+          if (aliasPos) updates[alias.primaryEntityId] = { x: aliasPos.x, y: aliasPos.y, w: aliasPos.w, h: aliasPos.h };
+          if (primaryPos) updates[id] = { x: primaryPos.x, y: primaryPos.y, w: primaryPos.w, h: primaryPos.h };
+          snappedAliasIds.delete(id);
+        } else if (!isRevealed) {
+          snappedAliasIds.delete(id);
+        }
       }
-    }
-    if (Object.keys(updates).length > 0) {
-      canvas?.reseed(updates);
-      for (const id of Object.keys(updates)) snappedAliasIds.add(id);
-    }
+      if (Object.keys(updates).length > 0) {
+        canvas?.reseed(updates, { fit: false });
+        for (const id of newlySnapped) snappedAliasIds.add(id);
+      }
+    });
   });
 
   // ── Right-click context menu ───────────────────────────────────────────────

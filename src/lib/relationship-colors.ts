@@ -29,7 +29,8 @@ export const REL_COLOR: Record<RelationshipType, string> = {
 	caused_by: 'var(--color-rel-other)',
 	located_at: 'var(--color-rel-loc)',
 	mentor_of: 'var(--color-rel-mentor)',
-	pov_of: 'var(--color-rel-pov)'
+	pov_of: 'var(--color-rel-pov)',
+	other: 'var(--color-rel-misc)'
 };
 
 /**
@@ -82,7 +83,8 @@ export const REL_EDGE_STYLE: Record<RelationshipType, EdgeStyle> = {
 	takes_place_at: { dasharray: null,  width: 1,   arrow: false },
 	caused_by:      { dasharray: '4 3', width: 1.5, arrow: true  },
 	located_at:     { dasharray: '2 3', width: 1,   arrow: false },
-	appears_in:     { dasharray: '4 3', width: 1,   arrow: false }
+	appears_in:     { dasharray: '4 3', width: 1,   arrow: false },
+	other:          { dasharray: null,  width: 1.5, arrow: false }
 };
 
 /**
@@ -123,6 +125,7 @@ export const REL_TYPES: RelationshipType[] = [
 	'allied_with',
 	'rivals',
 	'mentor_of',
+	'other',
 	'pov_of',
 	'takes_place_at',
 	'caused_by',
