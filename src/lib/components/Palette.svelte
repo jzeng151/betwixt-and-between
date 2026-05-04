@@ -33,6 +33,8 @@
     e.dataTransfer!.effectAllowed = 'copy';
   }
 
+  let charactersCollapsed = $state(false);
+
   let savingEvent = $state(false);
   async function addEventClick() {
     if (savingEvent) return;
@@ -49,28 +51,35 @@
   <section class="palette-section">
     <header class="palette-label">
       <span>Characters</span>
-      <span class="palette-filter" aria-hidden="true">all ▾</span>
+      <button
+        class="palette-filter"
+        aria-label={charactersCollapsed ? 'Show characters' : 'Hide characters'}
+        aria-expanded={!charactersCollapsed}
+        onclick={() => (charactersCollapsed = !charactersCollapsed)}
+      >{charactersCollapsed ? 'none' : 'all'} <span class="palette-filter-chevron">{charactersCollapsed ? '▸' : '▾'}</span></button>
     </header>
-    {#each characters as char, i (char.id)}
-      <div
-        class="palette-item"
-        class:placed={placedEntityIds.has(char.id)}
-        data-entity-id={char.id}
-        draggable="true"
-        role="button"
-        tabindex="0"
-        aria-label="Drag {char.name} onto timeline"
-        ondragstart={(e) => setDragData(e, char.id)}
-        onclick={() => onSelect?.(char.id)}
-        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect?.(char.id); }}
-      >
-        <span class="palette-dot" style="background: {colorFor(char, i)}" aria-hidden="true"></span>
-        <span class="palette-name">{char.name}</span>
-        <span class="palette-grip" aria-hidden="true">⋮⋮</span>
-      </div>
-    {/each}
-    {#if characters.length === 0}
-      <div class="palette-empty">No characters yet.</div>
+    {#if !charactersCollapsed}
+      {#each characters as char, i (char.id)}
+        <div
+          class="palette-item"
+          class:placed={placedEntityIds.has(char.id)}
+          data-entity-id={char.id}
+          draggable="true"
+          role="button"
+          tabindex="0"
+          aria-label="Drag {char.name} onto timeline"
+          ondragstart={(e) => setDragData(e, char.id)}
+          onclick={() => onSelect?.(char.id)}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect?.(char.id); }}
+        >
+          <span class="palette-dot" style="background: {colorFor(char, i)}" aria-hidden="true"></span>
+          <span class="palette-name">{char.name}</span>
+          <span class="palette-grip" aria-hidden="true">⋮⋮</span>
+        </div>
+      {/each}
+      {#if characters.length === 0}
+        <div class="palette-empty">No characters yet.</div>
+      {/if}
     {/if}
   </section>
 
@@ -138,13 +147,25 @@
     align-items: center;
   }
   .palette-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
     font-size: 10px;
     color: var(--color-text-muted, #6b7280);
     text-transform: none;
     letter-spacing: 0;
-    cursor: default;
-    /* Cosmetic placeholder — actual filter behavior is deferred per
-       CONSIDERATIONS.md "Open Decisions". */
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-family: var(--font-ui, 'Inter', sans-serif);
+    font-weight: 600;
+  }
+  .palette-filter:hover {
+    color: var(--color-text, #e8e0d0);
+  }
+  .palette-filter-chevron {
+    font-size: 14px;
   }
   .palette-item {
     display: flex;

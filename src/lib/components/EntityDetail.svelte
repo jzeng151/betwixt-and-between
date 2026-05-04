@@ -82,11 +82,16 @@
 	});
 
 	// View/edit mode (Block 5). Default 'view'; resets to initialMode on entityId change.
-	let mode = $state<'view' | 'edit'>('view');
+	let mode = $state<'view' | 'edit'>(initialMode);
+	// Only reset when entityId changes to a different value — not on every
+	// prop re-evaluation. Using a plain variable (not $state) so the effect
+	// doesn't track it and avoids an extra re-run cycle.
+	let _prevEntityId = entityId;
 	$effect(() => {
-		// Reactive on both props so entityId change resets mode in Svelte 5.
-		void entityId;
-		mode = initialMode;
+		if (entityId !== _prevEntityId) {
+			_prevEntityId = entityId;
+			mode = initialMode;
+		}
 	});
 
 	// Move-to-window confirmation (2B-i inline confirm pattern).
