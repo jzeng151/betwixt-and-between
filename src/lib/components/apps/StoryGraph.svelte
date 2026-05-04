@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-  import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
+  import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/stores/playhead.js';
   import { windowStore } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
@@ -16,19 +17,33 @@
     type NodePosition
   } from '$lib/components/GraphCanvas.svelte';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
+  import { entityAliases } from '$lib/stores/entity-aliases.js';
+  import AliasModal from '$lib/components/AliasModal.svelte';
   import Legend from '$lib/components/Legend.svelte';
+
+  onMount(() => { intervalsStore.load(); entityAliases.load(); });
 
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
   let relLabel = $state('');
+  let relStartActId = $state('');
+  let relEndActId = $state('');
+  let relRevealedAtPosition = $state<number | null>(null);
   let saving = $state(false);
   let pending = $state<{ fromId: string; toId: string; sx: number; sy: number } | null>(null);
 
   // First × click arms delete; second click on same node confirms.
   let confirmDeleteId = $state<string | null>(null);
 
-  // Right-click context menu state.
+  // Right-click context menu state (nodes).
   let contextMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
+
+  // Edge right-click → edit relationship modal.
+  let editRelMenu = $state<{ relationshipId: string; x: number; y: number } | null>(null);
+
+  // Right-click → alias modal.
+  let aliasModal = $state<{ entity: { id: string; type: string; name: string } } | null>(null);
 
   // Reference to the canvas so the per-node overlay UI can trigger connect drags.
   let canvas: GraphCanvas;
@@ -36,6 +51,9 @@
   // ── Store-derived data ─────────────────────────────────────────────────────
   const displayEntities = $derived($entities.filter((e) => e.type !== 'Note'));
   const hasEntities = $derived(displayEntities.length > 0);
+  const acts = $derived(
+    $entities.filter((e) => e.type === 'Act').sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+  );
 
   // Character cycle index — Same ordering the Timeline uses
   // (filter to Characters, position within that list). Lets graph
@@ -47,34 +65,153 @@
     return m;
   });
 
-  const graphNodes = $derived<GraphNode[]>(
-    displayEntities.map((e) => ({
-      id: e.id,
-      type: e.type,
-      name: e.name,
-      color: nodeColorFor(e, characterIndexById.get(e.id))
-    }))
+  const aliasEntityIds = $derived(
+    new Set([...$entityAliases.map((a) => a.primaryEntityId), ...$entityAliases.map((a) => a.aliasEntityId)])
   );
 
+  const displayEntityIdSet = $derived(new Set(displayEntities.map((e) => e.id)));
+
+  const nodeColorById = $derived.by(() => {
+    const m = new Map<string, string>();
+    for (const e of displayEntities) {
+      const color = nodeColorFor(e, characterIndexById.get(e.id));
+      if (color) m.set(e.id, color);
+    }
+    return m;
+  });
+
+  const graphNodes = $derived<GraphNode[]>(
+    displayEntities
+      .filter((e) => renderedEntityIds.has(e.id))
+      .map((e) => ({
+        id: e.id,
+        type: e.type,
+        name: e.name,
+        color: nodeColorFor(e, characterIndexById.get(e.id)),
+        aliasMember: aliasEntityIds.has(e.id)
+      }))
+  );
+
+  // ── View options (declared before derived scope logic that references them) ──
+  let hardFilter = $state(true);
+  let showGhostTrails = $state(false);
+
   // ── Playhead scope ─────────────────────────────────────────────────────────
-  // An entity is "out of scope" at T iff it has at least one interval AND
-  // none of its intervals contain T. Entities without intervals (Locations,
-  // Acts, Scenes, unplaced Characters/Events) are always considered in-scope.
+  // Stable map of entityId → intervals. Rebuilds only when intervals change,
+  // not on every playhead scrub — used by ghost trail proximity checks.
+  const entityIntervalMap = $derived.by(() => {
+    const m = new Map<string, Array<{ startPosition: number; endPosition: number }>>();
+    for (const iv of $intervalsStore) {
+      const list = m.get(iv.entityId) ?? [];
+      list.push(iv);
+      m.set(iv.entityId, list);
+    }
+    return m;
+  });
+
+  // Fractional sub-ranges for Scenes within their parent Act's [pos, pos+1) window.
+  // Rebuilds only when $entities changes. Scenes sorted by explicit position if set,
+  // otherwise by $entities list order (= creation order from the seed).
+  // e.position is a 1-indexed DB sort key; the playhead axis is 0-based.
+  // Map each act to its 0-based rank so scope checks use [0,1), [1,2), …
+  const actIndexById = $derived(
+    new Map(
+      [...$entities]
+        .filter((e) => e.type === 'Act' && e.position != null)
+        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+        .map((e, i): [string, number] => [e.id, i])
+    )
+  );
+
+  const sceneRanges = $derived.by(() => {
+    const ranges = new Map<string, { start: number; end: number }>();
+    const scenesByAct = new Map<string, Array<{ id: string; position: number | null }>>();
+    for (const e of $entities) {
+      if (e.type === 'Scene' && e.parentId != null) {
+        const list = scenesByAct.get(e.parentId) ?? [];
+        list.push({ id: e.id, position: e.position ?? null });
+        scenesByAct.set(e.parentId, list);
+      }
+    }
+    for (const [actId, scenes] of scenesByAct) {
+      const actIdx = actIndexById.get(actId);
+      if (actIdx == null) continue;
+      const sorted = [...scenes].sort((a, b) => {
+        if (a.position != null && b.position != null) return a.position - b.position;
+        if (a.position != null) return -1;
+        if (b.position != null) return 1;
+        return 0;
+      });
+      const n = sorted.length;
+      for (let i = 0; i < n; i++) {
+        ranges.set(sorted[i].id, { start: actIdx + i / n, end: actIdx + (i + 1) / n });
+      }
+    }
+    return ranges;
+  });
+
+  // Scenes with their story-time start positions, for the "Revealed at" dropdowns.
+  const scenesForReveal = $derived.by(() => {
+    const result: { id: string; name: string; actId: string; position: number }[] = [];
+    for (const [id, range] of sceneRanges) {
+      const e = $entities.find((en) => en.id === id);
+      if (e?.parentId) result.push({ id, name: e.name, actId: e.parentId, position: range.start });
+    }
+    return result.sort((a, b) => a.position - b.position);
+  });
+
+  // Sorted scene start positions for ghost trail proximity (scene-granular window).
+  const sortedSceneStarts = $derived(
+    [...sceneRanges.values()].map((r) => r.start).sort((a, b) => a - b)
+  );
+
+  // An entity is "out of scope" at T when:
+  //   - It has intervals and none contain T (characters/events on the timeline)
+  //   - It is an Act whose position window does not contain T
+  //   - It is a Scene whose fractional sub-range within its Act does not contain T
   const outOfScope = $derived.by(() => {
     const set = new Set<string>();
     if ($playhead == null) return set;
     const t = $playhead;
-    const byEntity = new Map<string, typeof $intervalsStore>();
-    for (const iv of $intervalsStore) {
-      const list = byEntity.get(iv.entityId) ?? [];
-      list.push(iv);
-      byEntity.set(iv.entityId, list);
-    }
-    for (const [entityId, ivs] of byEntity) {
+
+    for (const [entityId, ivs] of entityIntervalMap) {
       const active = ivs.some((iv) => intervalContainsT(iv.startPosition, iv.endPosition, t));
       if (!active) set.add(entityId);
     }
+
+    for (const e of displayEntities) {
+      if (e.type === 'Act') {
+        const actIdx = actIndexById.get(e.id);
+        if (actIdx != null && !intervalContainsT(actIdx, actIdx + 1, t)) set.add(e.id);
+      } else if (e.type === 'Scene') {
+        const range = sceneRanges.get(e.id);
+        if (range != null && !intervalContainsT(range.start, range.end, t)) set.add(e.id);
+      }
+    }
+
     return set;
+  });
+
+  const renderedEntityIds = $derived.by(() => {
+    if (!$hideOutOfScope) return displayEntityIdSet;
+    const inScope = new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)));
+    if (!showGhostTrails || $playhead === null) return inScope;
+    const t = $playhead;
+    const nearEnoughScene = (lo: number, hi: number) =>
+      sortedSceneStarts.length > 0
+        ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2
+        : hi - lo <= 1;
+    for (const [entityId, ivs] of entityIntervalMap) {
+      if (!outOfScope.has(entityId)) continue;
+      for (const iv of ivs) {
+        if ((iv.endPosition <= t && nearEnoughScene(iv.endPosition, t)) ||
+            (iv.startPosition > t && nearEnoughScene(t, iv.startPosition))) {
+          inScope.add(entityId);
+          break;
+        }
+      }
+    }
+    return inScope;
   });
 
   // ── Legend state (rel-type hard filter) ───────────────────────────────────
@@ -93,13 +230,6 @@
     enabledRelTypes = next;
   }
 
-  // Set of rel types that have at least one edge between two displayed
-  // entities, computed BEFORE applying the Legend filter. Drives the
-  // Legend's per-row dim/italic treatment for absent types so the
-  // user sees at a glance which connections actually exist on this
-  // graph. NOT filtered by enabledRelTypes — otherwise toggling a type
-  // off would dim it twice and prevent the user from re-enabling.
-  const displayEntityIdSet = $derived(new Set(displayEntities.map((e) => e.id)));
   const presentRelTypes = $derived.by(() => {
     const s = new Set<RelationshipType>();
     for (const r of $relationships) {
@@ -117,28 +247,90 @@
   const visibleRelationships = $derived(
     $relationships.filter(
       (r) =>
-        displayEntityIdSet.has(r.fromId) &&
-        displayEntityIdSet.has(r.toId) &&
-        enabledRelTypes.has(r.type)
+        renderedEntityIds.has(r.fromId) &&
+        renderedEntityIds.has(r.toId)
     )
   );
 
-  const graphEdges = $derived<GraphEdge[]>(
-    visibleRelationships.map((r) => {
+  const graphEdges = $derived.by(() => {
+    const t = $playhead;
+    const edges: GraphEdge[] = [];
+    for (const r of visibleRelationships) {
+      const inWindow = isEdgeVisibleAtT(r, t);
       const style = REL_EDGE_STYLE[r.type];
-      return {
+      const mystery = isMysteryEdgeAtT(r, t);
+
+      // Ghost mode: show edges near the playhead that aren't currently active.
+      // Proximity is scene-granular: ≤2 scene boundaries between the interval
+      // edge and T. Falls back to ≤1 act when no scenes exist.
+      let ghostMode: 'past' | 'future' | null = null;
+      if (showGhostTrails && t !== null && !mystery) {
+        const endpointOutOfScope = outOfScope.has(r.fromId) || outOfScope.has(r.toId);
+        if (!inWindow || endpointOutOfScope) {
+          const nearEnough = (lo: number, hi: number) =>
+            sortedSceneStarts.length > 0
+              ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2
+              : hi - lo <= 1;
+          if (r.startPosition != null || r.endPosition != null) {
+            const nearStart = r.startPosition != null && nearEnough(Math.min(r.startPosition, t), Math.max(r.startPosition, t));
+            const nearEnd = r.endPosition != null && nearEnough(Math.min(r.endPosition, t), Math.max(r.endPosition, t));
+            if (nearStart || nearEnd) {
+              ghostMode = r.startPosition != null && r.startPosition > t ? 'future' : 'past';
+            }
+          } else {
+            outer: for (const endpointId of [r.fromId, r.toId]) {
+              for (const iv of entityIntervalMap.get(endpointId) ?? []) {
+                if (iv.endPosition <= t && nearEnough(iv.endPosition, t)) { ghostMode = 'past'; break outer; }
+                if (iv.startPosition > t && nearEnough(t, iv.startPosition)) { ghostMode = 'future'; break outer; }
+              }
+            }
+          }
+        }
+      }
+
+      // Legend hard filter: skip disabled types unless they're showing as a ghost trail
+      if (!enabledRelTypes.has(r.type) && ghostMode === null) continue;
+      if (!inWindow && hardFilter && ghostMode === null) continue;
+      const ghostEntityId = ghostMode !== null
+        ? (outOfScope.has(r.fromId) ? r.fromId : r.toId)
+        : null;
+      edges.push({
         id: r.id,
         fromId: r.fromId,
         toId: r.toId,
-        color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
+        color: ghostEntityId !== null
+          ? (nodeColorById.get(ghostEntityId) ?? REL_COLOR[r.type] ?? 'var(--color-rel-other)')
+          : (REL_COLOR[r.type] ?? 'var(--color-rel-other)'),
         label: r.label ?? r.type.replace(/_/g, ' '),
-        dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId),
+        dimmed: !mystery && !ghostMode && (outOfScope.has(r.fromId) || outOfScope.has(r.toId) || (!inWindow && !hardFilter)),
         dasharray: style.dasharray,
         width: style.width,
-        arrow: style.arrow
-      };
-    })
-  );
+        arrow: style.arrow,
+        startPosition: r.startPosition,
+        endPosition: r.endPosition,
+        mysteryMode: mystery,
+        ghostMode
+      });
+    }
+    // Alias edges: dashed "aka" line per pair where both endpoints are visible
+    for (const alias of $entityAliases) {
+      if (!renderedEntityIds.has(alias.primaryEntityId) || !renderedEntityIds.has(alias.aliasEntityId)) continue;
+      if (alias.revealedAtPosition != null && t != null && t < alias.revealedAtPosition) continue;
+      edges.push({
+        id: `alias-${alias.id}`,
+        fromId: alias.primaryEntityId,
+        toId: alias.aliasEntityId,
+        color: 'var(--color-rel-other)',
+        label: 'aka',
+        dimmed: false,
+        dasharray: '1 2',
+        width: 1,
+        arrow: false
+      });
+    }
+    // Ghost edges emitted first → render behind normal edges in SVG
+    return [...edges.filter((e) => e.ghostMode), ...edges.filter((e) => !e.ghostMode)];
+  });
 
   // ── Position seed ─────────────────────────────────────────────────────────
   // StoryGraph defaults to its unstructured "hairball" state on every
@@ -160,6 +352,7 @@
   // canceling a different node's pending PUT.
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function onNodePositionChange(id: string, p: NodePosition) {
+    initialPositions = { ...initialPositions, [id]: p };
     const existing = saveTimers.get(id);
     if (existing) clearTimeout(existing);
     saveTimers.set(
@@ -287,23 +480,42 @@
     pending = null;
     relLabel = '';
     relType = 'allied_with';
+    relStartActId = '';
+    relEndActId = '';
+    relRevealedAtPosition = null;
     saveError = '';
   }
 
   async function savePending() {
     if (!pending) return;
+    if ((relStartActId && !relEndActId) || (!relStartActId && relEndActId)) {
+      saveError = 'Set both a start and end act, or neither.';
+      return;
+    }
     saving = true;
     saveError = '';
     try {
+      const temporalOpts: { startActId?: string; endActId?: string; revealedAtPosition?: number | null } = {};
+      if (relStartActId && relEndActId) {
+        temporalOpts.startActId = relStartActId;
+        temporalOpts.endActId = relEndActId;
+      }
+      if (relRevealedAtPosition !== null) {
+        temporalOpts.revealedAtPosition = relRevealedAtPosition;
+      }
       await relationships.createRelationship(
         pending.fromId,
         pending.toId,
         relType,
-        relLabel.trim() || undefined
+        relLabel.trim() || undefined,
+        Object.keys(temporalOpts).length ? temporalOpts : undefined
       );
       pending = null;
       relLabel = '';
       relType = 'allied_with';
+      relStartActId = '';
+      relEndActId = '';
+      relRevealedAtPosition = null;
     } catch (err) {
       // Surface the failure (was previously silently swallowed). Most
       // common cause: a relationship of this type between this pair
@@ -393,6 +605,35 @@
     }
   }
 
+  // ── Alias position snap ────────────────────────────────────────────────────
+  // When an alias entity enters renderedEntityIds, snap it to the primary
+  // entity's current canvas position so the reveal reads as in-place substitution.
+  // Plain Set (not $state) so writes don't trigger reactive re-runs.
+  let snappedAliasIds = new Set<string>();
+  $effect(() => {
+    const t = $playhead;
+    const updates: Record<string, NodePosition> = {};
+    for (const alias of $entityAliases) {
+      const id = alias.aliasEntityId;
+      // Snap only when spotlight is active, alias is in scope (not a ghost),
+      // and has been revealed (past its revealedAtPosition).
+      const isRevealed =
+        t !== null &&
+        !outOfScope.has(id) &&
+        (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
+      if (isRevealed && !snappedAliasIds.has(id)) {
+        const pos = initialPositions[alias.primaryEntityId];
+        if (pos) updates[id] = { ...pos };
+      } else if (!isRevealed) {
+        snappedAliasIds.delete(id);
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      canvas?.reseed(updates);
+      for (const id of Object.keys(updates)) snappedAliasIds.add(id);
+    }
+  });
+
   // ── Right-click context menu ───────────────────────────────────────────────
   // Locked menu items per Phase 1B C3:
   //   Open in window, View connections, Open Focused Graph, Edit, Delete,
@@ -409,6 +650,14 @@
       {
         label: 'Open Focused Graph',
         onSelect: () => windowStore.openFocusedGraph([id], 'their_worlds')
+      },
+      {
+        label: 'Mark as alias of…',
+        onSelect: () => {
+          const entity = $entities.find((e) => e.id === id);
+          if (entity) aliasModal = { entity };
+          contextMenu = null;
+        }
       },
       {
         label: 'Delete…',
@@ -428,6 +677,7 @@
   onNodeOpen={openEntity}
   onNodePositionChange={onNodePositionChange}
   onContextMenu={(id, x, y) => (contextMenu = { entityId: id, x, y })}
+  onEdgeContextMenu={(id, x, y) => (editRelMenu = { relationshipId: id, x, y })}
   showEdgeLabels={edgeLabelsVisible}
 >
   {#snippet emptyState()}
@@ -516,6 +766,24 @@
         onChange={(next) => (typeOrder = next)}
         onApply={() => void layoutByType()}
       />
+      <label class="sg-settings-row">
+        <span>Scrubbing</span>
+        <select
+          value={hardFilter ? 'hard' : 'soft'}
+          onchange={(e) => (hardFilter = (e.currentTarget as HTMLSelectElement).value === 'hard')}
+        >
+          <option value="hard">Hide edges</option>
+          <option value="soft">Dim edges</option>
+        </select>
+      </label>
+      <label class="sg-settings-row">
+        <span>Ghost trails</span>
+        <input type="checkbox" bind:checked={showGhostTrails} />
+      </label>
+      <label class="sg-settings-row">
+        <span>Hide out of scope</span>
+        <input type="checkbox" checked={$hideOutOfScope} onchange={() => hideOutOfScope.set(!$hideOutOfScope)} />
+      </label>
     </div>
   {/if}
 </div>
@@ -539,6 +807,7 @@
       presentTypes={presentRelTypes}
       {edgeLabelsVisible}
       onToggleEdgeLabels={() => (edgeLabelsVisible = !edgeLabelsVisible)}
+      {showGhostTrails}
     />
   {/if}
   <button
@@ -574,6 +843,48 @@
       bind:value={relLabel}
       autocomplete="off"
     />
+    {#if acts.length > 0}
+      <div class="rel-form-temporal">
+        <div class="rel-form-temporal-row">
+          <span class="rel-form-temporal-label">Starts</span>
+          <select bind:value={relStartActId}>
+            <option value="">Any time</option>
+            {#each acts as act}
+              <option value={act.id}>{act.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="rel-form-temporal-row">
+          <span class="rel-form-temporal-label">Ends</span>
+          <select bind:value={relEndActId}>
+            <option value="">Forever</option>
+            {#each acts as act}
+              <option value={act.id}>{act.name}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+    {/if}
+    {#if acts.length > 0}
+      <details class="rel-form-advanced">
+        <summary>Advanced</summary>
+        <div class="rel-form-temporal-row">
+          <span class="rel-form-temporal-label">Revealed at</span>
+          <select
+            value={relRevealedAtPosition}
+            onchange={(e) => {
+              const v = (e.currentTarget as HTMLSelectElement).value;
+              relRevealedAtPosition = v ? Number(v) : null;
+            }}
+          >
+            <option value="">Always visible</option>
+            {#each acts as act, i}
+              <option value={i}>{act.name}</option>
+            {/each}
+          </select>
+        </div>
+      </details>
+    {/if}
     {#if saveError}
       <p class="rel-form-error" role="alert">{saveError}</p>
     {/if}
@@ -592,6 +903,36 @@
     x={contextMenu.x}
     y={contextMenu.y}
     onClose={() => (contextMenu = null)}
+  />
+{/if}
+
+{#if editRelMenu}
+  {@const rel = $relationships.find((r) => r.id === editRelMenu!.relationshipId)}
+  {#if rel}
+    <EditRelationshipModal
+      relationship={rel}
+      {acts}
+      scenes={scenesForReveal}
+      onSave={async (fields) => {
+        await relationships.updateRelationship(rel.id, fields);
+        editRelMenu = null;
+      }}
+      onClose={() => (editRelMenu = null)}
+    />
+  {/if}
+{/if}
+
+{#if aliasModal}
+  <AliasModal
+    entity={aliasModal.entity}
+    allEntities={$entities}
+    {acts}
+    scenes={scenesForReveal}
+    onSave={async (primaryEntityId, revealedAtPosition) => {
+      await entityAliases.createAlias(primaryEntityId, aliasModal!.entity.id, revealedAtPosition);
+      aliasModal = null;
+    }}
+    onClose={() => (aliasModal = null)}
   />
 {/if}
 
@@ -874,6 +1215,67 @@
     border-radius: 4px;
     font-family: var(--font-ui);
     font-size: 13px;
+  }
+
+  .rel-form-temporal {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .rel-form-temporal-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .rel-form-temporal-label {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    color: var(--color-text-muted);
+    width: 32px;
+    flex-shrink: 0;
+  }
+  .rel-form-temporal-row select {
+    flex: 1;
+  }
+
+  .rel-form-advanced {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--color-text-muted);
+  }
+  .rel-form-advanced summary {
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 0;
+  }
+  .rel-form-advanced .rel-form-temporal-row {
+    margin-top: 6px;
+  }
+  .rel-form-advanced .rel-form-temporal-label {
+    width: 52px;
+  }
+
+  .sg-settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--color-text-muted);
+    cursor: default;
+  }
+  .sg-settings-row select {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-family: var(--font-ui);
+    font-size: 12px;
   }
 
   .rel-form-error {

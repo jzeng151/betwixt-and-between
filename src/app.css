@@ -22,6 +22,7 @@
   --color-rel-event:  #94a3b8;
   --color-rel-other:  #94a3b8;
   --color-rel-pov:    #a78bfa;
+  --color-rel-mystery: #4b5563;
 
   /* Per-type node defaults for the graph apps. Separate namespace
      from --color-rel-* so edge vs node coloring stays decoupled.

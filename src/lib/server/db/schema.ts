@@ -89,17 +89,30 @@ export const relationships = pgTable(
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
 		label: text('label'),
-		type: text('type', { enum: RelationshipType }).notNull()
+		type: text('type', { enum: RelationshipType }).notNull(),
+		// Temporal bounds — spotlight integration (Phase 1B Lane A, 2026-05-02).
+		// All four FK columns are nullable: NULL means the relationship is
+		// timeless. When non-null, start_act_id/end_act_id must reference Act
+		// entities; scene FKs must reference Scene entities. Validated at write
+		// time by resolveRelationshipBounds (intervals.ts).
+		//
+		// Uniqueness is enforced by two partial indexes in the migration (Drizzle
+		// does not support partial indexes natively):
+		//   relationships_timeless_dedup  — (from, to, type) WHERE start_position IS NULL
+		//   relationships_temporal_dedup  — (from, to, type, start_position) WHERE start_position IS NOT NULL
+		startActId: uuid('start_act_id').references(() => entities.id, { onDelete: 'set null' }),
+		startSceneId: uuid('start_scene_id').references(() => entities.id, { onDelete: 'set null' }),
+		endActId: uuid('end_act_id').references(() => entities.id, { onDelete: 'set null' }),
+		endSceneId: uuid('end_scene_id').references(() => entities.id, { onDelete: 'set null' }),
+		startPosition: doublePrecision('start_position'),
+		endPosition: doublePrecision('end_position'),
+		revealedAtPosition: doublePrecision('revealed_at_position')
 	},
 	(table) => [
-		// Prevent duplicate edges of the same type between the same pair.
-		// Allows multi-edges of DIFFERENT types (e.g., A allied_with B AND
-		// A rivals B is illogical but allowed; A pov_of X AND A pov_of Y is
-		// allowed and meaningful for multi-POV events). Enforced at the
-		// schema level so any future write path automatically inherits the
-		// constraint. Migrated 2026-04-29 in 0001_relationships_dedup.sql,
-		// carries over to the pg baseline migration regenerated in T8a.
-		uniqueIndex('relationships_dedup').on(table.fromId, table.toId, table.type)
+		index('relationships_position_idx').on(table.startPosition, table.endPosition)
+		// NOTE: the timeless/temporal dedup partial indexes are defined in
+		// 0002_spotlight_temporal.sql because Drizzle does not support partial
+		// indexes in the table DSL.
 	]
 );
 
@@ -211,3 +224,31 @@ export const intervals = pgTable(
 		check('intervals_position_order', sql`${table.startPosition} < ${table.endPosition}`)
 	]
 );
+
+// =============================================================================
+// entity_aliases — Phase 1B Lane A (2026-05-02)
+// =============================================================================
+//
+// Maps an entity to an alias entity (e.g., a character's pen name or a
+// location's alternate name). The alias is a full entity in its own right;
+// this table records the relationship between primary and alias identities.
+//
+// `revealed_at_position` is nullable: NULL means the alias is always known;
+// non-null means it is revealed only at or after that story-time position.
+//
+// Constraints:
+//   entity_aliases_unique   — (primary, alias) pair is unique
+//   entity_aliases_no_self  — a row cannot point an entity at itself
+// =============================================================================
+
+export const entityAliases = pgTable('entity_aliases', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	primaryEntityId: uuid('primary_entity_id')
+		.notNull()
+		.references(() => entities.id, { onDelete: 'cascade' }),
+	aliasEntityId: uuid('alias_entity_id')
+		.notNull()
+		.references(() => entities.id, { onDelete: 'cascade' }),
+	revealedAtPosition: doublePrecision('revealed_at_position'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+});

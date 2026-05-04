@@ -3,7 +3,7 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-  import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
+  import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/stores/playhead.js';
   import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
@@ -18,8 +18,11 @@
     type NodePosition
   } from '$lib/components/GraphCanvas.svelte';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
   import Legend from '$lib/components/Legend.svelte';
+  import { entityAliases } from '$lib/stores/entity-aliases.js';
+  import AliasModal from '$lib/components/AliasModal.svelte';
 
   interface Props {
     windowId: string;
@@ -33,6 +36,9 @@
 
   // ── Traversal inputs ──────────────────────────────────────────────────────
   const focalSetIds = $derived(new Set(focalSet));
+  const acts = $derived(
+    $entities.filter((e) => e.type === 'Act').sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+  );
 
   // Edge list for traversal helpers (B2 contract).
   const edgeList = $derived<TraversalEdge[]>(
@@ -67,22 +73,122 @@
   // derivations consistent (Greptile P2 follow-up from PR #12).
   const displayEntityIds = $derived(new Set(displayEntities.map((e) => e.id)));
 
+  const aliasEntityIds = $derived(
+    new Set([...$entityAliases.map((a) => a.primaryEntityId), ...$entityAliases.map((a) => a.aliasEntityId)])
+  );
+
+  // ── View options (declared before derived scope logic that references them) ──
+  let hardFilter = $state(true);
+  let showGhostTrails = $state(false);
+
   // ── Out-of-scope at playhead (same shape as StoryGraph) ───────────────────
+  // Stable interval map — only rebuilds when intervals change, not on scrubs.
+  const entityIntervalMap = $derived.by(() => {
+    const m = new Map<string, Array<{ startPosition: number; endPosition: number }>>();
+    for (const iv of $intervalsStore) {
+      const list = m.get(iv.entityId) ?? [];
+      list.push(iv);
+      m.set(iv.entityId, list);
+    }
+    return m;
+  });
+
+  const actIndexById = $derived(
+    new Map(
+      [...$entities]
+        .filter((e) => e.type === 'Act' && e.position != null)
+        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+        .map((e, i): [string, number] => [e.id, i])
+    )
+  );
+
+  const sceneRanges = $derived.by(() => {
+    const ranges = new Map<string, { start: number; end: number }>();
+    const scenesByAct = new Map<string, Array<{ id: string; position: number | null }>>();
+    for (const e of $entities) {
+      if (e.type === 'Scene' && e.parentId != null) {
+        const list = scenesByAct.get(e.parentId) ?? [];
+        list.push({ id: e.id, position: e.position ?? null });
+        scenesByAct.set(e.parentId, list);
+      }
+    }
+    for (const [actId, scenes] of scenesByAct) {
+      const actIdx = actIndexById.get(actId);
+      if (actIdx == null) continue;
+      const sorted = [...scenes].sort((a, b) => {
+        if (a.position != null && b.position != null) return a.position - b.position;
+        if (a.position != null) return -1;
+        if (b.position != null) return 1;
+        return 0;
+      });
+      const n = sorted.length;
+      for (let i = 0; i < n; i++) {
+        ranges.set(sorted[i].id, { start: actIdx + i / n, end: actIdx + (i + 1) / n });
+      }
+    }
+    return ranges;
+  });
+
+  const sortedSceneStarts = $derived(
+    [...sceneRanges.values()].map((r) => r.start).sort((a, b) => a - b)
+  );
+
+  const scenesForReveal = $derived.by(() => {
+    const result: { id: string; name: string; actId: string; position: number }[] = [];
+    for (const [id, range] of sceneRanges) {
+      const e = $entities.find((en) => en.id === id);
+      if (e?.parentId) result.push({ id, name: e.name, actId: e.parentId, position: range.start });
+    }
+    return result.sort((a, b) => a.position - b.position);
+  });
+
   const outOfScope = $derived.by(() => {
     const set = new Set<string>();
     if ($playhead == null) return set;
     const t = $playhead;
-    const byEntity = new Map<string, typeof $intervalsStore>();
-    for (const iv of $intervalsStore) {
-      const list = byEntity.get(iv.entityId) ?? [];
-      list.push(iv);
-      byEntity.set(iv.entityId, list);
-    }
-    for (const [entityId, ivs] of byEntity) {
+
+    for (const [entityId, ivs] of entityIntervalMap) {
       const active = ivs.some((iv) => intervalContainsT(iv.startPosition, iv.endPosition, t));
       if (!active) set.add(entityId);
     }
+
+    for (const e of displayEntities) {
+      if (e.type === 'Act') {
+        const actIdx = actIndexById.get(e.id);
+        if (actIdx != null && !intervalContainsT(actIdx, actIdx + 1, t)) set.add(e.id);
+      } else if (e.type === 'Scene') {
+        const range = sceneRanges.get(e.id);
+        if (range != null && !intervalContainsT(range.start, range.end, t)) set.add(e.id);
+      }
+    }
+
     return set;
+  });
+
+  // When hideOutOfScope is on, strip out-of-scope ids from the rendered set so
+  // those nodes (and their edges) disappear entirely instead of just dimming.
+  // When showGhostTrails is also on, keep nearby-ghost entities rendered so
+  // their edges can show as ghost trails (they'll be dimmed via dimmedNodes).
+  const renderedEntityIds = $derived.by(() => {
+    if (!$hideOutOfScope) return displayEntityIds;
+    const inScope = new Set([...displayEntityIds].filter((id) => !outOfScope.has(id)));
+    if (!showGhostTrails || $playhead === null) return inScope;
+    const t = $playhead;
+    const nearEnoughScene = (lo: number, hi: number) =>
+      sortedSceneStarts.length > 0
+        ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2
+        : hi - lo <= 1;
+    for (const [entityId, ivs] of entityIntervalMap) {
+      if (!outOfScope.has(entityId)) continue;
+      for (const iv of ivs) {
+        if ((iv.endPosition <= t && nearEnoughScene(iv.endPosition, t)) ||
+            (iv.startPosition > t && nearEnoughScene(t, iv.startPosition))) {
+          inScope.add(entityId);
+          break;
+        }
+      }
+    }
+    return inScope;
   });
 
   // ── Legend state (C4) ──────────────────────────────────────────────────────
@@ -124,13 +230,25 @@
     return m;
   });
 
+  const nodeColorById = $derived.by(() => {
+    const m = new Map<string, string>();
+    for (const e of displayEntities) {
+      const color = nodeColorFor(e, characterIndexById.get(e.id));
+      if (color) m.set(e.id, color);
+    }
+    return m;
+  });
+
   const graphNodes = $derived<GraphNode[]>(
-    displayEntities.map((e) => ({
-      id: e.id,
-      type: e.type,
-      name: e.name,
-      color: nodeColorFor(e, characterIndexById.get(e.id))
-    }))
+    displayEntities
+      .filter((e) => renderedEntityIds.has(e.id))
+      .map((e) => ({
+        id: e.id,
+        type: e.type,
+        name: e.name,
+        color: nodeColorFor(e, characterIndexById.get(e.id)),
+        aliasMember: aliasEntityIds.has(e.id)
+      }))
   );
 
   // Single source of truth for "edges currently in the graph": both endpoints
@@ -140,28 +258,90 @@
   const visibleRelationships = $derived(
     $relationships.filter(
       (r) =>
-        displayEntityIds.has(r.fromId) &&
-        displayEntityIds.has(r.toId) &&
-        enabledRelTypes.has(r.type)
+        renderedEntityIds.has(r.fromId) &&
+        renderedEntityIds.has(r.toId)
     )
   );
 
-  const graphEdges = $derived<GraphEdge[]>(
-    visibleRelationships.map((r) => {
+  const graphEdges = $derived.by(() => {
+    const t = $playhead;
+    const edges: GraphEdge[] = [];
+    for (const r of visibleRelationships) {
+      const inWindow = isEdgeVisibleAtT(r, t);
       const style = REL_EDGE_STYLE[r.type];
-      return {
+      const mystery = isMysteryEdgeAtT(r, t);
+
+      // Ghost mode: show edges near the playhead that aren't currently active.
+      // Proximity is scene-granular: ≤2 scene boundaries between the interval
+      // edge and T. Falls back to ≤1 act when no scenes exist.
+      let ghostMode: 'past' | 'future' | null = null;
+      if (showGhostTrails && t !== null && !mystery) {
+        const endpointOutOfScope = outOfScope.has(r.fromId) || outOfScope.has(r.toId);
+        if (!inWindow || endpointOutOfScope) {
+          const nearEnough = (lo: number, hi: number) =>
+            sortedSceneStarts.length > 0
+              ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2
+              : hi - lo <= 1;
+          if (r.startPosition != null || r.endPosition != null) {
+            const nearStart = r.startPosition != null && nearEnough(Math.min(r.startPosition, t), Math.max(r.startPosition, t));
+            const nearEnd = r.endPosition != null && nearEnough(Math.min(r.endPosition, t), Math.max(r.endPosition, t));
+            if (nearStart || nearEnd) {
+              ghostMode = r.startPosition != null && r.startPosition > t ? 'future' : 'past';
+            }
+          } else {
+            outer: for (const endpointId of [r.fromId, r.toId]) {
+              for (const iv of entityIntervalMap.get(endpointId) ?? []) {
+                if (iv.endPosition <= t && nearEnough(iv.endPosition, t)) { ghostMode = 'past'; break outer; }
+                if (iv.startPosition > t && nearEnough(t, iv.startPosition)) { ghostMode = 'future'; break outer; }
+              }
+            }
+          }
+        }
+      }
+
+      // Legend hard filter: skip disabled types unless they're showing as a ghost trail
+      if (!enabledRelTypes.has(r.type) && ghostMode === null) continue;
+      if (!inWindow && hardFilter && ghostMode === null) continue;
+      const ghostEntityId = ghostMode !== null
+        ? (outOfScope.has(r.fromId) ? r.fromId : r.toId)
+        : null;
+      edges.push({
         id: r.id,
         fromId: r.fromId,
         toId: r.toId,
-        color: REL_COLOR[r.type] ?? 'var(--color-rel-other)',
+        color: ghostEntityId !== null
+          ? (nodeColorById.get(ghostEntityId) ?? REL_COLOR[r.type] ?? 'var(--color-rel-other)')
+          : (REL_COLOR[r.type] ?? 'var(--color-rel-other)'),
         label: r.label ?? r.type.replace(/_/g, ' '),
-        dimmed: outOfScope.has(r.fromId) || outOfScope.has(r.toId),
+        dimmed: !mystery && !ghostMode && (outOfScope.has(r.fromId) || outOfScope.has(r.toId) || (!inWindow && !hardFilter)),
         dasharray: style.dasharray,
         width: style.width,
-        arrow: style.arrow
-      };
-    })
-  );
+        arrow: style.arrow,
+        startPosition: r.startPosition,
+        endPosition: r.endPosition,
+        mysteryMode: mystery,
+        ghostMode
+      });
+    }
+    // Alias edges: dashed "aka" line per pair where both endpoints are visible
+    for (const alias of $entityAliases) {
+      if (!renderedEntityIds.has(alias.primaryEntityId) || !renderedEntityIds.has(alias.aliasEntityId)) continue;
+      if (alias.revealedAtPosition != null && t != null && t < alias.revealedAtPosition) continue;
+      edges.push({
+        id: `alias-${alias.id}`,
+        fromId: alias.primaryEntityId,
+        toId: alias.aliasEntityId,
+        color: 'var(--color-rel-other)',
+        label: 'aka',
+        dimmed: false,
+        dasharray: '1 2',
+        width: 1,
+        arrow: false
+      });
+    }
+    // Ghost edges emitted first → render behind normal edges in SVG
+    return [...edges.filter((e) => e.ghostMode), ...edges.filter((e) => !e.ghostMode)];
+  });
 
   // Reference to the canvas for out-of-band position updates (reseed) +
   // refit calls after layout-by-type mutates positions. Set via bind:this.
@@ -189,6 +369,8 @@
   let radialSeeded = $state(false);
 
   onMount(() => {
+    intervalsStore.load();
+    entityAliases.load();
     void (async () => {
       // FG canvas is independent of StoryGraph: each FG window has
       // its own per-window state (Lane A). We don't inherit the
@@ -360,11 +542,13 @@
           fromId: r.fromId,
           toId: r.toId
         }));
-        const positionsForCentroid = Object.entries(currentPositions).map(([id, p]) => ({
-          id,
-          x: p.x,
-          y: p.y
-        }));
+        // Only include currently-visible entities. currentPositions accumulates
+        // stale entries from prior display states; stale pinned positions skew
+        // pinnedCentroid and shift the unpinned cluster away from visible pins.
+        const displayEntityIdSet = new Set(displayEntities.map((e) => e.id));
+        const positionsForCentroid = Object.entries(currentPositions)
+          .filter(([id]) => displayEntityIdSet.has(id))
+          .map(([id, p]) => ({ id, x: p.x, y: p.y }));
 
         const newPositions = await runLayout({
           nodes: layoutNodes,
@@ -462,12 +646,38 @@
     return $entities.find((e) => e.id === id)?.name ?? '(deleted)';
   }
 
+  // ── Alias position snap ────────────────────────────────────────────────────
+  let snappedAliasIds = new Set<string>();
+  $effect(() => {
+    const t = $playhead;
+    const updates: Record<string, NodePosition> = {};
+    for (const alias of $entityAliases) {
+      const id = alias.aliasEntityId;
+      const isRevealed =
+        t !== null &&
+        !outOfScope.has(id) &&
+        (alias.revealedAtPosition === null || t >= alias.revealedAtPosition);
+      if (isRevealed && !snappedAliasIds.has(id)) {
+        const pos = currentPositions[alias.primaryEntityId] ?? initialPositions[alias.primaryEntityId];
+        if (pos) updates[id] = { ...pos };
+      } else if (!isRevealed) {
+        snappedAliasIds.delete(id);
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      canvas?.reseed(updates);
+      for (const id of Object.keys(updates)) snappedAliasIds.add(id);
+    }
+  });
+
   // ── Right-click context menu ───────────────────────────────────────────────
   // FG variant per Phase 1B C3: focal nodes get "Remove from focal set"
   // instead of "Open Focused Graph"; non-focal nodes get an "Add to focal
   // set" affordance so the user can grow the focal selection without going
   // back to StoryGraph.
   let contextMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
+  let editRelMenu = $state<{ relationshipId: string; x: number; y: number } | null>(null);
+  let aliasModal = $state<{ entity: { id: string; type: string; name: string } } | null>(null);
 
   function addToFocalSet(id: string) {
     if (focalSetIds.has(id)) return;
@@ -504,6 +714,14 @@
       label: 'Layout by type',
       onSelect: () => void layoutByType()
     });
+    items.push({
+      label: 'Mark as alias of…',
+      onSelect: () => {
+        const entity = $entities.find((e) => e.id === id);
+        if (entity) aliasModal = { entity };
+        contextMenu = null;
+      }
+    });
     return items;
   });
 
@@ -518,7 +736,7 @@
   onclick={(e) => {
     if (!settingsOpen) return;
     const t = e.target as HTMLElement | null;
-    if (t?.closest('.fg-settings') || t?.closest('.fg-settings-btn')) return;
+    if (t?.closest('.fg-settings') || t?.closest('.fg-settings-btn') || t?.closest('.fg-mode')) return;
     settingsOpen = false;
   }}
 />
@@ -593,6 +811,7 @@
       onNodeOpen={openEntity}
       {onNodePositionChange}
       onContextMenu={(id, x, y) => (contextMenu = { entityId: id, x, y })}
+      onEdgeContextMenu={(id, x, y) => (editRelMenu = { relationshipId: id, x, y })}
       showEdgeLabels={edgeLabelsVisible}
     >
       {#snippet emptyState()}
@@ -638,6 +857,7 @@
           presentTypes={presentRelTypes}
           {edgeLabelsVisible}
           onToggleEdgeLabels={() => (edgeLabelsVisible = !edgeLabelsVisible)}
+          {showGhostTrails}
         />
       {/if}
       <button
@@ -659,6 +879,24 @@
           onChange={setTypeOrder}
           onApply={() => void layoutByType()}
         />
+        <label class="fg-settings-row">
+          <span>Scrubbing</span>
+          <select
+            value={hardFilter ? 'hard' : 'soft'}
+            onchange={(e) => (hardFilter = (e.currentTarget as HTMLSelectElement).value === 'hard')}
+          >
+            <option value="hard">Hide edges</option>
+            <option value="soft">Dim edges</option>
+          </select>
+        </label>
+        <label class="fg-settings-row">
+          <span>Ghost trails</span>
+          <input type="checkbox" bind:checked={showGhostTrails} />
+        </label>
+        <label class="fg-settings-row">
+          <span>Hide out of scope</span>
+          <input type="checkbox" checked={$hideOutOfScope} onchange={() => hideOutOfScope.set(!$hideOutOfScope)} />
+        </label>
       </div>
     {/if}
 
@@ -674,6 +912,36 @@
     x={contextMenu.x}
     y={contextMenu.y}
     onClose={() => (contextMenu = null)}
+  />
+{/if}
+
+{#if editRelMenu}
+  {@const rel = $relationships.find((r) => r.id === editRelMenu!.relationshipId)}
+  {#if rel}
+    <EditRelationshipModal
+      relationship={rel}
+      {acts}
+      scenes={scenesForReveal}
+      onSave={async (fields) => {
+        await relationships.updateRelationship(rel.id, fields);
+        editRelMenu = null;
+      }}
+      onClose={() => (editRelMenu = null)}
+    />
+  {/if}
+{/if}
+
+{#if aliasModal}
+  <AliasModal
+    entity={aliasModal.entity}
+    allEntities={$entities}
+    {acts}
+    scenes={scenesForReveal}
+    onSave={async (primaryEntityId, revealedAtPosition) => {
+      await entityAliases.createAlias(primaryEntityId, aliasModal!.entity.id, revealedAtPosition);
+      aliasModal = null;
+    }}
+    onClose={() => (aliasModal = null)}
   />
 {/if}
 
@@ -818,6 +1086,28 @@
     right: 12px;
     z-index: 5;
     pointer-events: auto;
+  }
+  .fg-settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--color-text-muted);
+    cursor: default;
+  }
+  .fg-settings-row select {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-family: var(--font-ui);
+    font-size: 12px;
   }
 
   /* Hover-only "+" badge on non-focal nodes for click-to-extend.

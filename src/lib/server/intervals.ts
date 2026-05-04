@@ -46,7 +46,7 @@ import type { PgliteDatabase } from 'drizzle-orm/pglite';
 import type { PgliteQueryResultHKT } from 'drizzle-orm/pglite';
 import type { ExtractTablesWithRelations } from 'drizzle-orm';
 import * as schema from './db/schema.js';
-import { entities, intervals } from './db/schema.js';
+import { entities, intervals, relationships } from './db/schema.js';
 // Pure math (actRange, sceneRange, smartSnap) lives in
 // $lib/timeline-v2-helpers so non-server code (drag-preview snap) can import it
 // without violating SvelteKit's $lib/server/* boundary.
@@ -741,6 +741,11 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 			);
 		}
 	}
+
+	// Also recompute temporal relationship bounds in the same transaction so
+	// act-reorder cascades are atomic (Phase 1B Lane A, 2026-05-02).
+	await recomputeRelationshipBoundsAll(db);
+
 	return updated;
 }
 
@@ -984,4 +989,119 @@ export async function intervalsForEntities(db: DB, entityIds: string[]) {
 		.from(intervals)
 		.where(inArray(intervals.entityId, entityIds))
 		.orderBy(intervals.startPosition);
+}
+
+// =============================================================================
+// Relationship temporal bounds — Phase 1B Lane A (2026-05-02)
+// =============================================================================
+
+export interface RelationshipBoundsInput {
+	startActId?: string | null;
+	startSceneId?: string | null;
+	endActId?: string | null;
+	endSceneId?: string | null;
+}
+
+export interface RelationshipBoundsResult {
+	startPosition: number | null;
+	endPosition: number | null;
+}
+
+/**
+ * Resolve (start_position, end_position) for a relationship from its FK anchors.
+ *
+ * Returns { startPosition: null, endPosition: null } when both act FKs are
+ * absent — the relationship is timeless.
+ *
+ * Otherwise delegates to computeIntervalPositions using the same math as
+ * intervals: start_act_id drives the integer part; scene FK (when present)
+ * drives the fractional part.
+ */
+export async function resolveRelationshipBounds(
+	db: DB,
+	input: RelationshipBoundsInput,
+	cache?: RecomputeCache
+): Promise<RelationshipBoundsResult> {
+	if (!input.startActId && !input.endActId) {
+		return { startPosition: null, endPosition: null };
+	}
+
+	// Both act anchors required when either is set — caller must provide both.
+	if (!input.startActId || !input.endActId) {
+		throw new Error(
+			'resolveRelationshipBounds: startActId and endActId must both be set or both be null'
+		);
+	}
+
+	const derived = await computeIntervalPositions(
+		db,
+		{
+			startActId: input.startActId,
+			startSceneId: input.startSceneId ?? null,
+			endActId: input.endActId,
+			endSceneId: input.endSceneId ?? null
+		},
+		cache
+	);
+	return { startPosition: derived.startPosition, endPosition: derived.endPosition };
+}
+
+/**
+ * Walk all temporal relationships and recompute their start_position /
+ * end_position from FK anchors. Returns the count of rows updated.
+ *
+ * Runs inside the caller's transaction context (pass db or tx).
+ */
+export async function recomputeRelationshipBoundsAll(db: DB): Promise<number> {
+	const rows = await db
+		.select()
+		.from(relationships)
+		.where(
+			sql`(${relationships.startActId} IS NOT NULL OR ${relationships.endActId} IS NOT NULL)`
+		);
+
+	if (rows.length === 0) return 0;
+
+	const cache = await buildRecomputeCache(db);
+	let updated = 0;
+
+	for (const row of rows) {
+		try {
+			const { startPosition, endPosition } = await resolveRelationshipBounds(
+				db,
+				{
+					startActId: row.startActId,
+					startSceneId: row.startSceneId,
+					endActId: row.endActId,
+					endSceneId: row.endSceneId
+				},
+				cache
+			);
+
+			const startDrift =
+				startPosition !== null &&
+				row.startPosition !== null &&
+				Math.abs(startPosition - row.startPosition) > POSITION_EPSILON;
+			const endDrift =
+				endPosition !== null &&
+				row.endPosition !== null &&
+				Math.abs(endPosition - row.endPosition) > POSITION_EPSILON;
+			// Also handle case where position was null and now needs a value
+			const startChanged = (startPosition === null) !== (row.startPosition === null) || startDrift;
+			const endChanged = (endPosition === null) !== (row.endPosition === null) || endDrift;
+
+			if (!startChanged && !endChanged) continue;
+
+			await db
+				.update(relationships)
+				.set({ startPosition, endPosition })
+				.where(eq(relationships.id, row.id));
+			updated++;
+		} catch (err) {
+			throw new Error(
+				`recomputeRelationshipBoundsAll failed on relationship ${row.id}: ${(err as Error).message}`
+			);
+		}
+	}
+	return updated;
 }

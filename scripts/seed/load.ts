@@ -12,7 +12,8 @@ import type {
   SeedEvent,
   SeedScene,
   SeedRelationship,
-  SeedInterval
+  SeedInterval,
+  SeedAlias
 } from './types.js';
 
 export interface LoadOptions {
@@ -31,6 +32,7 @@ export interface LoadCounts {
   scenes: number;
   relationships: number;
   intervals: number;
+  aliases: number;
 }
 
 interface EntityRow {
@@ -263,8 +265,8 @@ export async function loadStory(story: SeedStory, opts: LoadOptions): Promise<Lo
   // ── Phase 4: intervals ─────────────────────────────────────────────
   log(`creating ${story.intervals.length} intervals…`);
   for (const iv of story.intervals) {
-    const entityId = idByCharacterName.get(iv.character);
-    if (!entityId) throw new Error(`Interval .character='${iv.character}' is not a seeded character`);
+    const entityId = resolveEntityId(iv.character);
+    if (!entityId) throw new Error(`Interval .character='${iv.character}' did not resolve to any seeded entity`);
     const startActId = idByActName.get(iv.fromAct);
     if (!startActId) throw new Error(`Interval .fromAct='${iv.fromAct}' is not a seeded act`);
     const endActId = idByActName.get(iv.toAct);
@@ -289,6 +291,32 @@ export async function loadStory(story: SeedStory, opts: LoadOptions): Promise<Lo
     });
   }
 
+  // ── Phase 5: aliases ──────────────────────────────────────────────────
+  const aliases = story.aliases ?? [];
+  // Build 0-based index map for acts (sorted by position, matching the story-time axis).
+  const sortedActNames = [...story.acts].sort((a, b) => a.position - b.position).map((a) => a.name);
+  const indexByActName = new Map(sortedActNames.map((name, i) => [name, i]));
+
+  log(`creating ${aliases.length} aliases…`);
+  for (const al of aliases) {
+    const primaryEntityId = resolveEntityId(al.primary);
+    if (!primaryEntityId) throw new Error(`Alias .primary='${al.primary}' did not resolve to any seeded entity`);
+    const aliasEntityId = resolveEntityId(al.alias);
+    if (!aliasEntityId) throw new Error(`Alias .alias='${al.alias}' did not resolve to any seeded entity`);
+
+    let revealedAtPosition: number | null = null;
+    if (al.revealedAtAct !== undefined) {
+      const idx = indexByActName.get(al.revealedAtAct);
+      if (idx === undefined) throw new Error(`Alias .revealedAtAct='${al.revealedAtAct}' is not a seeded act`);
+      revealedAtPosition = idx;
+    }
+
+    await jfetch(`${baseUrl}/api/entity-aliases`, {
+      method: 'POST',
+      body: JSON.stringify({ primaryEntityId, aliasEntityId, revealedAtPosition })
+    });
+  }
+
   return {
     deleted,
     acts: story.acts.length,
@@ -297,6 +325,7 @@ export async function loadStory(story: SeedStory, opts: LoadOptions): Promise<Lo
     events: story.events.length,
     scenes: scenes.length,
     relationships: story.relationships.length,
-    intervals: story.intervals.length
+    intervals: story.intervals.length,
+    aliases: aliases.length
   };
 }
