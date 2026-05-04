@@ -94,6 +94,18 @@
 		}
 	});
 
+	function cancelEdit() {
+		// Dispatch Escape to the currently focused EditableField so its keydown
+		// handler resets draft → currentValue and blurs cleanly (no commit).
+		// Must run on mousedown — before the browser's natural focus-shift fires
+		// blur on the field, which would otherwise commit the draft.
+		const el = document.activeElement;
+		if (el instanceof HTMLElement) {
+			el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+		}
+		mode = 'view';
+	}
+
 	// Move-to-window confirmation (2B-i inline confirm pattern).
 	let confirmingMove = $state(false);
 
@@ -139,6 +151,13 @@
 			<div class="entity-detail-eyebrow-row">
 				<span class="entity-detail-eyebrow">{eyebrowFor(entity)}</span>
 				<div class="entity-detail-actions">
+					{#if mode === 'edit'}
+						<button
+							type="button"
+							class="mode-cancel"
+							onmousedown={cancelEdit}
+						>Cancel</button>
+					{/if}
 					<button
 						type="button"
 						class="mode-toggle"
@@ -291,6 +310,23 @@
 	}
 	.mode-toggle:hover {
 		filter: brightness(1.1);
+	}
+	.mode-cancel {
+		background: transparent;
+		color: var(--color-text-muted, #6b7280);
+		border: 1px solid var(--color-border, #2a2d35);
+		border-radius: 4px;
+		padding: 3px 10px;
+		font-size: 11px;
+		font-weight: 600;
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		cursor: pointer;
+	}
+	.mode-cancel:hover {
+		color: var(--color-text, #e8e0d0);
+		border-color: var(--color-text, #e8e0d0);
 	}
 	.entity-detail-title-text {
 		display: inline-block;

@@ -351,6 +351,21 @@
 		}
 	}
 
+	// ── Spotlight position label ─────────────────────────────────────────────
+	const spotlightLabel = $derived.by(() => {
+		if ($playhead == null || acts.length === 0) return '';
+		const actIdx = Math.max(0, Math.min(Math.floor($playhead), acts.length - 1));
+		const act = acts[actIdx];
+		const scenes = scenesByActId.get(act.id) ?? [];
+		if (scenes.length === 0) return act.name;
+		const f = $playhead - actIdx;
+		const sceneIdx = Math.min(Math.floor(f * scenes.length), scenes.length - 1);
+		return `${act.name} · ${scenes[sceneIdx].name}`;
+	});
+
+	// ── Palette collapse ─────────────────────────────────────────────────────
+	let paletteCollapsed = $state(false);
+
 	// ── Spotlight help popover ──────────────────────────────────────────────
 	let spotlightHelpOpen = $state(false);
 	let spotlightHelpWrapEl: HTMLDivElement | null = $state(null);
@@ -440,23 +455,31 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="tl2">
-	<Palette
-		{characters}
-		{events}
-		{placedEntityIds}
-		{colorFor}
-		onCreateEvent={async () => {
-			const created = await entities.createEntity(
-				'Event',
-				`Event ${events.length + 1}`
-			);
-			selectFromTimeline(created.id);
-		}}
-		onSelect={(id) => {
-			const row = trackEl?.querySelector(`[data-entity-id="${id}"]`);
-			row?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-		}}
-	/>
+	{#if !paletteCollapsed}
+		<Palette
+			{characters}
+			{events}
+			{placedEntityIds}
+			{colorFor}
+			onCreateEvent={async () => {
+				const created = await entities.createEntity(
+					'Event',
+					`Event ${events.length + 1}`
+				);
+				selectFromTimeline(created.id);
+			}}
+			onSelect={(id) => {
+				const row = trackEl?.querySelector(`[data-entity-id="${id}"]`);
+				row?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+			}}
+		/>
+	{/if}
+	<button
+		class="palette-toggle"
+		aria-label={paletteCollapsed ? 'Show palette' : 'Hide palette'}
+		title={paletteCollapsed ? 'Show palette' : 'Hide palette'}
+		onclick={() => (paletteCollapsed = !paletteCollapsed)}
+	>{paletteCollapsed ? '›' : '‹'}</button>
 
 	<!-- ── Main timeline ──────────────────────────────────────────────── -->
 	<div class="timeline" style="--tl-gutter: {gutterPx}px">
@@ -475,7 +498,7 @@
 						▶ Spotlight
 					{:else}
 						◼ Hide spotlight
-						<span class="scrub-pos">Time = {$playhead.toFixed(2)}</span>
+						<span class="scrub-pos">{spotlightLabel}</span>
 					{/if}
 				</button>
 				{#if $playhead != null}
@@ -636,6 +659,26 @@
 		color: var(--color-text, #e8e0d0);
 		font-family: var(--font-ui, 'Inter', sans-serif);
 		overflow: hidden;
+	}
+
+	.palette-toggle {
+		flex-shrink: 0;
+		width: 14px;
+		background: var(--color-surface-2, #1c1f28);
+		border: none;
+		border-right: 1px solid var(--color-border, #2a2d35);
+		color: var(--color-text-muted, #6b7280);
+		cursor: pointer;
+		padding: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 14px;
+		transition: background 0.12s, color 0.12s;
+	}
+	.palette-toggle:hover {
+		background: rgba(255, 255, 255, 0.04);
+		color: var(--color-text, #e8e0d0);
 	}
 
 	/* ── Main timeline ───────────────────────────────────────────────── */

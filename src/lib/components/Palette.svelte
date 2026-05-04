@@ -33,6 +33,21 @@
     e.dataTransfer!.effectAllowed = 'copy';
   }
 
+  let searchQuery = $state('');
+  const q = $derived(searchQuery.toLowerCase().trim());
+
+  const filteredCharacters = $derived(
+    q === ''
+      ? characters.map((c, i) => ({ entity: c, idx: i }))
+      : characters.map((c, i) => ({ entity: c, idx: i })).filter(({ entity }) => entity.name.toLowerCase().includes(q))
+  );
+
+  const filteredEvents = $derived(
+    q === ''
+      ? events.map((e, i) => ({ entity: e, idx: i }))
+      : events.map((e, i) => ({ entity: e, idx: i })).filter(({ entity }) => entity.name.toLowerCase().includes(q))
+  );
+
   let charactersCollapsed = $state(false);
 
   let savingEvent = $state(false);
@@ -48,6 +63,16 @@
 </script>
 
 <aside class="palette" aria-label="Timeline palette">
+  <div class="palette-search">
+    <input
+      class="palette-search-input"
+      type="search"
+      placeholder="Search…"
+      aria-label="Search characters and events"
+      bind:value={searchQuery}
+    />
+  </div>
+
   <section class="palette-section">
     <header class="palette-label">
       <span>Characters</span>
@@ -58,8 +83,8 @@
         onclick={() => (charactersCollapsed = !charactersCollapsed)}
       >{charactersCollapsed ? 'none' : 'all'} <span class="palette-filter-chevron">{charactersCollapsed ? '▸' : '▾'}</span></button>
     </header>
-    {#if !charactersCollapsed}
-      {#each characters as char, i (char.id)}
+    {#if !charactersCollapsed || q}
+      {#each filteredCharacters as { entity: char, idx } (char.id)}
         <div
           class="palette-item"
           class:placed={placedEntityIds.has(char.id)}
@@ -72,13 +97,15 @@
           onclick={() => onSelect?.(char.id)}
           onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect?.(char.id); }}
         >
-          <span class="palette-dot" style="background: {colorFor(char, i)}" aria-hidden="true"></span>
+          <span class="palette-dot" style="background: {colorFor(char, idx)}" aria-hidden="true"></span>
           <span class="palette-name">{char.name}</span>
           <span class="palette-grip" aria-hidden="true">⋮⋮</span>
         </div>
       {/each}
       {#if characters.length === 0}
         <div class="palette-empty">No characters yet.</div>
+      {:else if filteredCharacters.length === 0}
+        <div class="palette-empty">No matches.</div>
       {/if}
     {/if}
   </section>
@@ -94,7 +121,7 @@
         onclick={addEventClick}
       >+</button>
     </header>
-    {#each events as ev, i (ev.id)}
+    {#each filteredEvents as { entity: ev, idx } (ev.id)}
       <div
         class="palette-item"
         class:placed={placedEntityIds.has(ev.id)}
@@ -107,13 +134,15 @@
         onclick={() => onSelect?.(ev.id)}
         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect?.(ev.id); }}
       >
-        <span class="palette-dot" style="background: {colorFor(ev, i)}" aria-hidden="true"></span>
+        <span class="palette-dot" style="background: {colorFor(ev, idx)}" aria-hidden="true"></span>
         <span class="palette-name">{ev.name}</span>
         <span class="palette-grip" aria-hidden="true">⋮⋮</span>
       </div>
     {/each}
     {#if events.length === 0}
       <div class="palette-empty">No events yet.</div>
+    {:else if filteredEvents.length === 0}
+      <div class="palette-empty">No matches.</div>
     {/if}
   </section>
 </aside>
@@ -127,6 +156,34 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+  }
+  .palette-search {
+    padding: 10px 12px 8px;
+    border-bottom: 1px solid var(--color-border, #2a2d35);
+  }
+  .palette-search-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--color-surface-1, #13151c);
+    border: 1px solid var(--color-border, #2a2d35);
+    border-radius: 5px;
+    color: var(--color-text, #e8e0d0);
+    font-family: var(--font-ui, 'Inter', sans-serif);
+    font-size: 12px;
+    padding: 5px 8px;
+    outline: none;
+    transition: border-color 0.12s;
+  }
+  .palette-search-input::placeholder {
+    color: var(--color-text-muted, #6b7280);
+  }
+  .palette-search-input:focus {
+    border-color: var(--color-accent, #c8942a);
+  }
+  /* Remove browser default search cancel button styling inconsistencies */
+  .palette-search-input::-webkit-search-cancel-button {
+    opacity: 0.4;
+    cursor: pointer;
   }
   .palette-section {
     padding: 18px 16px 12px;
