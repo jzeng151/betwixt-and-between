@@ -20,17 +20,10 @@
 	import ActsHeader from '$lib/components/ActsHeader.svelte';
 	import IntervalRow from '$lib/components/IntervalRow.svelte';
 	import PlayheadOverlay from '$lib/components/PlayheadOverlay.svelte';
-	import EntityDetail from '$lib/components/EntityDetail.svelte';
-	import Toast from '$lib/components/Toast.svelte';
 	import { playhead, isPlaying, playbackSpeed } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
-	import { getDraftPreview, clearAllDraftsFor } from '$lib/stores/editable-drafts.js';
 	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
 
-	interface Props {
-		entityId: string | null;
-	}
-	let { entityId }: Props = $props();
 
 	// ── Data load ────────────────────────────────────────────────────────────
 	let loaded = $state(false);
@@ -267,7 +260,8 @@
 	// ── Per-bar render state ─────────────────────────────────────────────────
 	function tooltipFor(entity: Entity, interval: Interval): string {
 		const range = presenceLabel(interval.startPosition, interval.endPosition);
-		return `${entity.name} · ${range}`;
+		const note = dataNoteSnippet(entity);
+		return note ? `${entity.name} · ${range}\n${note}` : `${entity.name} · ${range}`;
 	}
 
 	// ── Drag-from-palette drop handler ───────────────────────────────────────
@@ -325,70 +319,18 @@
 		}
 	}
 
-	// ── Side panel selection (Phase 1.6 / Lane C) ───────────────────────────
-	// selectedEntityId drives the right-hand EntityDetail side panel. Only
-	// one editor is open at a time per D10/9A — clicking a bar/act/scene
-	// either opens the side panel or, if a popout window already exists for
-	// that entity, focuses the existing window instead. (D10/9A + D10-ext/19A)
-	let selectedEntityId: string | null = $state(null);
-	// Mode to pass to EntityDetail when the side panel opens. Reset to
-	// 'view' on plain selects; set to 'edit' after creating a new act or
-	// event so the user lands in the editor for the empty fields.
-	let selectedInitialMode: 'view' | 'edit' = $state('view');
-
-	function selectFromTimeline(id: string, mode: 'view' | 'edit' = 'view') {
+	function selectFromTimeline(id: string) {
 		// Scrub mode is exclusive — clicks on bars / act headers / scene
-		// cells should scrub the playhead, not open the side panel. The
-		// rows-level click handler (clickTrackToScrub) does the scrub
-		// once the bubbling reaches .rows.
+		// cells should scrub the playhead, not open a window.
 		if ($playhead != null) return;
 		const existing = windowStore.findOpenEditorFor(id);
 		if (existing) {
 			windowStore.focus(existing.id);
-			selectedEntityId = null;
 			return;
 		}
-		selectedInitialMode = mode;
-		selectedEntityId = id;
+		const ent = $entities.find((e) => e.id === id);
+		if (ent) windowStore.openForEntity(id, ent.type);
 	}
-
-	function moveSelectedToWindow() {
-		if (!selectedEntityId) return;
-		const id = selectedEntityId;
-		windowStore.open('entity-detail', id);
-		selectedEntityId = null;
-	}
-
-	// Draft-preview toast (D16/14A) — fires when EntityDetail's currently
-	// rendered entity disappears from $entities (e.g. confirmed-delete from
-	// another window). We capture both the entity name (looked up before
-	// nulling out the selection) and any in-flight EditableField draft from
-	// the module-level drafts bus.
-	type DraftToast = { name: string; draft: string | null };
-	let draftToast: DraftToast | null = $state(null);
-
-	function handleEntityVanished(lastName: string) {
-		if (!selectedEntityId) return;
-		const id = selectedEntityId;
-		const draftInfo = getDraftPreview(id);
-		clearAllDraftsFor(id);
-		draftToast = {
-			name: lastName,
-			draft: draftInfo?.text ?? null
-		};
-		selectedEntityId = null;
-	}
-
-	// If the host window opens with an entity prop pointed at an Act/Event/Scene,
-	// preselect it. Other types fall through (no-op — Wiki/etc handle them).
-	$effect(() => {
-		if (entityId && entityId !== selectedEntityId) {
-			const e = $entities.find((x) => x.id === entityId);
-			if (e && (e.type === 'Act' || e.type === 'Event' || e.type === 'Scene')) {
-				selectedEntityId = entityId;
-			}
-		}
-	});
 
 	// ── Playhead (Phase 1.5 scrubber) ────────────────────────────────────────
 	// ── + Act control (creates immediately, opens editor) ───────────────
@@ -401,8 +343,7 @@
 			const created = await entities.createEntity('Act', `Act ${acts.length + 1}`, {
 				position: acts.length
 			});
-			// Land in the editor — name is editable in the title bar.
-			selectFromTimeline(created.id, 'edit');
+			selectFromTimeline(created.id);
 		} catch (err) {
 			showError((err as Error).message);
 		} finally {
@@ -509,9 +450,11 @@
 				'Event',
 				`Event ${events.length + 1}`
 			);
-			// Open the new event in the side panel in edit mode so the
-			// user can fill in description / POV / outcome / etc.
-			selectFromTimeline(created.id, 'edit');
+			selectFromTimeline(created.id);
+		}}
+		onSelect={(id) => {
+			const row = trackEl?.querySelector(`[data-entity-id="${id}"]`);
+			row?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 		}}
 	/>
 
@@ -607,7 +550,7 @@
 		<ActsHeader
 			{acts}
 			{scenesByActId}
-			{selectedEntityId}
+			selectedEntityId={null}
 			{weights}
 			{actPxWidths}
 			{trackWidthPx}
@@ -683,28 +626,6 @@
 		{/if}
 	</div>
 
-	{#if selectedEntityId}
-		<aside class="side-panel">
-			<EntityDetail
-				entityId={selectedEntityId}
-				initialMode={selectedInitialMode}
-				onMoveToWindow={moveSelectedToWindow}
-				onClose={() => (selectedEntityId = null)}
-				onEntityVanished={handleEntityVanished}
-			/>
-		</aside>
-	{/if}
-
-	{#if draftToast}
-		<Toast
-			kind={draftToast.draft ? 'draft-preview' : 'info'}
-			message={draftToast.draft
-				? `${draftToast.name} was deleted while you were editing.`
-				: `${draftToast.name} was deleted.`}
-			draft={draftToast.draft}
-			onDismiss={() => (draftToast = null)}
-		/>
-	{/if}
 </div>
 
 <style>
@@ -726,17 +647,6 @@
 		position: relative;
 	}
 
-	/* ── Side panel (Variant A from plan-design-review) ──────────────── */
-	.side-panel {
-		flex: 0 0 360px;
-		min-width: 360px;
-		max-width: 480px;
-		border-left: 1px solid var(--color-border, #2a2d35);
-		background: var(--color-surface-2, #1c1f28);
-		overflow: hidden;
-		display: flex;
-		flex-direction: column;
-	}
 
 	.timeline-controls {
 		display: grid;

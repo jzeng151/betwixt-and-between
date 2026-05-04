@@ -20,8 +20,10 @@
     /** Create handler — parent creates the event with a default name and
      *  opens the editor. Returns when the create round-trip completes. */
     onCreateEvent: () => Promise<void>;
+    /** Called when the user clicks (not drags) a character chip. */
+    onSelect?: (id: string) => void;
   }
-  let { characters, events, placedEntityIds, colorFor, onCreateEvent }: Props = $props();
+  let { characters, events, placedEntityIds, colorFor, onCreateEvent, onSelect }: Props = $props();
 
   function setDragData(e: DragEvent, id: string) {
     // Custom MIME so V1 Timeline's text/plain drop handlers ignore our drags.
@@ -59,6 +61,8 @@
         tabindex="0"
         aria-label="Drag {char.name} onto timeline"
         ondragstart={(e) => setDragData(e, char.id)}
+        onclick={() => onSelect?.(char.id)}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect?.(char.id); }}
       >
         <span class="palette-dot" style="background: {colorFor(char, i)}" aria-hidden="true"></span>
         <span class="palette-name">{char.name}</span>
@@ -91,6 +95,8 @@
         tabindex="0"
         aria-label="Drag {ev.name} onto timeline"
         ondragstart={(e) => setDragData(e, ev.id)}
+        onclick={() => onSelect?.(ev.id)}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect?.(ev.id); }}
       >
         <span class="palette-dot" style="background: {colorFor(ev, i)}" aria-hidden="true"></span>
         <span class="palette-name">{ev.name}</span>
