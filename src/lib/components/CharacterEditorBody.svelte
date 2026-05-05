@@ -636,6 +636,31 @@
 				</div>
 			{/if}
 
+			<!-- Timeline snippet: source of the second-line label rendered on
+			     this character's timeline bars when "Name + note snippet"
+			     mode is selected (the default). Field name in the entity
+			     data blob is still `notes` for backward compatibility with
+			     existing data and timeline-v2-helpers' dataNoteSnippet(). -->
+			<label class="field-label" for="char-notes">Timeline snippet</label>
+			{#if !readOnly}
+				<textarea
+					id="char-notes"
+					class="field-textarea"
+					placeholder="One short line — appears on the timeline bar."
+					bind:value={notes}
+					onblur={saveAll}
+					rows="2"
+				></textarea>
+				<p class="field-hint">
+					First line shows on this character's timeline bars when "Name + note
+					snippet" is selected above.
+				</p>
+			{:else}
+				<p class="field-display" class:field-empty={!notes}>
+					{notes || 'Not set.'}
+				</p>
+			{/if}
+
 			<label class="field-label" for="char-motivation">Motivation</label>
 			{#if !readOnly}
 				<textarea
@@ -649,22 +674,6 @@
 			{:else}
 				<p class="field-display" class:field-empty={!motivation}>
 					{motivation || 'Not set.'}
-				</p>
-			{/if}
-
-			<label class="field-label" for="char-notes">Notes</label>
-			{#if !readOnly}
-				<textarea
-					id="char-notes"
-					class="field-textarea"
-					placeholder="Additional notes…"
-					bind:value={notes}
-					onblur={saveAll}
-					rows="4"
-				></textarea>
-			{:else}
-				<p class="field-display" class:field-empty={!notes}>
-					{notes || 'Not set.'}
 				</p>
 			{/if}
 
@@ -1042,6 +1051,14 @@
 	.field-textarea:focus {
 		outline: none;
 		border-color: var(--color-accent);
+	}
+
+	.field-hint {
+		margin: 0;
+		font-size: 10px;
+		color: var(--color-text-muted, #6b7280);
+		font-style: italic;
+		line-height: 1.4;
 	}
 
 	.save-error { color: var(--color-rel-rival, #ef4444); font-size: 12px; }
