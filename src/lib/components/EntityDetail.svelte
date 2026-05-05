@@ -248,10 +248,9 @@
 			<NotesSection entityId={entity.id} readOnly={mode === 'view'} />
 		{/if}
 
+		{#if mode !== 'view'}
 		<div class="entity-detail-footer">
-			{#if mode === 'view'}
-				<span class="view-footer-hint">Click Edit to modify.</span>
-			{:else if confirmingDelete}
+			{#if confirmingDelete}
 				<div class="delete-confirm">
 					<span class="delete-confirm-msg">
 						Delete <strong>{entity.name}</strong>?
@@ -281,6 +280,7 @@
 				<span class="save-status">Saved · just now</span>
 			{/if}
 		</div>
+		{/if}
 	</div>
 {/if}
 

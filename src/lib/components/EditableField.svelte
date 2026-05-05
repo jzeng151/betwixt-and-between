@@ -51,7 +51,11 @@
 	interface Props {
 		entityId: string;
 		field: string;
-		label: string;
+		/** Field label rendered above the input. Pass an empty string to
+		 *  skip the label header entirely — used when the surrounding
+		 *  context already names the field (e.g. NotesSection's
+		 *  disclosure summary makes "Body" redundant). */
+		label?: string;
 		kind: Kind;
 		placeholder?: string;
 		rows?: number;
@@ -70,7 +74,7 @@
 	const {
 		entityId,
 		field,
-		label,
+		label = '',
 		kind,
 		placeholder = '',
 		rows = 4,
@@ -227,9 +231,11 @@
 </script>
 
 <div class="field-row" data-field={field} class:readonly={readOnly}>
-	<div class="field-header">
-		<span class="field-label">{label}</span>
-	</div>
+	{#if label}
+		<div class="field-header">
+			<span class="field-label">{label}</span>
+		</div>
+	{/if}
 
 	{#if readOnly}
 		{#if kind === 'multi-entity-picker'}
