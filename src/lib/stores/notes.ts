@@ -1,4 +1,4 @@
-import { writable, derived, get } from 'svelte/store';
+import { writable } from 'svelte/store';
 
 export type NoteFolder = {
 	id: string;

@@ -92,7 +92,7 @@
           onclick={() => selectFolder(folder.id)}
         >
           <span class="folder-name">{folder.name}</span>
-          <button class="icon-btn small" onclick|stopPropagation={() => removeFolder(folder.id)} title="Delete folder">&times;</button>
+          <button class="icon-btn small" onclick={(e) => { e.stopPropagation(); removeFolder(folder.id); }} title="Delete folder">&times;</button>
         </li>
       {/each}
     </ul>
@@ -110,7 +110,7 @@
             onclick={() => selectEntry(entry.id)}
           >
             <span class="entry-name">{entry.name}</span>
-            <button class="icon-btn small" onclick|stopPropagation={() => removeEntry(entry.id)} title="Delete entry">&times;</button>
+            <button class="icon-btn small" onclick={(e) => { e.stopPropagation(); removeEntry(entry.id); }} title="Delete entry">&times;</button>
           </li>
         {/each}
       </ul>
