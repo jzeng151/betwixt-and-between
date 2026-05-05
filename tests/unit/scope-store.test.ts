@@ -37,8 +37,8 @@ function mkInterval(overrides: Partial<Interval> = {}): Interval {
 		endSceneId: null,
 		startPosition: 1.0,
 		endPosition: 2.0,
-		createdAt: '',
-		updatedAt: '',
+		createdAt: 0,
+		updatedAt: 0,
 		...overrides
 	};
 }
