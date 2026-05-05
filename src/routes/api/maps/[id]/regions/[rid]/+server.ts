@@ -25,6 +25,10 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 
 	if (Array.isArray(body.polygon)) {
 		if (body.polygon.length < 3) error(400, 'Polygon must have at least 3 vertices');
+		if (body.polygon.length > 500) error(400, 'Polygon must have at most 500 vertices');
+		if (!body.polygon.every((v: any) => Array.isArray(v) && v.length >= 2 && typeof v[0] === 'number' && typeof v[1] === 'number' && isFinite(v[0]) && isFinite(v[1]))) {
+			error(400, 'Each polygon vertex must be [number, number]');
+		}
 		if (isSelfIntersecting(body.polygon)) error(400, 'Polygon must not be self-intersecting');
 		updates.polygon = body.polygon;
 	}

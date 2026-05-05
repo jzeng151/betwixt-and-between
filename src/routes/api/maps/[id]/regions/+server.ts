@@ -17,6 +17,12 @@ export const POST: RequestHandler = async ({ params, request }) => {
 	if (!Array.isArray(polygon) || polygon.length < 3) {
 		error(400, 'Polygon must have at least 3 vertices');
 	}
+	if (polygon.length > 500) {
+		error(400, 'Polygon must have at most 500 vertices');
+	}
+	if (!polygon.every((v: any) => Array.isArray(v) && v.length >= 2 && typeof v[0] === 'number' && typeof v[1] === 'number' && isFinite(v[0]) && isFinite(v[1]))) {
+		error(400, 'Each polygon vertex must be [number, number]');
+	}
 	if (isSelfIntersecting(polygon)) {
 		error(400, 'Polygon must not be self-intersecting');
 	}

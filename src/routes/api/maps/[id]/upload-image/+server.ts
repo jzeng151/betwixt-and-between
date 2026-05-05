@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { RequestHandler } from './$types';
 
 const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const ALLOWED_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp']);
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
 export const POST: RequestHandler = async ({ params, request }) => {
@@ -37,8 +38,9 @@ export const POST: RequestHandler = async ({ params, request }) => {
 	const dir = join(process.cwd(), 'static', 'maps');
 	await mkdir(dir, { recursive: true });
 
-	const ext = file.name.split('.').pop() || 'png';
-	const filename = `${params.id}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+	const ext = file.name.split('.').pop()?.toLowerCase() || 'png';
+	if (!ALLOWED_EXTS.has(ext)) error(400, 'Invalid file extension');
+	const filename = `${params.id}_${Date.now()}.${ext}`;
 	const filepath = join(dir, filename);
 	await writeFile(filepath, buffer);
 
