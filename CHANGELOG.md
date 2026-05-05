@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - 2026-05-05
+
+### Added
+- Location editor mounts inside EntityDetail — opening a Location entity from a panel/window that uses EntityDetail now shows a real Synopsis + Color editor instead of the "lives in its dedicated app" stub. Phase 1 wiki-location-branch slice; relationship sections (located_at, takes_place_at) follow in the upcoming wiki-rework branch.
+
 ## [0.1.3] - 2026-05-05
 
 ### Added

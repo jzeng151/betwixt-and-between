@@ -9,10 +9,11 @@
   hyperlink from a future Wiki entry). Same content, different chrome.
 
   Routing (this PR):
-    Act   → ActEditor
-    Event → EventEditor
-    Scene → SceneEditor
-    Other → falls through to existing app routing (Wiki PR fills these).
+    Act      → ActEditor
+    Event    → EventEditor
+    Scene    → SceneEditor
+    Location → LocationEditor
+    Other    → falls through to existing app routing (Wiki PR fills these).
 
   Title is inline-editable in the panel header (single rename surface per
   D10). Footer has a Delete button with the inline-confirmation pattern
@@ -32,6 +33,7 @@
 	import ActEditor from './ActEditor.svelte';
 	import EventEditor from './EventEditor.svelte';
 	import SceneEditor from './SceneEditor.svelte';
+	import LocationEditor from './LocationEditor.svelte';
 
 	interface Props {
 		entityId: string | null;
@@ -141,6 +143,7 @@
 		if (e.type === 'Act') return 'Editing Act';
 		if (e.type === 'Event') return 'Editing Event';
 		if (e.type === 'Scene') return 'Editing Scene';
+		if (e.type === 'Location') return 'Editing Location';
 		return `Editing ${e.type}`;
 	};
 </script>
@@ -220,10 +223,12 @@
 			<EventEditor entityId={entity.id} readOnly={mode === 'view'} />
 		{:else if entity.type === 'Scene'}
 			<SceneEditor entityId={entity.id} readOnly={mode === 'view'} />
+		{:else if entity.type === 'Location'}
+			<LocationEditor entityId={entity.id} readOnly={mode === 'view'} />
 		{:else}
 			<!-- Other types fall through to existing app routing per D12.
 			     Future Wiki PR replaces this branch with full Character /
-			     Location / Note editors. -->
+			     Note editors. -->
 			<div class="entity-detail-stub">
 				Editor for {entity.type} entities lives in its dedicated app for now.
 			</div>
