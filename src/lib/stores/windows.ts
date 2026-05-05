@@ -9,6 +9,7 @@ export type AppId =
 	| 'wiki'
 	| 'story-graph'
 	| 'focused-graph'
+	| 'notes'
 	| 'settings';
 
 /**
@@ -108,6 +109,15 @@ function createWindowStore() {
 										? 380
 										: 320,
 				height: isGraph ? 500 : appId === 'settings' ? 400 : 480,
+							: appId === 'entity-detail'
+								? 480
+								: appId === 'character-editor'
+									? 380
+									: appId === 'notes'
+										? 600
+										: 320,
+				height:
+					isGraph ? 500 : appId === 'notes' ? 450 : 480,
 				minimized: false,
 				maximized: false,
 				zIndex: zCounter,
