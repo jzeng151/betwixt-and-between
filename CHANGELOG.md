@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-05-04
+
+### Added
+- E2E tests for v0.1.1 QoL features: palette search, palette collapse toggle, characters section collapse, entity detail cancel button, and spotlight position label
+- Sentry error tracking integration (client + server)
+
+### Fixed
+- Build failure caused by Sentry `instrumentation.server.ts` incompatibility with `adapter-auto` — switched to `adapter-node`
+
 ## [0.1.1] - 2026-05-04
 
 ### Added
