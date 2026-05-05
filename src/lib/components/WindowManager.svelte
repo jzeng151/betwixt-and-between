@@ -61,7 +61,7 @@
     zIndex={win.zIndex}
     minimized={win.minimized}
     maximized={win.maximized}
-    bare={win.appId === 'story-graph' || win.appId === 'focused-graph'}
+    bare={win.appId === 'story-graph' || win.appId === 'focused-graph' || win.appId === 'world-map'}
   >
     {#if win.appId === 'character-editor'}
       <CharacterEditor winId={win.id} entityId={win.entityId} />
@@ -76,7 +76,7 @@
         onClose={() => windowStore.close(win.id)}
       />
     {:else if win.appId === 'world-map'}
-      <WorldMap entityId={win.entityId} />
+      <WorldMap entityId={win.entityId ?? undefined} />
     {:else if win.appId === 'story-graph'}
       <StoryGraph />
     {:else if win.appId === 'focused-graph'}

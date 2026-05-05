@@ -21,7 +21,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 		error(400, 'Polygon must not be self-intersecting');
 	}
 
-	const values: Record<string, unknown> = {
+	const values: typeof mapRegions.$inferInsert = {
 		mapId: params.id,
 		polygon,
 	};

@@ -7,9 +7,10 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { entityAliases } from '$lib/stores/entity-aliases.js';
+  import { worldMapStore } from '$lib/stores/world-map.js';
 
   onMount(async () => {
-    await Promise.all([entities.load(), relationships.load(), entityAliases.load()]);
+    await Promise.all([entities.load(), relationships.load(), entityAliases.load(), worldMapStore.loadMaps()]);
   });
 </script>
 
