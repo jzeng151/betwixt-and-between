@@ -18,16 +18,6 @@
     selectedEntryId ? $notes.entries.find((e) => e.id === selectedEntryId) ?? null : null
   );
 
-  $effect(() => {
-    if (selectedEntry) {
-      editName = selectedEntry.name;
-      editBody = selectedEntry.body;
-    } else {
-      editName = '';
-      editBody = '';
-    }
-  });
-
   function debouncedSave() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
@@ -40,11 +30,16 @@
   function selectFolder(id: string) {
     selectedFolderId = id;
     selectedEntryId = null;
+    editName = '';
+    editBody = '';
     notes.loadEntries(id);
   }
 
   function selectEntry(id: string) {
     selectedEntryId = id;
+    const entry = $notes.entries.find((e) => e.id === id);
+    editName = entry?.name ?? '';
+    editBody = entry?.body ?? '';
   }
 
   async function addFolder() {
@@ -73,8 +68,8 @@
   }
 
   onMount(() => {
-    notes.loadFolders();
-    notes.loadEntries();
+    notes.loadFolders().catch(() => {});
+    notes.loadEntries().catch(() => {});
   });
 </script>
 
