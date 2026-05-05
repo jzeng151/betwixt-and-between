@@ -47,6 +47,16 @@
   --titlebar-height: 36px;
 }
 
+[data-theme="light"] {
+  --color-desktop:    #f0ede8;
+  --color-surface:    #ffffff;
+  --color-surface-2:  #f5f3f0;
+  --color-border:     #d4d0ca;
+  --color-text:       #1a1a1a;
+  --color-text-muted: #6b7280;
+  --window-shadow:    0 20px 60px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.08);
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;

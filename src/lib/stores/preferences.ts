@@ -50,8 +50,11 @@ const PROTO_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
  * defaults rather than killing the app.
  */
 export const MIGRATIONS: Record<number, (old: unknown) => unknown> = {
-	// Example for future use:
-	// 2: (v1) => ({ ...(v1 as object), schemaVersion: 2, newSection: { ... } }),
+	2: (v1) => ({
+		...(v1 as object),
+		schemaVersion: 2,
+		appearance: { theme: 'dark' as const, accentColor: '#c8942a' }
+	}),
 };
 
 /** A subset of the Web Storage API — easy to stub in unit tests. */

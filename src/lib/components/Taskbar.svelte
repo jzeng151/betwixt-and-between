@@ -16,6 +16,7 @@
     { id: 'timeline',         label: 'Timeline', icon: '📅' },
     { id: 'world-map',        label: 'World Map', icon: '🗺' },
     { id: 'wiki',             label: 'Wiki', icon: '📝' },
+    { id: 'settings',         label: 'Settings', icon: '⚙' },
   ];
 
   type GroupedWindow = {

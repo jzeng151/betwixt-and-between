@@ -8,6 +8,7 @@
   import WorldMap from './apps/WorldMap.svelte';
   import StoryGraph from './apps/StoryGraph.svelte';
   import FocusedGraph from './apps/FocusedGraph.svelte';
+  import Settings from './apps/Settings.svelte';
   import EntityDetail from './EntityDetail.svelte';
 
   const APP_TITLES: Record<string, string> = {
@@ -18,6 +19,7 @@
     'wiki': 'Wiki',
     'story-graph': 'Story Graph',
     'focused-graph': 'Focused Graph',
+    'settings': 'Settings',
   };
 
   function windowTitle(appId: string, entityId: string | null): string {
@@ -77,6 +79,8 @@
       <StoryGraph />
     {:else if win.appId === 'focused-graph'}
       <FocusedGraph windowId={win.id} />
+    {:else if win.appId === 'settings'}
+      <Settings />
     {/if}
   </Window>
 {/each}

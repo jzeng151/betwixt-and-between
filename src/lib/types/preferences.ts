@@ -1,3 +1,8 @@
+export interface Appearance {
+	theme: 'dark' | 'light';
+	accentColor: string; // hex color
+}
+
 /**
  * User preferences shape — the persisted root.
  *
@@ -14,13 +19,14 @@ export interface Preferences {
 	 * what the running build knows about (downgrade protection).
 	 */
 	schemaVersion: number;
+	appearance: Appearance;
 }
 
 /**
  * The current code's max-known version. Bump in lockstep with adding a
  * migration to MIGRATIONS in stores/preferences.ts.
  */
-export const PREFERENCES_CODE_MAX_VERSION: number = 1;
+export const PREFERENCES_CODE_MAX_VERSION: number = 2;
 
 /**
  * Built-in defaults. Sub-branches extend by deep-merge: their defaults compose
@@ -28,5 +34,6 @@ export const PREFERENCES_CODE_MAX_VERSION: number = 1;
  * the canonical defaults via reference.
  */
 export const PREFERENCES_DEFAULTS: Readonly<Preferences> = Object.freeze({
-	schemaVersion: PREFERENCES_CODE_MAX_VERSION
+	schemaVersion: PREFERENCES_CODE_MAX_VERSION,
+	appearance: { theme: 'dark', accentColor: '#c8942a' }
 });
