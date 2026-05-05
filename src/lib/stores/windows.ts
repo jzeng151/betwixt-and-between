@@ -44,16 +44,20 @@ export type WindowState = {
 
 /**
  * Routes an entity type to its default app. Locked 2026-04-29 in
- * /plan-design-review (D10-extension/Issue 19A): Acts/Events/Scenes route
- * to the unified `'entity-detail'` window since they have rich editors
- * (ActEditor, EventEditor, SceneEditor). Notes joined them in the Wiki
- * rework (slice 1) — Note entities now open in EntityDetail with the
- * NoteWikiEditor branch. Characters and Locations keep their dedicated
- * apps until the Wiki rework's parity slice flips them.
+ * /plan-design-review (D10-extension/Issue 19A) for Acts/Events/Scenes;
+ * Notes joined in Wiki rework slice 1; Character + Location joined in
+ * slice 6 once CharacterEditor's detail surface was extracted into
+ * CharacterEditorBody (mounted by EntityDetail's CharacterWikiEditor)
+ * and LocationEditor gained read-only linked-entity chips for parity
+ * with the WorldMap card UX.
+ *
+ * The 'character-editor' and 'world-map' app ids still exist as the
+ * dock-launcher list views (Characters list / WorldMap canvas) — they
+ * just no longer own the per-entity editor surface.
  */
 const ENTITY_APP: Record<EntityType, AppId> = {
-	Character: 'character-editor',
-	Location: 'world-map',
+	Character: 'entity-detail',
+	Location: 'entity-detail',
 	Event: 'entity-detail',
 	Act: 'entity-detail',
 	Scene: 'entity-detail',

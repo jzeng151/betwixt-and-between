@@ -100,14 +100,14 @@ describe('windowStore.open', () => {
 });
 
 describe('windowStore.openForEntity', () => {
-	it('routes Character → character-editor', () => {
+	it('routes Character → entity-detail', () => {
 		const id = windowStore.openForEntity('e1', 'Character');
-		expect(id).toBe('character-editor-e1');
+		expect(id).toBe('entity-detail-e1');
 	});
 
-	it('routes Location → world-map', () => {
+	it('routes Location → entity-detail', () => {
 		const id = windowStore.openForEntity('loc1', 'Location');
-		expect(id).toBe('world-map-loc1');
+		expect(id).toBe('entity-detail-loc1');
 	});
 
 	it('routes Event/Act/Scene → entity-detail (post D10-extension/19A)', () => {
