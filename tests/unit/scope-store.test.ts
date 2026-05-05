@@ -21,8 +21,8 @@ function mkEntity(overrides: Partial<Entity> & { id: string }): Entity {
 		data: {},
 		parentId: null,
 		position: null,
-		createdAt: 0,
-		updatedAt: 0,
+		createdAt: '',
+		updatedAt: '',
 		...overrides
 	};
 }
@@ -37,8 +37,8 @@ function mkInterval(overrides: Partial<Interval> = {}): Interval {
 		endSceneId: null,
 		startPosition: 1.0,
 		endPosition: 2.0,
-		createdAt: 0,
-		updatedAt: 0,
+		createdAt: '',
+		updatedAt: '',
 		...overrides
 	};
 }
