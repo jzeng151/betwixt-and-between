@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { notes } from '$lib/stores/notes.js';
+  import { notesStore, noteFolders, noteEntries, type NoteEntry } from '$lib/stores/notes.js';
   import { onMount } from 'svelte';
 
   let selectedFolderId = $state<string | null>(null);
@@ -10,19 +10,19 @@
 
   const folderEntries = $derived(
     selectedFolderId
-      ? $notes.entries.filter((e) => e.folderId === selectedFolderId)
+      ? $noteEntries.filter((e: NoteEntry) => e.folderId === selectedFolderId)
       : []
   );
 
   const selectedEntry = $derived(
-    selectedEntryId ? $notes.entries.find((e) => e.id === selectedEntryId) ?? null : null
+    selectedEntryId ? $noteEntries.find((e: NoteEntry) => e.id === selectedEntryId) ?? null : null
   );
 
   function debouncedSave() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       if (selectedEntryId && (editName || editBody)) {
-        notes.updateEntry(selectedEntryId, { name: editName, body: editBody });
+        notesStore.updateEntry(selectedEntryId, { name: editName, body: editBody });
       }
     }, 300);
   }
@@ -32,35 +32,35 @@
     selectedEntryId = null;
     editName = '';
     editBody = '';
-    notes.loadEntries(id);
+    notesStore.loadEntries(id);
   }
 
   function selectEntry(id: string) {
     selectedEntryId = id;
-    const entry = $notes.entries.find((e) => e.id === id);
+    const entry = $noteEntries.find((e) => e.id === id);
     editName = entry?.name ?? '';
     editBody = entry?.body ?? '';
   }
 
   async function addFolder() {
-    const folder = await notes.createFolder('New Folder');
+    const folder = await notesStore.createFolder('New Folder');
     selectedFolderId = folder.id;
-    notes.loadEntries(folder.id);
+    notesStore.loadEntries(folder.id);
   }
 
   async function addEntry() {
     if (!selectedFolderId) return;
-    const entry = await notes.createEntry('Untitled', selectedFolderId);
+    const entry = await notesStore.createEntry('Untitled', selectedFolderId);
     selectedEntryId = entry.id;
   }
 
   async function removeEntry(id: string) {
-    await notes.deleteEntry(id);
+    await notesStore.deleteEntry(id);
     if (selectedEntryId === id) selectedEntryId = null;
   }
 
   async function removeFolder(id: string) {
-    await notes.deleteFolder(id);
+    await notesStore.deleteFolder(id);
     if (selectedFolderId === id) {
       selectedFolderId = null;
       selectedEntryId = null;
@@ -68,8 +68,8 @@
   }
 
   onMount(() => {
-    notes.loadFolders().catch(() => {});
-    notes.loadEntries().catch(() => {});
+    notesStore.loadFolders().catch(() => {});
+    notesStore.loadEntries().catch(() => {});
   });
 </script>
 
@@ -80,7 +80,7 @@
       <button class="icon-btn" onclick={addFolder} title="New folder">+</button>
     </div>
     <ul class="folder-list">
-      {#each $notes.folders as folder (folder.id)}
+      {#each $noteFolders as folder (folder.id)}
         <li
           class="folder-item"
           class:selected={selectedFolderId === folder.id}

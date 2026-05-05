@@ -145,8 +145,8 @@ function createNotesStore() {
 	}
 
 	return {
-		folders: { subscribe: folders.subscribe },
-		entries: { subscribe: entries.subscribe },
+		folders,
+		entries,
 		loadFolders,
 		loadEntries,
 		createFolder,
@@ -158,4 +158,6 @@ function createNotesStore() {
 	};
 }
 
-export const notes = createNotesStore();
+export const notesStore = createNotesStore();
+export const noteFolders = notesStore.folders;
+export const noteEntries = notesStore.entries;
