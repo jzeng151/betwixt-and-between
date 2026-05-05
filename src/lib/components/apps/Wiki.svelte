@@ -9,6 +9,9 @@
 
 <script lang="ts">
 	import { entities } from '$lib/stores/entities.js';
+	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+	import { relationships } from '$lib/stores/relationships.js';
+	import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
 	import type { EntityType } from '$lib/server/db/schema.js';
 	import EntityDetail from '$lib/components/EntityDetail.svelte';
 
@@ -62,6 +65,48 @@
 	const totalSidebarEntities = $derived(
 		$entities.filter((e) => SIDEBAR_TYPES.includes(e.type as EntityType)).length
 	);
+
+	// ── Sidebar dim from playhead/scope ────────────────────────────────
+	// An entry is "out of scope" at T iff EITHER it has direct intervals
+	// and none of them contain T, OR it has no direct intervals but links
+	// to at least one entity that has intervals, and none of those linked
+	// entities are active at T. Entries with no time-bound signal stay
+	// full-opacity (matches the WorldMap dim semantics — design specs
+	// Lock 2 — "dim when scope info exists; do nothing otherwise").
+	const outOfScopeIds = $derived.by(() => {
+		const out = new Set<string>();
+		if ($playhead == null) return out;
+		const t = $playhead;
+
+		const ivsByEntity = new Map<string, typeof $intervalsStore>();
+		for (const iv of $intervalsStore) {
+			const list = ivsByEntity.get(iv.entityId) ?? [];
+			list.push(iv);
+			ivsByEntity.set(iv.entityId, list);
+		}
+		function entityActiveAtT(eid: string): boolean {
+			const ivs = ivsByEntity.get(eid);
+			if (!ivs || ivs.length === 0) return false;
+			return ivs.some((iv) => intervalContainsT(iv.startPosition, iv.endPosition, t));
+		}
+
+		for (const e of $entities) {
+			if (!SIDEBAR_TYPES.includes(e.type as EntityType)) continue;
+			const ownIvs = ivsByEntity.get(e.id);
+			if (ownIvs && ownIvs.length > 0) {
+				if (!entityActiveAtT(e.id)) out.add(e.id);
+				continue;
+			}
+			// No direct intervals — fall back to linked-entity inheritance.
+			const linkedIds = $relationships
+				.filter((r) => r.fromId === e.id || r.toId === e.id)
+				.map((r) => (r.fromId === e.id ? r.toId : r.fromId));
+			const ivLinks = linkedIds.filter((id) => (ivsByEntity.get(id)?.length ?? 0) > 0);
+			if (ivLinks.length === 0) continue; // no time-bound signal → not dimmed
+			if (!ivLinks.some(entityActiveAtT)) out.add(e.id);
+		}
+		return out;
+	});
 </script>
 
 {#if totalSidebarEntities === 0}
@@ -92,6 +137,7 @@
 								type="button"
 								class="entry"
 								class:active={entry.id === selectedId}
+								class:out-of-scope={outOfScopeIds.has(entry.id)}
 								onclick={() => (selectedId = entry.id)}
 							>
 								{entry.name}
@@ -200,6 +246,7 @@
 		padding: 6px 14px;
 		cursor: pointer;
 		line-height: 1.3;
+		transition: opacity 200ms ease;
 	}
 	.entry:hover {
 		background: var(--color-surface-2);
@@ -208,6 +255,12 @@
 		background: var(--color-surface-2);
 		color: var(--color-accent);
 		font-weight: 500;
+	}
+	.entry.out-of-scope {
+		opacity: 0.4;
+	}
+	.entry.out-of-scope:hover {
+		opacity: 1;
 	}
 
 	.sidebar-empty {
