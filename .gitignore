@@ -35,6 +35,3 @@ desync-bug.png
 tooltip-bug.png
 test.db
 .gitnexus
-
-# Sentry Config File
-.env.sentry-build-plugin
