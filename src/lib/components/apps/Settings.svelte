@@ -49,7 +49,7 @@
       <h2>Appearance</h2>
 
       <div class="setting-group">
-        <label class="setting-label">Theme</label>
+        <span class="setting-label">Theme</span>
         <div class="radio-group">
           <label class="radio-option">
             <input
@@ -75,7 +75,7 @@
       </div>
 
       <div class="setting-group">
-        <label class="setting-label">Accent Color</label>
+        <span class="setting-label">Accent Color</span>
         <input
           type="color"
           class="color-picker"

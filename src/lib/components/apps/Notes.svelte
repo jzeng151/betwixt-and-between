@@ -198,12 +198,15 @@
       <span class="sidebar-title">Folders</span>
       <button class="icon-btn" onclick={openNewFolderDialog} title="New folder">+</button>
     </div>
-    <ul class="folder-list">
+    <div class="folder-list">
       {#each $noteFolders as folder (folder.id)}
-        <li
+        <div
           class="folder-item"
           class:selected={selectedFolderId === folder.id}
+          role="button"
+          tabindex="0"
           onclick={() => onFolderClick(folder.id)}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onFolderClick(folder.id); }}
           oncontextmenu={(e) => onFolderContextMenu(e, folder.id)}
         >
           {#if renamingFolderId === folder.id}
@@ -213,23 +216,22 @@
               bind:value={renameDraft}
               onkeydown={(e) => handleRenameKeydown(e, folder.id)}
               onblur={() => commitRename(folder.id)}
-              autofocus
             />
           {:else}
             <span class="folder-name">{folder.name}</span>
           {/if}
-        </li>
+        </div>
         {#if confirmDeleteFolderId === folder.id}
-          <li class="confirm-delete-bar">
+          <div class="confirm-delete-bar">
             <span>Delete "{folder.name}"?</span>
             <div class="confirm-delete-actions">
               <button class="confirm-btn cancel" onclick={() => (confirmDeleteFolderId = null)}>Cancel</button>
               <button class="confirm-btn delete" onclick={() => removeFolder(folder.id)}>Delete</button>
             </div>
-          </li>
+          </div>
         {/if}
       {/each}
-    </ul>
+    </div>
   </div>
 
   <!-- Content area: entries list or editor -->
@@ -253,18 +255,21 @@
         <span class="entries-list-title">{selectedFolderName}</span>
         <button class="icon-btn" onclick={addEntry} title="New note">+</button>
       </div>
-      <ul class="content-entry-list">
+      <div class="content-entry-list">
         {#each folderEntries as entry (entry.id)}
-          <li
+          <div
             class="content-entry-item"
             class:selected={selectedEntryId === entry.id}
+            role="button"
+            tabindex="0"
             onclick={() => selectEntry(entry.id)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') selectEntry(entry.id); }}
           >
             <span class="content-entry-name">{entry.name}</span>
             <button class="icon-btn small" onclick={(e) => { e.stopPropagation(); removeEntry(entry.id); }} title="Delete entry">&times;</button>
-          </li>
+          </div>
         {/each}
-      </ul>
+      </div>
     {:else}
       <div class="editor-empty">
         <p>Select a folder to view notes</p>
@@ -274,7 +279,7 @@
 
   <!-- New folder dialog -->
   {#if showNewFolderDialog}
-    <div class="dialog-backdrop" onclick={cancelNewFolder}></div>
+    <div class="dialog-backdrop" role="presentation" onclick={cancelNewFolder}></div>
     <div class="dialog">
       <div class="dialog-title">New Folder</div>
       <label class="dialog-field">
@@ -283,7 +288,6 @@
           type="text"
           bind:value={newFolderName}
           onkeydown={handleNewFolderKeydown}
-          autofocus
         />
       </label>
       <div class="dialog-actions">
