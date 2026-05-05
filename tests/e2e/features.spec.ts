@@ -14,77 +14,80 @@ test.describe('Wiki', () => {
 		await page.goto('/');
 	});
 
-	test('empty state → create note → write content → preview', async ({ page }) => {
+	test('empty state asks the user to create a Character or Location', async ({ page }) => {
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
 		await expect(win).toBeVisible();
-
-		await expect(win.locator('.empty-state')).toBeVisible();
-
-		await win.locator('.empty-state button').click();
-		await expect(win.locator('.note-title')).toHaveText('Untitled Note', { timeout: 3000 });
-
-		const textarea = win.locator('textarea.note-body');
-		await textarea.fill('# Hello world\n\nNote content.');
-		await textarea.blur();
-
-		await win.locator('button', { hasText: 'Preview' }).click();
-		await expect(win.locator('.markdown-preview')).toBeVisible();
-		await expect(win.locator('.markdown-preview h1')).toHaveText('Hello world');
+		await expect(win.locator('.empty-state')).toContainText(
+			'Your wiki is empty. Create a Character or Location to begin.'
+		);
 	});
 
-	test('sidebar new note button creates a note', async ({ page }) => {
-		await page.click('button[title="Wiki"]');
-		const win = page.locator('.window[aria-label="Wiki"]');
-		await expect(win).toBeVisible();
-
-		// Create first note via empty state
-		await win.locator('.empty-state button').click();
-		await expect(win.locator('.note-item')).toHaveCount(1);
-
-		// Create second note via sidebar button
-		await win.locator('button.new-note-btn').click();
-		await expect(win.locator('.note-item')).toHaveCount(2);
-	});
-
-	test('search filters note list', async ({ page, request }) => {
-		await request.post('/api/entities', { data: { type: 'Note', name: 'Alpha Note' } });
-		await request.post('/api/entities', { data: { type: 'Note', name: 'Beta Note' } });
-		await page.goto('/');
-
-		await page.click('button[title="Wiki"]');
-		const win = page.locator('.window[aria-label="Wiki"]');
-		await expect(win).toBeVisible();
-		await expect(win.locator('.note-item')).toHaveCount(2);
-
-		await win.locator('input[aria-label="Search notes"]').fill('alpha');
-		await expect(win.locator('.note-item')).toHaveCount(1);
-		await expect(win.locator('.note-item').first()).toHaveText('Alpha Note');
-	});
-
-	test('clicking note in sidebar switches the editor', async ({ page, request }) => {
-		await request.post('/api/entities', { data: { type: 'Note', name: 'First Note' } });
-		await request.post('/api/entities', { data: { type: 'Note', name: 'Second Note' } });
+	test('sidebar groups entities by type and excludes Notes', async ({ page, request }) => {
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
+		await request.post('/api/entities', { data: { type: 'Location', name: 'Edoras' } });
+		await request.post('/api/entities', { data: { type: 'Note', name: 'Hidden Note' } });
 		await page.goto('/');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
 		await expect(win).toBeVisible();
 
-		await win.locator('.note-item', { hasText: 'Second Note' }).click();
-		await expect(win.locator('.note-title')).toHaveText('Second Note');
+		await expect(win.locator('.type-divider-label', { hasText: 'Characters' })).toBeVisible();
+		await expect(win.locator('.type-divider-label', { hasText: 'Locations' })).toBeVisible();
+		await expect(win.locator('.entry', { hasText: 'Aragorn' })).toBeVisible();
+		await expect(win.locator('.entry', { hasText: 'Edoras' })).toBeVisible();
+		// Notes are deliberately not in the sidebar (Lock 2).
+		await expect(win.locator('.entry', { hasText: 'Hidden Note' })).toHaveCount(0);
 	});
 
-	test('no search results shows "No results." message', async ({ page, request }) => {
-		await request.post('/api/entities', { data: { type: 'Note', name: 'Alpha Note' } });
+	test('clicking a sidebar entry shows EntityDetail in the content area', async ({
+		page,
+		request
+	}) => {
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
 		await page.goto('/');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
 		await expect(win).toBeVisible();
 
-		await win.locator('input[aria-label="Search notes"]').fill('zzznomatch');
-		await expect(win.locator('.empty-sidebar')).toHaveText('No results.');
+		await win.locator('.entry', { hasText: 'Aragorn' }).click();
+		await expect(
+			win.locator('.entity-detail-host[data-entity-type="Character"]')
+		).toBeVisible();
+		await expect(win.locator('.entity-detail-title-text')).toHaveText('Aragorn');
+	});
+
+	test('search filters the sidebar', async ({ page, request }) => {
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Boromir' } });
+		await page.goto('/');
+
+		await page.click('button[title="Wiki"]');
+		const win = page.locator('.window[aria-label="Wiki"]');
+		await expect(win).toBeVisible();
+		await expect(win.locator('.entry')).toHaveCount(2);
+
+		await win.locator('input[aria-label="Search wiki"]').fill('boro');
+		await expect(win.locator('.entry')).toHaveCount(1);
+		await expect(win.locator('.entry').first()).toHaveText('Boromir');
+	});
+
+	test('type-filter pill toggles a group on and off', async ({ page, request }) => {
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
+		await request.post('/api/entities', { data: { type: 'Location', name: 'Edoras' } });
+		await page.goto('/');
+
+		await page.click('button[title="Wiki"]');
+		const win = page.locator('.window[aria-label="Wiki"]');
+		await expect(win).toBeVisible();
+		await expect(win.locator('.entry')).toHaveCount(2);
+
+		// Toggle Characters off; only Edoras (Location) remains.
+		await win.locator('.type-pill', { hasText: 'Characters' }).click();
+		await expect(win.locator('.entry')).toHaveCount(1);
+		await expect(win.locator('.entry').first()).toHaveText('Edoras');
 	});
 });
 

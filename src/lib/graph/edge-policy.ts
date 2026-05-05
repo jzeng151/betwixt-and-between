@@ -17,6 +17,7 @@ import type { RelationshipType } from '$lib/server/db/schema.js';
  *   - mentor_of      — mentor → mentee
  *   - located_at     — Character AT Location
  *   - pov_of         — Event/Scene FROM-THE-POV-OF Character
+ *   - note_of        — Note ATTACHED-TO any entity
  *
  * Record<RelationshipType, ...> forces an exhaustiveness check at compile
  * time: adding a new RelationshipType to schema.ts breaks this file
@@ -31,5 +32,6 @@ export const DIRECTION: Record<RelationshipType, 'directed' | 'symmetric'> = {
 	caused_by: 'directed',
 	mentor_of: 'directed',
 	located_at: 'directed',
-	pov_of: 'directed'
+	pov_of: 'directed',
+	note_of: 'directed'
 };

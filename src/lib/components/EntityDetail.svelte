@@ -9,11 +9,12 @@
   hyperlink from a future Wiki entry). Same content, different chrome.
 
   Routing (this PR):
-    Act      → ActEditor
-    Event    → EventEditor
-    Scene    → SceneEditor
-    Location → LocationEditor
-    Other    → falls through to existing app routing (Wiki PR fills these).
+    Act       → ActEditor
+    Event     → EventEditor
+    Scene     → SceneEditor
+    Location  → LocationEditor
+    Character → CharacterWikiEditor (basic shell; parity slice grows it)
+    Note      → NoteWikiEditor      (basic shell; markdown/links land later)
 
   Title is inline-editable in the panel header (single rename surface per
   D10). Footer has a Delete button with the inline-confirmation pattern
@@ -34,6 +35,9 @@
 	import EventEditor from './EventEditor.svelte';
 	import SceneEditor from './SceneEditor.svelte';
 	import LocationEditor from './LocationEditor.svelte';
+	import CharacterWikiEditor from './CharacterWikiEditor.svelte';
+	import NoteWikiEditor from './NoteWikiEditor.svelte';
+	import NotesSection from './NotesSection.svelte';
 
 	interface Props {
 		entityId: string | null;
@@ -144,6 +148,8 @@
 		if (e.type === 'Event') return 'Editing Event';
 		if (e.type === 'Scene') return 'Editing Scene';
 		if (e.type === 'Location') return 'Editing Location';
+		if (e.type === 'Character') return 'Editing Character';
+		if (e.type === 'Note') return 'Editing Note';
 		return `Editing ${e.type}`;
 	};
 </script>
@@ -225,13 +231,21 @@
 			<SceneEditor entityId={entity.id} readOnly={mode === 'view'} />
 		{:else if entity.type === 'Location'}
 			<LocationEditor entityId={entity.id} readOnly={mode === 'view'} />
+		{:else if entity.type === 'Character'}
+			<CharacterWikiEditor entityId={entity.id} readOnly={mode === 'view'} />
+		{:else if entity.type === 'Note'}
+			<NoteWikiEditor entityId={entity.id} readOnly={mode === 'view'} />
 		{:else}
-			<!-- Other types fall through to existing app routing per D12.
-			     Future Wiki PR replaces this branch with full Character /
-			     Note editors. -->
+			<!-- All known entity types now route to dedicated editors above.
+			     This stub remains as a defensive fall-through for any future
+			     EntityType added to the schema before its editor lands. -->
 			<div class="entity-detail-stub">
 				Editor for {entity.type} entities lives in its dedicated app for now.
 			</div>
+		{/if}
+
+		{#if entity.type !== 'Note'}
+			<NotesSection entityId={entity.id} readOnly={mode === 'view'} />
 		{/if}
 
 		<div class="entity-detail-footer">

@@ -22,6 +22,7 @@
 	import PlayheadOverlay from '$lib/components/PlayheadOverlay.svelte';
 	import { playhead, isPlaying, playbackSpeed } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
+	import { timelineFilter } from '$lib/stores/timelineFilter.js';
 	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
 
 
@@ -618,25 +619,31 @@
 				{/if}
 
 				{#each rowEntities as entity, idx (entity.id)}
-					<IntervalRow
-						{entity}
-						intervals={intervalsByEntityId.get(entity.id) ?? []}
-						{idx}
-						{trackWidthPx}
-						actCount={N}
-						{acts}
-						{scenesByActId}
-						{colorFor}
-						{dataNoteSnippet}
-						{tooltipFor}
-						{posToFrac}
-						{fracToPos}
-						{pxForRange}
-						onLockAcquire={() => { interactionLock = true; }}
-						onLockRelease={() => { interactionLock = false; }}
-						onError={showError}
-						onSelect={(id) => selectFromTimeline(id)}
-					/>
+					<div
+						class="row-wrap"
+						class:row-dimmed={$timelineFilter.entityId !== null
+							&& $timelineFilter.entityId !== entity.id}
+					>
+						<IntervalRow
+							{entity}
+							intervals={intervalsByEntityId.get(entity.id) ?? []}
+							{idx}
+							{trackWidthPx}
+							actCount={N}
+							{acts}
+							{scenesByActId}
+							{colorFor}
+							{dataNoteSnippet}
+							{tooltipFor}
+							{posToFrac}
+							{fracToPos}
+							{pxForRange}
+							onLockAcquire={() => { interactionLock = true; }}
+							onLockRelease={() => { interactionLock = false; }}
+							onError={showError}
+							onSelect={(id) => selectFromTimeline(id)}
+						/>
+					</div>
 				{/each}
 
 				<PlayheadOverlay {trackWidthPx} actCount={N} {posToFrac} />
@@ -838,6 +845,15 @@
 	}
 	.rows.scrubbing {
 		cursor: ew-resize;
+	}
+
+	/* Row-filter dim — driven by `timelineFilter` (Wiki "Open focused
+	   timeline" context-menu action). Non-matching rows fade to 0.3. */
+	.row-wrap {
+		transition: opacity 200ms ease;
+	}
+	.row-wrap.row-dimmed {
+		opacity: 0.3;
 	}
 
 	.row-empty {

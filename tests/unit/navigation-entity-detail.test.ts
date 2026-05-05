@@ -136,7 +136,7 @@ describe('openEntity (post D10-extension / 19A)', () => {
 		expect(wins[0].appId).toBe('entity-detail');
 	});
 
-	it('Character/Location/Note unchanged (still legacy app routing)', () => {
+	it('Character/Location keep legacy routing; Note migrated to entity-detail', () => {
 		entitiesWritable.set([
 			makeEntity('c1', 'Character', 'Ellie'),
 			makeEntity('l1', 'Location', 'Castle'),
@@ -148,6 +148,6 @@ describe('openEntity (post D10-extension / 19A)', () => {
 		const byId = Object.fromEntries(get(windowStore).map((w) => [w.entityId, w.appId]));
 		expect(byId['c1']).toBe('character-editor');
 		expect(byId['l1']).toBe('world-map');
-		expect(byId['n1']).toBe('wiki');
+		expect(byId['n1']).toBe('entity-detail');
 	});
 });

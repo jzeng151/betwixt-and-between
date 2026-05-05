@@ -87,13 +87,13 @@ describe('openEntity', () => {
 		expect(wins[0].id).toBe('entity-detail-sc1');
 	});
 
-	it('routes Note → wiki window', () => {
+	it('routes Note → entity-detail window', () => {
 		entitiesWritable.set([makeEntity('n1', 'Note', 'Lore')]);
 		openEntity('n1');
 		const wins = get(windowStore);
 		expect(wins).toHaveLength(1);
-		expect(wins[0].appId).toBe('wiki');
-		expect(wins[0].id).toBe('wiki-n1');
+		expect(wins[0].appId).toBe('entity-detail');
+		expect(wins[0].id).toBe('entity-detail-n1');
 	});
 
 	it('opens a window with the correct entityId field', () => {
@@ -170,6 +170,6 @@ describe('openEntity', () => {
 		const byId = Object.fromEntries(wins.map((w) => [w.id, w.appId]));
 		expect(byId['character-editor-c1']).toBe('character-editor');
 		expect(byId['world-map-l1']).toBe('world-map');
-		expect(byId['wiki-n1']).toBe('wiki');
+		expect(byId['entity-detail-n1']).toBe('entity-detail');
 	});
 });
