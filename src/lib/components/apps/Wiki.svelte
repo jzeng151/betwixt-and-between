@@ -12,8 +12,11 @@
 	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
 	import { relationships } from '$lib/stores/relationships.js';
 	import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
+	import { windowStore } from '$lib/stores/windows.js';
+	import { timelineFilter } from '$lib/stores/timelineFilter.js';
 	import type { EntityType } from '$lib/server/db/schema.js';
 	import EntityDetail from '$lib/components/EntityDetail.svelte';
+	import ContextMenu from '$lib/components/ContextMenu.svelte';
 
 	interface Props {
 		entityId: string | null;
@@ -64,6 +67,38 @@
 
 	const totalSidebarEntities = $derived(
 		$entities.filter((e) => SIDEBAR_TYPES.includes(e.type as EntityType)).length
+	);
+
+	// ── Context menu (right-click on a sidebar entry) ──────────────────
+	let contextMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
+
+	function openContextMenu(e: MouseEvent, entityId: string) {
+		e.preventDefault();
+		contextMenu = { entityId, x: e.clientX, y: e.clientY };
+	}
+
+	const contextItems = $derived(
+		contextMenu
+			? [
+					{
+						label: 'Open focused graph',
+						icon: '◎',
+						onSelect: () => {
+							if (!contextMenu) return;
+							windowStore.openFocusedGraph([contextMenu.entityId]);
+						}
+					},
+					{
+						label: 'Open focused timeline',
+						icon: '⟶',
+						onSelect: () => {
+							if (!contextMenu) return;
+							timelineFilter.focus(contextMenu.entityId);
+							windowStore.open('timeline');
+						}
+					}
+				]
+			: []
 	);
 
 	// ── Sidebar dim from playhead/scope ────────────────────────────────
@@ -139,6 +174,7 @@
 								class:active={entry.id === selectedId}
 								class:out-of-scope={outOfScopeIds.has(entry.id)}
 								onclick={() => (selectedId = entry.id)}
+								oncontextmenu={(e) => openContextMenu(e, entry.id)}
 							>
 								{entry.name}
 							</button>
@@ -173,6 +209,15 @@
 			{/if}
 		</section>
 	</div>
+
+	{#if contextMenu}
+		<ContextMenu
+			items={contextItems}
+			x={contextMenu.x}
+			y={contextMenu.y}
+			onClose={() => (contextMenu = null)}
+		/>
+	{/if}
 {/if}
 
 <style>
