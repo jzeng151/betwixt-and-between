@@ -20,12 +20,13 @@ export interface Preferences {
  * The current code's max-known version. Bump in lockstep with adding a
  * migration to MIGRATIONS in stores/preferences.ts.
  */
-export const PREFERENCES_CODE_MAX_VERSION = 1;
+export const PREFERENCES_CODE_MAX_VERSION: number = 1;
 
 /**
  * Built-in defaults. Sub-branches extend by deep-merge: their defaults compose
- * with this object, never replace it.
+ * with this object, never replace it. Frozen so a future caller can't mutate
+ * the canonical defaults via reference.
  */
-export const PREFERENCES_DEFAULTS: Preferences = {
+export const PREFERENCES_DEFAULTS: Readonly<Preferences> = Object.freeze({
 	schemaVersion: PREFERENCES_CODE_MAX_VERSION
-};
+});
