@@ -1,3 +1,4 @@
+import { sentrySvelteKit } from "@sentry/sveltekit";
 import { defineConfig } from 'vitest/config';
 import { sveltekit } from '@sveltejs/kit/vite';
 
@@ -12,7 +13,10 @@ import { sveltekit } from '@sveltejs/kit/vite';
  * E2E tests (Playwright) live at tests/e2e/ and have their own config.
  */
 export default defineConfig({
-	plugins: [sveltekit()],
+	plugins: [sentrySvelteKit({
+        org: "jason-zeng",
+        project: "javascript-sveltekit"
+    }), sveltekit()],
 	test: {
 		expect: { requireAssertions: true },
 		projects: [
