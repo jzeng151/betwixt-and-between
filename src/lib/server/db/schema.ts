@@ -30,6 +30,10 @@ export type EntityType = (typeof EntityType)[number];
  *   pov_of         — Event/Scene pov_of Character (from is from-the-POV-of to).
  *                    Multi-allowed: an event may have multiple POV characters.
  *                    Uniqueness enforced at (from_id, to_id, type) level.
+ *   note_of        — Note note_of <any> (Wiki-rework Notes-as-sections model,
+ *                    2026-05-05). Attaches a Note entity to a parent entity so
+ *                    EntityDetail can render it under the parent's NOTES
+ *                    section. `from` is always the Note; `to` is the parent.
  */
 export const RelationshipType = [
 	'appears_in',
@@ -40,6 +44,7 @@ export const RelationshipType = [
 	'mentor_of',
 	'located_at',
 	'pov_of',
+	'note_of',
 	'other'
 ] as const;
 export type RelationshipType = (typeof RelationshipType)[number];

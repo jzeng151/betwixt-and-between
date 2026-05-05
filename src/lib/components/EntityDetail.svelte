@@ -37,6 +37,7 @@
 	import LocationEditor from './LocationEditor.svelte';
 	import CharacterWikiEditor from './CharacterWikiEditor.svelte';
 	import NoteWikiEditor from './NoteWikiEditor.svelte';
+	import NotesSection from './NotesSection.svelte';
 
 	interface Props {
 		entityId: string | null;
@@ -241,6 +242,10 @@
 			<div class="entity-detail-stub">
 				Editor for {entity.type} entities lives in its dedicated app for now.
 			</div>
+		{/if}
+
+		{#if entity.type !== 'Note'}
+			<NotesSection entityId={entity.id} readOnly={mode === 'view'} />
 		{/if}
 
 		<div class="entity-detail-footer">
