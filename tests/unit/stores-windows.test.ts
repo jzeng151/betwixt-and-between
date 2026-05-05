@@ -85,7 +85,10 @@ describe('windowStore.open', () => {
 	});
 
 	it('uses default 320x480 for other non-special apps', () => {
-		windowStore.open('wiki', 'w1');
+		// 'world-map' is the smallest fall-through case — every other appId
+		// has a width-specific branch (timeline 960, wiki 640, settings 520,
+		// entity-detail 480, character-editor 380, story-graph/focused-graph 640).
+		windowStore.open('world-map', 'l1');
 		const w = get(windowStore)[0];
 		expect(w.width).toBe(320);
 		expect(w.height).toBe(480);

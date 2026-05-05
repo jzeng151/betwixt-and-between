@@ -107,13 +107,15 @@ function createWindowStore() {
 						? 640
 						: appId === 'timeline'
 							? 960
-							: appId === 'settings'
-								? 520
-								: appId === 'entity-detail'
-									? 480
-									: appId === 'character-editor'
-										? 380
-										: 320,
+							: appId === 'wiki'
+								? 640
+								: appId === 'settings'
+									? 520
+									: appId === 'entity-detail'
+										? 480
+										: appId === 'character-editor'
+											? 380
+											: 320,
 				height:
 					isGraph
 						? 500
