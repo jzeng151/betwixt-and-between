@@ -61,6 +61,7 @@ export const MIGRATIONS: Record<number, (old: unknown) => unknown> = {
 export interface StorageLike {
 	getItem(key: string): string | null;
 	setItem(key: string, value: string): void;
+	removeItem?(key: string): void;
 }
 
 /** Thrown when stored prefs are from a build newer than the running code. */

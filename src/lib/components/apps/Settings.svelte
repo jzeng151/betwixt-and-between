@@ -4,14 +4,7 @@
 
   let activeSection = $state<string>('appearance');
 
-  let appearance = $state<Appearance>(getPreference('appearance'));
-
-  $effect(() => {
-    const current = $preferences;
-    if (current.appearance) {
-      appearance = { ...current.appearance };
-    }
-  });
+  let appearance = $state<Appearance>(getPreference('appearance') as Appearance);
 
   function applyTheme(theme: 'dark' | 'light') {
     if (typeof document !== 'undefined') {
@@ -29,17 +22,16 @@
     }
   }
 
+  // Single effect: persist + apply when appearance changes
   $effect(() => {
     setPreference('appearance', { ...appearance });
     applyTheme(appearance.theme);
     applyAccentColor(appearance.accentColor);
   });
 
-  // Apply saved preferences on mount
-  $effect(() => {
-    applyTheme(appearance.theme);
-    applyAccentColor(appearance.accentColor);
-  });
+  // Apply on mount from saved prefs
+  applyTheme(appearance.theme);
+  applyAccentColor(appearance.accentColor);
 </script>
 
 <div class="settings">

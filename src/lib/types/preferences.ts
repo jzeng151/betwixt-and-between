@@ -35,5 +35,5 @@ export const PREFERENCES_CODE_MAX_VERSION: number = 2;
  */
 export const PREFERENCES_DEFAULTS: Readonly<Preferences> = Object.freeze({
 	schemaVersion: PREFERENCES_CODE_MAX_VERSION,
-	appearance: { theme: 'dark', accentColor: '#c8942a' }
+	appearance: { theme: 'dark' as const, accentColor: '#c8942a' }
 });
