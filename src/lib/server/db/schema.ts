@@ -253,3 +253,29 @@ export const entityAliases = pgTable('entity_aliases', {
 	revealedAtPosition: doublePrecision('revealed_at_position'),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 });
+
+export const worldMaps = pgTable('world_maps', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	name: text('name').notNull(),
+	baseImageUrl: text('base_image_url'),
+	width: integer('width'),
+	height: integer('height'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+});
+
+export const mapRegions = pgTable('map_regions', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	mapId: uuid('map_id')
+		.notNull()
+		.references(() => worldMaps.id, { onDelete: 'cascade' }),
+	locationId: uuid('location_id')
+		.references(() => entities.id, { onDelete: 'set null' }),
+	polygon: jsonb('polygon').notNull().$type<number[][]>(),
+	color: text('color'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+}, (table) => [
+	index('map_regions_map_id_idx').on(table.mapId),
+	index('map_regions_location_id_idx').on(table.locationId)
+]);
