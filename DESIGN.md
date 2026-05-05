@@ -190,7 +190,7 @@ Every app window has a specific, actionable empty state. "No items found." is ne
 |--------|--------------------|--------------:|
 | Story Graph | "No characters yet. Create one in Characters — it will appear here automatically." + ghost dimmed example nodes | → opens Characters app |
 | Timeline | "No events yet. Add an Act or Event to begin your story." | [+ Add Act] button |
-| Wiki | "No notes yet. Create your first note." | [+ New Note] button |
+| Wiki | "Your wiki is empty. Create a Character or Location to begin." | (no button — directs user to Characters / World Map apps) |
 | World Map | "No locations yet. Add a location to place your story." | [+ Add Location] button |
 | Desktop (first run) | "Your story starts here." — disappears after first entity is created | dock tutorial overlay |
 
