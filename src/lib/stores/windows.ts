@@ -46,8 +46,10 @@ export type WindowState = {
  * Routes an entity type to its default app. Locked 2026-04-29 in
  * /plan-design-review (D10-extension/Issue 19A): Acts/Events/Scenes route
  * to the unified `'entity-detail'` window since they have rich editors
- * (ActEditor, EventEditor, SceneEditor). Characters/Locations/Notes stay
- * with their existing apps until the Wiki rework migrates them too.
+ * (ActEditor, EventEditor, SceneEditor). Notes joined them in the Wiki
+ * rework (slice 1) — Note entities now open in EntityDetail with the
+ * NoteWikiEditor branch. Characters and Locations keep their dedicated
+ * apps until the Wiki rework's parity slice flips them.
  */
 const ENTITY_APP: Record<EntityType, AppId> = {
 	Character: 'character-editor',
@@ -55,7 +57,7 @@ const ENTITY_APP: Record<EntityType, AppId> = {
 	Event: 'entity-detail',
 	Act: 'entity-detail',
 	Scene: 'entity-detail',
-	Note: 'wiki'
+	Note: 'entity-detail'
 };
 
 let lastOpenX = 80;

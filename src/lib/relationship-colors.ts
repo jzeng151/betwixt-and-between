@@ -30,6 +30,7 @@ export const REL_COLOR: Record<RelationshipType, string> = {
 	located_at: 'var(--color-rel-loc)',
 	mentor_of: 'var(--color-rel-mentor)',
 	pov_of: 'var(--color-rel-pov)',
+	note_of: 'var(--color-type-note)',
 	other: 'var(--color-rel-misc)'
 };
 
@@ -84,6 +85,7 @@ export const REL_EDGE_STYLE: Record<RelationshipType, EdgeStyle> = {
 	caused_by:      { dasharray: '4 3', width: 1.5, arrow: true  },
 	located_at:     { dasharray: '2 3', width: 1,   arrow: false },
 	appears_in:     { dasharray: '4 3', width: 1,   arrow: false },
+	note_of:        { dasharray: '2 3', width: 1,   arrow: false },
 	other:          { dasharray: null,  width: 1.5, arrow: false }
 };
 

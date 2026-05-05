@@ -28,6 +28,7 @@
 	import { relationships } from '$lib/stores/relationships.js';
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
+	import WikiLinkText from './WikiLinkText.svelte';
 	import { setDraft, clearDraft } from '$lib/stores/editable-drafts.js';
 
 	type Kind =
@@ -254,7 +255,7 @@
 			</span>
 		{:else if kind === 'textarea'}
 			<div class="readonly-textarea">
-				{currentValue || placeholder || '—'}
+				<WikiLinkText body={String(currentValue ?? '')} placeholder={placeholder || '—'} />
 			</div>
 		{:else}
 			<span class="readonly-text">

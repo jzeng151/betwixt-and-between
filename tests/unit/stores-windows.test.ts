@@ -119,9 +119,9 @@ describe('windowStore.openForEntity', () => {
 		expect(e).toBe('entity-detail-ev1');
 	});
 
-	it('routes Note → wiki', () => {
+	it('routes Note → entity-detail', () => {
 		const id = windowStore.openForEntity('n1', 'Note');
-		expect(id).toBe('wiki-n1');
+		expect(id).toBe('entity-detail-n1');
 	});
 
 	it('focuses an existing window instead of duplicating', () => {
