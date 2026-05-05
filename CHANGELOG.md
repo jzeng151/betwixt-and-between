@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-05-05
+
+### Added
+- **World Map app** — full rewrite from flat card-list to Leaflet-based interactive bitmap map. Pan, zoom, and draw polygon regions over an imported map image.
+- Schema: `world_maps` and `map_regions` tables with migration (`drizzle/0003_world_maps.sql`), indexes, and `bump_updated_at` triggers.
+- API routes for map CRUD (`/api/maps`, `/api/maps/[id]`), region CRUD (`/api/maps/[id]/regions`, `/api/maps/[id]/regions/[rid]`), and bitmap upload (`/api/maps/[id]/upload-image`).
+- Bitmap import: upload JPG/PNG/WebP (max 5 MB), header-only dimension parsing, deterministic filenames, static file serving.
+- Polygon drawing via `leaflet-draw` with validation: minimum 3 vertices, max 500, vertex type/finiteness checks, self-intersection rejection (`isSelfIntersecting` utility in `src/lib/server/validation.ts`).
+- Region-to-Location linking: each region optionally links to a Location entity with a color picker.
+- Scope-driven glow/dim: regions linked to in-scope locations render with accent stroke and higher opacity; out-of-scope regions dim. Driven by the existing `$isInScope` store.
+- Multi-map switcher dropdown to create and switch between maps within the World Map window.
+- `world-map` store (`src/lib/stores/world-map.ts`) with optimistic delete and rollback pattern.
+- World Map window opens at 1024×720 in bare mode (no padding) for full-bleed Leaflet rendering.
+- 35 integration tests covering map CRUD, region CRUD, cascade delete, polygon validation, upload-image validation, and region PATCH edge cases.
+- 7 unit tests for `isSelfIntersecting` covering degenerate, triangle, rectangle, pentagon, bowtie, crossing, and L-shape polygons.
+
+### Fixed
+- Upload endpoint: deterministic filenames instead of user-supplied names (path traversal prevention), file extension validation, MIME type allowlist.
+- Polygon validation: added 500-vertex cap and per-vertex `[number, number]` type/finiteness checks in both create and update endpoints.
+
 ## [0.1.5] - 2026-05-05
 
 ### Added
