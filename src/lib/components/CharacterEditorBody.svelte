@@ -679,6 +679,14 @@
 		flex-direction: column;
 		gap: 14px;
 		padding: 14px 18px;
+		/* Scroll internally when the body's natural height exceeds the
+		   space the wrapping flex-column gives us. Without this, overflow
+		   bubbles up to ancestors — in the Wiki app it dragged the
+		   sidebar along with the character content. Matches the pattern
+		   used by ActEditor / SceneEditor / LocationEditor. */
+		flex: 1 1 0;
+		overflow-y: auto;
+		min-height: 0;
 	}
 
 	.header {
