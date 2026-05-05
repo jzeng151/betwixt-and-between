@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - 2026-05-05
+
+### Added
+- Wiki app rebuilt as an alphabetical entity browser — sidebar groups every entity (except Notes) by type with faint dividers, search input, and toggle pills to filter visible types. Picking a sidebar entry mounts the unified entity editor inline in the Wiki window.
+- Cross-entity hyperlinks resolve in body fields — type `[[Aragorn]]` in any synopsis/description/note body and the resolver renders a clickable chip that navigates to that entity. Unknown names render with a subtle grey strikethrough so writers can spot orphaned references.
+- Right-click a Wiki sidebar entry for "Open focused graph" (loads that entity in a Focused Graph window) and "Open focused timeline" (focuses the Timeline app on that entity, dimming non-matching rows). Driven by a new `timelineFilter` store other surfaces can write to.
+- Wiki sidebar dims out-of-scope entries when the playhead moves — entries whose intervals (or whose linked entities' intervals) don't contain the current playhead position fade to 0.4 opacity. Hovering a dimmed entry lifts it to full opacity for readability.
+- Notes-as-sections — every non-Note entity gets a NOTES section in its detail view with collapsible disclosures per attached note and a "+ Add note" chip. Notes are attached via the new `note_of` relationship type so a single note can be threaded through any other entity.
+- EntityDetail now renders Character and Note entities (basic editor shells with description/role/color and body, respectively). The full CharacterEditor parity (icon picker, relationship sections) follows in the next branch before window routing flips.
+
+### Changed
+- Note entities now open in the unified EntityDetail surface (`ENTITY_APP[Note]: 'wiki' → 'entity-detail'`). Previously, opening a Note reused the Wiki app's editor; that role moved to NoteWikiEditor inside EntityDetail so the Wiki window can become the entity browser.
+
 ## [0.1.4] - 2026-05-05
 
 ### Added
