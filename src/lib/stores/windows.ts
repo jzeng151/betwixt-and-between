@@ -9,7 +9,8 @@ export type AppId =
 	| 'wiki'
 	| 'story-graph'
 	| 'focused-graph'
-	| 'notes';
+	| 'notes'
+	| 'settings';
 
 /**
  * View modes for `focused-graph` windows (Phase 1B Lane C):
@@ -100,15 +101,21 @@ function createWindowStore() {
 						? 640
 						: appId === 'timeline'
 							? 960
-							: appId === 'entity-detail'
-								? 480
-								: appId === 'character-editor'
-									? 380
-									: appId === 'notes'
-										? 600
+							: appId === 'settings'
+								? 520
+								: appId === 'entity-detail'
+									? 480
+									: appId === 'character-editor'
+										? 380
 										: 320,
 				height:
-					isGraph ? 500 : appId === 'notes' ? 450 : 480,
+					isGraph
+						? 500
+						: appId === 'settings'
+							? 400
+							: appId === 'notes'
+								? 450
+								: 480,
 				minimized: false,
 				maximized: false,
 				zIndex: zCounter,

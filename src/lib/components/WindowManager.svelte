@@ -8,6 +8,7 @@
   import WorldMap from './apps/WorldMap.svelte';
   import StoryGraph from './apps/StoryGraph.svelte';
   import FocusedGraph from './apps/FocusedGraph.svelte';
+  import Settings from './apps/Settings.svelte';
   import Notes from './apps/Notes.svelte';
   import EntityDetail from './EntityDetail.svelte';
 
@@ -19,6 +20,7 @@
     'wiki': 'Wiki',
     'story-graph': 'Story Graph',
     'focused-graph': 'Focused Graph',
+    'settings': 'Settings',
     'notes': 'Notes',
   };
 
@@ -79,6 +81,8 @@
       <StoryGraph />
     {:else if win.appId === 'focused-graph'}
       <FocusedGraph windowId={win.id} />
+    {:else if win.appId === 'settings'}
+      <Settings />
     {:else if win.appId === 'notes'}
       <Notes />
     {/if}

@@ -17,6 +17,7 @@
     { id: 'world-map',        label: 'World Map', icon: '🗺' },
     { id: 'wiki',             label: 'Wiki', icon: '📝' },
     { id: 'notes',            label: 'Notes', icon: '📒' },
+    { id: 'settings',         label: 'Settings', icon: '⚙' },
   ];
 
   type GroupedWindow = {
