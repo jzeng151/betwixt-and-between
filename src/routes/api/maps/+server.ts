@@ -1,15 +1,17 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { getDb } from '$lib/server/db/index.js';
 import { worldMaps } from '$lib/server/db/schema.js';
 import { desc } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async () => {
+export const GET: RequestHandler = async ({ platform }) => {
+	const db = await getDb(platform?.env);
 	const rows = await db.select().from(worldMaps).orderBy(desc(worldMaps.createdAt));
 	return json(rows);
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ platform, request }) => {
+	const db = await getDb(platform?.env);
 	const body = await request.json();
 	const { name } = body;
 

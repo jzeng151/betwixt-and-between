@@ -23,9 +23,7 @@ import { writeInterval } from '../../src/lib/server/intervals.js';
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
-	get db() {
-		return currentDb;
-	}
+	getDb: async () => currentDb
 }));
 
 const batchRoute = await import('../../src/routes/api/entities/batch/+server.js');

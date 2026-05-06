@@ -1,0 +1,4 @@
+# Cloudflare local runtime bindings for `wrangler pages dev` / `wrangler dev`.
+# Keep the real `.dev.vars` file untracked.
+
+DATABASE_URL=postgres://user:pass@ep-xxxxx.region.aws.neon.tech/dbname

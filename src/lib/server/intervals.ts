@@ -39,6 +39,8 @@
  */
 
 import { sql, eq, and, isNull, inArray } from 'drizzle-orm';
+import type { NeonDatabase } from 'drizzle-orm/neon-serverless';
+import type { NeonQueryResultHKT } from 'drizzle-orm/neon-serverless';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import type { PgTransaction } from 'drizzle-orm/pg-core';
 import type { PostgresJsQueryResultHKT } from 'drizzle-orm/postgres-js';
@@ -55,10 +57,12 @@ import { actRange, sceneRange } from '$lib/timeline-v2-helpers.js';
 /**
  * Polymorphic DB handle: accepts the top-level db or a transaction context.
  * Locked 2026-04-29 in /plan-eng-review (Issue 11A/17A). Union covers
- * postgres-js (Neon, production) and pglite (tests) — both expose identical
- * Drizzle query APIs.
+ * Neon serverless (Cloudflare runtime), postgres-js (local TCP fallback), and
+ * pglite (tests) — all expose compatible Drizzle query APIs.
  */
 export type Db =
+	| NeonDatabase<typeof schema>
+	| PgTransaction<NeonQueryResultHKT, typeof schema, ExtractTablesWithRelations<typeof schema>>
 	| PostgresJsDatabase<typeof schema>
 	| PgTransaction<
 			PostgresJsQueryResultHKT,
@@ -784,7 +788,7 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
  *
  * Atomicity: callers should wrap in `db.transaction(async (tx) => { await
  * splitInterval(tx, ...) })` so a crash between the UPDATE (left half) and
- * INSERT (right half) rolls back both. drizzle-orm/postgres-js supports
+ * INSERT (right half) rolls back both. Drizzle's Postgres drivers support
  * async tx callbacks natively (the previous sqlite-era raw BEGIN/COMMIT
  * workaround is gone). When called outside a tx the two writes are not
  * atomic — by design only the split endpoint and tests-that-want-rollback

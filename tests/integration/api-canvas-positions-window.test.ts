@@ -15,9 +15,7 @@ import { eq } from 'drizzle-orm';
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
-	get db() {
-		return currentDb;
-	}
+	getDb: async () => currentDb
 }));
 
 const route = await import(

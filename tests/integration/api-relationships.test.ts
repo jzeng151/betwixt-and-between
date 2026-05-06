@@ -12,9 +12,7 @@ import { entities, relationships, intervals } from '../../src/lib/server/db/sche
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
-	get db() {
-		return currentDb;
-	}
+	getDb: async () => currentDb
 }));
 
 const relRoute = await import('../../src/routes/api/relationships/+server.js');

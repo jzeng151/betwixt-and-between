@@ -1,10 +1,11 @@
 import { error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { getDb } from '$lib/server/db/index.js';
 import { entityAliases } from '$lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const DELETE: RequestHandler = async ({ params }) => {
+export const DELETE: RequestHandler = async ({ platform, params }) => {
+	const db = await getDb(platform?.env);
 	const [alias] = await db.select().from(entityAliases).where(eq(entityAliases.id, params.id));
 	if (!alias) error(404, 'Entity alias not found');
 

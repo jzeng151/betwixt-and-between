@@ -1,11 +1,12 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { getDb } from '$lib/server/db/index.js';
 import { mapRegions } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
 
-export const PATCH: RequestHandler = async ({ params, request }) => {
+export const PATCH: RequestHandler = async ({ platform, params, request }) => {
+	const db = await getDb(platform?.env);
 	// Fetch region and verify it belongs to this map
 	const [region] = await db
 		.select()
@@ -44,11 +45,12 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	return json(updated);
 };
 
-export const DELETE: RequestHandler = async ({ params }) => {
+export const DELETE: RequestHandler = async ({ platform, params }) => {
+	const db = await getDb(platform?.env);
 	const [deleted] = await db
 		.delete(mapRegions)
 		.where(and(eq(mapRegions.id, params.rid), eq(mapRegions.mapId, params.id)))
-		.returning({ id: mapRegions.id });
+		.returning();
 
 	if (!deleted) error(404, 'Region not found');
 	return new Response(null, { status: 204 });

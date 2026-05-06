@@ -13,9 +13,7 @@ import { entities } from '../../src/lib/server/db/schema.js';
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
-	get db() {
-		return currentDb;
-	}
+	getDb: async () => currentDb
 }));
 
 const { GET: LIST_MAPS, POST: CREATE_MAP } = await import(

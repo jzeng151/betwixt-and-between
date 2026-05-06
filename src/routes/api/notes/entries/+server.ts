@@ -1,10 +1,11 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { getDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, isNull, sql, or } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ platform, url }) => {
+	const db = await getDb(platform?.env);
 	const folderId = url.searchParams.get('folderId');
 
 	const conditions = [
@@ -28,7 +29,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	return json(rows);
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ platform, request }) => {
+	const db = await getDb(platform?.env);
 	const body = await request.json();
 	const { name, body: noteBody, parentId, position } = body as {
 		name?: string;

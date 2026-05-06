@@ -1,10 +1,11 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { getDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, sql } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const PATCH: RequestHandler = async ({ params, request }) => {
+export const PATCH: RequestHandler = async ({ platform, params, request }) => {
+	const db = await getDb(platform?.env);
 	const body = await request.json();
 	const { name } = body as { name?: string };
 
@@ -31,7 +32,8 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	return json(updated);
 };
 
-export const DELETE: RequestHandler = async ({ params }) => {
+export const DELETE: RequestHandler = async ({ platform, params }) => {
+	const db = await getDb(platform?.env);
 	// Verify it's a folder
 	const [existing] = await db
 		.select({ id: entities.id })

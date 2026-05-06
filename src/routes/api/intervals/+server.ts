@@ -1,11 +1,12 @@
 import { json, error } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
-import { db } from '$lib/server/db/index.js';
+import { getDb } from '$lib/server/db/index.js';
 import { intervals } from '$lib/server/db/schema.js';
 import { writeInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ platform, url }) => {
+	const db = await getDb(platform?.env);
 	const entityId = url.searchParams.get('entity_id');
 	if (entityId) {
 		const rows = await db
@@ -19,7 +20,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	return json(rows);
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ platform, request }) => {
+	const db = await getDb(platform?.env);
 	const body = await request.json();
 	const {
 		entity_id,

@@ -1,11 +1,12 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { getDb } from '$lib/server/db/index.js';
 import { windowCanvasState } from '$lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import { isUuid, coercePinned } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ params }) => {
+export const GET: RequestHandler = async ({ platform, params }) => {
+	const db = await getDb(platform?.env);
 	const { windowId } = params;
 	if (!windowId) error(400, 'windowId is required');
 
@@ -24,7 +25,8 @@ export const GET: RequestHandler = async ({ params }) => {
 	return json(rows);
 };
 
-export const PUT: RequestHandler = async ({ params, request }) => {
+export const PUT: RequestHandler = async ({ platform, params, request }) => {
+	const db = await getDb(platform?.env);
 	const { windowId } = params;
 	if (!windowId) error(400, 'windowId is required');
 
@@ -58,7 +60,8 @@ export const PUT: RequestHandler = async ({ params, request }) => {
 	return json(upserted);
 };
 
-export const DELETE: RequestHandler = async ({ params }) => {
+export const DELETE: RequestHandler = async ({ platform, params }) => {
+	const db = await getDb(platform?.env);
 	const { windowId } = params;
 	if (!windowId) error(400, 'windowId is required');
 

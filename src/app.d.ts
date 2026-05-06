@@ -6,7 +6,12 @@ declare global {
 		// interface Locals {}
 		// interface PageData {}
 		// interface PageState {}
-		// interface Platform {}
+		interface Platform {
+			env: {
+				DATABASE_URL: string;
+				BETWIXT_E2E_PGLITE?: string;
+			};
+		}
 	}
 }
 

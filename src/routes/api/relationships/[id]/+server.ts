@@ -1,11 +1,12 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { getDb } from '$lib/server/db/index.js';
 import { relationships } from '$lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import { resolveRelationshipBounds } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
-export const PATCH: RequestHandler = async ({ params, request }) => {
+export const PATCH: RequestHandler = async ({ platform, params, request }) => {
+	const db = await getDb(platform?.env);
 	const [rel] = await db.select().from(relationships).where(eq(relationships.id, params.id));
 	if (!rel) error(404, 'Relationship not found');
 
@@ -87,7 +88,8 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	return json(updated);
 };
 
-export const DELETE: RequestHandler = async ({ params }) => {
+export const DELETE: RequestHandler = async ({ platform, params }) => {
+	const db = await getDb(platform?.env);
 	const [rel] = await db.select().from(relationships).where(eq(relationships.id, params.id));
 	if (!rel) error(404, 'Relationship not found');
 

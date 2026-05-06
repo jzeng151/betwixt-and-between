@@ -1,10 +1,11 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { getDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, or, sql } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ params }) => {
+export const GET: RequestHandler = async ({ platform, params }) => {
+	const db = await getDb(platform?.env);
 	const [row] = await db
 		.select()
 		.from(entities)
@@ -22,7 +23,8 @@ export const GET: RequestHandler = async ({ params }) => {
 	return json(row);
 };
 
-export const PATCH: RequestHandler = async ({ params, request }) => {
+export const PATCH: RequestHandler = async ({ platform, params, request }) => {
+	const db = await getDb(platform?.env);
 	const body = await request.json();
 	const { name, body: noteBody, folderId } = body as {
 		name?: string;
@@ -65,7 +67,8 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	return json(updated);
 };
 
-export const DELETE: RequestHandler = async ({ params }) => {
+export const DELETE: RequestHandler = async ({ platform, params }) => {
+	const db = await getDb(platform?.env);
 	const [existing] = await db
 		.select({ id: entities.id })
 		.from(entities)
