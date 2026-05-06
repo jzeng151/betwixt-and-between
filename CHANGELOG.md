@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0.0] - 2026-05-06
+
+### Added
+- **Scroll Theatre landing page** — new `/` route with hero section, 4 alternating scroll-theatre sections, and CTA. MiniDesktop visualization stays centered (sticky) while copy scrolls past on desktop; linear stack on mobile.
+- **Route migration** — desktop app moved from `/` to `/app`. All existing e2e tests updated.
+- Pure CSS presentation components: MiniWindow, MiniGraph, MiniTimeline, MiniMap, MiniDesktop — no real data or API calls.
+- SEO metadata (title, meta description), skip-to-content link, reduced-motion media query support.
+
+### Changed
+- `overflow: hidden` scoped from `html, body` to `.app-shell` so the landing page can scroll.
+
 ## [0.2.0] - 2026-05-06
 
 ### Added
