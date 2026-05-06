@@ -108,7 +108,7 @@ function createWindowStore() {
 						: appId === 'timeline'
 							? 960
 							: appId === 'wiki'
-								? 640
+								? 1280
 								: appId === 'settings'
 									? 520
 									: appId === 'entity-detail'
@@ -119,11 +119,13 @@ function createWindowStore() {
 				height:
 					isGraph
 						? 500
-						: appId === 'settings'
-							? 400
-							: appId === 'notes'
-								? 450
-								: 480,
+						: appId === 'wiki'
+							? 960
+							: appId === 'settings'
+								? 400
+								: appId === 'notes'
+									? 450
+									: 480,
 				minimized: false,
 				maximized: false,
 				zIndex: zCounter,
