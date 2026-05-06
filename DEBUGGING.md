@@ -5,6 +5,76 @@ Investigation reports for non-obvious bugs. Each entry follows the
 
 ---
 
+## 2026-05-06 — World Map region pre-fill scenes not loading
+
+**Branch:** feat/world-map
+**Status:** FIXED
+
+### Symptom
+
+When creating or editing a region on the World Map and selecting a location
+from the dropdown, the scene checkboxes under "Active during" were never
+pre-checked based on existing intervals. The pre-fill `$effect` appeared to
+do nothing.
+
+### Root cause
+
+Two independent issues:
+
+1. **Missing data.** London's 5 intervals had been deleted (likely during
+   earlier edit/delete testing of the region popup feature). The interval
+   count dropped from 37 to 32, and the primary location had zero intervals.
+   Without data in the store, the pre-fill effect correctly produced an empty
+   set.
+
+2. **Wrong seed command.** Re-seeding ran `npx tsx scripts/seed/prestige.ts`
+   (the data module) instead of `npx tsx scripts/seed/cli.ts prestige`
+   (the CLI entry point). The data module exports the `PRESTIGE` object but
+   has no `main()` function, so the process exited silently with code 0 and
+   produced no output. The correct command is:
+   ```
+   npx tsx scripts/seed/cli.ts prestige --base http://localhost:5174
+   ```
+
+3. **`untrack` prevented store reactivity (earlier regression).** An earlier
+   attempt wrapped the pre-fill effect body in `untrack()` from Svelte 5 to
+   prevent it from re-running on interval store updates. This broke the effect
+   entirely: `untrack` prevented `$intervalsStore` and `$derived` values
+   (`scenesByAct`) from being reactively tracked inside the callback, so the
+   effect saw stale/empty data. Removing `untrack` fixed the reactive chain.
+
+### How the pre-fill works
+
+The `$effect` at `WorldMap.svelte:56` tracks `regionFormLocationId`,
+`$intervalsStore`, and `scenesByAct` (via `scenesInInterval`). When the user
+selects a location, the effect:
+
+1. Filters `$intervalsStore` for intervals matching that `entityId`
+2. For each interval, calls `scenesInInterval(iv)` which uses index-based
+   `findIndex` + `slice` to resolve start/end scene IDs into the full range
+   of scene IDs within that act
+3. Collects all resolved scene IDs into a `Set<string>`
+4. Sets `regionFormSceneIds` to that set
+
+The `scenesInInterval` function requires scenes to have `position` values for
+stable ordering. The Prestige seed scenes have `position: null`, so array order
+is not guaranteed to be chronological. The index-based approach works because
+the seed creates scenes in order within each act, and `scenesByAct` sorts by
+position (nulls sort as 0, preserving insertion order).
+
+### Structural lesson
+
+When a data-driven feature "doesn't work," check the data first. The pre-fill
+effect was correct all along. The problem was missing data (deleted intervals)
+masked by a silent no-op seed command. Adding `console.log` to the effect
+immediately showed the real issue: 0 matching intervals for the selected
+location.
+
+For seed scripts: always run the CLI entry point (`cli.ts`), not the data
+module directly. Data modules export constants but have no side effects.
+
+---
+
 ## 2026-05-03 — Alias position snap never fires in StoryGraph / FocusedGraph
 
 **Branch:** feat/spotlight-integration  
