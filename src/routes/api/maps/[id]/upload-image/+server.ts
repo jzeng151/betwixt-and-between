@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { getDb } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { worldMaps } from '$lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -10,8 +10,8 @@ const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const ALLOWED_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp']);
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
-export const POST: RequestHandler = async ({ platform, params, request }) => {
-	const db = await getDb(platform?.env);
+export const POST: RequestHandler = async ({ platform, params, request }) =>
+	withDb(platform?.env, async (db) => {
 	// Verify map exists
 	const [map] = await db.select().from(worldMaps).where(eq(worldMaps.id, params.id));
 	if (!map) error(404, 'Map not found');
@@ -54,7 +54,8 @@ export const POST: RequestHandler = async ({ platform, params, request }) => {
 		.returning();
 
 	return json(updated);
-};
+
+	});
 
 /**
  * Read width/height from image file headers without external dependencies.

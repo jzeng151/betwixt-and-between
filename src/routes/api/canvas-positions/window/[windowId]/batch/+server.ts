@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { getDb } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { windowCanvasState } from '$lib/server/db/schema.js';
 import { isUuid, coercePinned } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
@@ -9,8 +9,8 @@ import type { RequestHandler } from './$types';
  * partial failure (e.g. one row violates the entity FK) rolls all rows back.
  * This is the C5 dagre-layout atomicity guarantee from the locked Lane A plan.
  */
-export const POST: RequestHandler = async ({ platform, params, request }) => {
-	const db = await getDb(platform?.env);
+export const POST: RequestHandler = async ({ platform, params, request }) =>
+	withDb(platform?.env, async (db) => {
 	const { windowId } = params;
 	if (!windowId) error(400, 'windowId is required');
 
@@ -53,4 +53,5 @@ export const POST: RequestHandler = async ({ platform, params, request }) => {
 	});
 
 	return json(upserted);
-};
+
+	});

@@ -10,6 +10,9 @@ export interface DbEnv {
 
 export type RuntimeDb = NeonDatabase<typeof schema> | PostgresJsDatabase<typeof schema>;
 
+const closeRuntimeDb = Symbol('closeRuntimeDb');
+type ClosableRuntimeDb = RuntimeDb & { [closeRuntimeDb]?: () => Promise<void> };
+
 const dbCache = new Map<string, Promise<RuntimeDb>>();
 
 export async function getDb(env?: DbEnv): Promise<RuntimeDb> {
@@ -19,16 +22,37 @@ export async function getDb(env?: DbEnv): Promise<RuntimeDb> {
 	assertDatabaseUrl(databaseUrl);
 
 	const driver = shouldUseLocalPostgresDriver(databaseUrl, e2ePglite) ? 'postgres-js' : 'neon';
+	if (driver === 'neon') {
+		// Neon serverless Pool instances are request-scoped in edge runtimes:
+		// create one for this handler and close it via withDb() after the
+		// response is produced. Do not put Neon pools in the module cache.
+		return createNeonDb(databaseUrl);
+	}
+
+	// Local TCP drivers are safe to reuse across requests in dev/test servers.
 	const cacheKey = `${driver}:${databaseUrl}:${e2ePglite ?? ''}`;
 	let cached = dbCache.get(cacheKey);
 	if (!cached) {
-		cached =
-			driver === 'postgres-js'
-				? createLocalPostgresDb(databaseUrl, e2ePglite)
-				: createNeonDb(databaseUrl);
+		cached = createLocalPostgresDb(databaseUrl, e2ePglite);
 		dbCache.set(cacheKey, cached);
 	}
 	return cached;
+}
+
+export async function withDb<T>(
+	env: DbEnv | undefined,
+	callback: (db: RuntimeDb) => Promise<T>
+): Promise<T> {
+	const db = await getDb(env);
+	try {
+		return await callback(db);
+	} finally {
+		await closeDb(db);
+	}
+}
+
+async function closeDb(db: RuntimeDb): Promise<void> {
+	await (db as ClosableRuntimeDb)[closeRuntimeDb]?.();
 }
 
 function assertDatabaseUrl(databaseUrl: string | undefined): asserts databaseUrl is string {
@@ -56,7 +80,9 @@ async function createNeonDb(databaseUrl: string): Promise<RuntimeDb> {
 		import('drizzle-orm/neon-serverless')
 	]);
 	const pool = new Pool({ connectionString: databaseUrl });
-	return drizzle(pool, { schema });
+	const db = drizzle(pool, { schema }) as ClosableRuntimeDb;
+	db[closeRuntimeDb] = () => pool.end();
+	return db;
 }
 
 async function createLocalPostgresDb(

@@ -1,11 +1,11 @@
 import { json, error } from '@sveltejs/kit';
-import { getDb } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, sql } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const PATCH: RequestHandler = async ({ platform, params, request }) => {
-	const db = await getDb(platform?.env);
+export const PATCH: RequestHandler = async ({ platform, params, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const { name } = body as { name?: string };
 
@@ -30,10 +30,11 @@ export const PATCH: RequestHandler = async ({ platform, params, request }) => {
 		.returning();
 
 	return json(updated);
-};
 
-export const DELETE: RequestHandler = async ({ platform, params }) => {
-	const db = await getDb(platform?.env);
+	});
+
+export const DELETE: RequestHandler = async ({ platform, params }) =>
+	withDb(platform?.env, async (db) => {
 	// Verify it's a folder
 	const [existing] = await db
 		.select({ id: entities.id })
@@ -46,4 +47,5 @@ export const DELETE: RequestHandler = async ({ platform, params }) => {
 	// Cascade on the FK handles child entries
 	await db.delete(entities).where(eq(entities.id, params.id));
 	return json({ ok: true });
-};
+
+	});

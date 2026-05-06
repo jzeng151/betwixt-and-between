@@ -1,16 +1,17 @@
 import { json, error } from '@sveltejs/kit';
-import { getDb } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
 import { recomputeAllIntervals, recomputeIntervalsForAct } from '$lib/server/intervals.js';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform }) => {
-	const db = await getDb(platform?.env);
+export const GET: RequestHandler = async ({ platform }) =>
+	withDb(platform?.env, async (db) => {
 	const rows = await db.select().from(entities).orderBy(desc(entities.createdAt));
 	return json(rows);
-};
+
+	});
 
 /**
  * Create an entity. For Acts inserted with a position less than the current
@@ -20,8 +21,8 @@ export const GET: RequestHandler = async ({ platform }) => {
  * For Scenes added to an Act, recomputes interval positions for the parent
  * act (m changed → scene-anchored intervals shift).
  */
-export const POST: RequestHandler = async ({ platform, request }) => {
-	const db = await getDb(platform?.env);
+export const POST: RequestHandler = async ({ platform, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const { type, name, data, parentId, position } = body;
 
@@ -93,4 +94,5 @@ export const POST: RequestHandler = async ({ platform, request }) => {
 	}
 
 	return json(created, { status: 201 });
-};
+
+	});

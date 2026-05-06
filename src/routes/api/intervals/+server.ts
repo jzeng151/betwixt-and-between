@@ -1,12 +1,12 @@
 import { json, error } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
-import { getDb } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { intervals } from '$lib/server/db/schema.js';
 import { writeInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform, url }) => {
-	const db = await getDb(platform?.env);
+export const GET: RequestHandler = async ({ platform, url }) =>
+	withDb(platform?.env, async (db) => {
 	const entityId = url.searchParams.get('entity_id');
 	if (entityId) {
 		const rows = await db
@@ -18,10 +18,11 @@ export const GET: RequestHandler = async ({ platform, url }) => {
 	}
 	const rows = await db.select().from(intervals).orderBy(intervals.startPosition);
 	return json(rows);
-};
 
-export const POST: RequestHandler = async ({ platform, request }) => {
-	const db = await getDb(platform?.env);
+	});
+
+export const POST: RequestHandler = async ({ platform, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const {
 		entity_id,
@@ -69,4 +70,5 @@ export const POST: RequestHandler = async ({ platform, request }) => {
 		// raise from writeInterval. Surface as 400 with the message.
 		error(400, message);
 	}
-};
+
+	});

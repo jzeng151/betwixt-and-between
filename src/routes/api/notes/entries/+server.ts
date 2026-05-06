@@ -1,11 +1,11 @@
 import { json, error } from '@sveltejs/kit';
-import { getDb } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, isNull, sql, or } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform, url }) => {
-	const db = await getDb(platform?.env);
+export const GET: RequestHandler = async ({ platform, url }) =>
+	withDb(platform?.env, async (db) => {
 	const folderId = url.searchParams.get('folderId');
 
 	const conditions = [
@@ -27,10 +27,11 @@ export const GET: RequestHandler = async ({ platform, url }) => {
 		.orderBy(entities.position);
 
 	return json(rows);
-};
 
-export const POST: RequestHandler = async ({ platform, request }) => {
-	const db = await getDb(platform?.env);
+	});
+
+export const POST: RequestHandler = async ({ platform, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const { name, body: noteBody, parentId, position } = body as {
 		name?: string;
@@ -55,4 +56,5 @@ export const POST: RequestHandler = async ({ platform, request }) => {
 		.returning();
 
 	return json(created, { status: 201 });
-};
+
+	});

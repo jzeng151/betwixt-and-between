@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { getDb } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
 import { recomputeIntervalsForAct } from '$lib/server/intervals.js';
@@ -20,8 +20,8 @@ import type { RequestHandler } from './$types';
  * Recomputes interval positions ONCE per affected parent Act (deduped) so
  * break-into-scenes with N scenes triggers one recompute, not N.
  */
-export const POST: RequestHandler = async ({ platform, request }) => {
-	const db = await getDb(platform?.env);
+export const POST: RequestHandler = async ({ platform, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const items = body?.entities;
 	if (!Array.isArray(items)) {
@@ -79,4 +79,5 @@ export const POST: RequestHandler = async ({ platform, request }) => {
 	}
 
 	return json(created, { status: 201 });
-};
+
+	});

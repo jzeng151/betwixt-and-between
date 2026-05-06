@@ -1,13 +1,13 @@
 import { json, error } from '@sveltejs/kit';
-import { getDb } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { relationships, entities } from '$lib/server/db/schema.js';
 import { RelationshipType } from '$lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import { resolveRelationshipBounds } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform, url }) => {
-	const db = await getDb(platform?.env);
+export const GET: RequestHandler = async ({ platform, url }) =>
+	withDb(platform?.env, async (db) => {
 	const rows = await db.select().from(relationships);
 	const fromId = url.searchParams.get('fromId');
 	const toId = url.searchParams.get('toId');
@@ -15,10 +15,11 @@ export const GET: RequestHandler = async ({ platform, url }) => {
 		(r) => (!fromId || r.fromId === fromId) && (!toId || r.toId === toId)
 	);
 	return json(filtered);
-};
 
-export const POST: RequestHandler = async ({ platform, request }) => {
-	const db = await getDb(platform?.env);
+	});
+
+export const POST: RequestHandler = async ({ platform, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const { fromId, toId, type, label, startActId, startSceneId, endActId, endSceneId, revealedAtPosition } = body;
 
@@ -84,4 +85,5 @@ export const POST: RequestHandler = async ({ platform, request }) => {
 	}
 
 	return json(created, { status: 201 });
-};
+
+	});

@@ -1,12 +1,12 @@
 import { json, error } from '@sveltejs/kit';
-import { getDb } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { relationships } from '$lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import { resolveRelationshipBounds } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
-export const PATCH: RequestHandler = async ({ platform, params, request }) => {
-	const db = await getDb(platform?.env);
+export const PATCH: RequestHandler = async ({ platform, params, request }) =>
+	withDb(platform?.env, async (db) => {
 	const [rel] = await db.select().from(relationships).where(eq(relationships.id, params.id));
 	if (!rel) error(404, 'Relationship not found');
 
@@ -86,13 +86,15 @@ export const PATCH: RequestHandler = async ({ platform, params, request }) => {
 	}
 
 	return json(updated);
-};
 
-export const DELETE: RequestHandler = async ({ platform, params }) => {
-	const db = await getDb(platform?.env);
+	});
+
+export const DELETE: RequestHandler = async ({ platform, params }) =>
+	withDb(platform?.env, async (db) => {
 	const [rel] = await db.select().from(relationships).where(eq(relationships.id, params.id));
 	if (!rel) error(404, 'Relationship not found');
 
 	await db.delete(relationships).where(eq(relationships.id, params.id));
 	return new Response(null, { status: 204 });
-};
+
+	});

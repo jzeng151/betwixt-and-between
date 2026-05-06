@@ -1,11 +1,11 @@
 import { json, error } from '@sveltejs/kit';
-import { getDb } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { worldMaps, mapRegions } from '$lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform, params }) => {
-	const db = await getDb(platform?.env);
+export const GET: RequestHandler = async ({ platform, params }) =>
+	withDb(platform?.env, async (db) => {
 	const [map] = await db.select().from(worldMaps).where(eq(worldMaps.id, params.id));
 	if (!map) error(404, 'Map not found');
 
@@ -15,10 +15,11 @@ export const GET: RequestHandler = async ({ platform, params }) => {
 		.where(eq(mapRegions.mapId, params.id));
 
 	return json({ ...map, regions });
-};
 
-export const PATCH: RequestHandler = async ({ platform, params, request }) => {
-	const db = await getDb(platform?.env);
+	});
+
+export const PATCH: RequestHandler = async ({ platform, params, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 
 	const updates: Record<string, unknown> = {};
@@ -39,10 +40,11 @@ export const PATCH: RequestHandler = async ({ platform, params, request }) => {
 
 	if (!updated) error(404, 'Map not found');
 	return json(updated);
-};
 
-export const DELETE: RequestHandler = async ({ platform, params }) => {
-	const db = await getDb(platform?.env);
+	});
+
+export const DELETE: RequestHandler = async ({ platform, params }) =>
+	withDb(platform?.env, async (db) => {
 	const [deleted] = await db
 		.delete(worldMaps)
 		.where(eq(worldMaps.id, params.id))
@@ -50,4 +52,5 @@ export const DELETE: RequestHandler = async ({ platform, params }) => {
 
 	if (!deleted) error(404, 'Map not found');
 	return new Response(null, { status: 204 });
-};
+
+	});

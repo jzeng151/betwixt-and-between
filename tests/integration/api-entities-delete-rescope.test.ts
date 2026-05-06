@@ -24,7 +24,8 @@ import { vi } from 'vitest';
 
 let testDb: Awaited<ReturnType<typeof createTestDb>>;
 vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => testDb
+	getDb: async () => testDb,
+	withDb: async (_env: unknown, callback: (db: typeof testDb) => Promise<unknown>) => callback(testDb)
 }));
 
 const { DELETE } = await import('../../src/routes/api/entities/[id]/+server.js');

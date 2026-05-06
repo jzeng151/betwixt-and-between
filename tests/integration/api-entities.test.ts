@@ -17,7 +17,8 @@ import { createTestDb } from '../helpers/test-db.js';
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => currentDb
+	getDb: async () => currentDb,
+	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
 }));
 
 // Imports MUST come after vi.mock — Vitest hoists the mock but module
