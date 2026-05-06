@@ -11,7 +11,7 @@ test.describe('Window Manager', () => {
 	test.beforeEach(async ({ page, request }) => {
 		await clearEntities(request);
 		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-		await page.goto('/');
+		await page.goto('/app');
 	});
 
 	test('open window → appears on screen', async ({ page }) => {
@@ -88,7 +88,7 @@ test.describe('Window Manager', () => {
 
 	test('opening a character detail window puts it on top of the list window', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } });
-		await page.goto('/'); // reload so store picks up the new entity
+		await page.goto('/app'); // reload so store picks up the new entity
 
 		await page.click('button[title="Characters"]');
 		const listWin = page.locator('.window[aria-label="Characters"]');

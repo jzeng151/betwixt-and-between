@@ -11,7 +11,7 @@ test.describe('Wiki', () => {
 	test.beforeEach(async ({ page, request }) => {
 		await clearEntities(request);
 		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-		await page.goto('/');
+		await page.goto('/app');
 	});
 
 	test('empty state asks the user to create a Character or Location', async ({ page }) => {
@@ -27,7 +27,7 @@ test.describe('Wiki', () => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
 		await request.post('/api/entities', { data: { type: 'Location', name: 'Edoras' } });
 		await request.post('/api/entities', { data: { type: 'Note', name: 'Hidden Note' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
@@ -46,7 +46,7 @@ test.describe('Wiki', () => {
 		request
 	}) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
@@ -62,7 +62,7 @@ test.describe('Wiki', () => {
 	test('search filters the sidebar', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Boromir' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
@@ -77,7 +77,7 @@ test.describe('Wiki', () => {
 	test('type-filter pill toggles a group on and off', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
 		await request.post('/api/entities', { data: { type: 'Location', name: 'Edoras' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
@@ -95,7 +95,7 @@ test.describe('Characters', () => {
 	test.beforeEach(async ({ page, request }) => {
 		await clearEntities(request);
 		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-		await page.goto('/');
+		await page.goto('/app');
 	});
 
 	test('character list shows role badge and affiliation when set', async ({ page, request }) => {
@@ -105,7 +105,7 @@ test.describe('Characters', () => {
 		await request.patch(`/api/entities/${char.id}`, {
 			data: { data: { role: 'Protagonist', affiliation: 'The Conclave' } }
 		});
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Characters"]');
 		const win = page.locator('.window[aria-label="Characters"]');
@@ -115,7 +115,7 @@ test.describe('Characters', () => {
 
 	test('set role via header pencil → badge appears in header', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Characters"]');
 		const listWin = page.locator('.window[aria-label="Characters"]');
@@ -135,7 +135,7 @@ test.describe('Characters', () => {
 
 	test('set affiliation via header pencil → text appears in header', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Characters"]');
 		const listWin = page.locator('.window[aria-label="Characters"]');
@@ -156,7 +156,7 @@ test.describe('Characters', () => {
 
 	test('details section contains Timeline color, Show on timeline, Motivation, Notes — not Role', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Characters"]');
 		const listWin = page.locator('.window[aria-label="Characters"]');
@@ -192,7 +192,7 @@ test.describe('World Map', () => {
 	test.beforeEach(async ({ page, request }) => {
 		await clearEntities(request);
 		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-		await page.goto('/');
+		await page.goto('/app');
 	});
 
 	test('empty state → create location → card appears', async ({ page }) => {
@@ -230,7 +230,7 @@ test.describe('World Map', () => {
 		await request.post('/api/relationships', {
 			data: { fromId: char.id, toId: loc.id, type: 'located_at' }
 		});
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="World Map"]');
 		const win = page.locator('.window[aria-label="World Map"]');
@@ -242,7 +242,7 @@ test.describe('World Map', () => {
 		await request.post('/api/entities', { data: { type: 'Location', name: 'Ashenveil' } });
 		await request.post('/api/entities', { data: { type: 'Location', name: 'The Citadel' } });
 		await request.post('/api/entities', { data: { type: 'Location', name: 'Duskport' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="World Map"]');
 		const win = page.locator('.window[aria-label="World Map"]');
