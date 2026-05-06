@@ -701,12 +701,115 @@ export const PRESTIGE: SeedStory = {
       toScene: 'Below the stage'
     },
 
-    // Locations
-    { character: 'London', fromAct: 'Act 1: The Pledge', toAct: 'Act 5: The Secret' },
-    { character: 'The Orpheum Theatre', fromAct: 'Act 2: The Turn', toAct: 'Act 4: The Prestige' },
-    { character: 'Colorado Springs', fromAct: 'Act 3: Obsession', toAct: 'Act 4: The Prestige' },
-    { character: "Tesla's Laboratory", fromAct: 'Act 3: Obsession', toAct: 'Act 4: The Prestige' },
-    { character: "Lord Caldlow's Estate", fromAct: 'Act 4: The Prestige', toAct: 'Act 5: The Secret' },
-    { character: 'Newgate Prison', fromAct: 'Act 5: The Secret', toAct: 'Act 5: The Secret' }
+    // Locations — scene-precise intervals based on takes_place_at relationships
+    // London
+    {
+      character: 'London',
+      fromAct: 'Act 1: The Pledge',
+      toAct: 'Act 1: The Pledge',
+      fromScene: 'Assistants at the water tank',
+      toScene: 'Blame and dismissal'
+    },
+    {
+      character: 'London',
+      fromAct: 'Act 2: The Turn',
+      toAct: 'Act 2: The Turn',
+      fromScene: 'The Great Danton is born',
+      toScene: 'The Professor takes the stage'
+    },
+    {
+      character: 'London',
+      fromAct: 'Act 2: The Turn',
+      toAct: 'Act 2: The Turn',
+      fromScene: "Sarah's question",
+      toScene: "Sarah's question"
+    },
+    {
+      character: 'London',
+      fromAct: 'Act 3: Obsession',
+      toAct: 'Act 3: Obsession',
+      fromScene: 'Olivia goes undercover',
+      toScene: "Sarah's last morning"
+    },
+    {
+      character: 'London',
+      fromAct: 'Act 5: The Secret',
+      toAct: 'Act 5: The Secret',
+      fromScene: 'The trial',
+      toScene: 'The trial'
+    },
+
+    // The Orpheum Theatre
+    {
+      character: 'The Orpheum Theatre',
+      fromAct: 'Act 2: The Turn',
+      toAct: 'Act 2: The Turn',
+      fromScene: 'The Transported Man',
+      toScene: 'The bullet catch'
+    },
+    {
+      character: 'The Orpheum Theatre',
+      fromAct: 'Act 3: Obsession',
+      toAct: 'Act 3: Obsession',
+      fromScene: 'Gerald Root fails the trick',
+      toScene: 'Gerald Root fails the trick'
+    },
+    {
+      character: 'The Orpheum Theatre',
+      fromAct: 'Act 4: The Prestige',
+      toAct: 'Act 4: The Prestige',
+      fromScene: 'The Real Transported Man',
+      toScene: 'Below the stage'
+    },
+
+    // Colorado Springs
+    {
+      character: 'Colorado Springs',
+      fromAct: 'Act 3: Obsession',
+      toAct: 'Act 3: Obsession',
+      fromScene: 'The journey to Colorado',
+      toScene: 'The journey to Colorado'
+    },
+
+    // Tesla's Laboratory
+    {
+      character: "Tesla's Laboratory",
+      fromAct: 'Act 4: The Prestige',
+      toAct: 'Act 4: The Prestige',
+      fromScene: 'Angier meets Tesla',
+      toScene: "Edison's men destroy the lab"
+    },
+
+    // Lord Caldlow's Estate
+    {
+      character: "Lord Caldlow's Estate",
+      fromAct: 'Act 5: The Secret',
+      toAct: 'Act 5: The Secret',
+      fromScene: 'Cutter takes Jess',
+      toScene: 'Cutter takes Jess'
+    },
+    {
+      character: "Lord Caldlow's Estate",
+      fromAct: 'Act 5: The Secret',
+      toAct: 'Act 5: The Secret',
+      fromScene: 'The vault',
+      toScene: 'The vault'
+    },
+
+    // Newgate Prison
+    {
+      character: 'Newgate Prison',
+      fromAct: 'Act 5: The Secret',
+      toAct: 'Act 5: The Secret',
+      fromScene: 'Lord Caldlow visits the cell',
+      toScene: 'Lord Caldlow visits the cell'
+    },
+    {
+      character: 'Newgate Prison',
+      fromAct: 'Act 5: The Secret',
+      toAct: 'Act 5: The Secret',
+      fromScene: 'The hanging',
+      toScene: 'The hanging'
+    }
   ]
 };
