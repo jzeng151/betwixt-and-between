@@ -352,11 +352,11 @@
 					class="avatar-lg"
 					class:avatar-lg-roled={!avatar && (role || iconEntry)}
 					style={!avatar && (role || iconEntry) ? `--rc:${roleColor(role)}` : ''}
-					onclick={triggerAvatarUpload}
-					title="Click to change avatar"
-					role="button"
-					tabindex="0"
-					onkeydown={(e) => e.key === 'Enter' && triggerAvatarUpload()}
+					onclick={!readOnly ? triggerAvatarUpload : undefined}
+					title={readOnly ? undefined : "Click to change avatar"}
+					role={readOnly ? undefined : "button"}
+					tabindex={readOnly ? -1 : 0}
+					onkeydown={(e) => !readOnly && e.key === 'Enter' && triggerAvatarUpload()}
 				>
 					{#if avatar}
 						<img src={avatar} alt={entity.name} class="avatar-lg-img" />
