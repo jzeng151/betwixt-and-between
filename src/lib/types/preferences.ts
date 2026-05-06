@@ -4,6 +4,15 @@ export interface Appearance {
 }
 
 /**
+ * Editor preferences. Owned by slice 7 of the wiki rework — the link
+ * preview pane below textareas can be globally disabled via Settings.
+ */
+export interface Editor {
+	/** Show resolved [[Name]] chips below textarea drafts in edit mode. */
+	linkPreviewEnabled: boolean;
+}
+
+/**
  * User preferences shape — the persisted root.
  *
  * Sub-branches add their own sections (appearance, hotkeys, entityDefaults,
@@ -20,13 +29,14 @@ export interface Preferences {
 	 */
 	schemaVersion: number;
 	appearance: Appearance;
+	editor: Editor;
 }
 
 /**
  * The current code's max-known version. Bump in lockstep with adding a
  * migration to MIGRATIONS in stores/preferences.ts.
  */
-export const PREFERENCES_CODE_MAX_VERSION: number = 2;
+export const PREFERENCES_CODE_MAX_VERSION: number = 3;
 
 /**
  * Built-in defaults. Sub-branches extend by deep-merge: their defaults compose
@@ -35,5 +45,6 @@ export const PREFERENCES_CODE_MAX_VERSION: number = 2;
  */
 export const PREFERENCES_DEFAULTS: Readonly<Preferences> = Object.freeze({
 	schemaVersion: PREFERENCES_CODE_MAX_VERSION,
-	appearance: { theme: 'dark' as const, accentColor: '#c8942a' }
+	appearance: { theme: 'dark' as const, accentColor: '#c8942a' },
+	editor: { linkPreviewEnabled: true }
 });

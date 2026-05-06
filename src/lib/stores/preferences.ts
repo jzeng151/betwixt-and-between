@@ -55,6 +55,14 @@ export const MIGRATIONS: Record<number, (old: unknown) => unknown> = {
 		schemaVersion: 2,
 		appearance: { theme: 'dark' as const, accentColor: '#c8942a' }
 	}),
+	3: (v2) => ({
+		...(v2 as object),
+		schemaVersion: 3,
+		// Slice 7: editor.linkPreviewEnabled controls the [[Name]] chip
+		// preview pane below textareas. Default true so existing users
+		// see the feature on first load after upgrade.
+		editor: { linkPreviewEnabled: true }
+	})
 };
 
 /** A subset of the Web Storage API — easy to stub in unit tests. */

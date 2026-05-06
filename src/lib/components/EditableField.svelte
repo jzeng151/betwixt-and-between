@@ -36,6 +36,7 @@
 		type EditableFieldHandle
 	} from '$lib/util/pending-commit.js';
 	import { parseWikiLinks } from '$lib/wiki-links.js';
+	import { preferences } from '$lib/stores/preferences.js';
 
 	type Kind =
 		| 'single-line'
@@ -190,7 +191,9 @@
 	// decorative chips below the textarea so the writer can confirm the
 	// link parsed (Pass 6: chips are not clickable; navigate via View
 	// mode). Suppressed below 480px viewport (mobile gating).
-	const effectiveShowLinkPreview = $derived(showLinkPreview ?? true);
+	const effectiveShowLinkPreview = $derived(
+		showLinkPreview ?? $preferences.editor.linkPreviewEnabled
+	);
 
 	let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1024);
 	$effect(() => {

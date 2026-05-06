@@ -1,10 +1,11 @@
 <script lang="ts">
   import { preferences, setPreference, getPreference } from '$lib/stores/preferences.js';
-  import type { Appearance } from '$lib/types/preferences.js';
+  import type { Appearance, Editor } from '$lib/types/preferences.js';
 
   let activeSection = $state<string>('appearance');
 
   let appearance = $state<Appearance>(getPreference('appearance') as Appearance);
+  let editor = $state<Editor>(getPreference('editor') as Editor);
 
   function applyTheme(theme: 'dark' | 'light') {
     if (typeof document !== 'undefined') {
@@ -29,6 +30,12 @@
     applyAccentColor(appearance.accentColor);
   });
 
+  // Editor preferences persist on change. No separate "apply" step —
+  // EditableField subscribes to the store directly.
+  $effect(() => {
+    setPreference('editor', { ...editor });
+  });
+
   // Apply on mount from saved prefs
   applyTheme(appearance.theme);
   applyAccentColor(appearance.accentColor);
@@ -42,6 +49,13 @@
       onclick={() => activeSection = 'appearance'}
     >
       Appearance
+    </button>
+    <button
+      class="sidebar-item"
+      class:active={activeSection === 'editor'}
+      onclick={() => activeSection = 'editor'}
+    >
+      Editor
     </button>
   </nav>
   <div class="panel">
@@ -82,6 +96,22 @@
           value={appearance.accentColor}
           oninput={(e) => appearance = { ...appearance, accentColor: (e.target as HTMLInputElement).value }}
         />
+      </div>
+    {:else if activeSection === 'editor'}
+      <h2>Editor</h2>
+
+      <div class="setting-group">
+        <label class="checkbox-row">
+          <input
+            type="checkbox"
+            checked={editor.linkPreviewEnabled}
+            onchange={(e) => editor = { ...editor, linkPreviewEnabled: (e.target as HTMLInputElement).checked }}
+          />
+          <span class="checkbox-label">Show link preview while editing</span>
+        </label>
+        <p class="setting-helper">
+          Live preview of [[entity]] mentions appears below the textarea as you type.
+        </p>
       </div>
     {/if}
   </div>
@@ -172,5 +202,32 @@
     border-radius: 4px;
     background: none;
     cursor: pointer;
+  }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    color: var(--color-text);
+  }
+
+  .checkbox-row input[type='checkbox'] {
+    accent-color: var(--color-accent);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+  }
+
+  .checkbox-label {
+    font-size: 13px;
+  }
+
+  .setting-helper {
+    margin: 6px 0 0 22px;
+    font-size: 11px;
+    color: var(--color-text-muted);
+    font-style: italic;
+    line-height: 1.4;
   }
 </style>
