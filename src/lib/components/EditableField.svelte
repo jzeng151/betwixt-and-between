@@ -30,6 +30,11 @@
 	import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
 	import WikiLinkText from './WikiLinkText.svelte';
 	import { setDraft, clearDraft } from '$lib/stores/editable-drafts.js';
+	import {
+		registerDirtyField,
+		unregisterDirtyField,
+		type EditableFieldHandle
+	} from '$lib/util/pending-commit.js';
 
 	type Kind =
 		| 'single-line'
@@ -114,6 +119,27 @@
 			clearDraft(entityId, field);
 		}
 		return () => clearDraft(entityId, field);
+	});
+
+	/* Pending-commit handle: lets EntityLink chip clicks (slice 7) drain
+	   in-flight textarea drafts BEFORE swapping EntityDetail context.
+	   Without this, the navigate-then-blur sequence commits AGAINST the
+	   wrong entity reference. The handle is stable across re-renders so
+	   the registry Set dedupes correctly. */
+	const fieldHandle: EditableFieldHandle = {
+		commitNow: async () => {
+			if (draft !== currentValue) await commitText();
+		}
+	};
+
+	$effect(() => {
+		const isDirty = focused && draft !== currentValue;
+		if (isDirty) {
+			registerDirtyField(fieldHandle);
+		} else {
+			unregisterDirtyField(fieldHandle);
+		}
+		return () => unregisterDirtyField(fieldHandle);
 	});
 
 	async function commitText() {
