@@ -134,10 +134,27 @@
 	   in-flight textarea drafts BEFORE swapping EntityDetail context.
 	   Without this, the navigate-then-blur sequence commits AGAINST the
 	   wrong entity reference. The handle is stable across re-renders so
-	   the registry Set dedupes correctly. */
+	   the registry Set dedupes correctly.
+
+	   Captures draft at call time to eliminate theoretical race where
+	   draft changes between the dirty check and commitText's local capture. */
 	const fieldHandle: EditableFieldHandle = {
 		commitNow: async () => {
-			if (draft !== currentValue) await commitText();
+			const valueToCommit = draft;
+			if (valueToCommit !== currentValue) {
+				const value = valueToCommit;
+				lastAttempt = value;
+				saveError = null;
+				const existing = entity ? (entity.data ?? {}) : {};
+				try {
+					await entities.updateEntity(entityId, {
+						data: { ...existing, [field]: value }
+					});
+					lastAttempt = null;
+				} catch (err) {
+					saveError = (err as Error).message || 'Save failed';
+				}
+			}
 		}
 	};
 
