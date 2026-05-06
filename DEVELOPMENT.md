@@ -52,6 +52,7 @@ column.
 ```sh
 npm run build
 npm run preview   # serve the production build on port 4173
+npm run cf:preview # build and serve through Wrangler
 ```
 
 ## Testing
@@ -109,5 +110,14 @@ Cloudflare deployments must provide `DATABASE_URL` as a Worker/Pages secret
 or binding. Do not expose it as `PUBLIC_DATABASE_URL`.
 
 The app intentionally avoids initializing the database at module import time:
-API handlers call `getDb(event.platform.env)` at request runtime. This keeps
-SvelteKit's postbuild analysis from requiring Cloudflare runtime secrets.
+API handlers call `withDb(event.platform.env, ...)` at request runtime. This
+keeps SvelteKit's postbuild analysis from requiring Cloudflare runtime secrets
+and closes request-scoped Neon pools after each handler.
+
+Cloudflare Worker deployment uses `@sveltejs/adapter-cloudflare` plus
+`wrangler.jsonc`. For a local bundle check without publishing:
+
+```sh
+npm run build
+npx wrangler deploy --dry-run --outdir /tmp/betwixt-wrangler-dry-run
+```
