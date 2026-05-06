@@ -1,10 +1,11 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { entityAliases, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ platform, url }) =>
+	withDb(platform?.env, async (db) => {
 	const primaryEntityId = url.searchParams.get('primaryEntityId');
 
 	const rows = primaryEntityId
@@ -12,9 +13,11 @@ export const GET: RequestHandler = async ({ url }) => {
 		: await db.select().from(entityAliases);
 
 	return json(rows);
-};
 
-export const POST: RequestHandler = async ({ request }) => {
+	});
+
+export const POST: RequestHandler = async ({ platform, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const { primaryEntityId, aliasEntityId, revealedAtPosition } = body;
 
@@ -70,4 +73,5 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 
 	return json(created, { status: 201 });
-};
+
+	});

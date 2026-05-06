@@ -1,16 +1,18 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { recomputeAllIntervals, recomputeIntervalsForAct } from '$lib/server/intervals.js';
 import { intervals as intervalsTable } from '$lib/server/db/schema.js';
 import { and, eq, gt, gte, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ params }) => {
+export const GET: RequestHandler = async ({ platform, params }) =>
+	withDb(platform?.env, async (db) => {
 	const [entity] = await db.select().from(entities).where(eq(entities.id, params.id));
 	if (!entity) error(404, 'Entity not found');
 	return json(entity);
-};
+
+	});
 
 /**
  * Patch an entity. Accepts `name`, `data`, `parentId`, `position`.
@@ -19,7 +21,8 @@ export const GET: RequestHandler = async ({ params }) => {
  * Scenes trigger a cross-act move via the moveSceneToAct primitive
  * (recompute both old and new parent acts).
  */
-export const PATCH: RequestHandler = async ({ params, request }) => {
+export const PATCH: RequestHandler = async ({ platform, params, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const { name, data, parentId, position } = body as {
 		name?: string;
@@ -127,7 +130,8 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	}
 
 	return json(updated);
-};
+
+	});
 
 /**
  * Delete an entity. For Acts, optionally accepts ?moveScenesTo=<actId>
@@ -138,7 +142,8 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
  * P2-3 fix: when reparenting, intervals' start_act_id / end_act_id are
  * updated for any interval anchored to a reparented scene.
  */
-export const DELETE: RequestHandler = async ({ params, url }) => {
+export const DELETE: RequestHandler = async ({ platform, params, url }) =>
+	withDb(platform?.env, async (db) => {
 	const [entity] = await db.select().from(entities).where(eq(entities.id, params.id));
 	if (!entity) error(404, 'Entity not found');
 
@@ -288,4 +293,5 @@ export const DELETE: RequestHandler = async ({ params, url }) => {
 	}
 
 	return new Response(null, { status: 204 });
-};
+
+	});

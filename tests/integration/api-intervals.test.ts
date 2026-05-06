@@ -12,9 +12,8 @@ import { entities, intervals } from '../../src/lib/server/db/schema.js';
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
-	get db() {
-		return currentDb;
-	}
+	getDb: async () => currentDb,
+	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
 }));
 
 const route = await import('../../src/routes/api/intervals/+server.js');

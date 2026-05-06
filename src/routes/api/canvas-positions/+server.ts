@@ -1,15 +1,18 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { canvasPositions, entities } from '$lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async () => {
+export const GET: RequestHandler = async ({ platform }) =>
+	withDb(platform?.env, async (db) => {
 	const rows = await db.select().from(canvasPositions);
 	return json(rows);
-};
 
-export const PUT: RequestHandler = async ({ request }) => {
+	});
+
+export const PUT: RequestHandler = async ({ platform, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const { entityId, x, y, width, height } = body;
 
@@ -39,4 +42,5 @@ export const PUT: RequestHandler = async ({ request }) => {
 		.returning();
 
 	return json(upserted);
-};
+
+	});

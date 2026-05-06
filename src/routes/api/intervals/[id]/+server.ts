@@ -1,17 +1,20 @@
 import { json, error } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
-import { db } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { intervals } from '$lib/server/db/schema.js';
 import { updateInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ params }) => {
+export const GET: RequestHandler = async ({ platform, params }) =>
+	withDb(platform?.env, async (db) => {
 	const [row] = await db.select().from(intervals).where(eq(intervals.id, params.id));
 	if (!row) error(404, 'Interval not found');
 	return json(row);
-};
 
-export const PATCH: RequestHandler = async ({ params, request }) => {
+	});
+
+export const PATCH: RequestHandler = async ({ platform, params, request }) =>
+	withDb(platform?.env, async (db) => {
 	const [existing] = await db.select().from(intervals).where(eq(intervals.id, params.id));
 	if (!existing) error(404, 'Interval not found');
 
@@ -50,12 +53,15 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	} catch (err) {
 		error(400, (err as Error).message);
 	}
-};
 
-export const DELETE: RequestHandler = async ({ params }) => {
+	});
+
+export const DELETE: RequestHandler = async ({ platform, params }) =>
+	withDb(platform?.env, async (db) => {
 	const [row] = await db.select().from(intervals).where(eq(intervals.id, params.id));
 	if (!row) error(404, 'Interval not found');
 
 	await db.delete(intervals).where(eq(intervals.id, params.id));
 	return new Response(null, { status: 204 });
-};
+
+	});

@@ -14,9 +14,8 @@ import { entities, relationships, entityAliases } from '../../src/lib/server/db/
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
-	get db() {
-		return currentDb;
-	}
+	getDb: async () => currentDb,
+	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
 }));
 
 const relRoute = await import('../../src/routes/api/relationships/+server.js');

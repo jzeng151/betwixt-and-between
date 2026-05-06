@@ -1,9 +1,10 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { splitInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
-export const POST: RequestHandler = async ({ params, request }) => {
+export const POST: RequestHandler = async ({ platform, params, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const atPosition = body.atPosition ?? body.at_position;
 	if (typeof atPosition !== 'number' || !Number.isFinite(atPosition)) {
@@ -22,4 +23,5 @@ export const POST: RequestHandler = async ({ params, request }) => {
 	} catch (err) {
 		error(400, (err as Error).message);
 	}
-};
+
+	});

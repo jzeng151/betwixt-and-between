@@ -1,11 +1,12 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { worldMaps, mapRegions } from '$lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
 
-export const POST: RequestHandler = async ({ params, request }) => {
+export const POST: RequestHandler = async ({ platform, params, request }) =>
+	withDb(platform?.env, async (db) => {
 	// Verify map exists
 	const [map] = await db.select().from(worldMaps).where(eq(worldMaps.id, params.id));
 	if (!map) error(404, 'Map not found');
@@ -40,4 +41,5 @@ export const POST: RequestHandler = async ({ params, request }) => {
 	} catch (err) {
 		error(400, (err as Error).message);
 	}
-};
+
+	});

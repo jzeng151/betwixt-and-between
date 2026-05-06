@@ -3,7 +3,7 @@
 ## Tech stack
 
 - [SvelteKit](https://kit.svelte.dev/) + TypeScript
-- [Drizzle ORM](https://orm.drizzle.team/) + Postgres (`postgres-js` driver against [Neon](https://neon.com))
+- [Drizzle ORM](https://orm.drizzle.team/) + Postgres (Neon serverless driver for Cloudflare runtime)
 - [PGlite](https://pglite.dev/) for in-process Postgres in tests (no Docker)
 - [marked](https://marked.js.org/) for Wiki markdown preview
 
@@ -26,6 +26,12 @@ npm run dev
 DATABASE_URL=postgres://user:pass@ep-xxxxx.region.aws.neon.tech/dbname
 ```
 
+For Cloudflare local runtime emulation, copy `.dev.vars.example` to
+`.dev.vars` and set the same Neon `DATABASE_URL`. Cloudflare Worker secrets
+are runtime bindings, so server code reads them from `event.platform.env`
+during requests rather than at module import/build time. Plain `npm run dev`
+continues to read `.env` through SvelteKit's private dynamic env fallback.
+
 ## Database
 
 ```sh
@@ -46,6 +52,7 @@ column.
 ```sh
 npm run build
 npm run preview   # serve the production build on port 4173
+npm run cf:preview # build and serve through Wrangler
 ```
 
 ## Testing
@@ -99,11 +106,18 @@ generation, CHECK constraint enforcement.
 
 ## Deploying
 
-The current build targets [Fly.io](https://fly.io) with `adapter-node`
-against a Neon Postgres database. CONSIDERATIONS.md → "[2026-05-01]"
-captures the locked deployment stack. Auth + deploy infra lands in T8b
-after Phase 1B graph features ship.
+Cloudflare deployments must provide `DATABASE_URL` as a Worker/Pages secret
+or binding. Do not expose it as `PUBLIC_DATABASE_URL`.
 
-Until T8b ships, `npm run dev` against a Neon dev branch is the
-deploy-ready path. The Postgres baseline is identical between dev and
-prod; only the URL changes.
+The app intentionally avoids initializing the database at module import time:
+API handlers call `withDb(event.platform.env, ...)` at request runtime. This
+keeps SvelteKit's postbuild analysis from requiring Cloudflare runtime secrets
+and closes request-scoped Neon pools after each handler.
+
+Cloudflare Worker deployment uses `@sveltejs/adapter-cloudflare` plus
+`wrangler.jsonc`. For a local bundle check without publishing:
+
+```sh
+npm run build
+npx wrangler deploy --dry-run --outdir /tmp/betwixt-wrangler-dry-run
+```

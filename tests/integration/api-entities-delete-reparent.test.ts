@@ -25,9 +25,8 @@ import { writeInterval } from '../../src/lib/server/intervals.js';
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
 vi.mock('$lib/server/db/index.js', () => ({
-	get db() {
-		return currentDb;
-	}
+	getDb: async () => currentDb,
+	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
 }));
 
 const idRoute = await import('../../src/routes/api/entities/[id]/+server.js');

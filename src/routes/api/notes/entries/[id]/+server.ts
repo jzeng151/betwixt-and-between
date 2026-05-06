@@ -1,10 +1,11 @@
 import { json, error } from '@sveltejs/kit';
-import { db } from '$lib/server/db/index.js';
+import { withDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, or, sql } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ params }) => {
+export const GET: RequestHandler = async ({ platform, params }) =>
+	withDb(platform?.env, async (db) => {
 	const [row] = await db
 		.select()
 		.from(entities)
@@ -20,9 +21,11 @@ export const GET: RequestHandler = async ({ params }) => {
 		);
 	if (!row) error(404, 'Entry not found');
 	return json(row);
-};
 
-export const PATCH: RequestHandler = async ({ params, request }) => {
+	});
+
+export const PATCH: RequestHandler = async ({ platform, params, request }) =>
+	withDb(platform?.env, async (db) => {
 	const body = await request.json();
 	const { name, body: noteBody, folderId } = body as {
 		name?: string;
@@ -63,9 +66,11 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 		.returning();
 
 	return json(updated);
-};
 
-export const DELETE: RequestHandler = async ({ params }) => {
+	});
+
+export const DELETE: RequestHandler = async ({ platform, params }) =>
+	withDb(platform?.env, async (db) => {
 	const [existing] = await db
 		.select({ id: entities.id })
 		.from(entities)
@@ -83,4 +88,5 @@ export const DELETE: RequestHandler = async ({ params }) => {
 
 	await db.delete(entities).where(eq(entities.id, params.id));
 	return json({ ok: true });
-};
+
+	});
