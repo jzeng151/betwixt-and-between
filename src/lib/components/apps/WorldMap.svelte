@@ -4,7 +4,6 @@
 	import { worldMapStore, worldMaps, mapRegions } from '$lib/stores/world-map.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/stores/scope.js';
-	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
 	import { windowStore } from '$lib/stores/windows.js';
 
 	type LeafletNS = typeof import('leaflet');
@@ -13,7 +12,7 @@
 
 	let mapContainer: HTMLDivElement = $state(null!);
 	let leafletMap: any = $state(null);
-	let imageOverlay: any = null;
+	let imageOverlay: any = $state(null);
 	let regionLayers: any[] = [];
 	let drawnItems: any = null;
 	let L: LeafletNS = $state(null as any);
@@ -24,10 +23,7 @@
 	let pendingPolygon: number[][] | null = $state(null);
 	let regionFormLocationId = $state<string | null>(null);
 	let regionFormColor = $state('#e8a838');
-	let regionFormSceneIds = $state<Set<string>>(new Set());
 	let uploadError = $state<string | null>(null);
-	let editingRegionId: string | null = $state(null);
-	let editingOriginalLocationId: string | null = $state(null);
 	let mapReady = $state(false);
 
 	// Computed — $worldMaps / $mapRegions / $entities / $isInScope are Svelte store subscriptions
@@ -35,38 +31,8 @@
 	let locations = $derived($entities.filter((e) => e.type === 'Location'));
 	let hasMaps = $derived($worldMaps.length > 0);
 	let hasImage = $derived(activeMap?.baseImageUrl != null && activeMap.width != null && activeMap.height != null);
-	let acts = $derived(
-		$entities
-			.filter((e) => e.type === 'Act')
-			.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-	);
-	let scenesByAct = $derived.by(() => {
-		const map = new Map<string, typeof $entities[0][]>();
-		for (const act of acts) {
-			const scenes = $entities
-				.filter((e) => e.type === 'Scene' && e.parentId === act.id)
-				.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-			map.set(act.id, scenes);
-		}
-		return map;
-	});
 
 	// Resolve CSS custom properties to actual color values for Leaflet
-		// Pre-fill scene checkboxes from existing intervals when location changes
-		$effect(() => {
-			const locId = regionFormLocationId;
-			if (!locId) {
-				regionFormSceneIds = new Set();
-				return;
-			}
-			const sceneIds = new Set<string>();
-			for (const iv of $intervalsStore.filter((i) => i.entityId === locId)) {
-				for (const sid of scenesInInterval(iv)) {
-					sceneIds.add(sid);
-				}
-			}
-			regionFormSceneIds = sceneIds;
-		});
 	let accentColor = '#e8a838';
 	let borderColor = '#555';
 
@@ -81,7 +47,6 @@
 
 	onMount(() => {
 		worldMapStore.loadMaps();
-		intervalsStore.load();
 
 		(async () => {
 			// Dynamic-import Leaflet (browser-only)
@@ -139,33 +104,6 @@
 			const latLngs = layer.getLatLngs()[0].map((ll: any) => [ll.lat, ll.lng]);
 			pendingPolygon = latLngs;
 			showRegionForm = true;
-		});
-
-		leafletMap.on('popupopen', (e: any) => {
-			const popupEl = e.popup.getElement();
-			if (!popupEl) return;
-			const editBtn = popupEl.querySelector('[data-action="edit"]');
-			const deleteBtn = popupEl.querySelector('[data-action="delete"]');
-			const nameEl = popupEl.querySelector('.region-popup-name');
-			if (editBtn) {
-				editBtn.addEventListener('click', () => {
-					startEditRegion((editBtn as HTMLElement).dataset.regionId!);
-					leafletMap.closePopup();
-				});
-			}
-			if (deleteBtn) {
-				deleteBtn.addEventListener('click', () => {
-					handleDeleteRegion((deleteBtn as HTMLElement).dataset.regionId!);
-					leafletMap.closePopup();
-				});
-			}
-			if (nameEl) {
-				nameEl.addEventListener('click', () => {
-					const locId = (nameEl as HTMLElement).dataset.locationId;
-					if (locId) windowStore.open('entity-detail', locId);
-					leafletMap.closePopup();
-				});
-			}
 		});
 
 		// Set initial view
@@ -227,14 +165,17 @@
 				className: isActive ? 'region-active' : 'region-inactive'
 			}).addTo(leafletMap!);
 
-			// Tooltip and popup with location info
-			const loc = region.locationId
-				? $entities.find((e) => e.id === region.locationId)
-				: null;
-			if (loc) layer.bindTooltip(loc.name, { sticky: true });
-			layer.bindPopup(buildRegionPopup(region, loc?.name ?? null), {
-				closeButton: false,
-				minWidth: 140
+			// Tooltip with linked location name
+			if (region.locationId) {
+				const loc = $entities.find((e) => e.id === region.locationId);
+				if (loc) layer.bindTooltip(loc.name, { sticky: true });
+			}
+
+			// Click to open linked location
+			layer.on('click', () => {
+				if (region.locationId) {
+					windowStore.open('entity-detail', region.locationId);
+				}
 			});
 
 			regionLayers.push(layer);
@@ -258,118 +199,6 @@
 			}
 		}
 	});
-
-	// ── Scene scope helpers ──────────────────────────────────────────────────
-
-	function toggleScene(sceneId: string) {
-		const next = new Set(regionFormSceneIds);
-		if (next.has(sceneId)) next.delete(sceneId);
-		else next.add(sceneId);
-		regionFormSceneIds = next;
-	}
-
-	type SceneRange = { startActId: string; startSceneId: string; endActId: string; endSceneId: string };
-
-	function coalesceToRanges(
-		selectedSceneIds: Set<string>,
-		scenesByAct: Map<string, typeof $entities[0][]>
-	): SceneRange[] {
-		const ranges: SceneRange[] = [];
-		for (const [actId, scenes] of scenesByAct) {
-			const selected = scenes.filter((s) => selectedSceneIds.has(s.id));
-			if (selected.length === 0) continue;
-			let runStart = selected[0];
-			let runEnd = selected[0];
-			for (let i = 1; i < selected.length; i++) {
-				const prevIdx = scenes.indexOf(runEnd);
-				const currIdx = scenes.indexOf(selected[i]);
-				if (currIdx === prevIdx + 1) {
-					runEnd = selected[i];
-				} else {
-					ranges.push({
-						startActId: actId, startSceneId: runStart.id,
-						endActId: actId, endSceneId: runEnd.id
-					});
-					runStart = selected[i];
-					runEnd = selected[i];
-				}
-			}
-			ranges.push({
-				startActId: actId, startSceneId: runStart.id,
-				endActId: actId, endSceneId: runEnd.id
-			});
-		}
-		return ranges;
-	}
-
-	function scenesInInterval(iv: typeof $intervalsStore[0]): string[] {
-		if (!iv.startSceneId || !iv.endSceneId || iv.startActId !== iv.endActId) return [];
-		const scenes = scenesByAct.get(iv.startActId) ?? [];
-		const startIdx = scenes.findIndex((s) => s.id === iv.startSceneId);
-		const endIdx = scenes.findIndex((s) => s.id === iv.endSceneId);
-		if (startIdx < 0 || endIdx < 0) return [];
-		const lo = Math.min(startIdx, endIdx);
-		const hi = Math.max(startIdx, endIdx);
-		return scenes.slice(lo, hi + 1).map((s) => s.id);
-	}
-
-	function buildRegionPopup(region: typeof $mapRegions[0], locName: string | null): string {
-		const locHtml = locName && region.locationId
-			? `<button class="region-popup-name" data-location-id="${region.locationId}">${locName}</button>`
-			: '<span class="region-popup-name">Unlinked region</span>';
-		return `<div class="region-popup">${locHtml}<div class="region-popup-actions"><button class="region-popup-btn" data-action="edit" data-region-id="${region.id}">Edit</button><button class="region-popup-btn region-popup-btn-danger" data-action="delete" data-region-id="${region.id}">Delete</button></div></div>`;
-	}
-
-	function startEditRegion(regionId: string) {
-		const region = $mapRegions.find((r) => r.id === regionId);
-		if (!region || !activeMapId) return;
-		editingRegionId = regionId;
-		editingOriginalLocationId = region.locationId;
-		regionFormLocationId = region.locationId;
-		regionFormColor = region.color ?? '#e8a838';
-		const sceneIds = new Set<string>();
-		if (region.locationId) {
-			for (const iv of $intervalsStore.filter((i) => i.entityId === region.locationId)) {
-				for (const sid of scenesInInterval(iv)) {
-					sceneIds.add(sid);
-				}
-			}
-		}
-		regionFormSceneIds = sceneIds;
-		showRegionForm = true;
-	}
-
-	async function handleDeleteRegion(regionId: string) {
-		if (!activeMapId) return;
-		const region = $mapRegions.find((r) => r.id === regionId);
-		try {
-			await worldMapStore.deleteRegion(activeMapId, regionId);
-		} catch (err) {
-			console.error('Failed to delete region:', err);
-		}
-		if (region?.locationId) {
-			const otherRegions = $mapRegions.filter(
-				(r) => r.locationId === region.locationId && r.id !== regionId
-			);
-			if (otherRegions.length === 0) {
-				for (const iv of $intervalsStore.filter((i) => i.entityId === region.locationId)) {
-					try { await intervalsStore.deleteInterval(iv.id); } catch {}
-				}
-			}
-		}
-		if (editingRegionId === regionId) resetRegionForm();
-	}
-
-	function resetRegionForm() {
-		showRegionForm = false;
-		pendingPolygon = null;
-		regionFormLocationId = null;
-		regionFormColor = '#e8a838';
-		regionFormSceneIds = new Set();
-		editingRegionId = null;
-		editingOriginalLocationId = null;
-		drawnItems.clearLayers();
-	}
 
 	// ── Actions ────────────────────────────────────────────────────────────
 
@@ -408,74 +237,28 @@
 	}
 
 	async function handleSaveRegion() {
-		if (!activeMapId) return;
-		if (!editingRegionId && !pendingPolygon) return;
-			// Snapshot form state before any async work — the pre-fill $effect
-			// re-fires when deletes update $intervalsStore and can clear sceneIds.
-			const saveLocationId = regionFormLocationId;
-			const saveSceneIds = new Set(regionFormSceneIds);
-			const saveColor = regionFormColor;
-			const saveEditingId = editingRegionId;
-			const saveOrigLocId = editingOriginalLocationId;
-			const savePolygon = pendingPolygon;
-
-
-		if (editingRegionId) {
-			try {
-				await worldMapStore.updateRegion(activeMapId, editingRegionId, {
-					locationId: regionFormLocationId,
-					color: regionFormColor
-				});
-			} catch (err) {
-				console.error('Failed to update region:', err);
-			}
-			// Clean up old location intervals if location changed
-			if (editingOriginalLocationId && editingOriginalLocationId !== regionFormLocationId) {
-				await Promise.all(
-					$intervalsStore
-						.filter((i) => i.entityId === editingOriginalLocationId)
-						.map((iv) => intervalsStore.deleteInterval(iv.id).catch(() => {}))
-				);
-			}
-		} else {
-			try {
-				await worldMapStore.createRegion(activeMapId, {
-					locationId: regionFormLocationId,
-					polygon: pendingPolygon!,
-					color: regionFormColor
-				});
-			} catch (err) {
-				console.error('Failed to create region:', err);
-			}
+		if (!activeMapId || !pendingPolygon) return;
+		try {
+			await worldMapStore.createRegion(activeMapId, {
+				locationId: regionFormLocationId,
+				polygon: pendingPolygon,
+				color: regionFormColor
+			});
+		} catch (err) {
+			// Self-intersecting or other error — the toast can show this
+			console.error('Failed to create region:', err);
 		}
-
-		// Write intervals for the selected location
-		if (saveLocationId && saveSceneIds.size > 0) {
-			// Clear existing intervals for this location first (both create and edit)
-			await Promise.all(
-				$intervalsStore
-					.filter((i) => i.entityId === saveLocationId)
-					.map((iv) => intervalsStore.deleteInterval(iv.id))
-			);
-				const ranges = coalesceToRanges(saveSceneIds, scenesByAct);
-			await Promise.all(
-				ranges.map((range) =>
-					intervalsStore.createInterval({
-						entityId: saveLocationId,
-						startActId: range.startActId,
-						startSceneId: range.startSceneId,
-						endActId: range.endActId,
-						endSceneId: range.endSceneId
-					}).catch((err) => { console.error('Failed to create interval:', err); })
-				)
-			);
-		}
-
-		resetRegionForm();
+		showRegionForm = false;
+		pendingPolygon = null;
+		regionFormLocationId = null;
+		regionFormColor = '#e8a838';
+		drawnItems.clearLayers();
 	}
 
 	function handleCancelRegion() {
-		resetRegionForm();
+		showRegionForm = false;
+		pendingPolygon = null;
+		drawnItems.clearLayers();
 	}
 
 	async function handleRenameMap(e: Event) {
@@ -556,7 +339,7 @@
 {#if showRegionForm}
 	<div class="modal-overlay" role="dialog" aria-modal="true">
 		<div class="modal-content">
-			<h3>{editingRegionId ? "Edit Region" : "New Region"}</h3>
+			<h3>New Region</h3>
 
 			<label>
 				Linked Location
@@ -583,33 +366,6 @@
 				</div>
 			</label>
 
-			{#if regionFormLocationId}
-				<label>
-					Active during
-					<div class="scene-tree">
-						{#each acts as act}
-							{@const scenes = scenesByAct.get(act.id) ?? []}
-							{#if scenes.length > 0}
-								<div class="act-group">
-									<div class="act-label">{act.name}</div>
-									{#each scenes as scene}
-										<label class="scene-check">
-											<input type="checkbox"
-												checked={regionFormSceneIds.has(scene.id)}
-												onchange={() => toggleScene(scene.id)} />
-											{scene.name}
-										</label>
-									{/each}
-								</div>
-							{/if}
-						{/each}
-						{#if acts.length === 0 || acts.every((a) => (scenesByAct.get(a.id) ?? []).length === 0)}
-							<span class="hint">Create acts and scenes in the Timeline first.</span>
-						{/if}
-					</div>
-				</label>
-			{/if}
-
 			<div class="modal-actions">
 				<button class="btn-secondary" onclick={handleCancelRegion}>Cancel</button>
 				<button class="btn-primary" onclick={handleSaveRegion}>Save Region</button>
@@ -630,22 +386,19 @@
 	.map-toolbar {
 		position: absolute;
 		top: 8px;
-		left: 60px;
+		left: 8px;
 		z-index: 1000;
 		display: flex;
 		gap: 4px;
 		align-items: center;
-		background: color-mix(in srgb, var(--color-surface) 92%, transparent);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
+		background: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		padding: 4px 8px;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 	}
 
 	.map-switcher {
-		background: var(--color-surface);
+		background: var(--color-bg);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 		border-radius: 4px;
@@ -711,19 +464,6 @@
 		align-items: center;
 		justify-content: center;
 		gap: 12px;
-		background: color-mix(in srgb, var(--color-surface) 85%, transparent);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
-		border-radius: 8px;
-		margin: 48px 16px 16px;
-		padding: 32px;
-		border: 1px solid var(--color-border);
-		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
-	}
-
-	.upload-area p {
-		color: var(--color-text);
-		font-size: 15px;
 	}
 
 	.upload-btn {
@@ -770,16 +510,13 @@
 		left: 50%;
 		transform: translateX(-50%);
 		z-index: 1000;
-		background: color-mix(in srgb, var(--color-surface) 92%, transparent);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
+		background: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		padding: 6px 12px;
 		font-size: 13px;
 		color: var(--color-text-muted);
 		pointer-events: none;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 	}
 
 	/* Modal */
@@ -794,7 +531,7 @@
 	}
 
 	.modal-content {
-		background: var(--color-surface);
+		background: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		padding: 20px;
@@ -817,7 +554,7 @@
 	}
 
 	.modal-content select {
-		background: var(--color-surface);
+		background: var(--color-bg);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 		border-radius: 4px;
@@ -848,86 +585,10 @@
 		justify-content: flex-end;
 		margin-top: 4px;
 	}
-.scene-tree {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		max-height: 200px;
-		overflow-y: auto;
-	}
-
-	.act-group {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.act-label {
-		font-weight: 600;
-		font-size: 12px;
-		color: var(--color-text);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		margin-top: 4px;
-	}
-
-	.scene-check {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 13px;
-		color: var(--color-text);
-		padding-left: 12px;
-		cursor: pointer;
-	}
 
 	/* Scope transition on Leaflet SVG paths */
 	:global(.region-active),
 	:global(.region-inactive) {
 		transition: opacity 200ms ease-in-out;
-	}
-
-	:global(.region-popup) {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		font-family: inherit;
-		font-size: 13px;
-	}
-	:global(.region-popup-name) {
-		background: none;
-		border: none;
-		color: var(--color-accent, #e8a838);
-		cursor: pointer;
-		font-size: 13px;
-		padding: 0;
-		text-align: left;
-		font-weight: 600;
-	}
-	:global(.region-popup-name:hover) {
-		text-decoration: underline;
-	}
-	:global(.region-popup-actions) {
-		display: flex;
-		gap: 6px;
-	}
-	:global(.region-popup-btn) {
-		background: var(--color-surface, #fff);
-		border: 1px solid var(--color-border, #555);
-		border-radius: 4px;
-		padding: 3px 10px;
-		font-size: 12px;
-		cursor: pointer;
-		color: var(--color-text, #222);
-	}
-	:global(.region-popup-btn:hover) {
-		background: var(--color-border, #eee);
-	}
-	:global(.region-popup-btn-danger) {
-		color: #c0392b;
-	}
-	:global(.region-popup-btn-danger:hover) {
-		background: #c0392b;
-		color: #fff;
 	}
 </style>

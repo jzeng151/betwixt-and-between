@@ -419,25 +419,7 @@ export async function writeInterval(
 	input: WriteIntervalInput
 ): Promise<typeof intervals.$inferSelect> {
 	await validateFKTypes(db, input);
-
-	// Normalize: ensure startSceneId points to the lower-index scene.
-	// Client may send scenes in visual order rather than story-time (createdAt) order.
-	const normalized = { ...input };
-	if (
-		normalized.startActId === normalized.endActId &&
-		normalized.startSceneId &&
-		normalized.endSceneId &&
-		normalized.startSceneId !== normalized.endSceneId
-	) {
-		const startInfo = await sceneIndexOf(db, normalized.startSceneId);
-		const endInfo = await sceneIndexOf(db, normalized.endSceneId);
-		if (startInfo.sceneIndex > endInfo.sceneIndex) {
-			normalized.startSceneId = input.endSceneId;
-			normalized.endSceneId = input.startSceneId;
-		}
-	}
-
-	const derived = await computeIntervalPositions(db, normalized);
+	const derived = await computeIntervalPositions(db, input);
 
 	if (input.startPosition !== undefined) {
 		if (Math.abs(input.startPosition - derived.startPosition) > POSITION_EPSILON) {
@@ -456,16 +438,16 @@ export async function writeInterval(
 
 	/* Same-entity overlap rejection (CONSIDERATIONS.md → /plan-eng-review item 1.2,
 	   locked 2026-04-28). Must run after position derivation, before the insert. */
-	await assertNoOverlap(db, normalized.entityId, derived.startPosition, derived.endPosition);
+	await assertNoOverlap(db, input.entityId, derived.startPosition, derived.endPosition);
 
 	const [created] = await db
 		.insert(intervals)
 		.values({
-			entityId: normalized.entityId,
-			startActId: normalized.startActId,
-			startSceneId: normalized.startSceneId ?? null,
-			endActId: normalized.endActId,
-			endSceneId: normalized.endSceneId ?? null,
+			entityId: input.entityId,
+			startActId: input.startActId,
+			startSceneId: input.startSceneId ?? null,
+			endActId: input.endActId,
+			endSceneId: input.endSceneId ?? null,
 			startPosition: derived.startPosition,
 			endPosition: derived.endPosition
 		})
