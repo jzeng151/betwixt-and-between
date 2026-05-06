@@ -77,3 +77,22 @@ export async function seedActs(db: TestDb) {
 		.returning();
 	return { act0: act0.id, act1: act1.id, act2: act2.id };
 }
+
+/** Seed a test user row for auth-gated integration tests. Returns user fields for mkEvent. */
+export async function seedTestUser(
+	db: TestDb,
+	overrides?: { id?: string; email?: string; name?: string },
+) {
+	const { user } = await import('../../src/lib/server/db/schema.js');
+	const id = overrides?.id ?? crypto.randomUUID();
+	const [row] = await db
+		.insert(user)
+		.values({
+			id,
+			name: overrides?.name ?? 'Test User',
+			email: overrides?.email ?? `test-${id.slice(0, 8)}@test.com`,
+			emailVerified: true,
+		})
+		.returning();
+	return { id: row.id, name: row.name, email: row.email };
+}

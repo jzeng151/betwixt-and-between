@@ -29,6 +29,20 @@
       "when": 1746468000000,
       "tag": "0003_world_maps",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778086493885,
+      "tag": "0004_auth_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778086900000,
+      "tag": "0005_multi_user_columns",
+      "breakpoints": true
     }
   ]
 }

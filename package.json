@@ -49,6 +49,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
+    "better-auth": "^1.6.9",
     "dagre": "^0.8.5",
     "leaflet": "^1.9.4",
     "leaflet-draw": "^1.0.4",
