@@ -27,8 +27,8 @@ describe('Preferences appearance', () => {
 		});
 	});
 
-	it('code max version is 2', () => {
-		expect(PREFERENCES_CODE_MAX_VERSION).toBe(2);
+	it('code max version is 3', () => {
+		expect(PREFERENCES_CODE_MAX_VERSION).toBe(3);
 	});
 
 	it('migration #2 adds appearance to v1 payloads', () => {
@@ -45,6 +45,32 @@ describe('Preferences appearance', () => {
 		const v1 = { schemaVersion: 1, extra: 'data' };
 		const migrated = MIGRATIONS[2](v1) as Record<string, unknown>;
 		expect(migrated.extra).toBe('data');
+	});
+
+	it('migration #3 adds editor.linkPreviewEnabled defaulting to true', () => {
+		const v2 = { schemaVersion: 2, appearance: { theme: 'dark', accentColor: '#c8942a' } };
+		const migrated = MIGRATIONS[3](v2) as {
+			schemaVersion: number;
+			editor: { linkPreviewEnabled: boolean };
+		};
+		expect(migrated.schemaVersion).toBe(3);
+		expect(migrated.editor).toEqual({ linkPreviewEnabled: true });
+	});
+
+	it('migration #3 preserves existing keys (appearance, schemaVersion bump)', () => {
+		const v2 = {
+			schemaVersion: 2,
+			appearance: { theme: 'light' as const, accentColor: '#aabbcc' },
+			extra: 'kept'
+		};
+		const migrated = MIGRATIONS[3](v2) as Record<string, unknown>;
+		expect((migrated.appearance as { theme: string }).theme).toBe('light');
+		expect((migrated.appearance as { accentColor: string }).accentColor).toBe('#aabbcc');
+		expect(migrated.extra).toBe('kept');
+	});
+
+	it('defaults include editor.linkPreviewEnabled = true', () => {
+		expect(PREFERENCES_DEFAULTS.editor).toEqual({ linkPreviewEnabled: true });
 	});
 
 	it('updating appearance via preferences store works', () => {

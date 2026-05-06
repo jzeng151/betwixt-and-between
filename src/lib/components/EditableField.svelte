@@ -30,6 +30,13 @@
 	import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
 	import WikiLinkText from './WikiLinkText.svelte';
 	import { setDraft, clearDraft } from '$lib/stores/editable-drafts.js';
+	import {
+		registerDirtyField,
+		unregisterDirtyField,
+		type EditableFieldHandle
+	} from '$lib/util/pending-commit.js';
+	import { parseWikiLinks } from '$lib/wiki-links.js';
+	import { preferences } from '$lib/stores/preferences.js';
 
 	type Kind =
 		| 'single-line'
@@ -51,7 +58,11 @@
 	interface Props {
 		entityId: string;
 		field: string;
-		label: string;
+		/** Field label rendered above the input. Pass an empty string to
+		 *  skip the label header entirely — used when the surrounding
+		 *  context already names the field (e.g. NotesSection's
+		 *  disclosure summary makes "Body" redundant). */
+		label?: string;
 		kind: Kind;
 		placeholder?: string;
 		rows?: number;
@@ -65,12 +76,18 @@
 		/** When true, render the field as read-only text instead of inputs.
 		 *  Used by EntityDetail's view mode. */
 		readOnly?: boolean;
+		/** Render a decorative chip preview below the textarea showing
+		 *  resolved [[Name]] markers as the user types. textarea-kind only.
+		 *  Undefined defaults to true (will derive from preferences once
+		 *  slice 7 commit 5 lands). Suppressed below 480px viewport
+		 *  regardless. */
+		showLinkPreview?: boolean;
 	}
 
 	const {
 		entityId,
 		field,
-		label,
+		label = '',
 		kind,
 		placeholder = '',
 		rows = 4,
@@ -79,7 +96,8 @@
 		relationshipType,
 		targetEntityType,
 		currentIds = undefined,
-		readOnly = false
+		readOnly = false,
+		showLinkPreview
 	}: Props = $props();
 
 	const entity = $derived(($entities as Entity[]).find((e) => e.id === entityId));
@@ -110,6 +128,44 @@
 			clearDraft(entityId, field);
 		}
 		return () => clearDraft(entityId, field);
+	});
+
+	/* Pending-commit handle: lets EntityLink chip clicks (slice 7) drain
+	   in-flight textarea drafts BEFORE swapping EntityDetail context.
+	   Without this, the navigate-then-blur sequence commits AGAINST the
+	   wrong entity reference. The handle is stable across re-renders so
+	   the registry Set dedupes correctly.
+
+	   Captures draft at call time to eliminate theoretical race where
+	   draft changes between the dirty check and commitText's local capture. */
+	const fieldHandle: EditableFieldHandle = {
+		commitNow: async () => {
+			const valueToCommit = draft;
+			if (valueToCommit !== currentValue) {
+				const value = valueToCommit;
+				lastAttempt = value;
+				saveError = null;
+				const existing = entity ? (entity.data ?? {}) : {};
+				try {
+					await entities.updateEntity(entityId, {
+						data: { ...existing, [field]: value }
+					});
+					lastAttempt = null;
+				} catch (err) {
+					saveError = (err as Error).message || 'Save failed';
+				}
+			}
+		}
+	};
+
+	$effect(() => {
+		const isDirty = focused && draft !== currentValue;
+		if (isDirty) {
+			registerDirtyField(fieldHandle);
+		} else {
+			unregisterDirtyField(fieldHandle);
+		}
+		return () => unregisterDirtyField(fieldHandle);
 	});
 
 	async function commitText() {
@@ -145,6 +201,66 @@
 	function onTextBlur() {
 		focused = false;
 		if (draft !== currentValue) commitText();
+	}
+
+	// ── Edit-mode preview pane ────────────────────────────────────────
+	// When the textarea draft contains resolved [[Name]] markers, show
+	// decorative chips below the textarea so the writer can confirm the
+	// link parsed (Pass 6: chips are not clickable; navigate via View
+	// mode). Suppressed below 480px viewport (mobile gating).
+	const effectiveShowLinkPreview = $derived(
+		showLinkPreview ?? $preferences.editor.linkPreviewEnabled
+	);
+
+	let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1024);
+	$effect(() => {
+		if (typeof window === 'undefined') return;
+		const onResize = () => (viewportWidth = window.innerWidth);
+		window.addEventListener('resize', onResize);
+		return () => window.removeEventListener('resize', onResize);
+	});
+	const isMobile = $derived(viewportWidth < 480);
+
+	// Debounced parse — for short bodies the parse is cheap enough to run
+	// synchronously on every keystroke; for long bodies we coalesce via
+	// 100ms timeout so typing doesn't lag.
+	let debouncedDraft = $state('');
+	$effect(() => {
+		if (draft.length < 100) {
+			debouncedDraft = draft;
+			return;
+		}
+		const id = setTimeout(() => {
+			debouncedDraft = draft;
+		}, 100);
+		return () => clearTimeout(id);
+	});
+
+	const previewPool = $derived(
+		($entities as Entity[]).map((e) => ({ id: e.id, name: e.name, type: e.type }))
+	);
+	const previewSegments = $derived(
+		!readOnly && kind === 'textarea' && effectiveShowLinkPreview && !isMobile
+			? parseWikiLinks(debouncedDraft, previewPool)
+			: []
+	);
+	const previewLinks = $derived(
+		previewSegments.flatMap((s) =>
+			s.kind === 'link' && s.entity ? [{ entity: s.entity, name: s.name }] : []
+		)
+	);
+	const hasResolvedLinks = $derived(previewLinks.length > 0);
+
+	const REL_COLOR_MAP: Record<string, string> = {
+		Character: 'var(--color-rel-arc)',
+		Location: 'var(--color-rel-loc)',
+		Event: 'var(--color-rel-event)',
+		Scene: 'var(--color-rel-event)',
+		Act: 'var(--color-rel-arc)',
+		Note: 'var(--color-rel-other)'
+	};
+	function previewChipColor(type: string): string {
+		return REL_COLOR_MAP[type] ?? 'var(--color-rel-other)';
 	}
 
 	function onTextKeydown(e: KeyboardEvent, allowEnter: boolean) {
@@ -227,9 +343,11 @@
 </script>
 
 <div class="field-row" data-field={field} class:readonly={readOnly}>
-	<div class="field-header">
-		<span class="field-label">{label}</span>
-	</div>
+	{#if label}
+		<div class="field-header">
+			<span class="field-label">{label}</span>
+		</div>
+	{/if}
 
 	{#if readOnly}
 		{#if kind === 'multi-entity-picker'}
@@ -273,6 +391,21 @@
 			onblur={onTextBlur}
 			onkeydown={(e) => onTextKeydown(e, false)}
 		></textarea>
+		{#if hasResolvedLinks}
+			<div
+				class="wiki-link-preview"
+				role="status"
+				aria-live="polite"
+				aria-label="Linked entities in this body"
+			>
+				{#each previewLinks as { entity, name }, i (`${entity.id}-${i}`)}
+					<span
+						class="entity-chip preview-chip"
+						style="--chip-color: {previewChipColor(entity.type)}"
+					>{name}</span>
+				{/each}
+			</div>
+		{/if}
 	{:else if kind === 'single-line'}
 		<input
 			type="text"
@@ -422,6 +555,24 @@
 	.field-input:focus,
 	.field-textarea:focus {
 		border-color: var(--color-accent, #c8942a);
+	}
+
+	/* Edit-mode link preview pane (slice 7 commit 4). Subtle inline
+	   treatment per /plan-design-review Pass 5: same surface as the
+	   textarea, no border, just enough padding to separate visually.
+	   Chips are decorative spans (Pass 6) — no click handler, no focus
+	   ring, no hover state beyond the existing entity-chip tokens.
+	   Suppressed below 480px viewport in JS (mobile gating). */
+	.wiki-link-preview {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-top: 8px;
+		padding: 6px 8px;
+		background: var(--color-surface-2, #1c1f28);
+	}
+	.preview-chip {
+		cursor: default;
 	}
 	.swatch-row {
 		display: flex;

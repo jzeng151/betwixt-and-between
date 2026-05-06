@@ -42,22 +42,22 @@ describe('openEntity', () => {
 		entitiesWritable.set([]);
 	});
 
-	it('routes Character → character-editor window', () => {
+	it('routes Character → entity-detail window', () => {
 		entitiesWritable.set([makeEntity('e1', 'Character', 'Elara')]);
 		openEntity('e1');
 		const wins = get(windowStore);
 		expect(wins).toHaveLength(1);
-		expect(wins[0].appId).toBe('character-editor');
-		expect(wins[0].id).toBe('character-editor-e1');
+		expect(wins[0].appId).toBe('entity-detail');
+		expect(wins[0].id).toBe('entity-detail-e1');
 	});
 
-	it('routes Location → world-map window', () => {
+	it('routes Location → entity-detail window', () => {
 		entitiesWritable.set([makeEntity('loc1', 'Location', 'Castle')]);
 		openEntity('loc1');
 		const wins = get(windowStore);
 		expect(wins).toHaveLength(1);
-		expect(wins[0].appId).toBe('world-map');
-		expect(wins[0].id).toBe('world-map-loc1');
+		expect(wins[0].appId).toBe('entity-detail');
+		expect(wins[0].id).toBe('entity-detail-loc1');
 	});
 
 	it('routes Event → entity-detail window (post D10-extension/19A)', () => {
@@ -109,7 +109,7 @@ describe('openEntity', () => {
 		openEntity('e1');
 		const wins = get(windowStore);
 		expect(wins).toHaveLength(1);
-		expect(wins[0].id).toBe('character-editor-e1');
+		expect(wins[0].id).toBe('entity-detail-e1');
 	});
 
 	it('second openEntity call focuses the existing window (raises zIndex)', () => {
@@ -119,15 +119,15 @@ describe('openEntity', () => {
 		]);
 		openEntity('e1');
 		openEntity('e2'); // e2 now has highest zIndex
-		const zE1Before = get(windowStore).find((w) => w.id === 'character-editor-e1')!.zIndex;
-		const zE2Before = get(windowStore).find((w) => w.id === 'character-editor-e2')!.zIndex;
+		const zE1Before = get(windowStore).find((w) => w.id === 'entity-detail-e1')!.zIndex;
+		const zE2Before = get(windowStore).find((w) => w.id === 'entity-detail-e2')!.zIndex;
 		expect(zE2Before).toBeGreaterThan(zE1Before);
 
 		openEntity('e1'); // should focus, not duplicate
 		const wins = get(windowStore);
 		expect(wins).toHaveLength(2);
-		const zE1After = wins.find((w) => w.id === 'character-editor-e1')!.zIndex;
-		const zE2After = wins.find((w) => w.id === 'character-editor-e2')!.zIndex;
+		const zE1After = wins.find((w) => w.id === 'entity-detail-e1')!.zIndex;
+		const zE2After = wins.find((w) => w.id === 'entity-detail-e2')!.zIndex;
 		expect(zE1After).toBeGreaterThan(zE2After);
 	});
 
@@ -141,7 +141,7 @@ describe('openEntity', () => {
 		const wins = get(windowStore);
 		expect(wins).toHaveLength(2);
 		const ids = wins.map((w) => w.id).sort();
-		expect(ids).toEqual(['character-editor-damien', 'character-editor-elara']);
+		expect(ids).toEqual(['entity-detail-damien', 'entity-detail-elara']);
 	});
 
 	it('openEntity on a non-existent id is a no-op (no crash, no window)', () => {
@@ -168,8 +168,8 @@ describe('openEntity', () => {
 		const wins = get(windowStore);
 		expect(wins).toHaveLength(3);
 		const byId = Object.fromEntries(wins.map((w) => [w.id, w.appId]));
-		expect(byId['character-editor-c1']).toBe('character-editor');
-		expect(byId['world-map-l1']).toBe('world-map');
+		expect(byId['entity-detail-c1']).toBe('entity-detail');
+		expect(byId['entity-detail-l1']).toBe('entity-detail');
 		expect(byId['entity-detail-n1']).toBe('entity-detail');
 	});
 });

@@ -105,7 +105,11 @@
 					>
 						<span class="caret">{isOpen ? '▼' : '▶'}</span>
 						<span class="note-title" onclick={(e) => e.stopPropagation()}>
-							<InlineEdit value={note.name} onSave={(name) => renameNote(note.id, name)} />
+							{#if readOnly}
+								<span class="note-title-text">{note.name}</span>
+							{:else}
+								<InlineEdit value={note.name} onSave={(name) => renameNote(note.id, name)} />
+							{/if}
 						</span>
 						{#if !readOnly}
 							<button
@@ -124,7 +128,6 @@
 						<EditableField
 							entityId={note.id}
 							field="body"
-							label="Body"
 							kind="textarea"
 							rows={4}
 							{readOnly}
