@@ -8,12 +8,14 @@
 -->
 
 <script lang="ts">
+	import { setContext } from 'svelte';
 	import { entities } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
 	import { relationships } from '$lib/stores/relationships.js';
 	import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
 	import { timelineFilter } from '$lib/stores/timelineFilter.js';
+	import { WIKI_NAV, type WikiNavContext } from '$lib/contexts/wiki-nav.js';
 	import type { EntityType } from '$lib/server/db/schema.js';
 	import EntityDetail from '$lib/components/EntityDetail.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
@@ -37,6 +39,19 @@
 	};
 
 	let selectedId = $state<string | null>(null);
+
+	// Expose in-window navigation to descendant components. EntityLink
+	// chips inside our subtree (relationship chips, [[Name]] hyperlinks,
+	// etc.) call this instead of openEntity() so the click swaps the
+	// content area rather than spawning a new window. Outside the Wiki
+	// subtree (e.g. a popout entity-detail window), getContext returns
+	// undefined and consumers fall back to openEntity. See
+	// src/lib/contexts/wiki-nav.ts for the ambient-hijack contract.
+	setContext<WikiNavContext>(WIKI_NAV, {
+		navigate: (id: string) => {
+			selectedId = id;
+		}
+	});
 	$effect(() => {
 		if (entityId) selectedId = entityId;
 	});

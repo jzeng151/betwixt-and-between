@@ -85,7 +85,10 @@ describe('windowStore.open', () => {
 	});
 
 	it('uses default 320x480 for other non-special apps', () => {
-		windowStore.open('wiki', 'w1');
+		// 'world-map' is the smallest fall-through case — every other appId
+		// has a width-specific branch (timeline 960, wiki 640, settings 520,
+		// entity-detail 480, character-editor 380, story-graph/focused-graph 640).
+		windowStore.open('world-map', 'l1');
 		const w = get(windowStore)[0];
 		expect(w.width).toBe(320);
 		expect(w.height).toBe(480);
@@ -100,14 +103,14 @@ describe('windowStore.open', () => {
 });
 
 describe('windowStore.openForEntity', () => {
-	it('routes Character → character-editor', () => {
+	it('routes Character → entity-detail', () => {
 		const id = windowStore.openForEntity('e1', 'Character');
-		expect(id).toBe('character-editor-e1');
+		expect(id).toBe('entity-detail-e1');
 	});
 
-	it('routes Location → world-map', () => {
+	it('routes Location → entity-detail', () => {
 		const id = windowStore.openForEntity('loc1', 'Location');
-		expect(id).toBe('world-map-loc1');
+		expect(id).toBe('entity-detail-loc1');
 	});
 
 	it('routes Event/Act/Scene → entity-detail (post D10-extension/19A)', () => {

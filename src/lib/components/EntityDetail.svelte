@@ -8,13 +8,18 @@
   (when the user clicks "↗ Move to window" or follows an entity-detail
   hyperlink from a future Wiki entry). Same content, different chrome.
 
-  Routing (this PR):
+  Routing (post slice 7):
     Act       → ActEditor
     Event     → EventEditor
     Scene     → SceneEditor
     Location  → LocationEditor
-    Character → CharacterWikiEditor (basic shell; parity slice grows it)
-    Note      → NoteWikiEditor      (basic shell; markdown/links land later)
+    Character → CharacterWikiEditor
+    Note      → no editor branch — universal Body section below covers it
+
+  After the entity-type editor branch, EntityDetail mounts a universal
+  Body textarea (data.body across all entity types) and a NotesSection
+  for non-Note entities. NoteWikiEditor was deleted in slice 7 because
+  the universal Body field replaced its sole responsibility.
 
   Title is inline-editable in the panel header (single rename surface per
   D10). Footer has a Delete button with the inline-confirmation pattern
@@ -36,7 +41,7 @@
 	import SceneEditor from './SceneEditor.svelte';
 	import LocationEditor from './LocationEditor.svelte';
 	import CharacterWikiEditor from './CharacterWikiEditor.svelte';
-	import NoteWikiEditor from './NoteWikiEditor.svelte';
+	import EditableField from './EditableField.svelte';
 	import NotesSection from './NotesSection.svelte';
 
 	interface Props {
@@ -114,6 +119,18 @@
 
 	// Move-to-window confirmation (2B-i inline confirm pattern).
 	let confirmingMove = $state(false);
+
+	// Body textarea row count: shrink on small viewports so NotesSection
+	// stays in reach on phones (Pass 6 design decision). resize:vertical
+	// in field-textarea CSS lets the user grow it manually.
+	let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1024);
+	$effect(() => {
+		if (typeof window === 'undefined') return;
+		const onResize = () => (viewportWidth = window.innerWidth);
+		window.addEventListener('resize', onResize);
+		return () => window.removeEventListener('resize', onResize);
+	});
+	const bodyRows = $derived(viewportWidth < 640 ? 4 : 8);
 
 	async function rename(newName: string) {
 		if (!entity) return;
@@ -234,24 +251,46 @@
 		{:else if entity.type === 'Character'}
 			<CharacterWikiEditor entityId={entity.id} readOnly={mode === 'view'} />
 		{:else if entity.type === 'Note'}
-			<NoteWikiEditor entityId={entity.id} readOnly={mode === 'view'} />
+			<!-- Note has no structured-fields editor branch — the universal
+			     Body section below covers Note's editing surface entirely
+			     (slice 7 unified data.body across all entity types). -->
 		{:else}
-			<!-- All known entity types now route to dedicated editors above.
-			     This stub remains as a defensive fall-through for any future
-			     EntityType added to the schema before its editor lands. -->
+			<!-- Defensive fall-through for any future EntityType added to
+			     the schema before its editor lands. -->
 			<div class="entity-detail-stub">
 				Editor for {entity.type} entities lives in its dedicated app for now.
 			</div>
 		{/if}
 
+		<!-- Universal Body field. Wikipedia convention: structured fields
+		     (infobox) above, prose body, then notes. Note skips the divider
+		     + 'BODY' eyebrow since it has nothing above to separate from
+		     (Pass 7b design decision). -->
+		<div class="entity-detail-body" class:no-divider={entity.type === 'Note'}>
+			{#if entity.type !== 'Note'}
+				<hr class="body-divider" />
+				<p class="body-eyebrow">Body</p>
+			{/if}
+			<EditableField
+				readOnly={mode === 'view'}
+				entityId={entity.id}
+				field="body"
+				label=""
+				kind="textarea"
+				rows={bodyRows}
+				placeholder={entity.type === 'Note'
+					? 'Write the note…'
+					: `Tell ${entity.name}'s story. You can link to other entries with [[Name]].`}
+			/>
+		</div>
+
 		{#if entity.type !== 'Note'}
 			<NotesSection entityId={entity.id} readOnly={mode === 'view'} />
 		{/if}
 
+		{#if mode !== 'view'}
 		<div class="entity-detail-footer">
-			{#if mode === 'view'}
-				<span class="view-footer-hint">Click Edit to modify.</span>
-			{:else if confirmingDelete}
+			{#if confirmingDelete}
 				<div class="delete-confirm">
 					<span class="delete-confirm-msg">
 						Delete <strong>{entity.name}</strong>?
@@ -281,6 +320,7 @@
 				<span class="save-status">Saved · just now</span>
 			{/if}
 		</div>
+		{/if}
 	</div>
 {/if}
 
@@ -391,6 +431,31 @@
 		font-style: italic;
 		text-align: center;
 	}
+
+	/* Universal Body section. For non-Note entities, sits below the
+	   structured-fields editor branch with a hairline divider + 'BODY'
+	   eyebrow. Note skips both (no structured fields above). Locked
+	   in /plan-design-review Pass 1 + Pass 7b. */
+	.entity-detail-body {
+		padding: 14px 18px;
+	}
+	.entity-detail-body.no-divider {
+		padding-top: 0; /* Note: textarea is the entire editor surface; remove top padding so it hugs the header */
+	}
+	.body-divider {
+		border: none;
+		border-top: 1px solid var(--color-border, #2a2d35);
+		margin: 0 0 10px;
+	}
+	.body-eyebrow {
+		margin: 0 0 8px;
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		font-size: 9px;
+		font-weight: 600;
+		color: var(--color-text-muted, #6b7280);
+		text-transform: uppercase;
+		letter-spacing: 0.12em;
+	}
 	.entity-detail-footer {
 		margin-top: auto;
 		padding: 12px 18px;
@@ -411,11 +476,6 @@
 	}
 	.btn-delete:hover {
 		border-color: #ef4444;
-	}
-	.view-footer-hint {
-		font-size: 11px;
-		color: var(--color-text-muted, #6b7280);
-		font-style: italic;
 	}
 	.save-status {
 		font-size: 11px;
