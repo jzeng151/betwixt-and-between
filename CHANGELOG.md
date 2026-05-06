@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-05-06
+
+### Added
+- CharacterEditorBody extracted from CharacterEditor as a standalone component for use inside EntityDetail, enabling character feature parity without duplicating the full editor.
+- Pending-commit registry (`src/lib/util/pending-commit.ts`) drains in-flight EditableField drafts before navigation, preventing PATCH-against-wrong-entity races when clicking [[Name]] chips mid-edit.
+- EditableField exposes a `commitNow` handle registered with the pending-commit system so navigation waits for unsaved drafts.
+- Universal Body field in EntityDetail — every non-Note entity type (Character, Act, Event, Scene, Location) now has an editable synopsis/description body field.
+- NoteWikiEditor deleted; its responsibilities moved to the unified EntityDetail body field.
+- In-window chip navigation via `wiki-nav` Svelte context. Clicking an EntityLink chip inside the Wiki window swaps the content pane instead of spawning a new window (Wikipedia-style navigation).
+- Edit-mode preview pane renders resolved `[[Name]]` markers as colored chips below the textarea, showing exactly which links will resolve.
+- `linkPreviewEnabled` preference in Settings (Editor section) lets users toggle the preview pane globally.
+- Editor section added to the Settings popover with the link preview toggle.
+- LocationEditor now shows read-only linked-entity chips (characters, events, scenes referencing this location).
+- Wiki window dimensions doubled to 1280x960 (width doubled twice: 320 → 640 → 1280).
+- E2E test suite for slice 7 features: body field editing, in-window navigation, preview pane rendering, Settings toggle.
+
+### Fixed
+- CharacterEditorBody scrolls internally instead of scrolling the entire Wiki sidebar.
+- Character "Notes" textarea renamed to "Timeline snippet" to avoid confusion with the Notes section.
+- "Click Edit to modify" hint, redundant "Body" label, and view-mode rename pencil removed from notes.
+- `commitNow` closure captures draft at call time to close the race where draft changes between dirty check and PATCH execution.
+- ENTITY_APP routing for Character and Location flipped from popout editors to unified EntityDetail.
+
+### Changed
+- EntityDetail now renders Character, Location, Act, Event, and Scene entities with full editor shells.
+
 ## [0.1.5] - 2026-05-05
 
 ### Added
