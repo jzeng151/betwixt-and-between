@@ -39,3 +39,40 @@ export function coercePinned(v: unknown): 0 | 1 {
 	if (typeof v === 'number') return v ? 1 : 0;
 	return 0;
 }
+
+/**
+ * Check whether a polygon (array of [lat, lng] pairs) is self-intersecting.
+ * Uses O(n^2) edge-crossing test — fine for user-drawn polygons with < 100 vertices.
+ * Returns `true` if any two non-adjacent edges cross.
+ */
+export function isSelfIntersecting(polygon: number[][]): boolean {
+	const n = polygon.length;
+	if (n < 3) return true; // degenerate
+
+	for (let i = 0; i < n; i++) {
+		const a1 = polygon[i];
+		const a2 = polygon[(i + 1) % n];
+		for (let j = i + 2; j < n; j++) {
+			// skip adjacent edges (share a vertex) and the wrap-around pair
+			if (i === 0 && j === n - 1) continue;
+			const b1 = polygon[j];
+			const b2 = polygon[(j + 1) % n];
+			if (segmentsCross(a1, a2, b1, b2)) return true;
+		}
+	}
+	return false;
+}
+
+function segmentsCross(a: number[], b: number[], c: number[], d: number[]): boolean {
+	const d1 = cross(c, d, a);
+	const d2 = cross(c, d, b);
+	const d3 = cross(a, b, c);
+	const d4 = cross(a, b, d);
+	if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+		((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+	return false;
+}
+
+function cross(o: number[], a: number[], b: number[]): number {
+	return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+}

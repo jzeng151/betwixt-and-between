@@ -85,13 +85,14 @@ describe('windowStore.open', () => {
 	});
 
 	it('uses default 320x480 for other non-special apps', () => {
-		// 'world-map' is the smallest fall-through case — every other appId
-		// has a width-specific branch (timeline 960, wiki 640, settings 520,
-		// entity-detail 480, character-editor 380, story-graph/focused-graph 640).
-		windowStore.open('world-map', 'l1');
+		// 'notes' is the smallest fall-through case — every other appId
+		// has a width-specific branch (timeline 960, world-map 1024, wiki 980,
+		// settings 520, entity-detail 480, character-editor 380,
+		// story-graph/focused-graph 640).
+		windowStore.open('notes');
 		const w = get(windowStore)[0];
 		expect(w.width).toBe(320);
-		expect(w.height).toBe(480);
+		expect(w.height).toBe(450);
 	});
 
 	it('initializes new windows as not minimized and not maximized', () => {

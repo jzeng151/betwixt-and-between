@@ -5,3 +5,4 @@
  */
 export type { Preferences, Appearance } from './preferences.js';
 export { PREFERENCES_CODE_MAX_VERSION, PREFERENCES_DEFAULTS } from './preferences.js';
+export type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } from './world-map.js';

@@ -107,9 +107,11 @@ function createWindowStore() {
 						? 640
 						: appId === 'timeline'
 							? 960
-							: appId === 'wiki'
-								? 980
-								: appId === 'settings'
+							: appId === 'world-map'
+								? 1024
+								: appId === 'wiki'
+									? 980
+									: appId === 'settings'
 									? 520
 									: appId === 'entity-detail'
 										? 480
@@ -119,9 +121,11 @@ function createWindowStore() {
 				height:
 					isGraph
 						? 500
-						: appId === 'wiki'
-							? 700
-							: appId === 'settings'
+						: appId === 'world-map'
+							? 720
+							: appId === 'wiki'
+								? 700
+								: appId === 'settings'
 								? 400
 								: appId === 'notes'
 									? 450

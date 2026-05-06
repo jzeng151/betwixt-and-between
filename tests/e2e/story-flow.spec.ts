@@ -11,7 +11,7 @@ test.describe('Story flow', () => {
 	test.beforeEach(async ({ page, request }) => {
 		await clearEntities(request);
 		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-		await page.goto('/');
+		await page.goto('/app');
 	});
 
 	test('create a character in under 30 seconds', async ({ page }) => {
@@ -68,7 +68,7 @@ test.describe('Story flow', () => {
 
 	test('add event entity → Story Graph no longer shows empty overlay', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Event', name: 'The Battle' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Story Graph"]');
 		await page.waitForTimeout(1000);

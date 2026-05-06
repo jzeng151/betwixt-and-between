@@ -69,7 +69,6 @@ html, body {
   font-size: 14px;
   color: var(--color-text);
   background: var(--color-desktop);
-  overflow: hidden;
 }
 
 button {

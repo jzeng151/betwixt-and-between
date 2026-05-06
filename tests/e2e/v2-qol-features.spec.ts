@@ -47,7 +47,7 @@ async function seedForSpotlight(request: APIRequestContext) {
 
 async function openTimeline(page: Page) {
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-	await page.goto('/');
+	await page.goto('/app');
 	await page.click('button[title="Timeline"]');
 	const win = page.locator('.window[aria-label="Timeline"]');
 	await expect(win).toBeVisible();

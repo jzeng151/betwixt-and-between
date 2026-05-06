@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0.0] - 2026-05-06
+
+### Added
+- **Scroll Theatre landing page** — new `/` route with hero section, 4 alternating scroll-theatre sections, and CTA. MiniDesktop visualization stays centered (sticky) while copy scrolls past on desktop; linear stack on mobile.
+- **Route migration** — desktop app moved from `/` to `/app`. All existing e2e tests updated.
+- Pure CSS presentation components: MiniWindow, MiniGraph, MiniTimeline, MiniMap, MiniDesktop — no real data or API calls.
+- SEO metadata (title, meta description), skip-to-content link, reduced-motion media query support.
+
+### Changed
+- `overflow: hidden` scoped from `html, body` to `.app-shell` so the landing page can scroll.
+
 ## [0.2.0] - 2026-05-06
 
 ### Added
@@ -17,6 +28,18 @@ All notable changes to this project will be documented in this file.
 - LocationEditor now shows read-only linked-entity chips (characters, events, scenes referencing this location).
 - Wiki window dimensions doubled to 1280x960 (width doubled twice: 320 → 640 → 1280).
 - E2E test suite for slice 7 features: body field editing, in-window navigation, preview pane rendering, Settings toggle.
+- **World Map app** — full rewrite from flat card-list to Leaflet-based interactive bitmap map. Pan, zoom, and draw polygon regions over an imported map image.
+- Schema: `world_maps` and `map_regions` tables with migration (`drizzle/0003_world_maps.sql`), indexes, and `bump_updated_at` triggers.
+- API routes for map CRUD (`/api/maps`, `/api/maps/[id]`), region CRUD (`/api/maps/[id]/regions`, `/api/maps/[id]/regions/[rid]`), and bitmap upload (`/api/maps/[id]/upload-image`).
+- Bitmap import: upload JPG/PNG/WebP (max 5 MB), header-only dimension parsing, deterministic filenames, static file serving.
+- Polygon drawing via `leaflet-draw` with validation: minimum 3 vertices, max 500, vertex type/finiteness checks, self-intersection rejection (`isSelfIntersecting` utility in `src/lib/server/validation.ts`).
+- Region-to-Location linking: each region optionally links to a Location entity with a color picker.
+- Scope-driven glow/dim: regions linked to in-scope locations render with accent stroke and higher opacity; out-of-scope regions dim. Driven by the existing `$isInScope` store.
+- Multi-map switcher dropdown to create and switch between maps within the World Map window.
+- `world-map` store (`src/lib/stores/world-map.ts`) with optimistic delete and rollback pattern.
+- World Map window opens at 1024×720 in bare mode (no padding) for full-bleed Leaflet rendering.
+- 35 integration tests covering map CRUD, region CRUD, cascade delete, polygon validation, upload-image validation, and region PATCH edge cases.
+- 7 unit tests for `isSelfIntersecting` covering degenerate, triangle, rectangle, pentagon, bowtie, crossing, and L-shape polygons.
 
 ### Fixed
 - CharacterEditorBody scrolls internally instead of scrolling the entire Wiki sidebar.
@@ -24,6 +47,8 @@ All notable changes to this project will be documented in this file.
 - "Click Edit to modify" hint, redundant "Body" label, and view-mode rename pencil removed from notes.
 - `commitNow` closure captures draft at call time to close the race where draft changes between dirty check and PATCH execution.
 - ENTITY_APP routing for Character and Location flipped from popout editors to unified EntityDetail.
+- Upload endpoint: deterministic filenames instead of user-supplied names (path traversal prevention), file extension validation, MIME type allowlist.
+- Polygon validation: added 500-vertex cap and per-vertex `[number, number]` type/finiteness checks in both create and update endpoints.
 
 ### Changed
 - EntityDetail now renders Character, Location, Act, Event, and Scene entities with full editor shells.

@@ -201,9 +201,13 @@ Every window is a wiki page. Connections are primary, fields are secondary.
 
 ### 9. World Map
 
-- [x] `src/lib/components/apps/WorldMap.svelte` — list of `Location` entities; scrolls to / highlights `focusEntityId` on open (v1)
-- [x] Each location shows: name, description + **linked events** (what happened here) + **linked characters** (who's based here) → click any → `openEntity(id)`
-- [ ] Future upgrade: tldraw spatial canvas using same pattern as Story Graph
+- [x] `src/lib/components/apps/WorldMap.svelte` — Leaflet-based interactive bitmap map with polygon regions, bitmap import, location linking, and scope-driven glow/dim (Phase 1)
+- [x] Schema: `world_maps` and `map_regions` tables with migration + triggers
+- [x] API routes: map CRUD, region CRUD, bitmap upload with validation
+- [x] World Map store with optimistic updates
+- [x] Scope-driven region glow/dim via `$isInScope` store
+- [x] Multi-map switcher, bitmap import, polygon drawing via leaflet-draw
+- [ ] Future upgrade: hex grid overlay, fog-of-war
 
 ---
 

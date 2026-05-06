@@ -9,7 +9,7 @@ async function clearAll(request: APIRequestContext) {
 
 async function openStoryGraph(page: Page) {
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-	await page.goto('/');
+	await page.goto('/app');
 	await page.click('button[title="Story Graph"]');
 	const win = page.locator('.window[aria-label="Story Graph"]').first();
 	await expect(win).toBeVisible();
