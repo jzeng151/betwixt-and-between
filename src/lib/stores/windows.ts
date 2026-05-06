@@ -108,7 +108,7 @@ function createWindowStore() {
 						: appId === 'timeline'
 							? 960
 							: appId === 'wiki'
-								? 1280
+								? 980
 								: appId === 'settings'
 									? 520
 									: appId === 'entity-detail'
@@ -120,7 +120,7 @@ function createWindowStore() {
 					isGraph
 						? 500
 						: appId === 'wiki'
-							? 960
+							? 700
 							: appId === 'settings'
 								? 400
 								: appId === 'notes'
