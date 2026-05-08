@@ -1,6 +1,7 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { E2E_USER_HEADERS } from './pglite-config.js';
 
-test.use({ storageState: { cookies: [], origins: [] } });
+test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
 
 async function clearAll(request: APIRequestContext) {
 	const ents: Array<{ id: string }> = await (await request.get('/api/entities')).json();

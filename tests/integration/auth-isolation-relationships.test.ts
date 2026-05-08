@@ -59,7 +59,7 @@ describe('auth isolation: /api/relationships', () => {
 
 		const [rel] = await currentDb
 			.insert(relationships)
-			.values({ userId: userA, fromId: aFrom, toId: aTo, type: 'allies_with' })
+			.values({ userId: userA, fromId: aFrom, toId: aTo, type: 'allied_with' })
 			.returning();
 		aRelId = rel.id;
 	});
@@ -87,7 +87,7 @@ describe('auth isolation: /api/relationships', () => {
 	it('user B can NOT create rel between user A entities (fromId scoped lookup)', async () => {
 		await expect(
 			relsRoute.POST(
-				mkEvent(userB, { body: { fromId: aFrom, toId: aTo, type: 'allies_with' } })
+				mkEvent(userB, { body: { fromId: aFrom, toId: aTo, type: 'allied_with' } })
 			)
 		).rejects.toMatchObject({ status: 400 });
 	});

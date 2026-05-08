@@ -16,12 +16,55 @@ import type { Handle } from '@sveltejs/kit';
  * Pool instances are request-scoped in edge runtimes.
  */
 const authHandle: Handle = async ({ event, resolve }) => {
-	const platformEnv: (DbEnv & AuthEnv) | undefined =
-		(event.platform?.env as DbEnv & AuthEnv | undefined) ?? (privateEnv as DbEnv & AuthEnv);
+	// Resolve env in priority order: Cloudflare Worker bindings → SvelteKit
+	// $env/dynamic/private → process.env. The last fallback is required for
+	// vite preview / E2E test mode, where SvelteKit's privateEnv may not
+	// surface webServer.env vars set by Playwright.
+	const platformEnv: DbEnv & AuthEnv = {
+		...(typeof process !== 'undefined' ? (process.env as DbEnv & AuthEnv) : {}),
+		...(privateEnv as DbEnv & AuthEnv),
+		...((event.platform?.env as DbEnv & AuthEnv | undefined) ?? {}),
+	};
 
 	const db = await getDb(platformEnv);
 	try {
-		const auth = buildAuth(db, platformEnv ?? {});
+		// E2E test-mode bypass (T8b S8'): when BETWIXT_E2E_PGLITE=1, accept
+		// `x-test-user-id` as a session shortcut. The header carries a uuid
+		// that maps to a user row seeded in the PGlite DB. Existing 27 E2E
+		// specs use this to skip the magic-link round trip; new auth-flow
+		// specs (auth-magic-link.spec.ts etc.) use the real Better-Auth
+		// endpoints to verify the login flow itself.
+		const isTest = platformEnv.BETWIXT_E2E_PGLITE === '1';
+		const testUserId = isTest ? event.request.headers.get('x-test-user-id') : null;
+
+		if (testUserId) {
+			const { user } = await import('$lib/server/db/schema.js');
+			const { eq } = await import('drizzle-orm');
+			const [u] = await db.select().from(user).where(eq(user.id, testUserId));
+			if (u) {
+				// Build auth lazily so the bypass path doesn't trigger missing-secret
+				// guards in non-test contexts that mistakenly send the header.
+				const auth = buildAuth(db, platformEnv);
+				event.locals.db = db;
+				event.locals.auth = auth;
+				event.locals.user = {
+					id: u.id,
+					name: u.name,
+					email: u.email,
+					emailVerified: u.emailVerified,
+					image: u.image,
+				};
+				event.locals.session = {
+					id: 'test-session',
+					userId: u.id,
+					expiresAt: new Date(Date.now() + 86400000),
+					token: 'test-token',
+				};
+				return await resolve(event);
+			}
+		}
+
+		const auth = buildAuth(db, platformEnv);
 		const session = await auth.api.getSession({
 			headers: event.request.headers,
 		});
