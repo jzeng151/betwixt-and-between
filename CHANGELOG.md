@@ -32,8 +32,11 @@ All notable changes to this project will be documented in this file.
 - `entity-aliases` and `mapRegions` (which lack a direct `userId` column) are scoped via JOIN on the parent's userId — `worldMaps.userId` for regions, `entities.userId` for aliases.
 - `userId` propagated through `intervals.ts` header docstring so the documented signatures match the post-S5' code.
 
-### Known issue
-- E2E auth bypass code is architecturally correct but hits a "relation 'user' does not exist" error specific to the PGlite-socket + vite preview + adapter-cloudflare runtime path. Direct `pglite-socket` scripts work; only the playwright runtime fails. Fix is a small follow-up; vitest (728 tests) is unaffected.
+### Resolved during PR review
+- **Codex P1: hardcoded `localhost:5173` fallback in `auth-client.ts`** — would silently route prod browser auth to a non-existent local endpoint when `VITE_BETTER_AUTH_URL` is unset. Replaced with `window.location.origin` runtime resolution.
+- **Codex P2: Google button visibility checked `VITE_GOOGLE_CLIENT_ID`** while server-side `buildAuth` reads `GOOGLE_CLIENT_ID`. Two different env vars meant setting only the documented `GOOGLE_CLIENT_ID` enabled the backend but hid the button. Replaced with a server-driven `googleEnabled` flag passed via `+page.server.ts` load — the page mirrors the server's actual config.
+- **Codex P1: missing userId backfill** — added `drizzle/backfill-multi-user.sql.example` template + DEPLOY.md section covering migrating environments with existing single-tenant data. v0.4.0.0 itself ships pre-launch (no production data) so no backfill is needed for the launch deploy.
+- **Resolved E2E "relation 'user' does not exist" issue** flagged in the original PR. Root cause: `adapter-cloudflare`'s vite-preview polyfill populates `event.platform.env` from `.env` / `.dev.vars`, which shadowed Playwright's `webServer.env` PGlite URL injection. Hook now skips the platform polyfill when `BETWIXT_E2E_PGLITE=1`. Full E2E suite now runs against the test PGlite as intended.
 
 ## [0.3.0.0] - 2026-05-06
 

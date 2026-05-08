@@ -2,18 +2,20 @@
 	import { authClient } from '$lib/auth-client';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
+	import type { PageData } from './$types.js';
+
+	// Server-driven Google button visibility (Codex P2 fix). +page.server.ts
+	// reads GOOGLE_CLIENT_ID/SECRET from runtime env (the same vars buildAuth
+	// uses) and passes a googleEnabled flag down. Previous code checked
+	// VITE_GOOGLE_CLIENT_ID, a separate build-time env that could disagree
+	// with server config and hide the button while the backend was enabled.
+	let { data }: { data: PageData } = $props();
 
 	let email = $state('');
 	let loading = $state(false);
 	let error = $state('');
 	let sent = $state(false);
-	let showGoogle = $state(false);
-
-	onMount(() => {
-		// Google OAuth button only shows if client ID is configured
-		showGoogle = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
-	});
+	const showGoogle = $derived(data.googleEnabled);
 
 	async function handleMagicLink(e: Event) {
 		e.preventDefault();

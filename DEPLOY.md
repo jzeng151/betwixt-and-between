@@ -24,6 +24,14 @@ DATABASE_URL='postgres://...prod-branch...' npm run db:migrate
 
 After T8b lands, the auth tables (`user`, `session`, `account`, `verification`) and `userId` columns are part of the migration set.
 
+**Migrating from existing single-tenant data:** Migration `0005` adds nullable `user_id` columns. After T8b's gated routes ship, every SELECT filters by `userId`, so any pre-existing rows with NULL `user_id` become invisible to all users. If you have existing data:
+
+1. Apply migrations as above.
+2. Run the backfill template at `drizzle/backfill-multi-user.sql.example` against the prod branch (substituting `:owner_id` with the uuid of the user who should own the legacy rows). The template is commented-out by default — read it, parameterize it, and run only the parts you need.
+3. Deploy the Worker.
+
+For fresh deploys with no pre-existing data (the v0.4.0.0 launch path), no backfill is needed — every new row written through T8b's route handlers stamps `user_id` automatically.
+
 ### 3. Cloudflare Workers secrets
 
 Set these via the Cloudflare dashboard (Workers & Pages → Settings → Variables and Secrets) or `wrangler secret put`:

@@ -16,15 +16,34 @@ import type { Handle } from '@sveltejs/kit';
  * Pool instances are request-scoped in edge runtimes.
  */
 const authHandle: Handle = async ({ event, resolve }) => {
-	// Resolve env in priority order: Cloudflare Worker bindings → SvelteKit
-	// $env/dynamic/private → process.env. The last fallback is required for
-	// vite preview / E2E test mode, where SvelteKit's privateEnv may not
-	// surface webServer.env vars set by Playwright.
-	const platformEnv: DbEnv & AuthEnv = {
-		...(typeof process !== 'undefined' ? (process.env as DbEnv & AuthEnv) : {}),
-		...(privateEnv as DbEnv & AuthEnv),
-		...((event.platform?.env as DbEnv & AuthEnv | undefined) ?? {}),
-	};
+	// Resolve env. The right priority depends on runtime:
+	//
+	// Real Cloudflare Worker:
+	//   process is undefined; only event.platform.env is meaningful.
+	//
+	// Vite preview with adapter-cloudflare (E2E tests, local dev):
+	//   The adapter polyfills event.platform.env from .env / .dev.vars. That
+	//   polyfill SHADOWS Playwright's webServer.env injection — DATABASE_URL
+	//   from the developer's .env wins over the explicit PGLITE_URL test
+	//   override. The fix: when BETWIXT_E2E_PGLITE=1 (the explicit test
+	//   signal), trust process.env over the platform polyfill.
+	//
+	// This was the v0.4.0.0 "known issue" deferred from S8' — direct PGlite-
+	// socket scripts worked because they used the right URL; only playwright
+	// hit the polyfill that swapped in .env's prod Neon URL, then queried
+	// against a DB that doesn't have the auth tables → "relation 'user'
+	// does not exist".
+	const isTestMode = typeof process !== 'undefined' && process.env.BETWIXT_E2E_PGLITE === '1';
+	const platformEnv: DbEnv & AuthEnv = isTestMode
+		? {
+				...(privateEnv as DbEnv & AuthEnv),
+				...(process.env as DbEnv & AuthEnv),
+			}
+		: {
+				...(typeof process !== 'undefined' ? (process.env as DbEnv & AuthEnv) : {}),
+				...(privateEnv as DbEnv & AuthEnv),
+				...((event.platform?.env as DbEnv & AuthEnv | undefined) ?? {}),
+			};
 
 	const db = await getDb(platformEnv);
 	try {
