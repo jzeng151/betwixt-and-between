@@ -10,16 +10,14 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createTestDb } from '../helpers/test-db.js';
+import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 
 // Module-level holder so each test can swap in a fresh DB. The mock factory
 // closes over `currentDb` by reference via a getter.
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
+let userId: string;
 
-vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => currentDb,
-	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
-}));
+// vi.mock removed — routes now read event.locals.db (T8b S5' A1)
 
 // Imports MUST come after vi.mock — Vitest hoists the mock but module
 // resolution still happens here.
@@ -32,6 +30,11 @@ function mkEvent(overrides: { url?: URL; params?: Record<string, string>; body?:
 		params: overrides.params ?? {},
 		request: {
 			json: async () => overrides.body
+		},
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'test-token' },
 		}
 	};
 }
@@ -43,6 +46,8 @@ async function readJson(res: Response): Promise<any> {
 describe('/api/entities GET', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('returns empty array when no entities', async () => {
@@ -64,6 +69,8 @@ describe('/api/entities GET', () => {
 describe('/api/entities POST', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('creates a Character entity with valid input', async () => {
@@ -139,6 +146,8 @@ describe('/api/entities POST', () => {
 describe('/api/entities/[id] GET', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('returns the entity by id', async () => {
@@ -161,6 +170,8 @@ describe('/api/entities/[id] GET', () => {
 describe('/api/entities/[id] PATCH', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('updates name and trims whitespace', async () => {
@@ -195,6 +206,8 @@ describe('/api/entities/[id] PATCH', () => {
 describe('/api/entities/[id] DELETE', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('deletes the entity and returns 204', async () => {

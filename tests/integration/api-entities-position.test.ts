@@ -16,16 +16,14 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { eq, and, isNull, asc } from 'drizzle-orm';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
+let userId: string;
 
-vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => currentDb,
-	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
-}));
+// vi.mock removed — routes now read event.locals.db (T8b S5' A1)
 
 const { POST } = await import('../../src/routes/api/entities/+server.js');
 const idRoute = await import('../../src/routes/api/entities/[id]/+server.js');
@@ -36,6 +34,11 @@ function mkEvent(overrides: { url?: URL; params?: Record<string, string>; body?:
 		params: overrides.params ?? {},
 		request: {
 			json: async () => overrides.body
+		},
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'test-token' },
 		}
 	};
 }
@@ -57,7 +60,9 @@ describe('POST /api/entities — Act with position (D1, insert semantics)', () =
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		acts = await seedActs(currentDb);
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		acts = await seedActs(currentDb, userId);
 	});
 
 	it('append (position >= acts.length): no sibling bump, just inserts', async () => {
@@ -91,14 +96,14 @@ describe('POST /api/entities — Act with position (D1, insert semantics)', () =
 	it('insert-between recomputes intervals: positions shift to reflect new act ordering', async () => {
 		const [ellie] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		// Ellie covers all of original Act 1 → [1, 2).
 		await writeInterval(currentDb, {
 			entityId: ellie.id,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 
 		// Insert at position 1 — original Act 1 becomes index 2.
 		await POST(mkEvent({ body: { type: 'Act', name: 'New Act', position: 1 } }));
@@ -113,9 +118,10 @@ describe('POST /api/entities — Act with position (D1, insert semantics)', () =
 		// Plant a fraction-positioned crossing interval via raw insert.
 		const [ellie] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		await currentDb.insert(intervals).values({
+			userId,
 			entityId: ellie.id,
 			startActId: acts.act1,
 			startSceneId: null,
@@ -139,13 +145,13 @@ describe('POST /api/entities — Act with position (D1, insert semantics)', () =
 		// Plant a [1, 2) interval that ends exactly at an act boundary.
 		const [ellie] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		await writeInterval(currentDb, {
 			entityId: ellie.id,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 		// Verify baseline.
 		let [row] = await currentDb.select().from(intervals);
 		expect(row.endPosition).toBeCloseTo(2.0, 9);
@@ -181,7 +187,9 @@ describe('PATCH /api/entities/[id] — Act position cascade (D18 / Issue 12A)', 
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		acts = await seedActs(currentDb);
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		acts = await seedActs(currentDb, userId);
 	});
 
 	it('no-op when position is unchanged', async () => {
@@ -223,14 +231,14 @@ describe('PATCH /api/entities/[id] — Act position cascade (D18 / Issue 12A)', 
 	it('recompute fires after the cascade in the same tx', async () => {
 		const [ellie] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		// Ellie present in act1 → [1, 2).
 		await writeInterval(currentDb, {
 			entityId: ellie.id,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 
 		// Move act1 from position 1 to position 2.
 		await idRoute.PATCH(
@@ -246,7 +254,7 @@ describe('PATCH /api/entities/[id] — Act position cascade (D18 / Issue 12A)', 
 	it('PATCH with parentId: scene reparenting (D9/7B + 8C cross-act move)', async () => {
 		const [scene] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act0, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act0, position: 0 })
 			.returning();
 
 		const res = await idRoute.PATCH(
@@ -281,15 +289,15 @@ describe('PATCH /api/entities/[id] — Act position cascade (D18 / Issue 12A)', 
 		// Three scenes in act1 at positions 0/1/2.
 		const [s0] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 		const [s2] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S2', parentId: acts.act1, position: 2 })
+			.values({ userId, type: 'Scene', name: 'S2', parentId: acts.act1, position: 2 })
 			.returning();
 
 		// Move s2 (pos 2) to pos 0 — s0/s1 cascade +1 within act1.
@@ -311,14 +319,14 @@ describe('PATCH /api/entities/[id] — Act position cascade (D18 / Issue 12A)', 
 	it('insert-between via POST also handles intervals via recompute integer-part shift', async () => {
 		const [ellie] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		// Ellie spans act0+act1 → [0, 2).
 		await writeInterval(currentDb, {
 			entityId: ellie.id,
 			startActId: acts.act0,
 			endActId: acts.act1
-		});
+		}, userId);
 
 		// Insert new Act at position 0 (very front).
 		await POST(mkEvent({ body: { type: 'Act', name: 'Prologue', position: 0 } }));
@@ -333,16 +341,16 @@ describe('PATCH /api/entities/[id] — Act position cascade (D18 / Issue 12A)', 
 		// Plant a scene in act2.
 		const [s0] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act2, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act2, position: 0 })
 			.returning();
 		const [s1] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S1', parentId: acts.act2, position: 1 })
+			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act2, position: 1 })
 			.returning();
 
 		const [ellie] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		// Ellie anchored to scene s0 of act2 → originally [2.0, 2.5).
 		await writeInterval(currentDb, {
@@ -351,7 +359,7 @@ describe('PATCH /api/entities/[id] — Act position cascade (D18 / Issue 12A)', 
 			startSceneId: s0.id,
 			endActId: acts.act2,
 			endSceneId: s0.id
-		});
+		}, userId);
 
 		// Move act2 to position 0.
 		await idRoute.PATCH(

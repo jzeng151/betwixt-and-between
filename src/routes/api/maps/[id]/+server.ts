@@ -1,26 +1,31 @@
 import { json, error } from '@sveltejs/kit';
-import { withDb } from '$lib/server/db/index.js';
 import { worldMaps, mapRegions } from '$lib/server/db/schema.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { getUserId } from '$lib/server/auth-gate.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform, params }) =>
-	withDb(platform?.env, async (db) => {
-	const [map] = await db.select().from(worldMaps).where(eq(worldMaps.id, params.id));
+export const GET: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const [map] = await db
+		.select()
+		.from(worldMaps)
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
 	if (!map) error(404, 'Map not found');
 
+	// mapRegions has no direct userId — scoped via worldMaps.userId already verified above.
 	const regions = await db
 		.select()
 		.from(mapRegions)
-		.where(eq(mapRegions.mapId, params.id));
+		.where(eq(mapRegions.mapId, event.params.id));
 
 	return json({ ...map, regions });
+};
 
-	});
-
-export const PATCH: RequestHandler = async ({ platform, params, request }) =>
-	withDb(platform?.env, async (db) => {
-	const body = await request.json();
+export const PATCH: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const body = await event.request.json();
 
 	const updates: Record<string, unknown> = {};
 	if (typeof body.name === 'string') updates.name = body.name.trim();
@@ -35,22 +40,21 @@ export const PATCH: RequestHandler = async ({ platform, params, request }) =>
 	const [updated] = await db
 		.update(worldMaps)
 		.set(updates)
-		.where(eq(worldMaps.id, params.id))
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)))
 		.returning();
 
 	if (!updated) error(404, 'Map not found');
 	return json(updated);
+};
 
-	});
-
-export const DELETE: RequestHandler = async ({ platform, params }) =>
-	withDb(platform?.env, async (db) => {
+export const DELETE: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
 	const [deleted] = await db
 		.delete(worldMaps)
-		.where(eq(worldMaps.id, params.id))
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)))
 		.returning();
 
 	if (!deleted) error(404, 'Map not found');
 	return new Response(null, { status: 204 });
-
-	});
+};

@@ -10,20 +10,23 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { createTestDb } from '../helpers/test-db.js';
+import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 
 describe('bump_updated_at BEFORE UPDATE trigger', () => {
 	let db: Awaited<ReturnType<typeof createTestDb>>;
+	let userId: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
+		const _user = await seedTestUser(db);
+		userId = _user.id;
 	});
 
 	it('advances entities.updated_at on UPDATE without app-side updatedAt set', async () => {
 		const [row] = await db
 			.insert(entities)
-			.values({ type: 'Act', name: 'A' })
+			.values({ userId, type: 'Act', name: 'A' })
 			.returning();
 		const initial = row.updatedAt;
 
@@ -42,11 +45,11 @@ describe('bump_updated_at BEFORE UPDATE trigger', () => {
 		// the test focused on trigger semantics, not chokepoint logic).
 		const [act0] = await db
 			.insert(entities)
-			.values({ type: 'Act', name: 'Act 0', position: 0 })
+			.values({ userId, type: 'Act', name: 'Act 0', position: 0 })
 			.returning();
 		const [ellie] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		const [interval] = await db
 			.insert(intervals)
@@ -76,7 +79,7 @@ describe('bump_updated_at BEFORE UPDATE trigger', () => {
 	it('does not advance updated_at on no-op SELECT', async () => {
 		const [row] = await db
 			.insert(entities)
-			.values({ type: 'Note', name: 'n' })
+			.values({ userId, type: 'Note', name: 'n' })
 			.returning();
 		const initial = row.updatedAt;
 

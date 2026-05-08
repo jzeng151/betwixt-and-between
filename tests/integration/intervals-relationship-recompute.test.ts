@@ -8,39 +8,42 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb } from '../helpers/test-db.js';
+import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { entities, relationships } from '../../src/lib/server/db/schema.js';
 import { recomputeAllIntervals, writeInterval } from '../../src/lib/server/intervals.js';
 
 type Db = Awaited<ReturnType<typeof createTestDb>>;
 
-async function seedTwoActs(db: Db) {
-	const [act0] = await db.insert(entities).values({ type: 'Act', name: 'Act 0', position: 0 }).returning();
-	const [act1] = await db.insert(entities).values({ type: 'Act', name: 'Act 1', position: 1 }).returning();
+async function seedTwoActs(db: Db, userId: string) {
+	const [act0] = await db.insert(entities).values({ userId, type: 'Act', name: 'Act 0', position: 0 }).returning();
+	const [act1] = await db.insert(entities).values({ userId, type: 'Act', name: 'Act 1', position: 1 }).returning();
 	return { act0: act0.id, act1: act1.id };
 }
 
 describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 	let db: Db;
+	let userId: string;
 	let act0: string;
 	let act1: string;
 	let alice: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		const acts = await seedTwoActs(db);
+		const _user = await seedTestUser(db);
+		userId = _user.id;
+		const acts = await seedTwoActs(db, userId);
 		act0 = acts.act0;
 		act1 = acts.act1;
 
-		const [c] = await db.insert(entities).values({ type: 'Character', name: 'Alice' }).returning();
+		const [c] = await db.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
 		alice = c.id;
 	});
 
 	it('reorder acts → recomputeAllIntervals updates relationship start_position', async () => {
-		const [bob] = await db.insert(entities).values({ type: 'Character', name: 'Bob' }).returning();
+		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
 
 		// Temporal relationship anchored to act0 (position 0 → startPosition = 0.0)
-		await db.insert(relationships).values({
+		await db.insert(relationships).values({ userId,
 			fromId: alice,
 			toId: bob.id,
 			type: 'rivals',
@@ -54,7 +57,7 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 		await db.update(entities).set({ position: 1 }).where(eq(entities.id, act0));
 		await db.update(entities).set({ position: 0 }).where(eq(entities.id, act1));
 
-		await recomputeAllIntervals(db);
+		await recomputeAllIntervals(db, userId);
 
 		const [rel] = await db.select().from(relationships).where(eq(relationships.fromId, alice));
 		// act0 is now at index 1 → startPosition = 1.0, endPosition = 2.0
@@ -64,13 +67,13 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 
 	it('interval with same act anchor also recomputes after reorder', async () => {
 		// Give alice an interval anchored to act0
-		await writeInterval(db, { entityId: alice, startActId: act0, endActId: act0 });
+		await writeInterval(db, { entityId: alice, startActId: act0, endActId: act0 }, userId);
 
 		// Reorder: swap positions
 		await db.update(entities).set({ position: 1 }).where(eq(entities.id, act0));
 		await db.update(entities).set({ position: 0 }).where(eq(entities.id, act1));
 
-		await recomputeAllIntervals(db);
+		await recomputeAllIntervals(db, userId);
 
 		// Interval startPosition should now be 1.0 (act0 moved to index 1)
 		const { intervals } = await import('../../src/lib/server/db/schema.js');
@@ -80,13 +83,13 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 	});
 
 	it('CRITICAL regression: transaction failure rolls back both interval and relationship positions', async () => {
-		const [bob] = await db.insert(entities).values({ type: 'Character', name: 'Bob' }).returning();
+		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
 
 		// Interval for alice anchored to act0
-		await writeInterval(db, { entityId: alice, startActId: act0, endActId: act0 });
+		await writeInterval(db, { entityId: alice, startActId: act0, endActId: act0 }, userId);
 
 		// Temporal relationship anchored to act0
-		await db.insert(relationships).values({
+		await db.insert(relationships).values({ userId,
 			fromId: alice,
 			toId: bob.id,
 			type: 'rivals',
@@ -106,7 +109,7 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 			await db.transaction(async (tx) => {
 				await tx.update(entities).set({ position: 1 }).where(eq(entities.id, act0));
 				await tx.update(entities).set({ position: 0 }).where(eq(entities.id, act1));
-				await recomputeAllIntervals(tx);
+				await recomputeAllIntervals(tx, userId);
 				// Force rollback by throwing
 				throw new Error('forced rollback');
 			});

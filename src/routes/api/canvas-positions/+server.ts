@@ -1,29 +1,38 @@
 import { json, error } from '@sveltejs/kit';
-import { withDb } from '$lib/server/db/index.js';
 import { canvasPositions, entities } from '$lib/server/db/schema.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { getUserId } from '$lib/server/auth-gate.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform }) =>
-	withDb(platform?.env, async (db) => {
-	const rows = await db.select().from(canvasPositions);
+export const GET: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const rows = await db
+		.select()
+		.from(canvasPositions)
+		.where(eq(canvasPositions.userId, userId));
 	return json(rows);
+};
 
-	});
-
-export const PUT: RequestHandler = async ({ platform, request }) =>
-	withDb(platform?.env, async (db) => {
-	const body = await request.json();
+export const PUT: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const body = await event.request.json();
 	const { entityId, x, y, width, height } = body;
 
 	if (!entityId) error(400, 'entityId is required');
 
-	const [entity] = await db.select().from(entities).where(eq(entities.id, entityId));
+	// Verify entity belongs to user (cross-user FK = leak).
+	const [entity] = await db
+		.select()
+		.from(entities)
+		.where(and(eq(entities.id, entityId), eq(entities.userId, userId)));
 	if (!entity) error(400, 'Entity not found');
 
 	const [upserted] = await db
 		.insert(canvasPositions)
 		.values({
+			userId,
 			entityId,
 			x: x ?? 0,
 			y: y ?? 0,
@@ -42,5 +51,4 @@ export const PUT: RequestHandler = async ({ platform, request }) =>
 		.returning();
 
 	return json(upserted);
-
-	});
+};

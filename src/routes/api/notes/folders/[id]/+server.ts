@@ -1,21 +1,27 @@
 import { json, error } from '@sveltejs/kit';
-import { withDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, sql } from 'drizzle-orm';
+import { getUserId } from '$lib/server/auth-gate.js';
 import type { RequestHandler } from './$types';
 
-export const PATCH: RequestHandler = async ({ platform, params, request }) =>
-	withDb(platform?.env, async (db) => {
-	const body = await request.json();
+const isFolderFilter = (id: string, userId: string) =>
+	and(
+		eq(entities.id, id),
+		eq(entities.userId, userId),
+		eq(entities.type, 'Note'),
+		sql`(${entities.data}->>'isFolder')::boolean = true`
+	);
+
+export const PATCH: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const body = await event.request.json();
 	const { name } = body as { name?: string };
 
-	// Verify it's a folder
 	const [existing] = await db
 		.select()
 		.from(entities)
-		.where(
-			and(eq(entities.id, params.id), eq(entities.type, 'Note'), sql`(${entities.data}->>'isFolder')::boolean = true`)
-		);
+		.where(isFolderFilter(event.params.id, userId));
 	if (!existing) error(404, 'Folder not found');
 
 	const updates: Record<string, unknown> = {};
@@ -26,26 +32,23 @@ export const PATCH: RequestHandler = async ({ platform, params, request }) =>
 	const [updated] = await db
 		.update(entities)
 		.set(updates)
-		.where(eq(entities.id, params.id))
+		.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)))
 		.returning();
 
 	return json(updated);
+};
 
-	});
-
-export const DELETE: RequestHandler = async ({ platform, params }) =>
-	withDb(platform?.env, async (db) => {
-	// Verify it's a folder
+export const DELETE: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
 	const [existing] = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(
-			and(eq(entities.id, params.id), eq(entities.type, 'Note'), sql`(${entities.data}->>'isFolder')::boolean = true`)
-		);
+		.where(isFolderFilter(event.params.id, userId));
 	if (!existing) error(404, 'Folder not found');
 
-	// Cascade on the FK handles child entries
-	await db.delete(entities).where(eq(entities.id, params.id));
+	await db
+		.delete(entities)
+		.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)));
 	return json({ ok: true });
-
-	});
+};

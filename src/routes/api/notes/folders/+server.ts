@@ -1,25 +1,30 @@
 import { json, error } from '@sveltejs/kit';
-import { withDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, sql } from 'drizzle-orm';
+import { getUserId } from '$lib/server/auth-gate.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform }) =>
-	withDb(platform?.env, async (db) => {
+export const GET: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
 	const rows = await db
 		.select()
 		.from(entities)
 		.where(
-			and(eq(entities.type, 'Note'), sql`(${entities.data}->>'isFolder')::boolean = true`)
+			and(
+				eq(entities.userId, userId),
+				eq(entities.type, 'Note'),
+				sql`(${entities.data}->>'isFolder')::boolean = true`
+			)
 		)
 		.orderBy(entities.position);
 	return json(rows);
+};
 
-	});
-
-export const POST: RequestHandler = async ({ platform, request }) =>
-	withDb(platform?.env, async (db) => {
-	const body = await request.json();
+export const POST: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const body = await event.request.json();
 	const { name, parentId, position } = body as {
 		name?: string;
 		parentId?: string | null;
@@ -33,6 +38,7 @@ export const POST: RequestHandler = async ({ platform, request }) =>
 	const [created] = await db
 		.insert(entities)
 		.values({
+			userId,
 			type: 'Note',
 			name: name.trim(),
 			data: { isFolder: true },
@@ -42,5 +48,4 @@ export const POST: RequestHandler = async ({ platform, request }) =>
 		.returning();
 
 	return json(created, { status: 201 });
-
-	});
+};

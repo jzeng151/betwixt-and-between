@@ -1,29 +1,34 @@
 import { json, error } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
-import { withDb } from '$lib/server/db/index.js';
+import { and, eq } from 'drizzle-orm';
 import { intervals } from '$lib/server/db/schema.js';
+import { getUserId } from '$lib/server/auth-gate.js';
 import { writeInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform, url }) =>
-	withDb(platform?.env, async (db) => {
-	const entityId = url.searchParams.get('entity_id');
+export const GET: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const entityId = event.url.searchParams.get('entity_id');
 	if (entityId) {
 		const rows = await db
 			.select()
 			.from(intervals)
-			.where(eq(intervals.entityId, entityId))
+			.where(and(eq(intervals.entityId, entityId), eq(intervals.userId, userId)))
 			.orderBy(intervals.startPosition);
 		return json(rows);
 	}
-	const rows = await db.select().from(intervals).orderBy(intervals.startPosition);
+	const rows = await db
+		.select()
+		.from(intervals)
+		.where(eq(intervals.userId, userId))
+		.orderBy(intervals.startPosition);
 	return json(rows);
+};
 
-	});
-
-export const POST: RequestHandler = async ({ platform, request }) =>
-	withDb(platform?.env, async (db) => {
-	const body = await request.json();
+export const POST: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const body = await event.request.json();
 	const {
 		entity_id,
 		entityId,
@@ -54,21 +59,24 @@ export const POST: RequestHandler = async ({ platform, request }) =>
 	if (!eActId) error(400, 'end_act_id is required');
 
 	try {
-		const created = await writeInterval(db, {
-			entityId: eId,
-			startActId: sActId,
-			startSceneId: sSceneId ?? null,
-			endActId: eActId,
-			endSceneId: eSceneId ?? null,
-			startPosition: sPos,
-			endPosition: ePos
-		});
+		const created = await writeInterval(
+			db,
+			{
+				entityId: eId,
+				startActId: sActId,
+				startSceneId: sSceneId ?? null,
+				endActId: eActId,
+				endSceneId: eSceneId ?? null,
+				startPosition: sPos,
+				endPosition: ePos
+			},
+			userId
+		);
 		return json(created, { status: 201 });
 	} catch (err) {
-		const message = (err as Error).message;
-		// Polymorphic FK violations, position drift, scene-parent mismatch all
-		// raise from writeInterval. Surface as 400 with the message.
-		error(400, message);
+		// writeInterval validates FKs against entities scoped by userId — cross-
+		// user FKs surface as "entity_id not found" (400). Position drift,
+		// scene-parent mismatch, polymorphic FK violations also raise here.
+		error(400, (err as Error).message);
 	}
-
-	});
+};

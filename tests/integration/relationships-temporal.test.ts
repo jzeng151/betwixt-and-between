@@ -8,15 +8,13 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, relationships, entityAliases } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
+let userId: string;
 
-vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => currentDb,
-	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
-}));
+// vi.mock removed — routes now read event.locals.db (T8b S5' A1)
 
 const relRoute = await import('../../src/routes/api/relationships/+server.js');
 const relIdRoute = await import('../../src/routes/api/relationships/[id]/+server.js');
@@ -33,6 +31,11 @@ function mkEvent(overrides: {
 		params: overrides.params ?? {},
 		request: {
 			json: async () => overrides.body
+		},
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'test-token' },
 		}
 	};
 }
@@ -48,9 +51,11 @@ describe('POST /api/relationships — temporal bounds', () => {
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		acts = await seedActs(currentDb);
-		const [a] = await currentDb.insert(entities).values({ type: 'Character', name: 'Alice' }).returning();
-		const [b] = await currentDb.insert(entities).values({ type: 'Character', name: 'Bob' }).returning();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		acts = await seedActs(currentDb, userId);
+		const [a] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
+		const [b] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
 		alice = a.id;
 		bob = b.id;
 	});
@@ -80,7 +85,7 @@ describe('POST /api/relationships — temporal bounds', () => {
 		// Add a scene inside act0
 		const [scene] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'Scene 1', parentId: acts.act0, position: 0 })
+			.values({ userId, type: 'Scene', name: 'Scene 1', parentId: acts.act0, position: 0 })
 			.returning();
 
 		const res = await relRoute.POST(
@@ -207,9 +212,11 @@ describe('PATCH /api/relationships/[id] — temporal update', () => {
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		acts = await seedActs(currentDb);
-		const [a] = await currentDb.insert(entities).values({ type: 'Character', name: 'Alice' }).returning();
-		const [b] = await currentDb.insert(entities).values({ type: 'Character', name: 'Bob' }).returning();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		acts = await seedActs(currentDb, userId);
+		const [a] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
+		const [b] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
 		alice = a.id;
 		bob = b.id;
 	});
@@ -218,7 +225,7 @@ describe('PATCH /api/relationships/[id] — temporal update', () => {
 		// Create a timeless relationship first
 		const [rel] = await currentDb
 			.insert(relationships)
-			.values({ fromId: alice, toId: bob, type: 'rivals' })
+			.values({ userId, fromId: alice, toId: bob, type: 'rivals' })
 			.returning();
 
 		const res = await relIdRoute.PATCH(
@@ -253,8 +260,10 @@ describe('POST /api/entity-aliases', () => {
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		const [a] = await currentDb.insert(entities).values({ type: 'Character', name: 'Alice' }).returning();
-		const [b] = await currentDb.insert(entities).values({ type: 'Character', name: 'Alice (alias)' }).returning();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		const [a] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
+		const [b] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice (alias)' }).returning();
 		alice = a.id;
 		aliceAlias = b.id;
 	});
@@ -320,8 +329,10 @@ describe('DELETE /api/entity-aliases/[id]', () => {
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		const [a] = await currentDb.insert(entities).values({ type: 'Character', name: 'Alice' }).returning();
-		const [b] = await currentDb.insert(entities).values({ type: 'Character', name: 'Alice (alias)' }).returning();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		const [a] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
+		const [b] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice (alias)' }).returning();
 		alice = a.id;
 		aliceAlias = b.id;
 	});
@@ -354,29 +365,31 @@ describe('partial-unique-constraint — timeless vs temporal dedup', () => {
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		const [a] = await currentDb.insert(entities).values({ type: 'Character', name: 'Alice' }).returning();
-		const [b] = await currentDb.insert(entities).values({ type: 'Character', name: 'Bob' }).returning();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		const [a] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
+		const [b] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
 		alice = a.id;
 		bob = b.id;
 	});
 
 	it('DB rejects duplicate timeless row for same (from, to, type)', async () => {
-		await currentDb.insert(relationships).values({ fromId: alice, toId: bob, type: 'rivals' });
+		await currentDb.insert(relationships).values({ userId, fromId: alice, toId: bob, type: 'rivals' });
 		await expect(
-			currentDb.insert(relationships).values({ fromId: alice, toId: bob, type: 'rivals' })
+			currentDb.insert(relationships).values({ userId, fromId: alice, toId: bob, type: 'rivals' })
 		).rejects.toThrow();
 	});
 
 	it('DB accepts two temporal rows with different start_positions', async () => {
 		// Two temporal rows same pair+type but different start_position
-		await currentDb.insert(relationships).values({
+		await currentDb.insert(relationships).values({ userId,
 			fromId: alice,
 			toId: bob,
 			type: 'rivals',
 			startPosition: 0.0,
 			endPosition: 1.0
 		});
-		await currentDb.insert(relationships).values({
+		await currentDb.insert(relationships).values({ userId,
 			fromId: alice,
 			toId: bob,
 			type: 'rivals',

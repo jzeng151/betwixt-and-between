@@ -1,13 +1,14 @@
 import { json, error } from '@sveltejs/kit';
-import { withDb } from '$lib/server/db/index.js';
-import { windowCanvasState } from '$lib/server/db/schema.js';
-import { eq } from 'drizzle-orm';
+import { entities, windowCanvasState } from '$lib/server/db/schema.js';
+import { and, eq } from 'drizzle-orm';
+import { getUserId } from '$lib/server/auth-gate.js';
 import { isUuid, coercePinned } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform, params }) =>
-	withDb(platform?.env, async (db) => {
-	const { windowId } = params;
+export const GET: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const { windowId } = event.params;
 	if (!windowId) error(400, 'windowId is required');
 
 	const rows = await db
@@ -20,18 +21,18 @@ export const GET: RequestHandler = async ({ platform, params }) =>
 			pinned: windowCanvasState.pinned
 		})
 		.from(windowCanvasState)
-		.where(eq(windowCanvasState.windowId, windowId));
+		.where(and(eq(windowCanvasState.windowId, windowId), eq(windowCanvasState.userId, userId)));
 
 	return json(rows);
+};
 
-	});
-
-export const PUT: RequestHandler = async ({ platform, params, request }) =>
-	withDb(platform?.env, async (db) => {
-	const { windowId } = params;
+export const PUT: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const { windowId } = event.params;
 	if (!windowId) error(400, 'windowId is required');
 
-	const body = await request.json().catch(() => null);
+	const body = await event.request.json().catch(() => null);
 	if (!body || typeof body !== 'object') error(400, 'malformed body');
 
 	const { entityId, x, y, width, height, pinned } = body as Record<string, unknown>;
@@ -39,9 +40,17 @@ export const PUT: RequestHandler = async ({ platform, params, request }) =>
 	if (!isUuid(entityId)) error(400, 'entityId must be a uuid');
 	if (typeof x !== 'number' || typeof y !== 'number') error(400, 'x and y must be numbers');
 
+	// Verify entity belongs to user.
+	const [entity] = await db
+		.select({ id: entities.id })
+		.from(entities)
+		.where(and(eq(entities.id, entityId as string), eq(entities.userId, userId)));
+	if (!entity) error(400, 'Entity not found');
+
 	const row = {
 		windowId,
-		entityId,
+		userId,
+		entityId: entityId as string,
 		x: Math.trunc(x),
 		y: Math.trunc(y),
 		width: typeof width === 'number' ? Math.trunc(width) : 160,
@@ -59,15 +68,16 @@ export const PUT: RequestHandler = async ({ platform, params, request }) =>
 		.returning();
 
 	return json(upserted);
+};
 
-	});
-
-export const DELETE: RequestHandler = async ({ platform, params }) =>
-	withDb(platform?.env, async (db) => {
-	const { windowId } = params;
+export const DELETE: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const { windowId } = event.params;
 	if (!windowId) error(400, 'windowId is required');
 
-	await db.delete(windowCanvasState).where(eq(windowCanvasState.windowId, windowId));
+	await db
+		.delete(windowCanvasState)
+		.where(and(eq(windowCanvasState.windowId, windowId), eq(windowCanvasState.userId, userId)));
 	return json({ ok: true });
-
-	});
+};

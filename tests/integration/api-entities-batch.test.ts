@@ -16,16 +16,14 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { eq, and } from 'drizzle-orm';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
+let userId: string;
 
-vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => currentDb,
-	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
-}));
+// vi.mock removed — routes now read event.locals.db (T8b S5' A1)
 
 const batchRoute = await import('../../src/routes/api/entities/batch/+server.js');
 
@@ -35,6 +33,11 @@ function mkEvent(overrides: { url?: URL; params?: Record<string, string>; body?:
 		params: overrides.params ?? {},
 		request: {
 			json: async () => overrides.body
+		},
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'test-token' },
 		}
 	};
 }
@@ -48,7 +51,9 @@ describe('POST /api/entities/batch — atomic multi-entity creation (D21)', () =
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		acts = await seedActs(currentDb);
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		acts = await seedActs(currentDb, userId);
 	});
 
 	it('happy path: 5 scenes inserted, returned in order with ids', async () => {
@@ -133,11 +138,11 @@ describe('POST /api/entities/batch — atomic multi-entity creation (D21)', () =
 		// scenes changes m, so this interval's positions must shift.
 		const [s0] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'PreS0', parentId: acts.act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'PreS0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [ellie] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		await writeInterval(currentDb, {
 			entityId: ellie.id,
@@ -145,7 +150,7 @@ describe('POST /api/entities/batch — atomic multi-entity creation (D21)', () =
 			startSceneId: s0.id,
 			endActId: acts.act1,
 			endSceneId: s0.id
-		});
+		}, userId);
 		// Baseline: m=1, s0 → [1.0, 2.0).
 		let [row] = await currentDb.select().from(intervals);
 		expect(row.startPosition).toBeCloseTo(1.0, 9);

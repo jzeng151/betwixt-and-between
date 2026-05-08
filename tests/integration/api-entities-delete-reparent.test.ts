@@ -18,16 +18,14 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { eq, and, asc } from 'drizzle-orm';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
+let userId: string;
 
-vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => currentDb,
-	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
-}));
+// vi.mock removed — routes now read event.locals.db (T8b S5' A1)
 
 const idRoute = await import('../../src/routes/api/entities/[id]/+server.js');
 
@@ -37,6 +35,11 @@ function mkEvent(overrides: { url?: URL; params?: Record<string, string>; body?:
 		params: overrides.params ?? {},
 		request: {
 			json: async () => overrides.body
+		},
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'test-token' },
 		}
 	};
 }
@@ -47,10 +50,12 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		acts = await seedActs(currentDb);
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		acts = await seedActs(currentDb, userId);
 		const [c] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -59,11 +64,11 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 		// 2 scenes in act1.
 		const [s0] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 });
+			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 });
 
 		// Interval anchored inside act1.
 		await writeInterval(currentDb, {
@@ -72,17 +77,17 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 			startSceneId: s0.id,
 			endActId: acts.act1,
 			endSceneId: s0.id
-		});
+		}, userId);
 		// Survivor: interval in act2 → [2, 3).
 		const [damienE] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Damien' })
+			.values({ userId, type: 'Character', name: 'Damien' })
 			.returning();
 		await writeInterval(currentDb, {
 			entityId: damienE.id,
 			startActId: acts.act2,
 			endActId: acts.act2
-		});
+		}, userId);
 
 		const url = new URL(`http://localhost/api/entities/${acts.act1}`);
 		await idRoute.DELETE(mkEvent({ params: { id: acts.act1 }, url }));
@@ -110,15 +115,15 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 		// 2 scenes in act1, 1 scene in act2 (target gets 2 scenes appended after position 0).
 		const [s0] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 		await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'Existing', parentId: acts.act2, position: 0 });
+			.values({ userId, type: 'Scene', name: 'Existing', parentId: acts.act2, position: 0 });
 
 		const url = new URL(
 			`http://localhost/api/entities/${acts.act1}?moveScenesTo=${acts.act2}`
@@ -145,11 +150,11 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 	it('moveScenesTo updates intervals.start_act_id / end_act_id (P2-3 critical fix)', async () => {
 		const [s0] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 
 		// Interval anchored to scenes inside act1.
@@ -159,7 +164,7 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 			startSceneId: s0.id,
 			endActId: acts.act1,
 			endSceneId: s1.id
-		});
+		}, userId);
 
 		const url = new URL(
 			`http://localhost/api/entities/${acts.act1}?moveScenesTo=${acts.act2}`
@@ -181,7 +186,7 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 	it('moveScenesTo: source act is deleted after reparent', async () => {
 		await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 });
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 });
 		const url = new URL(
 			`http://localhost/api/entities/${acts.act1}?moveScenesTo=${acts.act2}`
 		);
@@ -228,12 +233,12 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 		// state — the source act must remain.
 		const [scene] = await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'Decoy', parentId: acts.act0, position: 0 })
+			.values({ userId, type: 'Scene', name: 'Decoy', parentId: acts.act0, position: 0 })
 			.returning();
 
 		await currentDb
 			.insert(entities)
-			.values({ type: 'Scene', name: 'X', parentId: acts.act1, position: 0 });
+			.values({ userId, type: 'Scene', name: 'X', parentId: acts.act1, position: 0 });
 
 		const url = new URL(
 			`http://localhost/api/entities/${acts.act1}?moveScenesTo=${scene.id}`
@@ -261,7 +266,7 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 			entityId: ellie,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 		const url = new URL(`http://localhost/api/entities/${acts.act1}`);
 		await idRoute.DELETE(mkEvent({ params: { id: acts.act1 }, url }));
 

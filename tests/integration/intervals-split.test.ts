@@ -1,5 +1,5 @@
 /**
- * Integration tests for `splitInterval(db, intervalId, atPosition)` —
+ * Integration tests for `splitInterval(db, intervalId, atPosition, userId)` —
  * Decision D7 / Issue 5b A (locked 2026-04-29 in /plan-eng-review).
  *
  * Behavior:
@@ -16,7 +16,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq, asc } from 'drizzle-orm';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval, splitInterval } from '../../src/lib/server/intervals.js';
 
@@ -24,15 +24,18 @@ type Db = Awaited<ReturnType<typeof createTestDb>>;
 
 describe('splitInterval — D7/5b A', () => {
 	let db: Db;
+	let userId: string;
 	let acts: { act0: string; act1: string; act2: string };
 	let ellie: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		acts = await seedActs(db);
+		const _user = await seedTestUser(db);
+		userId = _user.id;
+		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -43,9 +46,9 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act1
-		});
+		}, userId);
 
-		await splitInterval(db, original.id, 1.0);
+		await splitInterval(db, original.id, 1.0, userId);
 
 		const all = await db
 			.select()
@@ -73,9 +76,9 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act1
-		});
+		}, userId);
 
-		await splitInterval(db, original.id, 1.0);
+		await splitInterval(db, original.id, 1.0, userId);
 
 		const [origAfter] = await db
 			.select()
@@ -92,9 +95,9 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act1
-		});
+		}, userId);
 
-		await splitInterval(db, original.id, 1.0);
+		await splitInterval(db, original.id, 1.0, userId);
 
 		const all = await db
 			.select()
@@ -122,8 +125,8 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act1,
 			endActId: acts.act2
-		});
-		await expect(splitInterval(db, original.id, 0.5)).rejects.toThrow();
+		}, userId);
+		await expect(splitInterval(db, original.id, 0.5, userId)).rejects.toThrow();
 	});
 
 	it('rejects split above the bar range (atPosition > endPosition)', async () => {
@@ -131,8 +134,8 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act1
-		});
-		await expect(splitInterval(db, original.id, 2.5)).rejects.toThrow();
+		}, userId);
+		await expect(splitInterval(db, original.id, 2.5, userId)).rejects.toThrow();
 	});
 
 	it('rejects split exactly at start (zero-extent left half)', async () => {
@@ -140,8 +143,8 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act1
-		});
-		await expect(splitInterval(db, original.id, 0.0)).rejects.toThrow();
+		}, userId);
+		await expect(splitInterval(db, original.id, 0.0, userId)).rejects.toThrow();
 	});
 
 	it('rejects split exactly at end (zero-extent right half)', async () => {
@@ -149,8 +152,8 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act1
-		});
-		await expect(splitInterval(db, original.id, 2.0)).rejects.toThrow();
+		}, userId);
+		await expect(splitInterval(db, original.id, 2.0, userId)).rejects.toThrow();
 	});
 
 	it('3-act bar split at first internal boundary produces [0, 1) + [1, 3)', async () => {
@@ -159,9 +162,9 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act2
-		});
+		}, userId);
 
-		await splitInterval(db, original.id, 1.0);
+		await splitInterval(db, original.id, 1.0, userId);
 
 		const all = await db
 			.select()
@@ -180,9 +183,9 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act2
-		});
+		}, userId);
 
-		await splitInterval(db, original.id, 2.0);
+		await splitInterval(db, original.id, 2.0, userId);
 
 		const all = await db
 			.select()
@@ -201,11 +204,11 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act1
-		});
+		}, userId);
 
 		// Force a failure with an out-of-range split position. Verify the original
 		// row is unchanged (would-be left-side update did NOT persist).
-		await expect(splitInterval(db, original.id, -1)).rejects.toThrow();
+		await expect(splitInterval(db, original.id, -1, userId)).rejects.toThrow();
 
 		const all = await db
 			.select()
@@ -220,11 +223,11 @@ describe('splitInterval — D7/5b A', () => {
 		// Plant 2 scenes in act1.
 		const [s0] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 
 		// Ellie covers all of act1 → [1, 2).
@@ -232,10 +235,10 @@ describe('splitInterval — D7/5b A', () => {
 			entityId: ellie,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 
 		// Split at 1.5 (the scene-1 boundary: k=1, m=2 → 1 + 1/2 = 1.5).
-		await splitInterval(db, original.id, 1.5);
+		await splitInterval(db, original.id, 1.5, userId);
 
 		const all = await db
 			.select()
@@ -253,6 +256,6 @@ describe('splitInterval — D7/5b A', () => {
 	});
 
 	it('rejects split on a non-existent interval', async () => {
-		await expect(splitInterval(db, '00000000-0000-0000-0000-000000000000', 1.0)).rejects.toThrow();
+		await expect(splitInterval(db, '00000000-0000-0000-0000-000000000000', 1.0, userId)).rejects.toThrow();
 	});
 });

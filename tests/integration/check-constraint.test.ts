@@ -10,20 +10,23 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sql } from 'drizzle-orm';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 
 describe('intervals_position_order CHECK constraint', () => {
 	let db: Awaited<ReturnType<typeof createTestDb>>;
+	let userId: string;
 	let acts: { act0: string; act1: string; act2: string };
 	let ellie: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		acts = await seedActs(db);
+		const _user = await seedTestUser(db);
+		userId = _user.id;
+		acts = await seedActs(db, userId);
 		const [e] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = e.id;
 	});
@@ -31,7 +34,8 @@ describe('intervals_position_order CHECK constraint', () => {
 	it('rejects start_position > end_position', async () => {
 		await expect(
 			db.insert(intervals).values({
-				entityId: ellie,
+				userId,
+			entityId: ellie,
 				startActId: acts.act0,
 				endActId: acts.act0,
 				startPosition: 1.0,
@@ -43,7 +47,8 @@ describe('intervals_position_order CHECK constraint', () => {
 	it('rejects start_position == end_position (strict <)', async () => {
 		await expect(
 			db.insert(intervals).values({
-				entityId: ellie,
+				userId,
+			entityId: ellie,
 				startActId: acts.act0,
 				endActId: acts.act0,
 				startPosition: 0.5,

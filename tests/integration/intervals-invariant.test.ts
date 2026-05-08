@@ -30,7 +30,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import {
 	writeInterval,
@@ -50,7 +50,7 @@ interface Violation {
 /**
  * Walk every interval, run the 3 checks, return violations.
  */
-async function findViolations(db: Db): Promise<Violation[]> {
+async function findViolations(db: Db, userId: string): Promise<Violation[]> {
 	const violations: Violation[] = [];
 	const rows = await db.select().from(intervals);
 
@@ -142,7 +142,7 @@ async function findViolations(db: Db): Promise<Violation[]> {
 				startSceneId: row.startSceneId,
 				endActId: row.endActId,
 				endSceneId: row.endSceneId
-			});
+			}, userId);
 			if (Math.abs(derived.startPosition - row.startPosition) > POSITION_EPSILON) {
 				violations.push({
 					row,
@@ -160,8 +160,8 @@ async function findViolations(db: Db): Promise<Violation[]> {
 		}
 
 		// Check 3: act-ordering consistency
-		const startActIdx = await actIndexOf(db, row.startActId);
-		const endActIdx = await actIndexOf(db, row.endActId);
+		const startActIdx = await actIndexOf(db, row.startActId, userId);
+		const endActIdx = await actIndexOf(db, row.endActId, userId);
 		if (Math.floor(row.startPosition) !== startActIdx) {
 			violations.push({
 				row,
@@ -188,38 +188,41 @@ async function findViolations(db: Db): Promise<Violation[]> {
 
 describe('intervals invariant: type alignment + position-FK consistency + act ordering', () => {
 	let db: Db;
+	let userId: string;
 	let acts: { act0: string; act1: string; act2: string };
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		acts = await seedActs(db);
+		const _user = await seedTestUser(db);
+		userId = _user.id;
+		acts = await seedActs(db, userId);
 	});
 
 	it('clean DB has no violations', async () => {
-		const violations = await findViolations(db);
+		const violations = await findViolations(db, userId);
 		expect(violations).toEqual([]);
 	});
 
 	it('all six worked-example rows are invariant-clean', async () => {
 		const [ellie] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		const [damien] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Damien' })
+			.values({ userId, type: 'Character', name: 'Damien' })
 			.returning();
 		const [marcus] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Marcus' })
+			.values({ userId, type: 'Character', name: 'Marcus' })
 			.returning();
 		const [scout] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Scout' })
+			.values({ userId, type: 'Character', name: 'Scout' })
 			.returning();
 		const [battle] = await db
 			.insert(entities)
-			.values({ type: 'Event', name: 'Battle of Three Rivers' })
+			.values({ userId, type: 'Event', name: 'Battle of Three Rivers' })
 			.returning();
 
 		// 5 scenes in Act 1
@@ -227,7 +230,7 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 		for (let k = 0; k < 5; k++) {
 			const [s] = await db
 				.insert(entities)
-				.values({ type: 'Scene', name: `A1-S${k}`, parentId: acts.act1, position: k })
+				.values({ userId, type: 'Scene', name: `A1-S${k}`, parentId: acts.act1, position: k })
 				.returning();
 			a1scenes.push(s);
 		}
@@ -236,22 +239,22 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 		for (let k = 0; k < 3; k++) {
 			const [s] = await db
 				.insert(entities)
-				.values({ type: 'Scene', name: `A2-S${k}`, parentId: acts.act2, position: k })
+				.values({ userId, type: 'Scene', name: `A2-S${k}`, parentId: acts.act2, position: k })
 				.returning();
 			a2scenes.push(s);
 		}
 
 		// (1) Ellie all of Act 1
-		await writeInterval(db, { entityId: ellie.id, startActId: acts.act1, endActId: acts.act1 });
+		await writeInterval(db, { entityId: ellie.id, startActId: acts.act1, endActId: acts.act1 }, userId);
 		// (2) Battle multi-act, Act 0 → Act 2 (no scene FKs, full extent)
-		await writeInterval(db, { entityId: battle.id, startActId: acts.act0, endActId: acts.act2 });
+		await writeInterval(db, { entityId: battle.id, startActId: acts.act0, endActId: acts.act2 }, userId);
 		// (3) Scout-like — scene-anchored sub-range in Act 1.
 		// Use a distinct entity so this doesn't overlap with row (1)'s Ellie
 		// [1, 2); same-entity overlap is rejected by writeInterval per
 		// /plan-eng-review resolutions item 1.2 (locked 2026-04-28).
 		const [eve] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Eve' })
+			.values({ userId, type: 'Character', name: 'Eve' })
 			.returning();
 		await writeInterval(db, {
 			entityId: eve.id,
@@ -259,7 +262,7 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 			startSceneId: a1scenes[1].id,
 			endActId: acts.act1,
 			endSceneId: a1scenes[3].id
-		});
+		}, userId);
 		// (4) Damien multi-act with scenes
 		await writeInterval(db, {
 			entityId: damien.id,
@@ -267,13 +270,13 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 			startSceneId: undefined,
 			endActId: acts.act2,
 			endSceneId: a2scenes[1].id
-		});
+		}, userId);
 		// (5) Marcus full Act 0
-		await writeInterval(db, { entityId: marcus.id, startActId: acts.act0, endActId: acts.act0 });
+		await writeInterval(db, { entityId: marcus.id, startActId: acts.act0, endActId: acts.act0 }, userId);
 		// (6) Scout full Act 2
-		await writeInterval(db, { entityId: scout.id, startActId: acts.act2, endActId: acts.act2 });
+		await writeInterval(db, { entityId: scout.id, startActId: acts.act2, endActId: acts.act2 }, userId);
 
-		const violations = await findViolations(db);
+		const violations = await findViolations(db, userId);
 		expect(violations).toEqual([]);
 	});
 
@@ -284,10 +287,11 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 	it('catches polymorphic FK violation (start_act_id pointing at Character)', async () => {
 		const [ellie] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		// Plant a bad row directly. writeInterval would reject this; we go around it.
 		await db.insert(intervals).values({
+			userId,
 			entityId: ellie.id,
 			// Both act FKs point at a CHARACTER entity. SQLite doesn't enforce type.
 			startActId: ellie.id,
@@ -296,7 +300,7 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 			endPosition: 1
 		});
 
-		const violations = await findViolations(db);
+		const violations = await findViolations(db, userId);
 		expect(violations.some((v) => v.check === 'fk_type')).toBe(true);
 		expect(violations.some((v) => v.detail.includes('Character'))).toBe(true);
 	});
@@ -304,20 +308,21 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 	it('catches position-FK drift on a scene-anchored row', async () => {
 		const [ellie] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		const [s0] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 
 		// Plant a bad row: positions deliberately wrong for the FKs.
 		// scene 0 of 2 in Act 1 should be [1.0, 1.5). We write [1.0, 1.7).
 		await db.insert(intervals).values({
+			userId,
 			entityId: ellie.id,
 			startActId: acts.act1,
 			startSceneId: s0.id,
@@ -327,24 +332,24 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 			endPosition: 1.7 // wrong; should be 2.0
 		});
 
-		const violations = await findViolations(db);
+		const violations = await findViolations(db, userId);
 		expect(violations.some((v) => v.check === 'position_fk')).toBe(true);
 	});
 
 	it('catches act-ordering drift after Act position changes (without recompute)', async () => {
 		const [ellie] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		// Write a clean full-Act-1 interval.
-		await writeInterval(db, { entityId: ellie.id, startActId: acts.act1, endActId: acts.act1 });
+		await writeInterval(db, { entityId: ellie.id, startActId: acts.act1, endActId: acts.act1 }, userId);
 		// Now reorder Acts: swap Act 1 and Act 2 positions.
 		await db.update(entities).set({ position: 2 }).where(eq(entities.id, acts.act1));
 		await db.update(entities).set({ position: 1 }).where(eq(entities.id, acts.act2));
 		// Without recomputeAllIntervals, the row's start_position=1.0 / end_position=2.0
 		// no longer matches act_index_of(act1)=2.
 
-		const violations = await findViolations(db);
+		const violations = await findViolations(db, userId);
 		expect(violations.some((v) => v.check === 'act_ordering')).toBe(true);
 	});
 });
