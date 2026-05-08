@@ -3,18 +3,19 @@ import type { PageServerLoad } from './$types.js';
 
 /**
  * Pass the server's view of "is Google OAuth configured" to the page so the
- * UI button visibility matches the actual server-side enablement. Codex P2
- * fix: previously the page checked `VITE_GOOGLE_CLIENT_ID` (client-only build
- * env), but `buildAuth` reads `GOOGLE_CLIENT_ID` (server runtime env). With
- * only the documented `GOOGLE_CLIENT_ID` set, the backend enabled Google but
- * the button stayed hidden — feature appeared broken.
+ * UI button visibility matches the actual server-side enablement.
  *
- * On Cloudflare Workers, env comes from `platform.env`. In dev/preview, it
- * falls through to `$env/dynamic/private`. Either way, this load runs server-
- * side so the secret never reaches the browser.
+ * Must mirror the env merge in hooks.server.ts (process.env → privateEnv →
+ * platform.env). Picking only one source can hide the button when the
+ * adapter-cloudflare platform polyfill is partial in dev/preview but the
+ * secret is set in .env — backend would enable Google while the UI hides it.
  */
 export const load: PageServerLoad = async ({ platform }) => {
-	const env = (platform?.env ?? privateEnv) as Record<string, string | undefined>;
+	const env: Record<string, string | undefined> = {
+		...(typeof process !== 'undefined' ? (process.env as Record<string, string | undefined>) : {}),
+		...(privateEnv as Record<string, string | undefined>),
+		...((platform?.env as Record<string, string | undefined> | undefined) ?? {}),
+	};
 	const googleEnabled = !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
 	return { googleEnabled };
 };
