@@ -21,7 +21,10 @@ export default defineConfig({
 				test: {
 					name: 'unit',
 					environment: 'node',
-					include: ['tests/unit/**/*.{test,spec}.{js,ts}']
+					include: ['tests/unit/**/*.{test,spec}.{js,ts}'],
+					// One unit test (intervals-math) uses createTestDb — its PGlite
+					// boot competes with the integration project under parallel load.
+					hookTimeout: 30000
 				}
 			},
 			{
@@ -29,7 +32,10 @@ export default defineConfig({
 				test: {
 					name: 'integration',
 					environment: 'node',
-					include: ['tests/integration/**/*.{test,spec}.{js,ts}']
+					include: ['tests/integration/**/*.{test,spec}.{js,ts}'],
+					// PGlite WASM boot + 5 migrations exceeds the 10s default under
+					// parallel load (~25 files × concurrent worker forks).
+					hookTimeout: 30000
 				}
 			},
 			{

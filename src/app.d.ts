@@ -1,5 +1,8 @@
 // See https://svelte.dev/docs/kit/types#app.d.ts
 // for information about these interfaces
+import type { RuntimeDb } from '$lib/server/db/index.js';
+import type { Auth } from '$lib/server/auth.js';
+
 declare global {
 	namespace App {
 		interface Locals {
@@ -16,6 +19,8 @@ declare global {
 				expiresAt: Date;
 				token: string;
 			} | null;
+			db: RuntimeDb;
+			auth: Auth;
 		}
 		// interface Error {}
 		// interface PageData {}
