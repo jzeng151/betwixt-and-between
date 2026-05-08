@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getUserId, assertParentsOwned } from '$lib/server/auth-gate.js';
 import { recomputeIntervalsForAct } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
@@ -40,6 +40,15 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	if (items.length === 0) return json([], { status: 201 });
+
+	const parentIds = Array.from(
+		new Set(
+			items
+				.map((item: { parentId?: unknown }) => item.parentId)
+				.filter((p: unknown): p is string => typeof p === 'string')
+		)
+	);
+	await assertParentsOwned(db, userId, parentIds);
 
 	// Insert each row; track the affected parent acts for deduped recompute.
 	const created: (typeof entities.$inferSelect)[] = [];

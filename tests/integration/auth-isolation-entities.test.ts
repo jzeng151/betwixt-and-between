@@ -102,26 +102,21 @@ describe('auth isolation: /api/entities', () => {
 	});
 
 	it('user B batch with user A parentId fails (parent verification scoped)', async () => {
-		// Try to insert a Scene under user A's Act 0 as user B.
-		// FK exists on the row but our cross-user routes catch this — the user A's
-		// act exists but query scoped by user B sees no parent options. We don't
-		// validate parentId in batch (relies on FK), so the row inserts with
-		// userId=B and parentId=actsA.act0. That's a leak. Verify behavior:
-		const res = await batchRoute.POST(
-			mkEvent(userB, {
-				body: { entities: [{ type: 'Scene', name: 'leak', parentId: actsA.act0 }] }
-			})
-		);
-		const created = await readJson(res);
-		// FK referential integrity is preserved at the DB layer; the row is
-		// created but owned by user B. User A's GET list won't include it.
-		expect(created[0].userId).toBe(userB);
-		expect(created[0].parentId).toBe(actsA.act0);
+		// Codex P1 (PR37): batch must reject cross-tenant parentId references.
+		// Without assertParentsOwned, knowing user A's Act UUID was enough for
+		// user B to attach a Scene under it — corrupting isolation and creating
+		// cross-user delete cascades via the entities.parent_id FK.
+		await expect(
+			batchRoute.POST(
+				mkEvent(userB, {
+					body: { entities: [{ type: 'Scene', name: 'leak', parentId: actsA.act0 }] }
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
 
-		// User A doesn't see B's leaked-parent scene.
 		const aList = await entitiesRoute.GET(mkEvent(userA));
 		const aRows = await readJson(aList);
-		expect(aRows.find((r: { id: string }) => r.id === created[0].id)).toBeUndefined();
+		expect(aRows.find((r: { name: string }) => r.name === 'leak')).toBeUndefined();
 	});
 
 	it('position cascade scoped by userId — A reorders Acts, B unaffected', async () => {

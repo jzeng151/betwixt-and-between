@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, or, sql } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
 import type { RequestHandler } from './$types';
 
 const isEntryFilter = (id: string, userId: string) =>
@@ -42,7 +42,10 @@ export const PATCH: RequestHandler = async (event) => {
 		const data = (existing.data as Record<string, unknown>) ?? {};
 		updates.data = { ...data, body: noteBody };
 	}
-	if (folderId !== undefined) updates.parentId = folderId;
+	if (folderId !== undefined) {
+		await assertParentOwned(db, userId, folderId);
+		updates.parentId = folderId;
+	}
 
 	if (Object.keys(updates).length === 0) return json(existing);
 

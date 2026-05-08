@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
 import { recomputeAllIntervals, recomputeIntervalsForAct } from '$lib/server/intervals.js';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
@@ -36,6 +36,10 @@ export const POST: RequestHandler = async (event) => {
 	}
 	if (!name || typeof name !== 'string' || name.trim() === '') {
 		error(400, 'Name is required');
+	}
+
+	if (typeof parentId === 'string') {
+		await assertParentOwned(db, userId, parentId);
 	}
 
 	// Insert-between cascade for Acts: if a position is given and there's
