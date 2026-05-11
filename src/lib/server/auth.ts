@@ -94,6 +94,11 @@ export function buildAuth(db: RuntimeDb, env: AuthEnv) {
 		baseURL,
 		secret,
 		trustedOrigins,
+		advanced: {
+			database: {
+				generateId: () => crypto.randomUUID(),
+			},
+		},
 		session: {
 			cookieCache: {
 				enabled: true,
