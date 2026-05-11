@@ -51,7 +51,7 @@ export async function withDb<T>(
 	}
 }
 
-async function closeDb(db: RuntimeDb): Promise<void> {
+export async function closeDb(db: RuntimeDb): Promise<void> {
 	await (db as ClosableRuntimeDb)[closeRuntimeDb]?.();
 }
 

@@ -1,16 +1,20 @@
 import { json, error } from '@sveltejs/kit';
-import { withDb } from '$lib/server/db/index.js';
 import { relationships } from '$lib/server/db/schema.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { getUserId } from '$lib/server/auth-gate.js';
 import { resolveRelationshipBounds } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
-export const PATCH: RequestHandler = async ({ platform, params, request }) =>
-	withDb(platform?.env, async (db) => {
-	const [rel] = await db.select().from(relationships).where(eq(relationships.id, params.id));
+export const PATCH: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const [rel] = await db
+		.select()
+		.from(relationships)
+		.where(and(eq(relationships.id, event.params.id), eq(relationships.userId, userId)));
 	if (!rel) error(404, 'Relationship not found');
 
-	const body = await request.json();
+	const body = await event.request.json();
 	const {
 		type,
 		label,
@@ -24,18 +28,23 @@ export const PATCH: RequestHandler = async ({ platform, params, request }) =>
 	// Merge incoming temporal FKs with existing ones (undefined means keep existing).
 	// Scenes are children of acts — clearing an act FK must also clear its scene FK.
 	const mergedStartActId = startActId !== undefined ? (startActId ?? null) : rel.startActId;
-	const mergedStartSceneId = mergedStartActId === null
-		? null
-		: (startSceneId !== undefined ? (startSceneId ?? null) : rel.startSceneId);
+	const mergedStartSceneId =
+		mergedStartActId === null
+			? null
+			: startSceneId !== undefined
+				? (startSceneId ?? null)
+				: rel.startSceneId;
 	const mergedEndActId = endActId !== undefined ? (endActId ?? null) : rel.endActId;
-	const mergedEndSceneId = mergedEndActId === null
-		? null
-		: (endSceneId !== undefined ? (endSceneId ?? null) : rel.endSceneId);
+	const mergedEndSceneId =
+		mergedEndActId === null
+			? null
+			: endSceneId !== undefined
+				? (endSceneId ?? null)
+				: rel.endSceneId;
 
 	let startPosition: number | null = rel.startPosition;
 	let endPosition: number | null = rel.endPosition;
 
-	// Re-resolve positions if any temporal FK changed
 	const temporalChanged =
 		startActId !== undefined ||
 		startSceneId !== undefined ||
@@ -44,12 +53,16 @@ export const PATCH: RequestHandler = async ({ platform, params, request }) =>
 
 	if (temporalChanged) {
 		try {
-			const bounds = await resolveRelationshipBounds(db, {
-				startActId: mergedStartActId,
-				startSceneId: mergedStartSceneId,
-				endActId: mergedEndActId,
-				endSceneId: mergedEndSceneId
-			});
+			const bounds = await resolveRelationshipBounds(
+				db,
+				{
+					startActId: mergedStartActId,
+					startSceneId: mergedStartSceneId,
+					endActId: mergedEndActId,
+					endSceneId: mergedEndSceneId
+				},
+				userId
+			);
 			startPosition = bounds.startPosition;
 			endPosition = bounds.endPosition;
 		} catch (err) {
@@ -74,7 +87,7 @@ export const PATCH: RequestHandler = async ({ platform, params, request }) =>
 		[updated] = await db
 			.update(relationships)
 			.set(patch)
-			.where(eq(relationships.id, params.id))
+			.where(and(eq(relationships.id, event.params.id), eq(relationships.userId, userId)))
 			.returning();
 	} catch (err) {
 		const code = (err as { code?: string }).code ?? '';
@@ -85,16 +98,17 @@ export const PATCH: RequestHandler = async ({ platform, params, request }) =>
 		throw err;
 	}
 
+	if (!updated) error(404, 'Relationship not found');
 	return json(updated);
+};
 
-	});
-
-export const DELETE: RequestHandler = async ({ platform, params }) =>
-	withDb(platform?.env, async (db) => {
-	const [rel] = await db.select().from(relationships).where(eq(relationships.id, params.id));
-	if (!rel) error(404, 'Relationship not found');
-
-	await db.delete(relationships).where(eq(relationships.id, params.id));
+export const DELETE: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const [deleted] = await db
+		.delete(relationships)
+		.where(and(eq(relationships.id, event.params.id), eq(relationships.userId, userId)))
+		.returning();
+	if (!deleted) error(404, 'Relationship not found');
 	return new Response(null, { status: 204 });
-
-	});
+};

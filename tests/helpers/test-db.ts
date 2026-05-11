@@ -60,20 +60,47 @@ export async function createTestDb() {
 
 export type TestDb = Awaited<ReturnType<typeof createTestDb>>;
 
-/** Convenience: seed three Acts (positions 0, 1, 2) into a fresh test DB. */
-export async function seedActs(db: TestDb) {
+/**
+ * Convenience: seed three Acts (positions 0, 1, 2) into a fresh test DB.
+ *
+ * Pass `userId` to scope the acts to a user (required after T8b S5'). Tests
+ * that don't yet thread userId can call the legacy form `seedActs(db)` —
+ * acts are inserted with userId NULL and intervals.ts functions called with a
+ * matching null-equivalent userId will not see them. New tests should always
+ * pass userId.
+ */
+export async function seedActs(db: TestDb, userId?: string) {
 	const { entities } = await import('../../src/lib/server/db/schema.js');
 	const [act0] = await db
 		.insert(entities)
-		.values({ type: 'Act', name: 'Act 0', position: 0 })
+		.values({ userId: userId ?? null, type: 'Act', name: 'Act 0', position: 0 })
 		.returning();
 	const [act1] = await db
 		.insert(entities)
-		.values({ type: 'Act', name: 'Act 1', position: 1 })
+		.values({ userId: userId ?? null, type: 'Act', name: 'Act 1', position: 1 })
 		.returning();
 	const [act2] = await db
 		.insert(entities)
-		.values({ type: 'Act', name: 'Act 2', position: 2 })
+		.values({ userId: userId ?? null, type: 'Act', name: 'Act 2', position: 2 })
 		.returning();
 	return { act0: act0.id, act1: act1.id, act2: act2.id };
+}
+
+/** Seed a test user row for auth-gated integration tests. Returns user fields for mkEvent. */
+export async function seedTestUser(
+	db: TestDb,
+	overrides?: { id?: string; email?: string; name?: string },
+) {
+	const { user } = await import('../../src/lib/server/db/schema.js');
+	const id = overrides?.id ?? crypto.randomUUID();
+	const [row] = await db
+		.insert(user)
+		.values({
+			id,
+			name: overrides?.name ?? 'Test User',
+			email: overrides?.email ?? `test-${id.slice(0, 8)}@test.com`,
+			emailVerified: true,
+		})
+		.returning();
+	return { id: row.id, name: row.name, email: row.email };
 }

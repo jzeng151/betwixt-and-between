@@ -1,4 +1,7 @@
 import { test, expect } from '@playwright/test';
+import { E2E_USER_HEADERS } from './pglite-config.js';
+
+test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
 
 test.describe('Landing page', () => {
   test.beforeEach(async ({ page }) => {

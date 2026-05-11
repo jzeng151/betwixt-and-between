@@ -18,21 +18,24 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval, splitInterval } from '../../src/lib/server/intervals.js';
 
 describe('splitInterval atomicity under tx rollback', () => {
 	let db: Awaited<ReturnType<typeof createTestDb>>;
+	let userId: string;
 	let acts: { act0: string; act1: string; act2: string };
 	let ellie: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		acts = await seedActs(db);
+		const _user = await seedTestUser(db);
+		userId = _user.id;
+		acts = await seedActs(db, userId);
 		const [e] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = e.id;
 	});
@@ -43,14 +46,14 @@ describe('splitInterval atomicity under tx rollback', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act2
-		});
+		}, userId);
 		expect(original.startPosition).toBe(0);
 		expect(original.endPosition).toBe(3);
 
 		// Attempt the split inside a tx that throws after splitInterval.
 		await expect(
 			db.transaction(async (tx) => {
-				await splitInterval(tx, original.id, 1.5);
+				await splitInterval(tx, original.id, 1.5, userId);
 				throw new Error('boom — caller failure mid-tx');
 			})
 		).rejects.toThrow(/boom/);
@@ -69,10 +72,10 @@ describe('splitInterval atomicity under tx rollback', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act2
-		});
+		}, userId);
 
 		await db.transaction(async (tx) => {
-			await splitInterval(tx, original.id, 1.5);
+			await splitInterval(tx, original.id, 1.5, userId);
 		});
 
 		const all = await db.select().from(intervals).orderBy(intervals.startPosition);

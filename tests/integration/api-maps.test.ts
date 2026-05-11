@@ -7,15 +7,13 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createTestDb } from '../helpers/test-db.js';
+import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { entities } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
+let userId: string;
 
-vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => currentDb,
-	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
-}));
+// vi.mock removed — routes now read event.locals.db (T8b S5' A1)
 
 const { GET: LIST_MAPS, POST: CREATE_MAP } = await import(
 	'../../src/routes/api/maps/+server.js'
@@ -39,6 +37,11 @@ function mkEvent(
 		params: overrides.params ?? {},
 		request: {
 			json: async () => overrides.body
+		},
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'test-token' },
 		}
 	};
 }
@@ -57,6 +60,11 @@ function mkFormDataEvent(
 		params: overrides.params ?? {},
 		request: {
 			formData: async () => formData
+		},
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'test-token' }
 		}
 	};
 }
@@ -64,6 +72,8 @@ function mkFormDataEvent(
 describe('/api/maps GET', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('returns empty array when no maps', async () => {
@@ -85,6 +95,8 @@ describe('/api/maps GET', () => {
 describe('/api/maps POST', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('creates a map with valid name', async () => {
@@ -119,6 +131,8 @@ describe('/api/maps POST', () => {
 describe('/api/maps/[id]', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('GET returns map with empty regions', async () => {
@@ -219,6 +233,8 @@ describe('/api/maps/[id]', () => {
 describe('/api/maps/[id]/regions', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('POST creates a region with valid polygon', async () => {
@@ -311,6 +327,8 @@ describe('/api/maps/[id]/regions', () => {
 describe('/api/maps/[id]/regions/[rid]', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	async function setupMapWithRegion() {
@@ -401,7 +419,7 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 		// First set a locationId via PATCH
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ type: 'Location', name: 'Forest' })
+			.values({ userId, type: 'Location', name: 'Forest' })
 			.returning();
 		await regionIdRoute.PATCH(
 			mkEvent({
@@ -460,7 +478,7 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 		);
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ type: 'Location', name: 'Castle' })
+			.values({ userId, type: 'Location', name: 'Castle' })
 			.returning();
 		const polygon = [[0, 0], [100, 0], [100, 100]];
 		const res = await CREATE_REGION(
@@ -479,6 +497,8 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 describe('Map + Region cascade', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('deleting map cascades to regions', async () => {
@@ -517,6 +537,8 @@ describe('Map + Region cascade', () => {
 describe('/api/maps/[id]/upload-image', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	// Minimal 1x1 white PNG (67 bytes)
@@ -595,7 +617,7 @@ describe('/api/maps/[id]/upload-image', () => {
 		);
 		expect(res.status).toBe(200);
 		const body = await readJson(res);
-		expect(body.baseImageUrl).toMatch(/^\/maps\//);
+		expect(body.baseImageUrl).toMatch(/^\/api\/maps\/file\//);
 		expect(body.width).toBe(1);
 		expect(body.height).toBe(1);
 	});

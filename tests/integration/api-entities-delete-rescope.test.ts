@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
 import { eq } from 'drizzle-orm';
@@ -23,10 +23,8 @@ import { eq } from 'drizzle-orm';
 import { vi } from 'vitest';
 
 let testDb: Awaited<ReturnType<typeof createTestDb>>;
-vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => testDb,
-	withDb: async (_env: unknown, callback: (db: typeof testDb) => Promise<unknown>) => callback(testDb)
-}));
+let userId: string;
+// vi.mock removed — routes now read event.locals.db (T8b S5' A1)
 
 const { DELETE } = await import('../../src/routes/api/entities/[id]/+server.js');
 
@@ -35,8 +33,13 @@ function makeEvent(path: string, params: Record<string, string>) {
 	return {
 		params,
 		url: new URL(fullUrl),
-		request: new Request(fullUrl, { method: 'DELETE' })
-	} as Parameters<typeof DELETE>[0];
+		request: new Request(fullUrl, { method: 'DELETE' }),
+		locals: {
+			db: testDb,
+			user: { id: userId, name: 'Test', email: 't@t.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'tok' }
+		}
+	} as unknown as Parameters<typeof DELETE>[0];
 }
 
 describe('act delete rescopes intervals instead of cascading', () => {
@@ -45,10 +48,12 @@ describe('act delete rescopes intervals instead of cascading', () => {
 
 	beforeEach(async () => {
 		testDb = await createTestDb();
-		acts = await seedActs(testDb);
+		const _user = await seedTestUser(testDb);
+		userId = _user.id;
+		acts = await seedActs(testDb, userId);
 		const [e] = await testDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = e.id;
 	});
@@ -61,7 +66,7 @@ describe('act delete rescopes intervals instead of cascading', () => {
 			endActId: acts.act2,
 			startPosition: 0.5,
 			endPosition: 2.7
-		});
+		}, userId);
 
 		await DELETE(makeEvent(`/api/entities/${acts.act2}`, { id: acts.act2 }));
 
@@ -80,7 +85,7 @@ describe('act delete rescopes intervals instead of cascading', () => {
 			endActId: acts.act1,
 			startPosition: 0.3,
 			endPosition: 1.6
-		});
+		}, userId);
 
 		await DELETE(makeEvent(`/api/entities/${acts.act0}`, { id: acts.act0 }));
 
@@ -99,7 +104,7 @@ describe('act delete rescopes intervals instead of cascading', () => {
 			endActId: acts.act1,
 			startPosition: 1.2,
 			endPosition: 1.8
-		});
+		}, userId);
 
 		await DELETE(makeEvent(`/api/entities/${acts.act1}`, { id: acts.act1 }));
 
@@ -115,15 +120,15 @@ describe('act delete rescopes intervals instead of cascading', () => {
 			endActId: acts.act2,
 			startPosition: 0,
 			endPosition: 2.5
-		});
-		const [d] = await testDb.insert(entities).values({ type: 'Character', name: 'D' }).returning();
+		}, userId);
+		const [d] = await testDb.insert(entities).values({ userId, type: 'Character', name: 'D' }).returning();
 		await writeInterval(testDb, {
 			entityId: d.id,
 			startActId: acts.act2,
 			endActId: acts.act2,
 			startPosition: 2.1,
 			endPosition: 2.9
-		});
+		}, userId);
 
 		await DELETE(makeEvent(`/api/entities/${acts.act2}`, { id: acts.act2 }));
 
@@ -141,7 +146,7 @@ describe('act delete rescopes intervals instead of cascading', () => {
 			endActId: acts.act2,
 			startPosition: 0.5,
 			endPosition: 2.5
-		});
+		}, userId);
 
 		await DELETE(makeEvent(`/api/entities/${acts.act1}`, { id: acts.act1 }));
 

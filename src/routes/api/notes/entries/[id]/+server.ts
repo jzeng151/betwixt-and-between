@@ -1,52 +1,39 @@
 import { json, error } from '@sveltejs/kit';
-import { withDb } from '$lib/server/db/index.js';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, or, sql } from 'drizzle-orm';
+import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ platform, params }) =>
-	withDb(platform?.env, async (db) => {
-	const [row] = await db
-		.select()
-		.from(entities)
-		.where(
-			and(
-				eq(entities.id, params.id),
-				eq(entities.type, 'Note'),
-				or(
-					sql`(${entities.data}->>'isFolder')::boolean IS NOT TRUE`,
-					sql`${entities.data}->>'isFolder' IS NULL`
-				)!
-			)
-		);
+const isEntryFilter = (id: string, userId: string) =>
+	and(
+		eq(entities.id, id),
+		eq(entities.userId, userId),
+		eq(entities.type, 'Note'),
+		or(
+			sql`(${entities.data}->>'isFolder')::boolean IS NOT TRUE`,
+			sql`${entities.data}->>'isFolder' IS NULL`
+		)!
+	);
+
+export const GET: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const [row] = await db.select().from(entities).where(isEntryFilter(event.params.id, userId));
 	if (!row) error(404, 'Entry not found');
 	return json(row);
+};
 
-	});
-
-export const PATCH: RequestHandler = async ({ platform, params, request }) =>
-	withDb(platform?.env, async (db) => {
-	const body = await request.json();
+export const PATCH: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const body = await event.request.json();
 	const { name, body: noteBody, folderId } = body as {
 		name?: string;
 		body?: string;
 		folderId?: string | null;
 	};
 
-	// Verify it's an entry (not a folder)
-	const [existing] = await db
-		.select()
-		.from(entities)
-		.where(
-			and(
-				eq(entities.id, params.id),
-				eq(entities.type, 'Note'),
-				or(
-					sql`(${entities.data}->>'isFolder')::boolean IS NOT TRUE`,
-					sql`${entities.data}->>'isFolder' IS NULL`
-				)!
-			)
-		);
+	const [existing] = await db.select().from(entities).where(isEntryFilter(event.params.id, userId));
 	if (!existing) error(404, 'Entry not found');
 
 	const updates: Record<string, unknown> = {};
@@ -55,38 +42,33 @@ export const PATCH: RequestHandler = async ({ platform, params, request }) =>
 		const data = (existing.data as Record<string, unknown>) ?? {};
 		updates.data = { ...data, body: noteBody };
 	}
-	if (folderId !== undefined) updates.parentId = folderId;
+	if (folderId !== undefined) {
+		await assertParentOwned(db, userId, folderId);
+		updates.parentId = folderId;
+	}
 
 	if (Object.keys(updates).length === 0) return json(existing);
 
 	const [updated] = await db
 		.update(entities)
 		.set(updates)
-		.where(eq(entities.id, params.id))
+		.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)))
 		.returning();
 
 	return json(updated);
+};
 
-	});
-
-export const DELETE: RequestHandler = async ({ platform, params }) =>
-	withDb(platform?.env, async (db) => {
+export const DELETE: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
 	const [existing] = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(
-			and(
-				eq(entities.id, params.id),
-				eq(entities.type, 'Note'),
-				or(
-					sql`(${entities.data}->>'isFolder')::boolean IS NOT TRUE`,
-					sql`${entities.data}->>'isFolder' IS NULL`
-				)!
-			)
-		);
+		.where(isEntryFilter(event.params.id, userId));
 	if (!existing) error(404, 'Entry not found');
 
-	await db.delete(entities).where(eq(entities.id, params.id));
+	await db
+		.delete(entities)
+		.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)));
 	return json({ ok: true });
-
-	});
+};

@@ -5,25 +5,26 @@
  * UPDATE outside this file is forbidden — see CONSIDERATIONS.md → "Dual-write
  * invariant strategy."
  *
+ * **Multi-tenant scoping (T8b S5', 2026-05-08):** every public function takes
+ * a `userId` and scopes every SELECT/UPDATE/DELETE/INSERT by it. Cross-user
+ * reads return empty; cross-user updates affect zero rows. Callers must pass
+ * `getUserId(event)` from the route handler.
+ *
  * Three primary surfaces:
  *
- *   1. computeIntervalPositions(input)   — pure math, callable from anywhere.
- *      Used by writeInterval AND the Vitest invariant test (single source of
- *      truth on the formula; drift impossible across call sites).
+ *   1. computeIntervalPositions(db, input, userId, cache?)
+ *      Pure math wrapper that resolves FK positions. Reads scoped by userId.
  *
- *   2. writeInterval(input)              — chokepoint for INSERT and UPDATE.
- *      Validates polymorphic FK types, validates positions match FK derivation
- *      when both supplied, computes positions if only FKs supplied, writes in a
- *      transaction.
+ *   2. writeInterval(db, input, userId)
+ *      Chokepoint for INSERT. Validates polymorphic FK types, validates
+ *      positions match FK derivation, stamps userId on the new row.
  *
- *   3. recomputeIntervalsForAct(actId)   — Scene-mutation handler. Walks
- *      affected intervals, recomputes positions for scene-anchored rows, leaves
- *      fraction-positioned rows frozen. Runs in same transaction as the scene
- *      mutation (caller responsibility).
+ *   3. recomputeIntervalsForAct(db, actId, userId)
+ *      Scene-mutation handler. Walks affected intervals (scoped to user),
+ *      recomputes positions for scene-anchored rows.
  *
- *      recomputeAllIntervals()           — Act-mutation handler. Walks every
- *      interval and recomputes positions because act_index changed for some N.
- *      Runs in same transaction as the act mutation.
+ *      recomputeAllIntervals(db, userId)
+ *      Act-mutation handler. Walks every interval owned by user.
  *
  * Math (CONSIDERATIONS.md → "The math, with variable definitions"):
  *
@@ -135,11 +136,11 @@ export interface RecomputeCache {
 	>;
 }
 
-export async function buildRecomputeCache(db: DB): Promise<RecomputeCache> {
+export async function buildRecomputeCache(db: DB, userId: string): Promise<RecomputeCache> {
 	const acts = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.where(and(eq(entities.userId, userId), eq(entities.type, 'Act'), isNull(entities.parentId)))
 		.orderBy(entities.position, entities.createdAt);
 	const actIndex = new Map<string, number>();
 	acts.forEach((a, i) => actIndex.set(a.id, i));
@@ -147,7 +148,7 @@ export async function buildRecomputeCache(db: DB): Promise<RecomputeCache> {
 	const allScenes = await db
 		.select({ id: entities.id, parentId: entities.parentId })
 		.from(entities)
-		.where(eq(entities.type, 'Scene'))
+		.where(and(eq(entities.userId, userId), eq(entities.type, 'Scene')))
 		.orderBy(entities.position, entities.createdAt);
 	const byAct = new Map<string, string[]>();
 	for (const s of allScenes) {
@@ -183,17 +184,17 @@ function sceneInfoFromCache(
 	return info;
 }
 
-export async function actIndexOf(db: DB, actId: string): Promise<number> {
+export async function actIndexOf(db: DB, actId: string, userId: string): Promise<number> {
 	const ordered = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.where(and(eq(entities.userId, userId), eq(entities.type, 'Act'), isNull(entities.parentId)))
 		.orderBy(entities.position, entities.createdAt);
 
 	const idx = ordered.findIndex((row) => row.id === actId);
 	if (idx === -1) {
 		// Differentiate "not an Act" from "Act with parent_id set" for better errors.
-		const [maybe] = await db.select().from(entities).where(eq(entities.id, actId));
+		const [maybe] = await db.select().from(entities).where(and(eq(entities.id, actId), eq(entities.userId, userId)));
 		if (!maybe) throw new Error(`Act not found: ${actId}`);
 		if (maybe.type !== 'Act')
 			throw new Error(
@@ -212,15 +213,16 @@ export async function actIndexOf(db: DB, actId: string): Promise<number> {
  */
 export async function sceneIndexOf(
 	db: DB,
-	sceneId: string
+	sceneId: string,
+	userId: string
 ): Promise<{ sceneIndex: number; sceneCount: number; parentActId: string }> {
-	const [scene] = await db.select().from(entities).where(eq(entities.id, sceneId));
+	const [scene] = await db.select().from(entities).where(and(eq(entities.id, sceneId), eq(entities.userId, userId)));
 	if (!scene) throw new Error(`Scene not found: ${sceneId}`);
 	if (scene.type !== 'Scene')
 		throw new Error(`Entity ${sceneId} has type='${scene.type}', expected 'Scene'`);
 	if (!scene.parentId) throw new Error(`Scene ${sceneId} has no parent_id`);
 
-	const [parent] = await db.select().from(entities).where(eq(entities.id, scene.parentId));
+	const [parent] = await db.select().from(entities).where(and(eq(entities.id, scene.parentId), eq(entities.userId, userId)));
 	if (!parent) throw new Error(`Scene ${sceneId} parent ${scene.parentId} not found`);
 	if (parent.type !== 'Act')
 		throw new Error(
@@ -230,7 +232,7 @@ export async function sceneIndexOf(
 	const siblings = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.type, 'Scene'), eq(entities.parentId, scene.parentId)))
+		.where(and(eq(entities.userId, userId), eq(entities.type, 'Scene'), eq(entities.parentId, scene.parentId)))
 		.orderBy(entities.position, entities.createdAt);
 
 	const k = siblings.findIndex((row) => row.id === sceneId);
@@ -257,17 +259,18 @@ export async function sceneIndexOf(
 export async function computeIntervalPositions(
 	db: DB,
 	input: ComputeIntervalPositionsInput,
+	userId: string,
 	cache?: RecomputeCache
 ): Promise<ComputeIntervalPositionsResult> {
 	let startPosition: number;
 	let endPosition: number;
 
 	const lookupAct = async (actId: string): Promise<number> =>
-		cache ? actIndexFromCache(cache, actId) : actIndexOf(db, actId);
+		cache ? actIndexFromCache(cache, actId) : actIndexOf(db, actId, userId);
 	const lookupScene = async (
 		sceneId: string
 	): Promise<{ sceneIndex: number; sceneCount: number; parentActId: string }> =>
-		cache ? sceneInfoFromCache(cache, sceneId) : sceneIndexOf(db, sceneId);
+		cache ? sceneInfoFromCache(cache, sceneId) : sceneIndexOf(db, sceneId, userId);
 
 	if (input.startSceneId) {
 		const { sceneIndex, sceneCount, parentActId } = await lookupScene(input.startSceneId);
@@ -329,11 +332,11 @@ export async function computeIntervalPositions(
 // Type-safety validation (polymorphic FK guard)
 // =============================================================================
 
-async function assertEntityType(db: DB, id: string, expected: schema.EntityType): Promise<void> {
+async function assertEntityType(db: DB, id: string, expected: schema.EntityType, userId: string): Promise<void> {
 	const [row] = await db
 		.select({ id: entities.id, type: entities.type })
 		.from(entities)
-		.where(eq(entities.id, id));
+		.where(and(eq(entities.id, id), eq(entities.userId, userId)));
 	if (!row) throw new Error(`Entity not found: ${id}`);
 	if (row.type !== expected) {
 		throw new Error(
@@ -364,12 +367,13 @@ async function assertNoOverlap(
 	entityId: string,
 	startPosition: number,
 	endPosition: number,
-	excludeId?: string
+	excludeId: string | undefined,
+	userId: string
 ): Promise<void> {
 	const existing = await db
 		.select()
 		.from(intervals)
-		.where(eq(intervals.entityId, entityId));
+		.where(and(eq(intervals.entityId, entityId), eq(intervals.userId, userId)));
 
 	for (const row of existing) {
 		if (excludeId && row.id === excludeId) continue;
@@ -382,19 +386,19 @@ async function assertNoOverlap(
 	}
 }
 
-async function validateFKTypes(db: DB, input: WriteIntervalInput): Promise<void> {
-	// entity_id must exist (any type — Character, Event, etc.)
+async function validateFKTypes(db: DB, input: WriteIntervalInput, userId: string): Promise<void> {
+	// entity_id must exist AND belong to user (any type — Character, Event, etc.)
 	const [entity] = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(eq(entities.id, input.entityId));
+		.where(and(eq(entities.id, input.entityId), eq(entities.userId, userId)));
 	if (!entity) throw new Error(`entity_id not found: ${input.entityId}`);
 
-	// Acts and Scenes must have correct types.
-	await assertEntityType(db, input.startActId, 'Act');
-	await assertEntityType(db, input.endActId, 'Act');
-	if (input.startSceneId) await assertEntityType(db, input.startSceneId, 'Scene');
-	if (input.endSceneId) await assertEntityType(db, input.endSceneId, 'Scene');
+	// Acts and Scenes must have correct types AND belong to user.
+	await assertEntityType(db, input.startActId, 'Act', userId);
+	await assertEntityType(db, input.endActId, 'Act', userId);
+	if (input.startSceneId) await assertEntityType(db, input.startSceneId, 'Scene', userId);
+	if (input.endSceneId) await assertEntityType(db, input.endSceneId, 'Scene', userId);
 }
 
 // =============================================================================
@@ -420,9 +424,10 @@ async function validateFKTypes(db: DB, input: WriteIntervalInput): Promise<void>
  */
 export async function writeInterval(
 	db: DB,
-	input: WriteIntervalInput
+	input: WriteIntervalInput,
+	userId: string
 ): Promise<typeof intervals.$inferSelect> {
-	await validateFKTypes(db, input);
+	await validateFKTypes(db, input, userId);
 
 	// Normalize: ensure startSceneId points to the lower-index scene.
 	// Client may send scenes in visual order rather than story-time (createdAt) order.
@@ -433,15 +438,15 @@ export async function writeInterval(
 		normalized.endSceneId &&
 		normalized.startSceneId !== normalized.endSceneId
 	) {
-		const startInfo = await sceneIndexOf(db, normalized.startSceneId);
-		const endInfo = await sceneIndexOf(db, normalized.endSceneId);
+		const startInfo = await sceneIndexOf(db, normalized.startSceneId, userId);
+		const endInfo = await sceneIndexOf(db, normalized.endSceneId, userId);
 		if (startInfo.sceneIndex > endInfo.sceneIndex) {
 			normalized.startSceneId = input.endSceneId;
 			normalized.endSceneId = input.startSceneId;
 		}
 	}
 
-	const derived = await computeIntervalPositions(db, normalized);
+	const derived = await computeIntervalPositions(db, normalized, userId);
 
 	if (input.startPosition !== undefined) {
 		if (Math.abs(input.startPosition - derived.startPosition) > POSITION_EPSILON) {
@@ -460,11 +465,12 @@ export async function writeInterval(
 
 	/* Same-entity overlap rejection (CONSIDERATIONS.md → /plan-eng-review item 1.2,
 	   locked 2026-04-28). Must run after position derivation, before the insert. */
-	await assertNoOverlap(db, normalized.entityId, derived.startPosition, derived.endPosition);
+	await assertNoOverlap(db, normalized.entityId, derived.startPosition, derived.endPosition, undefined, userId);
 
 	const [created] = await db
 		.insert(intervals)
 		.values({
+			userId,
 			entityId: normalized.entityId,
 			startActId: normalized.startActId,
 			startSceneId: normalized.startSceneId ?? null,
@@ -492,9 +498,10 @@ export interface UpdateIntervalResult {
 export async function updateInterval(
 	db: DB,
 	id: string,
-	patch: Partial<WriteIntervalInput>
+	patch: Partial<WriteIntervalInput>,
+	userId: string
 ): Promise<UpdateIntervalResult> {
-	const [existing] = await db.select().from(intervals).where(eq(intervals.id, id));
+	const [existing] = await db.select().from(intervals).where(and(eq(intervals.id, id), eq(intervals.userId, userId)));
 	if (!existing) throw new Error(`Interval not found: ${id}`);
 
 	const mergedStartActId = patch.startActId ?? existing.startActId;
@@ -530,8 +537,8 @@ export async function updateInterval(
 		endPosition: endPosOverride
 	};
 
-	await validateFKTypes(db, merged);
-	const derived = await computeIntervalPositions(db, merged);
+	await validateFKTypes(db, merged, userId);
+	const derived = await computeIntervalPositions(db, merged, userId);
 
 	if (patch.startPosition !== undefined) {
 		if (Math.abs(patch.startPosition - derived.startPosition) > POSITION_EPSILON) {
@@ -556,7 +563,7 @@ export async function updateInterval(
 	const sameEntity = await db
 		.select()
 		.from(intervals)
-		.where(eq(intervals.entityId, merged.entityId));
+		.where(and(eq(intervals.entityId, merged.entityId), eq(intervals.userId, userId)));
 	const overlappers = sameEntity.filter(
 		(row) =>
 			row.id !== id &&
@@ -610,9 +617,10 @@ export async function updateInterval(
 		unionEndSceneId = rightmost.sceneId;
 
 		// Delete the absorbed siblings before the update so the unique-
-		// row-per-entity-position invariant holds.
+		// row-per-entity-position invariant holds. userId in WHERE is defense-
+		// in-depth — overlappers were already filtered by userId above.
 		for (const row of overlappers) {
-			await db.delete(intervals).where(eq(intervals.id, row.id));
+			await db.delete(intervals).where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
 			absorbed.push(row.id);
 		}
 	}
@@ -628,7 +636,7 @@ export async function updateInterval(
 			startPosition: unionStart,
 			endPosition: unionEnd,
 		})
-		.where(eq(intervals.id, id))
+		.where(and(eq(intervals.id, id), eq(intervals.userId, userId)))
 		.returning();
 	return { updated, absorbed };
 }
@@ -647,17 +655,20 @@ export async function updateInterval(
  *
  * Only writes rows whose positions actually changed.
  */
-export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<number> {
+export async function recomputeIntervalsForAct(db: DB, actId: string, userId: string): Promise<number> {
 	const affected = await db
 		.select()
 		.from(intervals)
 		.where(
-			sql`(${intervals.startActId} = ${actId} OR ${intervals.endActId} = ${actId})`
+			and(
+				eq(intervals.userId, userId),
+				sql`(${intervals.startActId} = ${actId} OR ${intervals.endActId} = ${actId})`
+			)
 		);
 
 	// One-shot act + scene index maps so each row resolves FKs in O(1)
 	// instead of issuing 2-4 DB queries (D20/16A).
-	const cache = await buildRecomputeCache(db);
+	const cache = await buildRecomputeCache(db, userId);
 
 	let updated = 0;
 	for (const row of affected) {
@@ -685,23 +696,23 @@ export async function recomputeIntervalsForAct(db: DB, actId: string): Promise<n
 				startPosition: newStart,
 				endPosition: newEnd,
 			})
-			.where(eq(intervals.id, row.id));
+			.where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
 		updated++;
 	}
 	return updated;
 }
 
 /**
- * Recompute positions for EVERY interval row in the database.
+ * Recompute positions for EVERY interval row owned by user.
  *
  * Runs after any Act-level mutation (insert, reorder, delete) where the
  * act_index of one or more Acts changes. Acts are typically <= ~30 in any
  * story; touching every interval is fine at that scale.
  */
-export async function recomputeAllIntervals(db: DB): Promise<number> {
-	const all = await db.select().from(intervals);
+export async function recomputeAllIntervals(db: DB, userId: string): Promise<number> {
+	const all = await db.select().from(intervals).where(eq(intervals.userId, userId));
 	// Build one-shot FK cache (D20/16A).
-	const cache = await buildRecomputeCache(db);
+	const cache = await buildRecomputeCache(db, userId);
 	let updated = 0;
 
 	for (const row of all) {
@@ -714,6 +725,7 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 					endActId: row.endActId,
 					endSceneId: row.endSceneId
 				},
+				userId,
 				cache
 			);
 
@@ -755,7 +767,7 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 					startPosition: newStart,
 					endPosition: newEnd,
 				})
-				.where(eq(intervals.id, row.id));
+				.where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
 			updated++;
 		} catch (err) {
 			throw new Error(
@@ -766,7 +778,7 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 
 	// Also recompute temporal relationship bounds in the same transaction so
 	// act-reorder cascades are atomic (Phase 1B Lane A, 2026-05-02).
-	await recomputeRelationshipBoundsAll(db);
+	await recomputeRelationshipBoundsAll(db, userId);
 
 	return updated;
 }
@@ -797,9 +809,10 @@ export async function recomputeAllIntervals(db: DB): Promise<number> {
 export async function splitInterval(
 	db: DB,
 	intervalId: string,
-	atPosition: number
+	atPosition: number,
+	userId: string
 ): Promise<{ left: typeof intervals.$inferSelect; right: typeof intervals.$inferSelect }> {
-	const [existing] = await db.select().from(intervals).where(eq(intervals.id, intervalId));
+	const [existing] = await db.select().from(intervals).where(and(eq(intervals.id, intervalId), eq(intervals.userId, userId)));
 	if (!existing) throw new Error(`Interval not found: ${intervalId}`);
 
 	if (atPosition <= existing.startPosition + POSITION_EPSILON) {
@@ -816,12 +829,12 @@ export async function splitInterval(
 	const actRows = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.where(and(eq(entities.userId, userId), eq(entities.type, 'Act'), isNull(entities.parentId)))
 		.orderBy(entities.position, entities.createdAt);
 	const sceneRows = await db
 		.select({ id: entities.id, parentId: entities.parentId })
 		.from(entities)
-		.where(eq(entities.type, 'Scene'))
+		.where(and(eq(entities.userId, userId), eq(entities.type, 'Scene')))
 		.orderBy(entities.position, entities.createdAt);
 	const scenesByActId = new Map<string, { id: string }[]>();
 	for (const s of sceneRows) {
@@ -851,12 +864,13 @@ export async function splitInterval(
 			endSceneId: leftEndFKs.endSceneId,
 			endPosition: leftEndFKs.endPosition
 		})
-		.where(eq(intervals.id, intervalId))
+		.where(and(eq(intervals.id, intervalId), eq(intervals.userId, userId)))
 		.returning();
 
 	const [right] = await db
 		.insert(intervals)
 		.values({
+			userId,
 			entityId: existing.entityId,
 			startActId: rightStartFKs.startActId,
 			startSceneId: rightStartFKs.startSceneId,
@@ -899,9 +913,10 @@ export async function moveSceneToAct(
 	db: DB,
 	sceneId: string,
 	newActId: string,
-	newPosition: number
+	newPosition: number,
+	userId: string
 ): Promise<void> {
-	const [scene] = await db.select().from(entities).where(eq(entities.id, sceneId));
+	const [scene] = await db.select().from(entities).where(and(eq(entities.id, sceneId), eq(entities.userId, userId)));
 	if (!scene) throw new Error(`Scene not found: ${sceneId}`);
 	if (scene.type !== 'Scene') {
 		throw new Error(`Entity ${sceneId} has type='${scene.type}', expected 'Scene'`);
@@ -910,7 +925,7 @@ export async function moveSceneToAct(
 		throw new Error(`Scene ${sceneId} has no parent_id`);
 	}
 
-	const [target] = await db.select().from(entities).where(eq(entities.id, newActId));
+	const [target] = await db.select().from(entities).where(and(eq(entities.id, newActId), eq(entities.userId, userId)));
 	if (!target) throw new Error(`Target act not found: ${newActId}`);
 	if (target.type !== 'Act') {
 		throw new Error(`Target ${newActId} has type='${target.type}', expected 'Act'`);
@@ -925,6 +940,7 @@ export async function moveSceneToAct(
 		})
 		.where(
 			and(
+				eq(entities.userId, userId),
 				eq(entities.type, 'Scene'),
 				eq(entities.parentId, newActId),
 				sql`${entities.position} >= ${newPosition}`
@@ -937,25 +953,25 @@ export async function moveSceneToAct(
 			parentId: newActId,
 			position: newPosition,
 		})
-		.where(eq(entities.id, sceneId));
+		.where(and(eq(entities.id, sceneId), eq(entities.userId, userId)));
 
 	await db
 		.update(intervals)
 		.set({
 			startActId: newActId,
 		})
-		.where(eq(intervals.startSceneId, sceneId));
+		.where(and(eq(intervals.startSceneId, sceneId), eq(intervals.userId, userId)));
 	await db
 		.update(intervals)
 		.set({
 			endActId: newActId,
 		})
-		.where(eq(intervals.endSceneId, sceneId));
+		.where(and(eq(intervals.endSceneId, sceneId), eq(intervals.userId, userId)));
 
 	if (oldActId !== newActId) {
-		await recomputeIntervalsForAct(db, oldActId);
+		await recomputeIntervalsForAct(db, oldActId, userId);
 	}
-	await recomputeIntervalsForAct(db, newActId);
+	await recomputeIntervalsForAct(db, newActId, userId);
 }
 
 // =============================================================================
@@ -963,53 +979,56 @@ export async function moveSceneToAct(
 // =============================================================================
 
 /** "Who is present at story time T?" */
-export async function entitiesPresentAt(db: DB, t: number): Promise<string[]> {
+export async function entitiesPresentAt(db: DB, t: number, userId: string): Promise<string[]> {
 	const rows = await db
 		.select({ entityId: intervals.entityId })
 		.from(intervals)
 		.where(
-			and(sql`${intervals.startPosition} <= ${t}`, sql`${intervals.endPosition} > ${t}`)
+			and(eq(intervals.userId, userId), sql`${intervals.startPosition} <= ${t}`, sql`${intervals.endPosition} > ${t}`)
 		);
 	return [...new Set(rows.map((r) => r.entityId))];
 }
 
 /** "Who is present anywhere in Act with given index?" */
-export async function entitiesPresentInActIndex(db: DB, i: number): Promise<string[]> {
+export async function entitiesPresentInActIndex(db: DB, i: number, userId: string): Promise<string[]> {
 	const rows = await db
 		.select({ entityId: intervals.entityId })
 		.from(intervals)
 		.where(
-			and(sql`${intervals.startPosition} < ${i + 1}`, sql`${intervals.endPosition} > ${i}`)
+			and(eq(intervals.userId, userId), sql`${intervals.startPosition} < ${i + 1}`, sql`${intervals.endPosition} > ${i}`)
 		);
 	return [...new Set(rows.map((r) => r.entityId))];
 }
 
 /** "All intervals that touch the scene with given id" — FK-direct, no math. */
-export async function intervalsTouchingScene(db: DB, sceneId: string) {
+export async function intervalsTouchingScene(db: DB, sceneId: string, userId: string) {
 	return db
 		.select()
 		.from(intervals)
 		.where(
-			sql`(${intervals.startSceneId} = ${sceneId} OR ${intervals.endSceneId} = ${sceneId})`
+			and(
+				eq(intervals.userId, userId),
+				sql`(${intervals.startSceneId} = ${sceneId} OR ${intervals.endSceneId} = ${sceneId})`
+			)
 		);
 }
 
 /** All intervals for an entity, ordered by story time. */
-export async function intervalsForEntity(db: DB, entityId: string) {
+export async function intervalsForEntity(db: DB, entityId: string, userId: string) {
 	return db
 		.select()
 		.from(intervals)
-		.where(eq(intervals.entityId, entityId))
+		.where(and(eq(intervals.entityId, entityId), eq(intervals.userId, userId)))
 		.orderBy(intervals.startPosition);
 }
 
 /** All intervals for a list of entities, fetched in one query. */
-export async function intervalsForEntities(db: DB, entityIds: string[]) {
+export async function intervalsForEntities(db: DB, entityIds: string[], userId: string) {
 	if (entityIds.length === 0) return [];
 	return db
 		.select()
 		.from(intervals)
-		.where(inArray(intervals.entityId, entityIds))
+		.where(and(inArray(intervals.entityId, entityIds), eq(intervals.userId, userId)))
 		.orderBy(intervals.startPosition);
 }
 
@@ -1042,6 +1061,7 @@ export interface RelationshipBoundsResult {
 export async function resolveRelationshipBounds(
 	db: DB,
 	input: RelationshipBoundsInput,
+	userId: string,
 	cache?: RecomputeCache
 ): Promise<RelationshipBoundsResult> {
 	if (!input.startActId && !input.endActId) {
@@ -1063,6 +1083,7 @@ export async function resolveRelationshipBounds(
 			endActId: input.endActId,
 			endSceneId: input.endSceneId ?? null
 		},
+		userId,
 		cache
 	);
 	return { startPosition: derived.startPosition, endPosition: derived.endPosition };
@@ -1074,17 +1095,20 @@ export async function resolveRelationshipBounds(
  *
  * Runs inside the caller's transaction context (pass db or tx).
  */
-export async function recomputeRelationshipBoundsAll(db: DB): Promise<number> {
+export async function recomputeRelationshipBoundsAll(db: DB, userId: string): Promise<number> {
 	const rows = await db
 		.select()
 		.from(relationships)
 		.where(
-			sql`(${relationships.startActId} IS NOT NULL OR ${relationships.endActId} IS NOT NULL)`
+			and(
+				eq(relationships.userId, userId),
+				sql`(${relationships.startActId} IS NOT NULL OR ${relationships.endActId} IS NOT NULL)`
+			)
 		);
 
 	if (rows.length === 0) return 0;
 
-	const cache = await buildRecomputeCache(db);
+	const cache = await buildRecomputeCache(db, userId);
 	let updated = 0;
 
 	for (const row of rows) {
@@ -1097,6 +1121,7 @@ export async function recomputeRelationshipBoundsAll(db: DB): Promise<number> {
 					endActId: row.endActId,
 					endSceneId: row.endSceneId
 				},
+				userId,
 				cache
 			);
 
@@ -1117,7 +1142,7 @@ export async function recomputeRelationshipBoundsAll(db: DB): Promise<number> {
 			await db
 				.update(relationships)
 				.set({ startPosition, endPosition })
-				.where(eq(relationships.id, row.id));
+				.where(and(eq(relationships.id, row.id), eq(relationships.userId, userId)));
 			updated++;
 		} catch (err) {
 			throw new Error(

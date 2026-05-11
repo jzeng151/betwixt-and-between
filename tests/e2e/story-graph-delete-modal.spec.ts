@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { E2E_USER_HEADERS } from './pglite-config.js';
 import { clearAll } from './helpers/db';
 
 // Regression for the delete-confirmation modal Escape-dismiss path.
@@ -8,7 +9,7 @@ import { clearAll } from './helpers/db';
 // handler to `<svelte:window onkeydown>`. This test guards against
 // someone moving it back onto the backdrop.
 
-test.use({ storageState: { cookies: [], origins: [] } });
+test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
 
 async function openStoryGraph(page: Page) {
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));

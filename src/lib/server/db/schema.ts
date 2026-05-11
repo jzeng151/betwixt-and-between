@@ -3,6 +3,7 @@ import {
 	uuid,
 	text,
 	integer,
+	boolean,
 	doublePrecision,
 	jsonb,
 	timestamp,
@@ -16,6 +17,56 @@ import { sql } from 'drizzle-orm';
 
 export const EntityType = ['Character', 'Location', 'Event', 'Act', 'Scene', 'Note'] as const;
 export type EntityType = (typeof EntityType)[number];
+
+// ── Auth tables (Better-Auth) ──────────────────────────────────────────────
+
+export const user = pgTable('user', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	name: text('name').notNull(),
+	email: text('email').notNull().unique(),
+	emailVerified: boolean('email_verified').notNull().default(false),
+	image: text('image'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const session = pgTable('session', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+	token: text('token').notNull().unique(),
+	userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+	ipAddress: text('ip_address'),
+	userAgent: text('user_agent'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const account = pgTable('account', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+	accountId: text('account_id').notNull(),
+	providerId: text('provider_id').notNull(),
+	accessToken: text('access_token'),
+	refreshToken: text('refresh_token'),
+	accessTokenExpiresAt: timestamp('access_token_expires_at', { withTimezone: true }),
+	refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { withTimezone: true }),
+	scope: text('scope'),
+	idToken: text('id_token'),
+	password: text('password'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const verification = pgTable('verification', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	identifier: text('identifier').notNull(),
+	value: text('value').notNull(),
+	expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+});
+
+// ── Application tables ─────────────────────────────────────────────────────
 
 /**
  * Relationship types and their directional convention (`from [type] to`):
@@ -53,6 +104,7 @@ export const entities = pgTable(
 	'entities',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
+		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
 		type: text('type', { enum: EntityType }).notNull(),
 		name: text('name').notNull(),
 		// jsonb so app code can pass objects directly; Drizzle's $type<>
@@ -88,6 +140,7 @@ export const relationships = pgTable(
 	'relationships',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
+		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
 		fromId: uuid('from_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
@@ -124,6 +177,7 @@ export const relationships = pgTable(
 
 export const canvasPositions = pgTable('canvas_positions', {
 	id: uuid('id').primaryKey().defaultRandom(),
+	userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
 	entityId: uuid('entity_id')
 		.notNull()
 		.unique()
@@ -153,6 +207,7 @@ export const windowCanvasState = pgTable(
 	'window_canvas_state',
 	{
 		windowId: text('window_id').notNull(),
+		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
 		entityId: uuid('entity_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
@@ -201,6 +256,7 @@ export const intervals = pgTable(
 	'intervals',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
+		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
 		entityId: uuid('entity_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
@@ -261,6 +317,7 @@ export const entityAliases = pgTable('entity_aliases', {
 
 export const worldMaps = pgTable('world_maps', {
 	id: uuid('id').primaryKey().defaultRandom(),
+	userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
 	name: text('name').notNull(),
 	baseImageUrl: text('base_image_url'),
 	width: integer('width'),

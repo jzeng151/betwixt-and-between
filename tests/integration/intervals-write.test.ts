@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import {
 	writeInterval,
@@ -22,15 +22,18 @@ type Db = Awaited<ReturnType<typeof createTestDb>>;
 
 describe('writeInterval — chokepoint', () => {
 	let db: Db;
+	let userId: string;
 	let acts: { act0: string; act1: string; act2: string };
 	let ellie: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		acts = await seedActs(db);
+		const _user = await seedTestUser(db);
+		userId = _user.id;
+		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -40,7 +43,7 @@ describe('writeInterval — chokepoint', () => {
 			entityId: ellie,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 		expect(row.startPosition).toBeCloseTo(1.0, 9);
 		expect(row.endPosition).toBeCloseTo(2.0, 9);
 		expect(row.startSceneId).toBeNull();
@@ -52,14 +55,14 @@ describe('writeInterval — chokepoint', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act2
-		});
+		}, userId);
 		expect(row.startPosition).toBeCloseTo(0.0, 9);
 		expect(row.endPosition).toBeCloseTo(3.0, 9);
 	});
 
 	it('rejects polymorphic FK violation on start_act_id (Character pointer)', async () => {
 		await expect(
-			writeInterval(db, { entityId: ellie, startActId: ellie, endActId: acts.act0 })
+			writeInterval(db, { entityId: ellie, startActId: ellie, endActId: acts.act0 }, userId)
 		).rejects.toThrow(/Polymorphic FK violation/);
 	});
 
@@ -71,7 +74,7 @@ describe('writeInterval — chokepoint', () => {
 				startActId: acts.act0,
 				startSceneId: ellie,
 				endActId: acts.act0
-			})
+			}, userId)
 		).rejects.toThrow(/Polymorphic FK violation/);
 	});
 
@@ -84,7 +87,7 @@ describe('writeInterval — chokepoint', () => {
 			endActId: acts.act1,
 			startPosition: 1.0,
 			endPosition: 1.5
-		});
+		}, userId);
 		expect(row.startPosition).toBeCloseTo(1.0, 9);
 		expect(row.endPosition).toBeCloseTo(1.5, 9);
 		expect(row.startSceneId).toBeNull();
@@ -99,7 +102,7 @@ describe('writeInterval — chokepoint', () => {
 				endActId: acts.act1,
 				startPosition: 1.0,
 				endPosition: 2.5 // outside [1, 2] for Act 1
-			})
+			}, userId)
 		).rejects.toThrow(/outside act range/);
 	});
 
@@ -110,7 +113,7 @@ describe('writeInterval — chokepoint', () => {
 			endActId: acts.act1,
 			startPosition: 1.0,
 			endPosition: 2.0 + 1e-12 // within epsilon
-		});
+		}, userId);
 		expect(row.startPosition).toBeCloseTo(1.0, 9);
 		expect(row.endPosition).toBeCloseTo(2.0, 9);
 	});
@@ -134,7 +137,7 @@ describe('writeInterval — chokepoint', () => {
 			entityId: ellie,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 		const before = await db.select().from(intervals);
 		expect(before).toHaveLength(1);
 
@@ -149,7 +152,7 @@ describe('writeInterval — chokepoint', () => {
 			entityId: ellie,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 		await db.delete(entities).where(eq(entities.id, acts.act1));
 
 		const after = await db.select().from(intervals);
@@ -159,7 +162,7 @@ describe('writeInterval — chokepoint', () => {
 	it('SET NULL on start_scene when scene is deleted', async () => {
 		const [s0] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		await writeInterval(db, {
 			entityId: ellie,
@@ -167,7 +170,7 @@ describe('writeInterval — chokepoint', () => {
 			startSceneId: s0.id,
 			endActId: acts.act1,
 			endSceneId: s0.id
-		});
+		}, userId);
 		await db.delete(entities).where(eq(entities.id, s0.id));
 
 		const [row] = await db.select().from(intervals);
@@ -179,15 +182,18 @@ describe('writeInterval — chokepoint', () => {
 
 describe('updateInterval', () => {
 	let db: Db;
+	let userId: string;
 	let acts: { act0: string; act1: string; act2: string };
 	let ellie: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		acts = await seedActs(db);
+		const _user = await seedTestUser(db);
+		userId = _user.id;
+		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -197,10 +203,10 @@ describe('updateInterval', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act0
-		});
+		}, userId);
 		expect(row.endPosition).toBeCloseTo(1.0, 9);
 
-		const { updated } = await updateInterval(db, row.id, { endActId: acts.act2 });
+		const { updated } = await updateInterval(db, row.id, { endActId: acts.act2 }, userId);
 		expect(updated.endPosition).toBeCloseTo(3.0, 9);
 	});
 
@@ -210,18 +216,18 @@ describe('updateInterval', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act0
-		});
+		}, userId);
 		const second = await writeInterval(db, {
 			entityId: ellie,
 			startActId: acts.act2,
 			endActId: acts.act2
-		});
+		}, userId);
 
 		// Drag the Act-2 interval back to start at Act 0 → ranges become
 		// [0, 1) and [0, 3). Per the merge-on-overlap rule (UX request),
 		// these should fold into one [0, 3) row anchored to the dragged
 		// interval's id; the absorbed sibling row disappears.
-		const { updated: merged } = await updateInterval(db, second.id, { startActId: acts.act0 });
+		const { updated: merged } = await updateInterval(db, second.id, { startActId: acts.act0 }, userId);
 		expect(merged.id).toBe(second.id);
 		expect(merged.startPosition).toBeCloseTo(0, 9);
 		expect(merged.endPosition).toBeCloseTo(3, 9);
@@ -236,15 +242,15 @@ describe('updateInterval', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act0
-		});
+		}, userId);
 		const b = await writeInterval(db, {
 			entityId: ellie,
 			startActId: acts.act2,
 			endActId: acts.act2
-		});
+		}, userId);
 		const result = await updateInterval(db, b.id, {
 			startActId: acts.act0
-		});
+		}, userId);
 		expect(result.absorbed).toEqual([a.id]);
 		expect(result.updated.id).toBe(b.id);
 	});
@@ -254,8 +260,8 @@ describe('updateInterval', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act0
-		});
-		const result = await updateInterval(db, a.id, { endActId: acts.act1 });
+		}, userId);
+		const result = await updateInterval(db, a.id, { endActId: acts.act1 }, userId);
 		expect(result.absorbed).toEqual([]);
 	});
 
@@ -267,17 +273,17 @@ describe('updateInterval', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act0
-		});
+		}, userId);
 		const c = await writeInterval(db, {
 			entityId: ellie,
 			startActId: acts.act2,
 			endActId: acts.act2
-		});
+		}, userId);
 		const b = await writeInterval(db, {
 			entityId: ellie,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 		// Drag b's right edge to absorb c (extending into Act 2). It should
 		// also absorb a since it now overlaps via the union with c.
 		// Actually b becomes [1, 3) which doesn't overlap a — only c. So
@@ -285,7 +291,7 @@ describe('updateInterval', () => {
 		const { updated: merged } = await updateInterval(db, b.id, {
 			startActId: acts.act0,
 			endActId: acts.act2
-		});
+		}, userId);
 		expect(merged.id).toBe(b.id);
 		expect(merged.startPosition).toBeCloseTo(0, 9);
 		expect(merged.endPosition).toBeCloseTo(3, 9);
@@ -303,13 +309,13 @@ describe('updateInterval', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act0
-		});
+		}, userId);
 		const second = await writeInterval(db, {
 			entityId: ellie,
 			startActId: acts.act2,
 			endActId: acts.act2
-		});
-		const { updated } = await updateInterval(db, second.id, { startActId: acts.act1 });
+		}, userId);
+		const { updated } = await updateInterval(db, second.id, { startActId: acts.act1 }, userId);
 		expect(updated.startPosition).toBeCloseTo(1, 9);
 		expect(updated.endPosition).toBeCloseTo(3, 9);
 		// Both rows survive.
@@ -324,13 +330,13 @@ describe('updateInterval', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act2
-		});
+		}, userId);
 
 		// Shrink to just Act 1 → [1, 2). No other rows for Ellie, so no overlap.
 		const { updated } = await updateInterval(db, row.id, {
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 		expect(updated.startPosition).toBeCloseTo(1.0, 9);
 		expect(updated.endPosition).toBeCloseTo(2.0, 9);
 	});
@@ -338,15 +344,18 @@ describe('updateInterval', () => {
 
 describe('writeInterval — same-entity overlap rejection', () => {
 	let db: Db;
+	let userId: string;
 	let acts: { act0: string; act1: string; act2: string };
 	let ellie: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		acts = await seedActs(db);
+		const _user = await seedTestUser(db);
+		userId = _user.id;
+		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -357,23 +366,23 @@ describe('writeInterval — same-entity overlap rejection', () => {
 			entityId: ellie,
 			startActId: acts.act0,
 			endActId: acts.act1
-		});
+		}, userId);
 		// Now try Ellie [1, 2): overlaps with Act 1 portion of the first row.
 		await expect(
-			writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 })
+			writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 }, userId)
 		).rejects.toThrow(/Overlap with existing interval/);
 	});
 
 	it('allows same-entity adjacent intervals (touching at boundary)', async () => {
 		// Ellie [0, 1) — Act 0 only.
-		await writeInterval(db, { entityId: ellie, startActId: acts.act0, endActId: acts.act0 });
+		await writeInterval(db, { entityId: ellie, startActId: acts.act0, endActId: acts.act0 }, userId);
 		// Ellie [1, 2) — Act 1 only. Touches [0, 1) at 1.0 but does not overlap
 		// under half-open semantics.
 		const row2 = await writeInterval(db, {
 			entityId: ellie,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 		expect(row2.startPosition).toBeCloseTo(1.0, 9);
 		expect(row2.endPosition).toBeCloseTo(2.0, 9);
 	});
@@ -381,40 +390,43 @@ describe('writeInterval — same-entity overlap rejection', () => {
 	it('allows different-entity overlapping intervals', async () => {
 		const [j] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Joel' })
+			.values({ userId, type: 'Character', name: 'Joel' })
 			.returning();
 
-		await writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 });
+		await writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 }, userId);
 		// Joel covers the same range — fine, different entity.
 		const joelRow = await writeInterval(db, {
 			entityId: j.id,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 		expect(joelRow.startPosition).toBeCloseTo(1.0, 9);
 		expect(joelRow.endPosition).toBeCloseTo(2.0, 9);
 	});
 
 	it('rejects same-entity duplicate range', async () => {
-		await writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 });
+		await writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 }, userId);
 		// Identical range — total overlap.
 		await expect(
-			writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 })
+			writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 }, userId)
 		).rejects.toThrow(/Overlap with existing interval/);
 	});
 });
 
 describe('recomputeIntervalsForAct', () => {
 	let db: Db;
+	let userId: string;
 	let acts: { act0: string; act1: string; act2: string };
 	let ellie: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		acts = await seedActs(db);
+		const _user = await seedTestUser(db);
+		userId = _user.id;
+		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -423,15 +435,15 @@ describe('recomputeIntervalsForAct', () => {
 		// 3 scenes in Act 1, positions 0/1/2 → ranges [1.0,1.333), [1.333,1.667), [1.667,2.0)
 		const [s0] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 		const [s2] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S2', parentId: acts.act1, position: 2 })
+			.values({ userId, type: 'Scene', name: 'S2', parentId: acts.act1, position: 2 })
 			.returning();
 
 		// Ellie anchored to scene s1 only.
@@ -441,7 +453,7 @@ describe('recomputeIntervalsForAct', () => {
 			startSceneId: s1.id,
 			endActId: acts.act1,
 			endSceneId: s1.id
-		});
+		}, userId);
 		expect(before.startPosition).toBeCloseTo(1 + 1 / 3, 9);
 		expect(before.endPosition).toBeCloseTo(1 + 2 / 3, 9);
 
@@ -450,7 +462,7 @@ describe('recomputeIntervalsForAct', () => {
 		await db.update(entities).set({ position: 0 }).where(eq(entities.id, s1.id));
 
 		// Recompute.
-		const touched = await recomputeIntervalsForAct(db, acts.act1);
+		const touched = await recomputeIntervalsForAct(db, acts.act1, userId);
 		expect(touched).toBe(1);
 
 		const [after] = await db.select().from(intervals);
@@ -464,12 +476,13 @@ describe('recomputeIntervalsForAct', () => {
 		// First write a scene-anchored interval to establish baseline numbers.
 		await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 });
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 });
 
 		// Now plant a fraction-positioned interval (no scene FK) at start=1.5, end=1.75.
 		// We can't create this via writeInterval (which derives from FKs only), so we use
 		// raw insert. This simulates a future PR 2 capability.
 		await db.insert(intervals).values({
+			userId,
 			entityId: ellie,
 			startActId: acts.act1,
 			startSceneId: null,
@@ -480,7 +493,7 @@ describe('recomputeIntervalsForAct', () => {
 		});
 
 		// Recompute should NOT touch this row (no scene FK on either side).
-		const touched = await recomputeIntervalsForAct(db, acts.act1);
+		const touched = await recomputeIntervalsForAct(db, acts.act1, userId);
 		expect(touched).toBe(0);
 
 		const [row] = await db.select().from(intervals);
@@ -491,15 +504,18 @@ describe('recomputeIntervalsForAct', () => {
 
 describe('recomputeAllIntervals (Act-level mutations)', () => {
 	let db: Db;
+	let userId: string;
 	let acts: { act0: string; act1: string; act2: string };
 	let ellie: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		acts = await seedActs(db);
+		const _user = await seedTestUser(db);
+		userId = _user.id;
+		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -510,7 +526,7 @@ describe('recomputeAllIntervals (Act-level mutations)', () => {
 			entityId: ellie,
 			startActId: acts.act1,
 			endActId: acts.act1
-		});
+		}, userId);
 		expect(before.startPosition).toBeCloseTo(1.0, 9);
 		expect(before.endPosition).toBeCloseTo(2.0, 9);
 
@@ -518,7 +534,7 @@ describe('recomputeAllIntervals (Act-level mutations)', () => {
 		await db.update(entities).set({ position: 2 }).where(eq(entities.id, acts.act1));
 		await db.update(entities).set({ position: 1 }).where(eq(entities.id, acts.act2));
 
-		const touched = await recomputeAllIntervals(db);
+		const touched = await recomputeAllIntervals(db, userId);
 		expect(touched).toBe(1);
 
 		const [after] = await db.select().from(intervals);

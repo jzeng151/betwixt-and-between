@@ -1,0 +1,62 @@
+-- ============================================================================
+-- BACKFILL TEMPLATE — DO NOT RUN AS-IS
+-- ============================================================================
+--
+-- Migration 0005_multi_user_columns.sql adds nullable user_id columns. After
+-- the T8b route handlers ship, every SELECT filters by
+-- `eq(table.userId, current_user_id)`, so any pre-existing rows with NULL
+-- user_id become invisible to all users.
+--
+-- v0.4.0.0 of betwixt-and-between ships pre-launch — there are no public
+-- users yet and no production data to migrate. This template is for
+-- environments that DO have existing single-tenant data: run it AFTER
+-- 0005 applies and BEFORE deploying the gated route handlers, so existing
+-- data is reachable by the designated owner.
+--
+-- Codex P1 review on PR #37 flagged the missing backfill step. This file
+-- documents the manual remediation path.
+--
+-- ============================================================================
+-- Step 1: identify the owning user (uuid).
+--
+-- Either pick an existing user row's id, or create a dedicated migration
+-- owner row first. Example:
+--
+--   INSERT INTO "user" (id, name, email, email_verified)
+--   VALUES (gen_random_uuid(), 'Migration Owner', 'owner@example.com', true)
+--   RETURNING id;
+--
+-- Capture the returned uuid as :owner_id below.
+-- ============================================================================
+--
+-- Step 2: backfill every multi-user table. Run inside a single transaction
+-- so a partial failure rolls back to the pre-backfill state.
+--
+-- BEGIN;
+-- UPDATE "entities"             SET user_id = :owner_id WHERE user_id IS NULL;
+-- UPDATE "relationships"        SET user_id = :owner_id WHERE user_id IS NULL;
+-- UPDATE "intervals"            SET user_id = :owner_id WHERE user_id IS NULL;
+-- UPDATE "canvas_positions"     SET user_id = :owner_id WHERE user_id IS NULL;
+-- UPDATE "window_canvas_state"  SET user_id = :owner_id WHERE user_id IS NULL;
+-- UPDATE "world_maps"           SET user_id = :owner_id WHERE user_id IS NULL;
+-- COMMIT;
+--
+-- entityAliases and mapRegions inherit ownership transitively (via parent
+-- entity / parent map JOINs), so they don't need direct backfill.
+--
+-- ============================================================================
+-- Step 3 (optional): tighten to NOT NULL after backfill.
+--
+-- Once the application is verified to populate user_id on every insert and
+-- no nulls remain, you can enforce the invariant at the schema level:
+--
+--   ALTER TABLE "entities"             ALTER COLUMN "user_id" SET NOT NULL;
+--   ALTER TABLE "relationships"        ALTER COLUMN "user_id" SET NOT NULL;
+--   ALTER TABLE "intervals"            ALTER COLUMN "user_id" SET NOT NULL;
+--   ALTER TABLE "canvas_positions"     ALTER COLUMN "user_id" SET NOT NULL;
+--   ALTER TABLE "window_canvas_state"  ALTER COLUMN "user_id" SET NOT NULL;
+--   ALTER TABLE "world_maps"           ALTER COLUMN "user_id" SET NOT NULL;
+--
+-- Generate a real Drizzle migration for this step rather than running it
+-- ad-hoc, so future deploys don't drift from schema.ts.
+-- ============================================================================

@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
-import { withDb } from '$lib/server/db/index.js';
 import { worldMaps } from '$lib/server/db/schema.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { getUserId } from '$lib/server/auth-gate.js';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RequestHandler } from './$types';
@@ -10,13 +10,18 @@ const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const ALLOWED_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp']);
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
-export const POST: RequestHandler = async ({ platform, params, request }) =>
-	withDb(platform?.env, async (db) => {
-	// Verify map exists
-	const [map] = await db.select().from(worldMaps).where(eq(worldMaps.id, params.id));
+export const POST: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+
+	// Verify map exists AND belongs to user.
+	const [map] = await db
+		.select()
+		.from(worldMaps)
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
 	if (!map) error(404, 'Map not found');
 
-	const formData = await request.formData();
+	const formData = await event.request.formData();
 	const file = formData.get('file');
 	if (!file || !(file instanceof File)) {
 		error(400, 'No file provided');
@@ -35,27 +40,33 @@ export const POST: RequestHandler = async ({ platform, params, request }) =>
 		error(400, 'Could not read image dimensions');
 	}
 
-	// Write to static/maps/
-	const dir = join(process.cwd(), 'static', 'maps');
-	await mkdir(dir, { recursive: true });
-
 	const ext = file.name.split('.').pop()?.toLowerCase() || 'png';
 	if (!ALLOWED_EXTS.has(ext)) error(400, 'Invalid file extension');
-	const filename = `${params.id}_${Date.now()}.${ext}`;
-	const filepath = join(dir, filename);
-	await writeFile(filepath, buffer);
+	const filename = `${event.params.id}_${Date.now()}.${ext}`;
 
-	const baseImageUrl = `/maps/${filename}`;
+	// R2 in prod (Cloudflare Workers has no writable filesystem); local fs
+	// fallback for `npm run dev` where the R2 binding isn't injected.
+	const bucket = event.platform?.env?.MAP_UPLOADS;
+	if (bucket) {
+		await bucket.put(filename, buffer, {
+			httpMetadata: { contentType: file.type },
+		});
+	} else {
+		const dir = join(process.cwd(), 'static', 'maps');
+		await mkdir(dir, { recursive: true });
+		await writeFile(join(dir, filename), buffer);
+	}
+
+	const baseImageUrl = `/api/maps/file/${filename}`;
 
 	const [updated] = await db
 		.update(worldMaps)
 		.set({ baseImageUrl, width: dimensions.width, height: dimensions.height })
-		.where(eq(worldMaps.id, params.id))
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)))
 		.returning();
 
 	return json(updated);
-
-	});
+};
 
 /**
  * Read width/height from image file headers without external dependencies.

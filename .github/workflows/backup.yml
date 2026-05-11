@@ -1,0 +1,42 @@
+name: backup
+
+on:
+  schedule:
+    # Weekly Sunday 06:00 UTC
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install postgres client + gpg + rclone
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client gnupg rclone
+
+      - name: Dump + encrypt + upload
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
+          GPG_RECIPIENT: ${{ secrets.BACKUP_GPG_RECIPIENT }}
+          GPG_PUBLIC_KEY: ${{ secrets.BACKUP_GPG_PUBLIC_KEY }}
+          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
+        run: |
+          # Trust the recipient's public key for non-interactive encrypt.
+          echo "$GPG_PUBLIC_KEY" | gpg --batch --import
+          # Configure rclone from inline config — secrets contain B2 keys.
+          mkdir -p ~/.config/rclone
+          echo "$RCLONE_CONFIG" > ~/.config/rclone/rclone.conf
+
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          OUT="backup-${STAMP}.sql.gpg"
+
+          pg_dump --no-owner --no-acl "$DATABASE_URL" \
+            | gpg --batch --yes --trust-model always \
+                --encrypt --recipient "$GPG_RECIPIENT" \
+                --output "$OUT"
+
+          rclone copy "$OUT" b2:betwixt-backups/
+
+          echo "Uploaded $OUT to B2"

@@ -1,11 +1,12 @@
 import { json, error } from '@sveltejs/kit';
-import { withDb } from '$lib/server/db/index.js';
+import { getUserId } from '$lib/server/auth-gate.js';
 import { splitInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
-export const POST: RequestHandler = async ({ platform, params, request }) =>
-	withDb(platform?.env, async (db) => {
-	const body = await request.json();
+export const POST: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const body = await event.request.json();
 	const atPosition = body.atPosition ?? body.at_position;
 	if (typeof atPosition !== 'number' || !Number.isFinite(atPosition)) {
 		error(400, 'atPosition must be a finite number');
@@ -17,11 +18,10 @@ export const POST: RequestHandler = async ({ platform, params, request }) =>
 	// guards against.
 	try {
 		const { left, right } = await db.transaction(async (tx) =>
-			splitInterval(tx, params.id, atPosition)
+			splitInterval(tx, event.params.id, atPosition, userId)
 		);
 		return json({ left, right });
 	} catch (err) {
 		error(400, (err as Error).message);
 	}
-
-	});
+};

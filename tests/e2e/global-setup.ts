@@ -15,7 +15,7 @@ import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGLITE_PORT, PGLITE_URL } from './pglite-config.js';
+import { E2E_USER_EMAIL, E2E_USER_ID, PGLITE_PORT, PGLITE_URL } from './pglite-config.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'drizzle');
@@ -42,6 +42,13 @@ export default async function globalSetup() {
 	for (const stmt of loadMigrationStatements()) {
 		await db.exec(stmt);
 	}
+
+	// Seed the fixed-UUID default E2E user (T8b S8'). Existing 27 specs use
+	// E2E_USER_ID as their `x-test-user-id` header; the hook honors that
+	// only when BETWIXT_E2E_PGLITE=1.
+	await db.exec(
+		`INSERT INTO "user" (id, name, email, email_verified) VALUES ('${E2E_USER_ID}', 'E2E User', '${E2E_USER_EMAIL}', true) ON CONFLICT (id) DO NOTHING`
+	);
 
 	const server = new PGLiteSocketServer({ db, host: '127.0.0.1', port: PGLITE_PORT });
 	try {

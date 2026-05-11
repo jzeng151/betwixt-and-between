@@ -37,3 +37,6 @@ desync-bug.png
 tooltip-bug.png
 test.db
 .gitnexus
+
+# User-uploaded map images (R2 in prod, local fs in dev)
+static/maps/

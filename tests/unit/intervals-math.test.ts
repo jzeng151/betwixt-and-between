@@ -11,7 +11,7 @@ import {
 	computeIntervalPositions,
 	POSITION_EPSILON
 } from '../../src/lib/server/intervals.js';
-import { createTestDb } from '../helpers/test-db.js';
+import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 
 // =============================================================================
 // Pure math (no DB)
@@ -95,25 +95,28 @@ describe('smartSnap', () => {
 
 describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 	let db: Awaited<ReturnType<typeof createTestDb>>;
+	let userId: string;
 	let act0: string;
 	let act1: string;
 	let act2: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
+		const _user = await seedTestUser(db);
+		userId = _user.id;
 
 		// Three Acts at root level, ordered 0, 1, 2.
 		const [a0] = await db
 			.insert(entities)
-			.values({ type: 'Act', name: 'Act 0', position: 0 })
+			.values({ userId, type: 'Act', name: 'Act 0', position: 0 })
 			.returning();
 		const [a1] = await db
 			.insert(entities)
-			.values({ type: 'Act', name: 'Act 1', position: 1 })
+			.values({ userId, type: 'Act', name: 'Act 1', position: 1 })
 			.returning();
 		const [a2] = await db
 			.insert(entities)
-			.values({ type: 'Act', name: 'Act 2', position: 2 })
+			.values({ userId, type: 'Act', name: 'Act 2', position: 2 })
 			.returning();
 		act0 = a0.id;
 		act1 = a1.id;
@@ -121,43 +124,43 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 	});
 
 	it('actIndexOf returns the correct rank', async () => {
-		expect(await actIndexOf(db, act0)).toBe(0);
-		expect(await actIndexOf(db, act1)).toBe(1);
-		expect(await actIndexOf(db, act2)).toBe(2);
+		expect(await actIndexOf(db, act0, userId)).toBe(0);
+		expect(await actIndexOf(db, act1, userId)).toBe(1);
+		expect(await actIndexOf(db, act2, userId)).toBe(2);
 	});
 
 	it('actIndexOf throws on non-Act entity', async () => {
 		const [c] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
-		await expect(actIndexOf(db, c.id)).rejects.toThrow(/expected 'Act'/);
+		await expect(actIndexOf(db, c.id, userId)).rejects.toThrow(/expected 'Act'/);
 	});
 
 	it('actIndexOf throws on missing entity', async () => {
-		await expect(actIndexOf(db, '00000000-0000-0000-0000-000000000000')).rejects.toThrow(/not found/);
+		await expect(actIndexOf(db, '00000000-0000-0000-0000-000000000000', userId)).rejects.toThrow(/not found/);
 	});
 
 	it('sceneIndexOf returns scene index, count, parent', async () => {
 		const [s0] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'Scene 0', parentId: act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'Scene 0', parentId: act1, position: 0 })
 			.returning();
 		const [s1] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'Scene 1', parentId: act1, position: 1 })
+			.values({ userId, type: 'Scene', name: 'Scene 1', parentId: act1, position: 1 })
 			.returning();
 		const [s2] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'Scene 2', parentId: act1, position: 2 })
+			.values({ userId, type: 'Scene', name: 'Scene 2', parentId: act1, position: 2 })
 			.returning();
 
-		const r0 = await sceneIndexOf(db, s0.id);
+		const r0 = await sceneIndexOf(db, s0.id, userId);
 		expect(r0.sceneIndex).toBe(0);
 		expect(r0.sceneCount).toBe(3);
 		expect(r0.parentActId).toBe(act1);
 
-		const r2 = await sceneIndexOf(db, s2.id);
+		const r2 = await sceneIndexOf(db, s2.id, userId);
 		expect(r2.sceneIndex).toBe(2);
 	});
 
@@ -168,12 +171,12 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 	it('worked example 1 — Ellie present for all of Act 1', async () => {
 		const [ellie] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		const r = await computeIntervalPositions(db, {
 			startActId: act1,
 			endActId: act1
-		});
+		}, userId);
 		expect(r.startPosition).toBeCloseTo(1.0, 9);
 		expect(r.endPosition).toBeCloseTo(2.0, 9);
 		// silence unused warning
@@ -184,7 +187,7 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 		const r = await computeIntervalPositions(db, {
 			startActId: act0,
 			endActId: act2
-		});
+		}, userId);
 		expect(r.startPosition).toBeCloseTo(0.0, 9);
 		expect(r.endPosition).toBeCloseTo(3.0, 9);
 	});
@@ -195,7 +198,7 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 		for (let k = 0; k < 5; k++) {
 			const [s] = await db
 				.insert(entities)
-				.values({ type: 'Scene', name: `Scene ${k}`, parentId: act1, position: k })
+				.values({ userId, type: 'Scene', name: `Scene ${k}`, parentId: act1, position: k })
 				.returning();
 			scenes.push(s);
 		}
@@ -204,7 +207,7 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 			startSceneId: scenes[1].id, // scene 1 of 5 starts at 1 + 1/5 = 1.2
 			endActId: act1,
 			endSceneId: scenes[3].id // scene 3 of 5 ends at 1 + 4/5 = 1.8
-		});
+		}, userId);
 		expect(r.startPosition).toBeCloseTo(1.2, 9);
 		expect(r.endPosition).toBeCloseTo(1.8, 9);
 	});
@@ -215,7 +218,7 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 		for (let k = 0; k < 5; k++) {
 			const [s] = await db
 				.insert(entities)
-				.values({ type: 'Scene', name: `A0-S${k}`, parentId: act0, position: k })
+				.values({ userId, type: 'Scene', name: `A0-S${k}`, parentId: act0, position: k })
 				.returning();
 			a0scenes.push(s);
 		}
@@ -224,7 +227,7 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 		for (let k = 0; k < 3; k++) {
 			const [s] = await db
 				.insert(entities)
-				.values({ type: 'Scene', name: `A2-S${k}`, parentId: act2, position: k })
+				.values({ userId, type: 'Scene', name: `A2-S${k}`, parentId: act2, position: k })
 				.returning();
 			a2scenes.push(s);
 		}
@@ -233,7 +236,7 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 			startSceneId: a0scenes[4].id, // 0 + 4/5 = 0.8
 			endActId: act2,
 			endSceneId: a2scenes[1].id // end of scene 1 of 3 in act 2 = 2 + 2/3 = 2.6667
-		});
+		}, userId);
 		expect(r.startPosition).toBeCloseTo(0.8, 9);
 		expect(r.endPosition).toBeCloseTo(2 + 2 / 3, 9);
 	});
@@ -241,14 +244,14 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 	it('throws when start_scene_id parent does not match start_act_id', async () => {
 		const [s] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'X', parentId: act0, position: 0 })
+			.values({ userId, type: 'Scene', name: 'X', parentId: act0, position: 0 })
 			.returning();
 		await expect(
 			computeIntervalPositions(db, {
 				startActId: act1, // parent mismatch
 				startSceneId: s.id,
 				endActId: act1
-			})
+			}, userId)
 		).rejects.toThrow(/parent/i);
 	});
 
@@ -262,7 +265,7 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 			computeIntervalPositions(db, {
 				startActId: act2, // index 2
 				endActId: act0 // index 0; end < start
-			})
+			}, userId)
 		).rejects.toThrow(/zero or negative extent/);
 	});
 });

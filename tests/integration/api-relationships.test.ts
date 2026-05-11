@@ -6,15 +6,13 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, relationships, intervals } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
+let userId: string;
 
-vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => currentDb,
-	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
-}));
+// vi.mock removed — routes now read event.locals.db (T8b S5' A1)
 
 const relRoute = await import('../../src/routes/api/relationships/+server.js');
 const relIdRoute = await import('../../src/routes/api/relationships/[id]/+server.js');
@@ -25,6 +23,11 @@ function mkEvent(overrides: { url?: URL; params?: Record<string, string>; body?:
 		params: overrides.params ?? {},
 		request: {
 			json: async () => overrides.body
+		},
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'test-token' },
 		}
 	};
 }
@@ -39,13 +42,15 @@ describe('/api/relationships POST (non-hijack)', () => {
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 		const [a] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Alice' })
+			.values({ userId, type: 'Character', name: 'Alice' })
 			.returning();
 		const [b] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Bob' })
+			.values({ userId, type: 'Character', name: 'Bob' })
 			.returning();
 		alice = a.id;
 		bob = b.id;
@@ -119,20 +124,20 @@ describe('/api/relationships POST (non-hijack)', () => {
 		// entities. Multi-edge of DIFFERENT types between same pair is still
 		// allowed; multi-edge of pov_of from same event to DIFFERENT characters
 		// is also allowed (different to_id).
-		await currentDb.insert(relationships).values({
+		await currentDb.insert(relationships).values({ userId,
 			fromId: alice,
 			toId: bob,
 			type: 'allied_with'
 		});
 		await expect(
-			currentDb.insert(relationships).values({
+			currentDb.insert(relationships).values({ userId,
 				fromId: alice,
 				toId: bob,
 				type: 'allied_with'
 			})
 		).rejects.toThrow();
 		// But a different type between same pair is allowed.
-		await currentDb.insert(relationships).values({
+		await currentDb.insert(relationships).values({ userId,
 			fromId: alice,
 			toId: bob,
 			type: 'rivals'
@@ -145,6 +150,8 @@ describe('/api/relationships POST (non-hijack)', () => {
 describe('/api/relationships GET', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('returns empty array when no relationships', async () => {
@@ -154,10 +161,10 @@ describe('/api/relationships GET', () => {
 	});
 
 	it('rejects appears_in writes (route is intervals API now)', async () => {
-		const acts = await seedActs(currentDb);
+		const acts = await seedActs(currentDb, userId);
 		const [ellie] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		await expect(
 			relRoute.POST(
@@ -169,18 +176,18 @@ describe('/api/relationships GET', () => {
 	it('filters by fromId query param', async () => {
 		const [a] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'A' })
+			.values({ userId, type: 'Character', name: 'A' })
 			.returning();
 		const [b] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'B' })
+			.values({ userId, type: 'Character', name: 'B' })
 			.returning();
 		const [c] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'C' })
+			.values({ userId, type: 'Character', name: 'C' })
 			.returning();
-		await currentDb.insert(relationships).values({ fromId: a.id, toId: b.id, type: 'rivals' });
-		await currentDb.insert(relationships).values({ fromId: c.id, toId: b.id, type: 'rivals' });
+		await currentDb.insert(relationships).values({ userId, fromId: a.id, toId: b.id, type: 'rivals' });
+		await currentDb.insert(relationships).values({ userId, fromId: c.id, toId: b.id, type: 'rivals' });
 
 		const url = new URL(`http://localhost/api/relationships?fromId=${a.id}`);
 		const res = await relRoute.GET(mkEvent({ url }));
@@ -193,20 +200,22 @@ describe('/api/relationships GET', () => {
 describe('/api/relationships/[id] DELETE', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('deletes a real relationship and returns 204', async () => {
 		const [a] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'A' })
+			.values({ userId, type: 'Character', name: 'A' })
 			.returning();
 		const [b] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'B' })
+			.values({ userId, type: 'Character', name: 'B' })
 			.returning();
 		const [rel] = await currentDb
 			.insert(relationships)
-			.values({ fromId: a.id, toId: b.id, type: 'rivals' })
+			.values({ userId, fromId: a.id, toId: b.id, type: 'rivals' })
 			.returning();
 
 		const res = await relIdRoute.DELETE(mkEvent({ params: { id: rel.id } }));

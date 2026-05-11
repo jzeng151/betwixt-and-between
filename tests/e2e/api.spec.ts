@@ -1,4 +1,7 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
+import { E2E_USER_HEADERS } from './pglite-config.js';
+
+test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
 
 async function clearEntities(request: APIRequestContext) {
 	const ents: Array<{ id: string }> = await (await request.get('/api/entities')).json();

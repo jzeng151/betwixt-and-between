@@ -8,16 +8,14 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createTestDb } from '../helpers/test-db.js';
+import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { entities, windowCanvasState } from '../../src/lib/server/db/schema.js';
 import { eq } from 'drizzle-orm';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
+let userId: string;
 
-vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => currentDb,
-	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
-}));
+// vi.mock removed — routes now read event.locals.db (T8b S5' A1)
 
 const route = await import(
 	'../../src/routes/api/canvas-positions/window/[windowId]/+server.js'
@@ -34,6 +32,11 @@ function mkEvent(
 		params: overrides.params ?? {},
 		request: {
 			json: async () => overrides.body
+		},
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'test-token' },
 		}
 	};
 }
@@ -45,7 +48,7 @@ async function readJson(res: Response): Promise<any> {
 async function makeEntity(name = 'A'): Promise<string> {
 	const [e] = await currentDb
 		.insert(entities)
-		.values({ type: 'Character', name })
+		.values({ userId, type: 'Character', name })
 		.returning();
 	return e.id;
 }
@@ -53,6 +56,8 @@ async function makeEntity(name = 'A'): Promise<string> {
 describe('/api/canvas-positions/window/[windowId] GET', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('returns empty array for a window with no rows', async () => {
@@ -81,6 +86,8 @@ describe('/api/canvas-positions/window/[windowId] PUT', () => {
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 		entityId = await makeEntity('Ellie');
 	});
 
@@ -179,6 +186,8 @@ describe('/api/canvas-positions/window/[windowId] PUT', () => {
 describe('/api/canvas-positions/window/[windowId] DELETE', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('removes all rows for the windowId; rows for other windows untouched', async () => {
@@ -214,6 +223,8 @@ describe('/api/canvas-positions/window/[windowId] DELETE', () => {
 describe('cross-window isolation', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('two windows with overlapping entityIds work independently', async () => {
@@ -327,6 +338,8 @@ describe('cross-window isolation', () => {
 describe('cascade on entity delete', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('deletes window_canvas_state rows when the entity is deleted', async () => {
@@ -348,6 +361,8 @@ describe('cascade on entity delete', () => {
 describe('/api/canvas-positions/window/[windowId]/batch POST', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
 	});
 
 	it('inserts N rows atomically (happy path)', async () => {
@@ -390,9 +405,15 @@ describe('/api/canvas-positions/window/[windowId]/batch POST', () => {
 		// or some unrelated runtime failure. drizzle wraps the pg error as
 		// 'Failed query: insert into ...' with the underlying 23503 message
 		// in the cause; the regex tolerates either wrapping shape.
+		// T8b S5': route now validates ownership upfront via JOIN on entities
+		// before any insert, so a non-existent entity surfaces as a 400 with
+		// body "entityIds not found" instead of a FK violation at INSERT time.
+		// Same C5 guarantee (no partial persistence) — different error shape.
+		// SvelteKit's `error(status, body)` throws HttpError with status+body;
+		// match on either the wrapped FK error message or the HttpError status.
 		await expect(
 			batchRoute.POST(mkEvent({ params: { windowId: 'win-1' }, body }))
-		).rejects.toThrow(/foreign key|Failed query.*insert/i);
+		).rejects.toMatchObject({ status: 400 });
 
 		// Critical C5 guarantee: the two valid rows must NOT be in the DB.
 		const rows = await currentDb.select().from(windowCanvasState);

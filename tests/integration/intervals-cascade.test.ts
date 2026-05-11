@@ -18,35 +18,38 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq, count } from 'drizzle-orm';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval, recomputeAllIntervals } from '../../src/lib/server/intervals.js';
 
 describe('cascade behavior on entity deletion', () => {
 	let db: Awaited<ReturnType<typeof createTestDb>>;
+	let userId: string;
 	let acts: { act0: string; act1: string; act2: string };
 	let ellie: string;
 	let damien: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		acts = await seedActs(db);
+		const user = await seedTestUser(db);
+		userId = user.id;
+		acts = await seedActs(db, userId);
 		const [a] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = a.id;
 		const [b] = await db
 			.insert(entities)
-			.values({ type: 'Character', name: 'Damien' })
+			.values({ userId, type: 'Character', name: 'Damien' })
 			.returning();
 		damien = b.id;
 	});
 
 	it('deleting a Character deletes only their intervals', async () => {
-		await writeInterval(db, { entityId: ellie, startActId: acts.act0, endActId: acts.act0 });
-		await writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 });
-		await writeInterval(db, { entityId: damien, startActId: acts.act2, endActId: acts.act2 });
+		await writeInterval(db, { entityId: ellie, startActId: acts.act0, endActId: acts.act0 }, userId);
+		await writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 }, userId);
+		await writeInterval(db, { entityId: damien, startActId: acts.act2, endActId: acts.act2 }, userId);
 
 		const [pre] = await db.select({ c: count() }).from(intervals);
 		expect(pre.c).toBe(3);
@@ -64,7 +67,7 @@ describe('cascade behavior on entity deletion', () => {
 		for (let k = 0; k < 3; k++) {
 			const [s] = await db
 				.insert(entities)
-				.values({ type: 'Scene', name: `S${k}`, parentId: acts.act1, position: k })
+				.values({ userId, type: 'Scene', name: `S${k}`, parentId: acts.act1, position: k })
 				.returning();
 			sceneIds.push(s.id);
 		}
@@ -76,9 +79,9 @@ describe('cascade behavior on entity deletion', () => {
 			startSceneId: sceneIds[0],
 			endActId: acts.act1,
 			endSceneId: sceneIds[2]
-		});
+		}, userId);
 		// Damien has a separate Act 2 interval (untouched).
-		await writeInterval(db, { entityId: damien, startActId: acts.act2, endActId: acts.act2 });
+		await writeInterval(db, { entityId: damien, startActId: acts.act2, endActId: acts.act2 }, userId);
 
 		const [scenesPre] = await db
 			.select({ c: count() })
@@ -92,7 +95,7 @@ describe('cascade behavior on entity deletion', () => {
 		// rule on regressions. Per Decision D1, the DELETE handler now fires
 		// recompute after act delete; survivors must reflect the NEW act
 		// ordering, not their pre-delete positions.
-		await recomputeAllIntervals(db);
+		await recomputeAllIntervals(db, userId);
 
 		// Scenes for Act 1 are gone (parent_id CASCADE).
 		const [scenesPost] = await db
@@ -124,11 +127,11 @@ describe('cascade behavior on entity deletion', () => {
 	it('deleting a Scene SETs NULL on intervals scene FKs (interval row preserved)', async () => {
 		const [s0] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await db
 			.insert(entities)
-			.values({ type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 
 		await writeInterval(db, {
@@ -137,7 +140,7 @@ describe('cascade behavior on entity deletion', () => {
 			startSceneId: s0.id,
 			endActId: acts.act1,
 			endSceneId: s1.id
-		});
+		}, userId);
 
 		await db.delete(entities).where(eq(entities.id, s0.id));
 

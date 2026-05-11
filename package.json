@@ -1,7 +1,7 @@
 {
   "name": "betwixt-and-between",
   "private": true,
-  "version": "0.3.0.0",
+  "version": "0.4.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -49,6 +49,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
+    "better-auth": "^1.6.9",
     "dagre": "^0.8.5",
     "leaflet": "^1.9.4",
     "leaflet-draw": "^1.0.4",

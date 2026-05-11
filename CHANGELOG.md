@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0.0] - 2026-05-08
+
+### Added
+- **Multi-user authentication** — Better-Auth wired with magic-link and Google OAuth. New `/auth/login` page, `/api/auth/*` catch-all, `/app/*` redirect guard. Sessions cookie-cached for 5 min.
+- **Per-request auth factory** (`src/lib/server/auth.ts`) — `buildAuth(db, env)` builds a request-scoped Better-Auth instance from the explicit env object passed by the hook. Throws on missing `BETTER_AUTH_SECRET` or `BETTER_AUTH_URL` outside test mode (no silent dev-secret fallback). `trustedOrigins` derived from `BETTER_AUTH_URL`.
+- **userId scoping across the entire API** — every handler reads `getUserId(event)` and filters/stamps userId on every SELECT/UPDATE/DELETE/INSERT. Wrong-owner returns 404 (no existence leak), unauthenticated returns 401. Cascade queries (insert-between Act bumps, Act-delete rescoping, position-bump, moveSceneToAct) all scope by userId so one user's reorder can't shift another's data.
+- **`intervals.ts` userId threading** — `writeInterval`, `updateInterval`, `recomputeAllIntervals`, `recomputeIntervalsForAct`, `moveSceneToAct`, `splitInterval`, `assertNoOverlap`, `validateFKTypes`, `assertEntityType`, `actIndexOf`, `sceneIndexOf`, `computeIntervalPositions`, `buildRecomputeCache`, `intervalsForEntity`, `intervalsForEntities`, `entitiesPresentAt`, `entitiesPresentInActIndex`, `intervalsTouchingScene`, `resolveRelationshipBounds`, `recomputeRelationshipBoundsAll` all take userId and scope every internal query.
+- **36 multi-tenant isolation integration tests** across 5 files: entities (incl. cascade-scoping + user FK cascade), relationships, intervals (incl. moveSceneToAct), maps + regions (scoped via JOIN on `worldMaps.userId`), and unauthenticated 401 coverage.
+- **Production magic-link email** path — `sendMagicLink` calls Resend when `RESEND_API_KEY` + `RESEND_FROM_EMAIL` are set; falls back to `console.log` in dev/test.
+- **E2E auth bypass** for the existing 27 specs — when `BETWIXT_E2E_PGLITE=1`, the hook honors an `x-test-user-id` header and skips Better-Auth's session lookup. New `tests/e2e/helpers/auth.ts` plus `E2E_USER_ID`/`E2E_USER_HEADERS` constants in `pglite-config.ts`. Default test user seeded once in global-setup.
+- **DEPLOY.md** — Cloudflare Workers deploy guide: Neon prod branch setup, secret list (`DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, Google OAuth, Resend), GitHub integration, magic-link email gate, rollback procedure.
+- **Weekly database backup workflow** (`.github/workflows/backup.yml`) — Sunday 06:00 UTC: `pg_dump` → `gpg` encrypt → `rclone` to Backblaze B2.
+- Migration `0004_auth_tables.sql` — Better-Auth `user`, `session`, `account`, `verification` tables.
+- Migration `0005_multi_user_columns.sql` — nullable `userId` on `entities`, `relationships`, `intervals`, `canvasPositions`, `windowCanvasState`, `worldMaps`, with btree indexes.
+
+### Changed
+- **Hook owns the db lifecycle** — `hooks.server.ts` opens a single `getDb(env)` per request, attaches `db`/`auth`/`user`/`session` to `event.locals`, closes the Neon Pool in `finally`. Routes drop their `withDb(platform?.env, ...)` wrapper and read `event.locals.db` directly. Reverts PR #36's per-route wrapping in favor of a single Pool per request.
+- `App.Locals` gains `db: RuntimeDb` and `auth: Auth` fields for hook-attached resources.
+- `closeDb` exported from `src/lib/server/db/index.ts` so the hook can drive lifecycle.
+- Hook resolves env in priority order: `process.env` → `$env/dynamic/private` → `event.platform?.env`. Platform bindings win when present; the fallback chain handles vite preview / E2E test mode where `$env/dynamic/private` doesn't always surface webServer-injected vars.
+- `tests/helpers/authed-request.ts` — `setupAuth(db)` now injects `locals.db` automatically. `mkUnauthedEvent(db, ...)` accepts the db so handlers reach `getUserId` before any DB call.
+- `tests/helpers/test-db.ts` — `seedActs(db, userId?)` accepts an optional userId. Existing `seedTestUser(db, overrides?)` exposed for direct use in tests.
+- Vitest `hookTimeout` bumped to 30s in unit + integration projects — PGlite WASM boot + 5 migrations under parallel worker load exceeds the 10s default.
+- `playwright.config.ts.webServer.env` adds `BETTER_AUTH_SECRET` + `BETTER_AUTH_URL` so the preview boots cleanly under the new secret guards.
+
+### Fixed
+- Cross-user `relationships` POST now verifies both `fromId` and `toId` belong to the caller via scoped entity lookup. Cross-user FKs surface as 400 "fromId entity not found".
+- `entity-aliases` and `mapRegions` (which lack a direct `userId` column) are scoped via JOIN on the parent's userId — `worldMaps.userId` for regions, `entities.userId` for aliases.
+- `userId` propagated through `intervals.ts` header docstring so the documented signatures match the post-S5' code.
+
+### Resolved during PR review
+- **Codex P1: hardcoded `localhost:5173` fallback in `auth-client.ts`** — would silently route prod browser auth to a non-existent local endpoint when `VITE_BETTER_AUTH_URL` is unset. Replaced with `window.location.origin` runtime resolution.
+- **Codex P2: Google button visibility checked `VITE_GOOGLE_CLIENT_ID`** while server-side `buildAuth` reads `GOOGLE_CLIENT_ID`. Two different env vars meant setting only the documented `GOOGLE_CLIENT_ID` enabled the backend but hid the button. Replaced with a server-driven `googleEnabled` flag passed via `+page.server.ts` load — the page mirrors the server's actual config.
+- **Codex P1: missing userId backfill** — added `drizzle/backfill-multi-user.sql.example` template + DEPLOY.md section covering migrating environments with existing single-tenant data. v0.4.0.0 itself ships pre-launch (no production data) so no backfill is needed for the launch deploy.
+- **Resolved E2E "relation 'user' does not exist" issue** flagged in the original PR. Root cause: `adapter-cloudflare`'s vite-preview polyfill populates `event.platform.env` from `.env` / `.dev.vars`, which shadowed Playwright's `webServer.env` PGlite URL injection. Hook now skips the platform polyfill when `BETWIXT_E2E_PGLITE=1`. Full E2E suite now runs against the test PGlite as intended.
+
 ## [0.3.0.0] - 2026-05-06
 
 ### Added

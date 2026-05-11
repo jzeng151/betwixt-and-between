@@ -1,6 +1,7 @@
 import { json, error } from '@sveltejs/kit';
-import { withDb } from '$lib/server/db/index.js';
-import { windowCanvasState } from '$lib/server/db/schema.js';
+import { entities, windowCanvasState } from '$lib/server/db/schema.js';
+import { and, eq, inArray } from 'drizzle-orm';
+import { getUserId } from '$lib/server/auth-gate.js';
 import { isUuid, coercePinned } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
 
@@ -9,12 +10,13 @@ import type { RequestHandler } from './$types';
  * partial failure (e.g. one row violates the entity FK) rolls all rows back.
  * This is the C5 dagre-layout atomicity guarantee from the locked Lane A plan.
  */
-export const POST: RequestHandler = async ({ platform, params, request }) =>
-	withDb(platform?.env, async (db) => {
-	const { windowId } = params;
+export const POST: RequestHandler = async (event) => {
+	const { db } = event.locals;
+	const userId = getUserId(event);
+	const { windowId } = event.params;
 	if (!windowId) error(400, 'windowId is required');
 
-	const body = await request.json().catch(() => null);
+	const body = await event.request.json().catch(() => null);
 	if (!Array.isArray(body)) error(400, 'body must be an array');
 
 	const rows = body.map((raw, i) => {
@@ -25,7 +27,8 @@ export const POST: RequestHandler = async ({ platform, params, request }) =>
 			error(400, `row ${i}: x and y must be numbers`);
 		return {
 			windowId,
-			entityId,
+			userId,
+			entityId: entityId as string,
 			x: Math.trunc(x),
 			y: Math.trunc(y),
 			width: typeof width === 'number' ? Math.trunc(width) : 160,
@@ -35,6 +38,16 @@ export const POST: RequestHandler = async ({ platform, params, request }) =>
 	});
 
 	if (rows.length === 0) return json([]);
+
+	// Verify every entity belongs to the user before any write — fail fast.
+	const entityIds = rows.map((r) => r.entityId);
+	const owned = await db
+		.select({ id: entities.id })
+		.from(entities)
+		.where(and(inArray(entities.id, entityIds), eq(entities.userId, userId)));
+	if (owned.length !== new Set(entityIds).size) {
+		error(400, 'one or more entityIds not found');
+	}
 
 	const upserted = await db.transaction(async (tx) => {
 		const out = [];
@@ -53,5 +66,4 @@ export const POST: RequestHandler = async ({ platform, params, request }) =>
 	});
 
 	return json(upserted);
-
-	});
+};

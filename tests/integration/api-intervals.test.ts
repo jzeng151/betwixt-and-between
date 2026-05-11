@@ -6,15 +6,13 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createTestDb, seedActs } from '../helpers/test-db.js';
+import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
+let userId: string;
 
-vi.mock('$lib/server/db/index.js', () => ({
-	getDb: async () => currentDb,
-	withDb: async (_env: unknown, callback: (db: typeof currentDb) => Promise<unknown>) => callback(currentDb)
-}));
+// vi.mock removed — routes now read event.locals.db (T8b S5' A1)
 
 const route = await import('../../src/routes/api/intervals/+server.js');
 const idRoute = await import('../../src/routes/api/intervals/[id]/+server.js');
@@ -25,6 +23,11 @@ function mkEvent(overrides: { url?: URL; params?: Record<string, string>; body?:
 		params: overrides.params ?? {},
 		request: {
 			json: async () => overrides.body
+		},
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: { id: crypto.randomUUID(), userId, expiresAt: new Date(Date.now() + 86400000), token: 'test-token' },
 		}
 	};
 }
@@ -40,14 +43,16 @@ describe('/api/intervals GET', () => {
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		acts = await seedActs(currentDb);
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		acts = await seedActs(currentDb, userId);
 		const [e] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		const [b] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Bob' })
+			.values({ userId, type: 'Character', name: 'Bob' })
 			.returning();
 		ellie = e.id;
 		bob = b.id;
@@ -107,10 +112,12 @@ describe('/api/intervals POST', () => {
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		acts = await seedActs(currentDb);
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		acts = await seedActs(currentDb, userId);
 		const [e] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = e.id;
 	});
@@ -170,10 +177,12 @@ describe('/api/intervals/[id] GET/PATCH/DELETE', () => {
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
-		acts = await seedActs(currentDb);
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+		acts = await seedActs(currentDb, userId);
 		const [e] = await currentDb
 			.insert(entities)
-			.values({ type: 'Character', name: 'Ellie' })
+			.values({ userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = e.id;
 		const created = await readJson(
