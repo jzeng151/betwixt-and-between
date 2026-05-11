@@ -40,16 +40,24 @@ export const POST: RequestHandler = async (event) => {
 		error(400, 'Could not read image dimensions');
 	}
 
-	const dir = join(process.cwd(), 'static', 'maps');
-	await mkdir(dir, { recursive: true });
-
 	const ext = file.name.split('.').pop()?.toLowerCase() || 'png';
 	if (!ALLOWED_EXTS.has(ext)) error(400, 'Invalid file extension');
 	const filename = `${event.params.id}_${Date.now()}.${ext}`;
-	const filepath = join(dir, filename);
-	await writeFile(filepath, buffer);
 
-	const baseImageUrl = `/maps/${filename}`;
+	// R2 in prod (Cloudflare Workers has no writable filesystem); local fs
+	// fallback for `npm run dev` where the R2 binding isn't injected.
+	const bucket = event.platform?.env?.MAP_UPLOADS;
+	if (bucket) {
+		await bucket.put(filename, buffer, {
+			httpMetadata: { contentType: file.type },
+		});
+	} else {
+		const dir = join(process.cwd(), 'static', 'maps');
+		await mkdir(dir, { recursive: true });
+		await writeFile(join(dir, filename), buffer);
+	}
+
+	const baseImageUrl = `/api/maps/file/${filename}`;
 
 	const [updated] = await db
 		.update(worldMaps)
