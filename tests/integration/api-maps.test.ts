@@ -617,7 +617,7 @@ describe('/api/maps/[id]/upload-image', () => {
 		);
 		expect(res.status).toBe(200);
 		const body = await readJson(res);
-		expect(body.baseImageUrl).toMatch(/^\/maps\//);
+		expect(body.baseImageUrl).toMatch(/^\/api\/maps\/file\//);
 		expect(body.width).toBe(1);
 		expect(body.height).toBe(1);
 	});
