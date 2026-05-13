@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { get } from 'svelte/store';
 	import { entities, type Entity } from '$lib/stores/entities.js';
 	import { playhead, isPlaying, secondsPerScene } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
@@ -82,7 +83,12 @@
 	});
 
 	onDestroy(() => {
-		playhead.dismiss();
+		// Minimize unmounts content via {#if !minimized} in Window.svelte, so
+		// onDestroy fires on both close and minimize. Only dismiss when the
+		// window has actually been removed from the store (real close) —
+		// otherwise minimize would clear playback state.
+		const stillOpen = get(windowStore).some((w) => w.id === winId);
+		if (!stillOpen) playhead.dismiss();
 	});
 
 	function togglePlay() {
