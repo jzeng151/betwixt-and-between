@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 
-export type NoteFolder = {
+type NoteFolder = {
 	id: string;
 	name: string;
 	position: number | null;

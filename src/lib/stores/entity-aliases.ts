@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 
-export type EntityAlias = {
+type EntityAlias = {
 	id: string;
 	primaryEntityId: string;
 	aliasEntityId: string;

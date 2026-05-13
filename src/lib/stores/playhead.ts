@@ -18,12 +18,6 @@ const _isPlaying = writable(false);
 export const isPlaying = { subscribe: _isPlaying.subscribe };
 
 /**
- * @deprecated Story Player now uses scene-stepping driven by `secondsPerScene`.
- * Retained as an export for backward compat but no longer read by `play()`.
- */
-export const playbackSpeed = writable(0.5);
-
-/**
  * Story Player advance speed in seconds per scene boundary.
  * Spec options: 2 / 4 / 8 / 16. Default 4.
  */

@@ -12,7 +12,7 @@ import { writable } from 'svelte/store';
  * Character editor) can write to it without coordinating through the
  * window store.
  */
-export interface TimelineFilter {
+interface TimelineFilter {
 	entityId: string | null;
 }
 

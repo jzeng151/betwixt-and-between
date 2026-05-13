@@ -15,8 +15,8 @@ export interface NodePosition {
   h: number;
 }
 
-export const NODE_W = 120;
-export const NODE_H = 32;
+const NODE_W = 120;
+const NODE_H = 32;
 const CENTER_X = 320;
 const CENTER_Y = 200;
 

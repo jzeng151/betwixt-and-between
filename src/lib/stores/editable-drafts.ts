@@ -20,23 +20,3 @@ export function clearDraft(entityId: string, field: string): void {
 	if (inner.size === 0) drafts.delete(entityId);
 }
 
-export function clearAllDraftsFor(entityId: string): void {
-	drafts.delete(entityId);
-}
-
-/**
- * Get the longest non-empty draft for an entity. Pick longest because it's
- * the user's most-developed thought; ties broken by insertion order.
- * Returns null when nothing was being typed.
- */
-export function getDraftPreview(entityId: string): { field: string; text: string } | null {
-	const inner = drafts.get(entityId);
-	if (!inner) return null;
-	let best: { field: string; text: string } | null = null;
-	for (const [field, text] of inner) {
-		const t = text.trim();
-		if (!t) continue;
-		if (!best || t.length > best.text.length) best = { field, text: t };
-	}
-	return best;
-}

@@ -24,8 +24,8 @@ export async function getDb(env?: DbEnv): Promise<RuntimeDb> {
 	const driver = shouldUseLocalPostgresDriver(databaseUrl, e2ePglite) ? 'postgres-js' : 'neon';
 	if (driver === 'neon') {
 		// Neon serverless Pool instances are request-scoped in edge runtimes:
-		// create one for this handler and close it via withDb() after the
-		// response is produced. Do not put Neon pools in the module cache.
+		// create one per handler and let hooks.server.ts close it after the
+		// response. Do not put Neon pools in the module cache.
 		return createNeonDb(databaseUrl);
 	}
 
@@ -37,18 +37,6 @@ export async function getDb(env?: DbEnv): Promise<RuntimeDb> {
 		dbCache.set(cacheKey, cached);
 	}
 	return cached;
-}
-
-export async function withDb<T>(
-	env: DbEnv | undefined,
-	callback: (db: RuntimeDb) => Promise<T>
-): Promise<T> {
-	const db = await getDb(env);
-	try {
-		return await callback(db);
-	} finally {
-		await closeDb(db);
-	}
 }
 
 export async function closeDb(db: RuntimeDb): Promise<void> {
