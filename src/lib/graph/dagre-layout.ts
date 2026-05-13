@@ -24,19 +24,19 @@
 
 import type { EntityType } from '$lib/server/db/schema.js';
 
-export interface LayoutNode {
+interface LayoutNode {
 	id: string;
 	type: EntityType;
 	width: number;
 	height: number;
 }
 
-export interface LayoutEdge {
+interface LayoutEdge {
 	fromId: string;
 	toId: string;
 }
 
-export interface CurrentPosition {
+interface CurrentPosition {
 	id: string;
 	x: number;
 	y: number;
