@@ -19,7 +19,7 @@ export type Interval = {
 	updatedAt: number | Date;
 };
 
-export type CreateIntervalInput = {
+type CreateIntervalInput = {
 	entityId: string;
 	startActId: string;
 	startSceneId?: string | null;
@@ -27,7 +27,7 @@ export type CreateIntervalInput = {
 	endSceneId?: string | null;
 };
 
-export type UpdateIntervalInput = Partial<{
+type UpdateIntervalInput = Partial<{
 	entityId: string;
 	startActId: string;
 	startSceneId: string | null;

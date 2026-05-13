@@ -39,7 +39,7 @@
  *   Half-open convention: end is exclusive. CHECK (start_position < end_position).
  */
 
-import { sql, eq, and, isNull, inArray } from 'drizzle-orm';
+import { sql, eq, and, isNull } from 'drizzle-orm';
 import type { NeonDatabase } from 'drizzle-orm/neon-serverless';
 import type { NeonQueryResultHKT } from 'drizzle-orm/neon-serverless';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
@@ -136,7 +136,7 @@ export interface RecomputeCache {
 	>;
 }
 
-export async function buildRecomputeCache(db: DB, userId: string): Promise<RecomputeCache> {
+async function buildRecomputeCache(db: DB, userId: string): Promise<RecomputeCache> {
 	const acts = await db
 		.select({ id: entities.id })
 		.from(entities)
@@ -975,64 +975,6 @@ export async function moveSceneToAct(
 }
 
 // =============================================================================
-// Query helpers
-// =============================================================================
-
-/** "Who is present at story time T?" */
-export async function entitiesPresentAt(db: DB, t: number, userId: string): Promise<string[]> {
-	const rows = await db
-		.select({ entityId: intervals.entityId })
-		.from(intervals)
-		.where(
-			and(eq(intervals.userId, userId), sql`${intervals.startPosition} <= ${t}`, sql`${intervals.endPosition} > ${t}`)
-		);
-	return [...new Set(rows.map((r) => r.entityId))];
-}
-
-/** "Who is present anywhere in Act with given index?" */
-export async function entitiesPresentInActIndex(db: DB, i: number, userId: string): Promise<string[]> {
-	const rows = await db
-		.select({ entityId: intervals.entityId })
-		.from(intervals)
-		.where(
-			and(eq(intervals.userId, userId), sql`${intervals.startPosition} < ${i + 1}`, sql`${intervals.endPosition} > ${i}`)
-		);
-	return [...new Set(rows.map((r) => r.entityId))];
-}
-
-/** "All intervals that touch the scene with given id" — FK-direct, no math. */
-export async function intervalsTouchingScene(db: DB, sceneId: string, userId: string) {
-	return db
-		.select()
-		.from(intervals)
-		.where(
-			and(
-				eq(intervals.userId, userId),
-				sql`(${intervals.startSceneId} = ${sceneId} OR ${intervals.endSceneId} = ${sceneId})`
-			)
-		);
-}
-
-/** All intervals for an entity, ordered by story time. */
-export async function intervalsForEntity(db: DB, entityId: string, userId: string) {
-	return db
-		.select()
-		.from(intervals)
-		.where(and(eq(intervals.entityId, entityId), eq(intervals.userId, userId)))
-		.orderBy(intervals.startPosition);
-}
-
-/** All intervals for a list of entities, fetched in one query. */
-export async function intervalsForEntities(db: DB, entityIds: string[], userId: string) {
-	if (entityIds.length === 0) return [];
-	return db
-		.select()
-		.from(intervals)
-		.where(and(inArray(intervals.entityId, entityIds), eq(intervals.userId, userId)))
-		.orderBy(intervals.startPosition);
-}
-
-// =============================================================================
 // Relationship temporal bounds — Phase 1B Lane A (2026-05-02)
 // =============================================================================
 
@@ -1095,7 +1037,7 @@ export async function resolveRelationshipBounds(
  *
  * Runs inside the caller's transaction context (pass db or tx).
  */
-export async function recomputeRelationshipBoundsAll(db: DB, userId: string): Promise<number> {
+async function recomputeRelationshipBoundsAll(db: DB, userId: string): Promise<number> {
 	const rows = await db
 		.select()
 		.from(relationships)

@@ -14,9 +14,9 @@
   import { radialLayout } from '$lib/graph/radial-layout.js';
   import GraphCanvas, {
     type GraphNode,
-    type GraphEdge,
-    type NodePosition
+    type GraphEdge
   } from '$lib/components/GraphCanvas.svelte';
+  import type { NodePosition } from '$lib/graph/radial-layout.js';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';

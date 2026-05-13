@@ -4,7 +4,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { entities } from './db/schema.js';
 import type { Db } from './intervals.js';
 
-export function requireUser(event: RequestEvent) {
+function requireUser(event: RequestEvent) {
 	const user = event.locals.user;
 	if (!user) error(401, 'Authentication required');
 	return user;

@@ -59,13 +59,6 @@
 		ghostMode?: 'past' | 'future' | null;
 	}
 
-	export interface NodePosition {
-		x: number;
-		y: number;
-		w: number;
-		h: number;
-	}
-
 	export interface NodeOverlayContext {
 		id: string;
 		hovered: boolean;
@@ -76,6 +69,7 @@
 <script lang="ts">
 	import { onMount, untrack, type Snippet } from 'svelte';
 	import { NODE_COLOR } from '$lib/relationship-colors.js';
+	import type { NodePosition } from '$lib/graph/radial-layout.js';
 
 	interface Props {
 		nodes: GraphNode[];
