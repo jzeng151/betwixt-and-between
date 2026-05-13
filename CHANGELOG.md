@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0.1] - 2026-05-13
+
+### Changed
+- Extract shared story-structure derivations (`getActs`, `getScenesByActId`, `getSceneBoundaries`, `getSpotlightLabel`, `stepForwardScene`, `stepBackScene`) into `src/lib/story-structure.ts` so `Timeline` and `PlayerDock` no longer carry byte-identical copies of the same logic.
+
+### Added
+- Unit tests for `story-structure.ts` covering act sort/tiebreaker, scene grouping, boundary math, spotlight-label edge cases, and forward/back scene stepping.
+
 ## [0.5.0.0] - 2026-05-12
 
 ### Added

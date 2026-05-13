@@ -24,6 +24,14 @@
 	import { windowStore } from '$lib/stores/windows.js';
 	import { timelineFilter } from '$lib/stores/timelineFilter.js';
 	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
+	import {
+		getActs,
+		getScenesByActId,
+		getSceneBoundaries,
+		getSpotlightLabel,
+		stepForwardScene,
+		stepBackScene
+	} from '$lib/story-structure.js';
 
 
 	// ── Data load ────────────────────────────────────────────────────────────
@@ -60,40 +68,8 @@
 
 	// ── Derived data ─────────────────────────────────────────────────────────
 
-	// Root-level Acts ordered by position (with createdAt as tiebreaker — matches
-	// server-side actIndexOf).
-	const acts = $derived(
-		$entities
-			.filter((e) => e.type === 'Act' && e.parentId == null)
-			.sort((a, b) => {
-				const ap = a.position ?? Number.MAX_SAFE_INTEGER;
-				const bp = b.position ?? Number.MAX_SAFE_INTEGER;
-				if (ap !== bp) return ap - bp;
-				return Number(a.createdAt) - Number(b.createdAt);
-			})
-	);
-
-	// Scenes grouped by parent Act id.
-	const scenesByActId = $derived(
-		(() => {
-			const m = new Map<string, Entity[]>();
-			for (const e of $entities) {
-				if (e.type !== 'Scene') continue;
-				if (!e.parentId) continue;
-				if (!m.has(e.parentId)) m.set(e.parentId, []);
-				m.get(e.parentId)!.push(e);
-			}
-			for (const list of m.values()) {
-				list.sort((a, b) => {
-					const ap = a.position ?? Number.MAX_SAFE_INTEGER;
-					const bp = b.position ?? Number.MAX_SAFE_INTEGER;
-					if (ap !== bp) return ap - bp;
-					return Number(a.createdAt) - Number(b.createdAt);
-				});
-			}
-			return m;
-		})()
-	);
+	const acts = $derived(getActs($entities));
+	const scenesByActId = $derived(getScenesByActId($entities));
 
 	const characters = $derived($entities.filter((e) => e.type === 'Character'));
 	const events = $derived($entities.filter((e) => e.type === 'Event'));
@@ -149,34 +125,7 @@
 	// Max story-time position: the playback upper bound for play/stepForward.
 	const maxT = $derived(acts.length);
 
-	// Sorted snap positions for scene-granular stepping: act starts + scene
-	// sub-boundaries within each act. Acts with no scenes contribute only their
-	// start; acts with m scenes add m-1 interior points (k/m for k=1..m-1).
-	const sceneBoundaries = $derived.by(() => {
-		const pts: number[] = [];
-		acts.forEach((act, i) => {
-			pts.push(i);
-			const scenes = scenesByActId.get(act.id) ?? [];
-			const m = scenes.length;
-			for (let k = 1; k < m; k++) pts.push(i + k / m);
-		});
-		pts.push(N);
-		return pts; // already sorted: acts are sorted, subdivisions are fractional
-	});
-
-	function stepForwardScene() {
-		playhead.pause();
-		const cur = $playhead ?? 0;
-		const next = sceneBoundaries.find((b) => b > cur + 1e-9);
-		if (next !== undefined) playhead.scrubTo(Math.min(next, maxT));
-	}
-
-	function stepBackScene() {
-		playhead.pause();
-		const cur = $playhead ?? 0;
-		const prev = [...sceneBoundaries].reverse().find((b) => b < cur - 1e-9);
-		if (prev !== undefined) playhead.scrubTo(Math.max(prev, 0));
-	}
+	const sceneBoundaries = $derived(getSceneBoundaries(acts, scenesByActId));
 
 	// ── Per-act weights for variable-width acts ──────────────────────────────
 	// Each Act's data.timelineWeight (default 1) controls its share of the
@@ -358,16 +307,7 @@
 	const spotlightWin = $derived($windowStore.find((w) => w.appId === 'story-player'));
 
 	// ── Spotlight position label ─────────────────────────────────────────────
-	const spotlightLabel = $derived.by(() => {
-		if ($playhead == null || acts.length === 0) return '';
-		const actIdx = Math.max(0, Math.min(Math.floor($playhead), acts.length - 1));
-		const act = acts[actIdx];
-		const scenes = scenesByActId.get(act.id) ?? [];
-		if (scenes.length === 0) return act.name;
-		const f = $playhead - actIdx;
-		const sceneIdx = Math.min(Math.floor(f * scenes.length), scenes.length - 1);
-		return `${act.name} · Scene ${sceneIdx + 1}: ${scenes[sceneIdx].name}`;
-	});
+	const spotlightLabel = $derived(getSpotlightLabel($playhead, acts, scenesByActId));
 
 	// ── Palette collapse ─────────────────────────────────────────────────────
 	let paletteCollapsed = $state(false);
@@ -424,11 +364,11 @@
 				break;
 			case 'ArrowLeft':
 				e.preventDefault();
-				stepBackScene();
+				stepBackScene(sceneBoundaries);
 				break;
 			case 'ArrowRight':
 				e.preventDefault();
-				stepForwardScene();
+				stepForwardScene(sceneBoundaries, maxT);
 				break;
 			case 'ArrowDown': {
 				// Slower = more seconds per scene
