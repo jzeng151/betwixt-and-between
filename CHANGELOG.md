@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0.0] - 2026-05-12
+
+### Added
+- **Story Player ("Spotlight")** — a standalone floating window that plays the timeline scene-by-scene. Compact transport bar with play/pause, step back/forward, and a scrub slider; an active act/scene label sits above the controls with a tooltip for truncated text.
+- **Pin-to-top toggle** on the Story Player window so it can stay above other windows during playback.
+- **Taskbar grouping** — the Spotlight entry is attached to the Timeline dock group with hover-focus behavior.
+- **Window infrastructure** — `compact` mode, `alwaysOnTop` + `PIN_Z_BASE` z-ordering, and a `togglePin` store action; a new `story-player` AppId with a default 280×72 spawn centered above the taskbar.
+- **E2E coverage** — four Playwright specs in `tests/e2e/v2-story-player.spec.ts` for toggle, play, step, and scrub-while-playing.
+
+### Changed
+- Timeline's Spotlight button now toggles the standalone Story Player window instead of embedding an inline dock inside Timeline.
+- `playhead` store: speed and step semantics refactored to support the standalone window.
+
 ## [0.4.0.0] - 2026-05-08
 
 ### Added
