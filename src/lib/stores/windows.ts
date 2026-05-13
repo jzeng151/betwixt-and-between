@@ -10,7 +10,8 @@ export type AppId =
 	| 'story-graph'
 	| 'focused-graph'
 	| 'notes'
-	| 'settings';
+	| 'settings'
+	| 'story-player';
 
 /**
  * View modes for `focused-graph` windows (Phase 1B Lane C):
@@ -40,7 +41,13 @@ export type WindowState = {
 	focalSet?: string[];
 	viewMode?: FocusedGraphMode;
 	typeOrder?: EntityType[];
+	// When true, the window renders with a boosted z-index that keeps it
+	// above all non-pinned windows regardless of focus changes.
+	alwaysOnTop?: boolean;
 };
+
+/** Z-index offset applied to `alwaysOnTop` windows so they float above the rest. */
+export const PIN_Z_BASE = 10000;
 
 /**
  * Routes an entity type to its default app. Locked 2026-04-29 in
@@ -86,10 +93,21 @@ function createWindowStore() {
 			return windowId;
 		}
 
-		const x = lastOpenX;
-		const y = lastOpenY;
-		lastOpenX = lastOpenX + 28 > 520 ? 80 : lastOpenX + 28;
-		lastOpenY = lastOpenY + 28 > 400 ? 80 : lastOpenY + 28;
+		let x = lastOpenX;
+		let y = lastOpenY;
+		if (appId === 'story-player' && typeof window !== 'undefined') {
+			// Anchor the Story Player just above the taskbar (52px) so it acts
+			// like a transport bar by default.
+			const winW = 320;
+			const winH = 100;
+			const taskbarH = 52;
+			const gap = 12;
+			x = Math.max(8, Math.floor((window.innerWidth - winW) / 2));
+			y = Math.max(8, window.innerHeight - taskbarH - winH - gap);
+		} else {
+			lastOpenX = lastOpenX + 28 > 520 ? 80 : lastOpenX + 28;
+			lastOpenY = lastOpenY + 28 > 400 ? 80 : lastOpenY + 28;
+		}
 		zCounter++;
 
 		const isGraph = appId === 'story-graph' || appId === 'focused-graph';
@@ -117,7 +135,9 @@ function createWindowStore() {
 										? 480
 										: appId === 'character-editor'
 											? 380
-											: 320,
+											: appId === 'story-player'
+												? 280
+												: 320,
 				height:
 					isGraph
 						? 500
@@ -129,7 +149,9 @@ function createWindowStore() {
 								? 400
 								: appId === 'notes'
 									? 450
-									: 480,
+									: appId === 'story-player'
+										? 100
+										: 480,
 				minimized: false,
 				maximized: false,
 				zIndex: zCounter,
@@ -235,6 +257,12 @@ function createWindowStore() {
 		);
 	}
 
+	function togglePin(id: string) {
+		update((all) =>
+			all.map((w) => (w.id === id ? { ...w, alwaysOnTop: !w.alwaysOnTop } : w))
+		);
+	}
+
 	function setEntityId(id: string, entityId: string) {
 		update((all) => all.map((w) => (w.id === id ? { ...w, entityId } : w)));
 	}
@@ -288,6 +316,7 @@ function createWindowStore() {
 		maximize,
 		move,
 		resize,
+		togglePin,
 		setEntityId,
 		focusedWindow,
 		findOpenEditorFor,

@@ -10,6 +10,7 @@
   import FocusedGraph from './apps/FocusedGraph.svelte';
   import Settings from './apps/Settings.svelte';
   import Notes from './apps/Notes.svelte';
+  import PlayerDock from './PlayerDock.svelte';
   import EntityDetail from './EntityDetail.svelte';
 
   const APP_TITLES: Record<string, string> = {
@@ -22,6 +23,7 @@
     'focused-graph': 'Focused Graph',
     'settings': 'Settings',
     'notes': 'Notes',
+    'story-player': 'Story Player',
   };
 
   function windowTitle(appId: string, entityId: string | null): string {
@@ -61,7 +63,9 @@
     zIndex={win.zIndex}
     minimized={win.minimized}
     maximized={win.maximized}
-    bare={win.appId === 'story-graph' || win.appId === 'focused-graph' || win.appId === 'world-map'}
+    bare={win.appId === 'story-graph' || win.appId === 'focused-graph' || win.appId === 'world-map' || win.appId === 'story-player'}
+    compact={win.appId === 'story-player'}
+    alwaysOnTop={win.alwaysOnTop ?? false}
   >
     {#if win.appId === 'character-editor'}
       <CharacterEditor winId={win.id} entityId={win.entityId} />
@@ -85,6 +89,8 @@
       <Settings />
     {:else if win.appId === 'notes'}
       <Notes />
+    {:else if win.appId === 'story-player'}
+      <PlayerDock winId={win.id} pinned={win.alwaysOnTop ?? false} />
     {/if}
   </Window>
 {/each}

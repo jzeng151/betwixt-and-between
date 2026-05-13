@@ -20,7 +20,7 @@
 	import ActsHeader from '$lib/components/ActsHeader.svelte';
 	import IntervalRow from '$lib/components/IntervalRow.svelte';
 	import PlayheadOverlay from '$lib/components/PlayheadOverlay.svelte';
-	import { playhead, isPlaying, playbackSpeed } from '$lib/stores/playhead.js';
+	import { playhead, isPlaying, secondsPerScene } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
 	import { timelineFilter } from '$lib/stores/timelineFilter.js';
 	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
@@ -361,7 +361,7 @@
 		if (scenes.length === 0) return act.name;
 		const f = $playhead - actIdx;
 		const sceneIdx = Math.min(Math.floor(f * scenes.length), scenes.length - 1);
-		return `${act.name} · ${scenes[sceneIdx].name}`;
+		return `${act.name} · Scene ${sceneIdx + 1}: ${scenes[sceneIdx].name}`;
 	});
 
 	// ── Palette collapse ─────────────────────────────────────────────────────
@@ -405,7 +405,7 @@
 		};
 	});
 
-	const SPEED_STEPS = [0.25, 0.5, 1, 2];
+	const SPEED_OPTIONS = [0.5, 1, 2, 4, 8, 16];
 
 	function handleKeydown(e: KeyboardEvent) {
 		const target = e.target as HTMLElement;
@@ -415,7 +415,7 @@
 			case ' ':
 				e.preventDefault();
 				if ($isPlaying) playhead.pause();
-				else playhead.play(maxT);
+				else playhead.play(maxT, sceneBoundaries);
 				break;
 			case 'ArrowLeft':
 				e.preventDefault();
@@ -425,18 +425,24 @@
 				e.preventDefault();
 				stepForwardScene();
 				break;
-			case 'ArrowUp': {
-				e.preventDefault();
-				const idx = SPEED_STEPS.indexOf($playbackSpeed);
-				playbackSpeed.set(SPEED_STEPS[Math.min(idx + 1, SPEED_STEPS.length - 1)] ?? SPEED_STEPS[SPEED_STEPS.length - 1]);
-				break;
-			}
 			case 'ArrowDown': {
+				// Slower = more seconds per scene
 				e.preventDefault();
-				const idx = SPEED_STEPS.indexOf($playbackSpeed);
-				playbackSpeed.set(SPEED_STEPS[Math.max(idx - 1, 0)] ?? SPEED_STEPS[0]);
+				const idx = SPEED_OPTIONS.indexOf($secondsPerScene);
+				secondsPerScene.set(SPEED_OPTIONS[Math.min(idx + 1, SPEED_OPTIONS.length - 1)] ?? SPEED_OPTIONS[SPEED_OPTIONS.length - 1]);
 				break;
 			}
+			case 'ArrowUp': {
+				// Faster = fewer seconds per scene
+				e.preventDefault();
+				const idx = SPEED_OPTIONS.indexOf($secondsPerScene);
+				secondsPerScene.set(SPEED_OPTIONS[Math.max(idx - 1, 0)] ?? SPEED_OPTIONS[0]);
+				break;
+			}
+			case 'Escape':
+				e.preventDefault();
+				playhead.dismiss();
+				break;
 		}
 	}
 
@@ -447,6 +453,8 @@
 		const target = e.target as HTMLElement;
 		if (target.closest('.playhead')) return;
 		if (!trackEl || trackWidthPx === 0 || N === 0) return;
+		// Manual scrub during playback pauses (player-convention; spec Pass 2).
+		if ($isPlaying) playhead.pause();
 		const rect = trackEl.getBoundingClientRect();
 		const t = fracToPos((e.clientX - rect.left) / trackWidthPx);
 		playhead.scrubTo(Math.max(0, Math.min(t, N)));
@@ -490,7 +498,11 @@
 				<button
 					class="scrub-toggle"
 					class:active={$playhead != null}
-					onclick={() => playhead.toggle(0)}
+					onclick={() => {
+						const open = $windowStore.find((w) => w.appId === 'story-player');
+						if (open) windowStore.close(open.id);
+						else windowStore.open('story-player');
+					}}
 					title={$playhead == null
 						? 'Spotlight a moment in story-time'
 						: 'Hide the spotlight'}
@@ -499,44 +511,9 @@
 						▶ Spotlight
 					{:else}
 						◼ Hide spotlight
-						<span class="scrub-pos">{spotlightLabel}</span>
+						<span class="scrub-pos" title={spotlightLabel}>{spotlightLabel}</span>
 					{/if}
 				</button>
-				{#if $playhead != null}
-					<div class="media-controls">
-						<button
-							class="media-btn"
-							title="Step back one scene"
-							aria-label="Step back"
-							onclick={() => stepBackScene()}
-						>⏮</button>
-						<button
-							class="media-btn media-play"
-							class:playing={$isPlaying}
-							title={$isPlaying ? 'Pause (Space)' : 'Play (Space)'}
-							aria-label={$isPlaying ? 'Pause' : 'Play'}
-							onclick={() => ($isPlaying ? playhead.pause() : playhead.play(maxT))}
-						>{$isPlaying ? '⏸' : '▶'}</button>
-						<button
-							class="media-btn"
-							title="Step forward one scene"
-							aria-label="Step forward"
-							onclick={() => stepForwardScene()}
-						>⏭</button>
-						<select
-							class="speed-select"
-							value={$playbackSpeed}
-							onchange={(e) => playbackSpeed.set(Number((e.currentTarget as HTMLSelectElement).value))}
-							title="Playback speed"
-							aria-label="Playback speed"
-						>
-							<option value={0.25}>¼×</option>
-							<option value={0.5}>½×</option>
-							<option value={1}>1×</option>
-							<option value={2}>2×</option>
-						</select>
-					</div>
-				{/if}
 				<div class="spotlight-help-wrap" bind:this={spotlightHelpWrapEl}>
 					<button
 						type="button"
@@ -597,6 +574,7 @@
 			class="rows"
 			class:drag-over={dragOver}
 			class:scrubbing={$playhead != null}
+			class:player-active={$playhead != null}
 			role="region"
 			aria-label="Timeline track"
 			bind:this={trackEl}
@@ -654,6 +632,7 @@
 		{#if errorMsg}
 			<div class="error-toast" role="alert">{errorMsg}</div>
 		{/if}
+
 	</div>
 
 </div>
@@ -846,6 +825,9 @@
 	.rows.scrubbing {
 		cursor: ew-resize;
 	}
+	.rows.player-active {
+		opacity: 0.95;
+	}
 
 	/* Row-filter dim — driven by `timelineFilter` (Wiki "Open focused
 	   timeline" context-menu action). Non-matching rows fade to 0.3. */
@@ -890,47 +872,4 @@
 		z-index: 10;
 	}
 
-	.media-controls {
-		display: inline-flex;
-		align-items: center;
-		gap: 3px;
-	}
-
-	.media-btn {
-		width: 26px;
-		height: 26px;
-		padding: 0;
-		border: 1px solid var(--color-border, #2a2d35);
-		border-radius: 4px;
-		background: transparent;
-		color: var(--color-text-muted, #6b7280);
-		font-size: 11px;
-		line-height: 1;
-		cursor: pointer;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		transition: color 0.12s, border-color 0.12s, background 0.12s;
-	}
-	.media-btn:hover {
-		color: var(--color-text, #e8e0d0);
-		border-color: var(--color-text-muted, #6b7280);
-	}
-	.media-btn.media-play.playing {
-		color: var(--color-accent, #c8942a);
-		border-color: var(--color-accent, #c8942a);
-		background: rgba(200, 148, 42, 0.08);
-	}
-
-	.speed-select {
-		height: 26px;
-		background: transparent;
-		border: 1px solid var(--color-border, #2a2d35);
-		border-radius: 4px;
-		color: var(--color-text-muted, #6b7280);
-		font-family: var(--font-ui, 'Inter', sans-serif);
-		font-size: 11px;
-		padding: 0 4px;
-		cursor: pointer;
-	}
 </style>

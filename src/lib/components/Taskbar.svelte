@@ -75,15 +75,18 @@
   });
 
   const APP_PARENT: Partial<Record<AppId, AppId>> = {
-    'focused-graph': 'story-graph'
+    'focused-graph': 'story-graph',
+    'story-player': 'timeline'
   };
 
   // FocusedGraph windows get a different icon (🎯) to distinguish them in the shared group.
   const PICKER_ICON: Partial<Record<AppId, string>> = {
-    'focused-graph': '🎯'
+    'focused-graph': '🎯',
+    'story-player': '▶'
   };
 
   function pickerLabel(win: (typeof $windowStore)[number], fallback: string): string {
+    if (win.appId === 'story-player') return 'Story Player';
     // FocusedGraph: synthesize a name from the focal set since FG
     // windows aren't bound to a single entity.
     if (win.appId === 'focused-graph') {
@@ -103,6 +106,7 @@
   }
 
   function pickerSubtitle(win: (typeof $windowStore)[number]): string | null {
+    if (win.appId === 'story-player') return 'Player';
     if (win.appId === 'focused-graph') return 'Focused Graph';
     if (!win.entityId) return null;
     const entity = $entities.find((e) => e.id === win.entityId);
