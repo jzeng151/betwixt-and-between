@@ -352,6 +352,11 @@
 		}
 	}
 
+	// ── Spotlight window presence ─────────────────────────────────────────────
+	// Drives the Spotlight toggle button so it stays in sync when Escape
+	// dismisses the playhead but leaves the window open (or vice versa).
+	const spotlightWin = $derived($windowStore.find((w) => w.appId === 'story-player'));
+
 	// ── Spotlight position label ─────────────────────────────────────────────
 	const spotlightLabel = $derived.by(() => {
 		if ($playhead == null || acts.length === 0) return '';
@@ -439,10 +444,17 @@
 				secondsPerScene.set(SPEED_OPTIONS[Math.max(idx - 1, 0)] ?? SPEED_OPTIONS[0]);
 				break;
 			}
-			case 'Escape':
+			case 'Escape': {
 				e.preventDefault();
-				playhead.dismiss();
+				// Close the Story Player window if it's open; PlayerDock's
+				// onDestroy then dismisses the playhead. Keeps the Spotlight
+				// toggle (driven by window presence below) in sync. If no
+				// window is open but a stray playhead exists, idle it directly.
+				const sp = $windowStore.find((w) => w.appId === 'story-player');
+				if (sp) windowStore.close(sp.id);
+				else playhead.dismiss();
 				break;
+			}
 		}
 	}
 
@@ -497,21 +509,22 @@
 			<div class="ctrl-center">
 				<button
 					class="scrub-toggle"
-					class:active={$playhead != null}
+					class:active={spotlightWin != null}
 					onclick={() => {
-						const open = $windowStore.find((w) => w.appId === 'story-player');
-						if (open) windowStore.close(open.id);
+						if (spotlightWin) windowStore.close(spotlightWin.id);
 						else windowStore.open('story-player');
 					}}
-					title={$playhead == null
+					title={spotlightWin == null
 						? 'Spotlight a moment in story-time'
 						: 'Hide the spotlight'}
 				>
-					{#if $playhead == null}
+					{#if spotlightWin == null}
 						▶ Spotlight
 					{:else}
 						◼ Hide spotlight
-						<span class="scrub-pos" title={spotlightLabel}>{spotlightLabel}</span>
+						{#if $playhead != null}
+							<span class="scrub-pos" title={spotlightLabel}>{spotlightLabel}</span>
+						{/if}
 					{/if}
 				</button>
 				<div class="spotlight-help-wrap" bind:this={spotlightHelpWrapEl}>
