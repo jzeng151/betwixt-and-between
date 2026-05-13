@@ -7,72 +7,28 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { get } from 'svelte/store';
-	import { entities, type Entity } from '$lib/stores/entities.js';
+	import { entities } from '$lib/stores/entities.js';
 	import { playhead, isPlaying, secondsPerScene } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
+	import {
+		getActs,
+		getScenesByActId,
+		getSceneBoundaries,
+		getSpotlightLabel,
+		stepForwardScene,
+		stepBackScene
+	} from '$lib/story-structure.js';
 
 	type Props = { winId: string; pinned: boolean };
 	const { winId, pinned }: Props = $props();
 
 	const SPEED_OPTIONS = [.5, 1, 2, 4, 8, 16];
 
-	// Derive acts and scene boundaries from the entities store. Mirrors the
-	// same logic Timeline uses (acts sorted by position, scenes grouped by
-	// parent act). Boundaries: act starts + interior scene fractions + final.
-	const acts = $derived(
-		$entities
-			.filter((e) => e.type === 'Act' && e.parentId == null)
-			.sort((a, b) => {
-				const ap = a.position ?? Number.MAX_SAFE_INTEGER;
-				const bp = b.position ?? Number.MAX_SAFE_INTEGER;
-				if (ap !== bp) return ap - bp;
-				return Number(a.createdAt) - Number(b.createdAt);
-			})
-	);
-
-	const scenesByActId = $derived.by(() => {
-		const m = new Map<string, Entity[]>();
-		for (const e of $entities) {
-			if (e.type !== 'Scene' || !e.parentId) continue;
-			if (!m.has(e.parentId)) m.set(e.parentId, []);
-			m.get(e.parentId)!.push(e);
-		}
-		for (const list of m.values()) {
-			list.sort((a, b) => {
-				const ap = a.position ?? Number.MAX_SAFE_INTEGER;
-				const bp = b.position ?? Number.MAX_SAFE_INTEGER;
-				if (ap !== bp) return ap - bp;
-				return Number(a.createdAt) - Number(b.createdAt);
-			});
-		}
-		return m;
-	});
-
+	const acts = $derived(getActs($entities));
+	const scenesByActId = $derived(getScenesByActId($entities));
 	const maxT = $derived(acts.length);
-
-	// Human-readable "Act · Scene" label for the current playhead position.
-	const spotlightLabel = $derived.by(() => {
-		if ($playhead == null || acts.length === 0) return '';
-		const actIdx = Math.max(0, Math.min(Math.floor($playhead), acts.length - 1));
-		const act = acts[actIdx];
-		const scenes = scenesByActId.get(act.id) ?? [];
-		if (scenes.length === 0) return act.name;
-		const f = $playhead - actIdx;
-		const sceneIdx = Math.min(Math.floor(f * scenes.length), scenes.length - 1);
-		return `${act.name} · Scene ${sceneIdx + 1}: ${scenes[sceneIdx].name}`;
-	});
-
-	const sceneBoundaries = $derived.by(() => {
-		const pts: number[] = [];
-		acts.forEach((act, i) => {
-			pts.push(i);
-			const scenes = scenesByActId.get(act.id) ?? [];
-			const m = scenes.length;
-			for (let k = 1; k < m; k++) pts.push(i + k / m);
-		});
-		pts.push(acts.length);
-		return pts;
-	});
+	const spotlightLabel = $derived(getSpotlightLabel($playhead, acts, scenesByActId));
+	const sceneBoundaries = $derived(getSceneBoundaries(acts, scenesByActId));
 
 	// Activate the playhead when the dock opens; idle it when closed.
 	onMount(() => {
@@ -96,19 +52,8 @@
 		else playhead.play(maxT, sceneBoundaries);
 	}
 
-	function stepForward() {
-		playhead.pause();
-		const cur = $playhead ?? 0;
-		const next = sceneBoundaries.find((b) => b > cur + 1e-9);
-		if (next !== undefined) playhead.scrubTo(Math.min(next, maxT));
-	}
-
-	function stepBack() {
-		playhead.pause();
-		const cur = $playhead ?? 0;
-		const prev = [...sceneBoundaries].reverse().find((b) => b < cur - 1e-9);
-		if (prev !== undefined) playhead.scrubTo(Math.max(prev, 0));
-	}
+	const stepForward = () => stepForwardScene(sceneBoundaries, maxT);
+	const stepBack = () => stepBackScene(sceneBoundaries);
 </script>
 
 <div class="player-shell">

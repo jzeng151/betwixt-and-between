@@ -21,7 +21,7 @@ export type AppId =
  */
 export type FocusedGraphMode = 'shared' | 'their_worlds' | 'reachable';
 
-export type WindowState = {
+type WindowState = {
 	id: string;
 	appId: AppId;
 	entityId: string | null;
