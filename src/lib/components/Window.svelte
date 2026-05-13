@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { windowStore } from '$lib/stores/windows.js';
+  import { windowStore, PIN_Z_BASE } from '$lib/stores/windows.js';
 
   interface Props {
     id: string;
@@ -12,10 +12,14 @@
     minimized: boolean;
     maximized: boolean;
     bare?: boolean;
+    compact?: boolean;
+    alwaysOnTop?: boolean;
     children?: import('svelte').Snippet;
   }
 
-  let { id, title, x, y, width, height, zIndex, minimized, maximized, bare = false, children }: Props = $props();
+  let { id, title, x, y, width, height, zIndex, minimized, maximized, bare = false, compact = false, alwaysOnTop = false, children }: Props = $props();
+
+  const effectiveZ = $derived(alwaysOnTop ? PIN_Z_BASE + zIndex : zIndex);
 
   let dragging = false;
   let dragOffsetX = 0;
@@ -29,8 +33,8 @@
   let resizeStartH = 0;
   let resizeStartLeft = 0;
 
-  const MIN_W = 280;
-  const MIN_H = 200;
+  const MIN_W = compact ? 240 : 280;
+  const MIN_H = compact ? 88 : 200;
 
   function onTitlebarMousedown(e: MouseEvent) {
     if ((e.target as HTMLElement).closest('.win-control')) return;
@@ -102,7 +106,9 @@
   <div
     class="window"
     class:maximized
-    style={maximized ? `z-index:${zIndex}` : `left:${x}px; top:${y}px; width:${width}px; height:${height}px; z-index:${zIndex}`}
+    class:compact
+    class:pinned={alwaysOnTop}
+    style={maximized ? `z-index:${effectiveZ}` : `left:${x}px; top:${y}px; width:${width}px; height:${height}px; z-index:${effectiveZ}`}
     onmousedown={() => windowStore.focus(id)}
     role="dialog"
     aria-label={title}
@@ -153,6 +159,15 @@
     overflow: hidden;
     min-width: 280px;
     min-height: 200px;
+  }
+
+  .window.compact {
+    min-width: 240px;
+    min-height: 88px;
+  }
+
+  .window.pinned {
+    box-shadow: 0 0 0 1px var(--color-accent, #c8942a), var(--window-shadow);
   }
 
   .titlebar {

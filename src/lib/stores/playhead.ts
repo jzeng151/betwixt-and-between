@@ -17,15 +17,24 @@ const _isPlaying = writable(false);
 /** Whether the playhead is currently auto-advancing. Read-only to consumers. */
 export const isPlaying = { subscribe: _isPlaying.subscribe };
 
-/** Positions per second during auto-play. Writable so Timeline's speed selector can set it. */
+/**
+ * @deprecated Story Player now uses scene-stepping driven by `secondsPerScene`.
+ * Retained as an export for backward compat but no longer read by `play()`.
+ */
 export const playbackSpeed = writable(0.5);
+
+/**
+ * Story Player advance speed in seconds per scene boundary.
+ * Spec options: 2 / 4 / 8 / 16. Default 4.
+ */
+export const secondsPerScene = writable(4);
 
 /** When true, out-of-scope nodes are removed from both graphs instead of dimmed. */
 export const hideOutOfScope = writable(false);
 
 function createPlayheadStore() {
 	const { subscribe, set } = writable<number | null>(null);
-	let _interval: ReturnType<typeof setInterval> | null = null;
+	let _timeout: ReturnType<typeof setTimeout> | null = null;
 
 	/** Activate the playhead at the given story-time position. */
 	function scrubTo(t: number) {
@@ -46,27 +55,44 @@ function createPlayheadStore() {
 		set(null);
 	}
 
-	/** Start auto-advancing the playhead. Stops at maxT. Resets to 0 if already at the end. */
-	function play(maxT: number) {
-		if (maxT <= 0) return;
+	function nextBoundaryAfter(t: number, boundaries: number[]): number | undefined {
+		return boundaries.find((b) => b > t + 1e-9);
+	}
+
+	/**
+	 * Auto-advance the playhead one scene boundary at a time. Each tick fires
+	 * after `secondsPerScene` seconds and jumps to the next boundary > current.
+	 * Stops at maxT. Resets to 0 if already at the end.
+	 */
+	function play(maxT: number, sceneBoundaries: number[]) {
+		if (maxT <= 0 || sceneBoundaries.length === 0) return;
 		const cur = get({ subscribe });
 		if (cur == null || cur >= maxT) set(0);
 		_isPlaying.set(true);
-		if (_interval) clearInterval(_interval);
-		_interval = setInterval(() => {
-			const speed = get(playbackSpeed);
+		if (_timeout) clearTimeout(_timeout);
+
+		const tick = () => {
 			const t = get({ subscribe });
 			if (t == null) { pause(); return; }
-			const next = t + speed * 0.1;
-			if (next >= maxT) { set(maxT); pause(); return; }
+			const next = nextBoundaryAfter(t, sceneBoundaries);
+			if (next === undefined || next >= maxT) {
+				set(maxT);
+				pause();
+				return;
+			}
 			set(next);
-		}, 100);
+			const delayMs = Math.max(50, get(secondsPerScene) * 1000);
+			_timeout = setTimeout(tick, delayMs);
+		};
+
+		const delayMs = Math.max(50, get(secondsPerScene) * 1000);
+		_timeout = setTimeout(tick, delayMs);
 	}
 
 	/** Stop auto-advancing without dismissing the playhead. */
 	function pause() {
 		_isPlaying.set(false);
-		if (_interval) { clearInterval(_interval); _interval = null; }
+		if (_timeout) { clearTimeout(_timeout); _timeout = null; }
 	}
 
 	/** Pause and jump forward by one act position. */

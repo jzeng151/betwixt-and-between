@@ -75,15 +75,18 @@
   });
 
   const APP_PARENT: Partial<Record<AppId, AppId>> = {
-    'focused-graph': 'story-graph'
+    'focused-graph': 'story-graph',
+    'story-player': 'timeline'
   };
 
   // FocusedGraph windows get a different icon (🎯) to distinguish them in the shared group.
   const PICKER_ICON: Partial<Record<AppId, string>> = {
-    'focused-graph': '🎯'
+    'focused-graph': '🎯',
+    'story-player': '▶'
   };
 
   function pickerLabel(win: (typeof $windowStore)[number], fallback: string): string {
+    if (win.appId === 'story-player') return 'Story Player';
     // FocusedGraph: synthesize a name from the focal set since FG
     // windows aren't bound to a single entity.
     if (win.appId === 'focused-graph') {
@@ -103,6 +106,7 @@
   }
 
   function pickerSubtitle(win: (typeof $windowStore)[number]): string | null {
+    if (win.appId === 'story-player') return 'Player';
     if (win.appId === 'focused-graph') return 'Focused Graph';
     if (!win.entityId) return null;
     const entity = $entities.find((e) => e.id === win.entityId);
@@ -153,9 +157,13 @@
           class:has-windows={group.windows.length > 0}
           onclick={() => {
             // Touch / keyboard fallback (mouseenter doesn't fire on touch).
-            // 0 windows: open a fresh one. 1 window: minimize/focus toggle
-            // matches OS taskbar conventions. 2+: just toggle the popover.
-            if (group.windows.length === 0) {
+            // Count only windows whose appId matches the group's primary —
+            // hoisted children (e.g. story-player under timeline) shouldn't
+            // satisfy "Timeline is open." 0 primary: open a fresh one.
+            // 1 window total (necessarily the primary): minimize/focus toggle.
+            // Otherwise: toggle the popover so the user can pick.
+            const primaryCount = group.windows.filter((w) => w.appId === group.appId).length;
+            if (primaryCount === 0) {
               windowStore.open(group.appId);
               dismissNow();
             } else if (group.windows.length === 1) {
