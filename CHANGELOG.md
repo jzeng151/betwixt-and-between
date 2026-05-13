@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0.2] - 2026-05-13
+
+### Added
+- **Shared delete confirmation dialog** (`DeleteConfirmDialog`) used by both Story Graph and World Map. One backdrop, one modal, one keyboard handler, one styling pass.
+- **Per-entity-type colors** in the Wiki sidebar dividers and Palette section headers — Character (amber), Location (forest green), Event (magenta), Scene (sky blue), Act (deep violet), Note (warm grey). Reuses the existing `--color-type-*` tokens already in use by Story Graph nodes, so the palette now agrees across all three surfaces.
+- **`src/lib/entity-type-colors.ts`** — single source of truth for "what color represents this entity type" across the app. Groundwork for a future Settings-app PR that will let users customize the palette per preferences.
+
+### Changed
+- World Map rename pencil now uses the same inline SVG as `InlineEdit`, removing the visual inconsistency with the rest of the app.
+- World Map toolbar drops the duplicate map-name label — the dropdown already shows the active name, so the second label was redundant.
+- Story Graph migrated from its inline delete modal to the shared `DeleteConfirmDialog`, removing ~116 lines of dead CSS.
+
+### Fixed
+- Map images now render reliably on first upload — Leaflet `imageOverlay` and region layers are now `$state`-tracked so Svelte 5 reactivity drives lifecycle. Draw and zoom controls reactively gate on `hasImage` and tear down together when the image is removed.
+- Switching maps after deleting one no longer leaves a blank background — the `{:else if activeMap}` gate now matches the actual lifecycle.
+- Delete confirmation dialog now floats above the map image — bumped z-index above Leaflet panes (which reach ~700) and the World Map toolbar (1000).
+- R2 image reads return correct `Content-Type` and `Cache-Control` — switched from `writeHttpMetadata()` to direct `httpMetadata` POJO access on Cloudflare's R2 binding.
+- Graph edge dimming uses `opacity` rather than `stroke-opacity` so it composes correctly with arrow markers.
+
+### Removed
+- Leaflet-Draw edit/delete toolbar buttons (pencil + trash) — they were perpetually greyed out because saved regions were added directly to the map rather than the working `FeatureGroup` the toolbar watches. Polygon-draw button stays; region edit/delete still works via the popup. Reshape-polygon will return cleanly in the World Map v2 design (see `~/.gstack/projects/betwixt-and-between/steve-feat-app-qol-design-20260513-175833.md`).
+
 ## [0.5.0.1] - 2026-05-13
 
 ### Changed
