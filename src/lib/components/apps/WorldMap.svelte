@@ -689,11 +689,13 @@
 {#if deleteConfirm}
 	{@const dc = deleteConfirm}
 	{@const impacts = [
-		{ html: `The map <strong>${dc.name}</strong> and its background image` },
+		{ parts: ['The map ', { bold: dc.name }, ' and its background image'] },
 		...(dc.regionCount > 0
 			? [
 					{
-						html: `${dc.regionCount} region${dc.regionCount === 1 ? '' : 's'} drawn on this map (location links remain intact)`
+						parts: [
+							`${dc.regionCount} region${dc.regionCount === 1 ? '' : 's'} drawn on this map (location links remain intact)`
+						]
 					}
 				]
 			: [])

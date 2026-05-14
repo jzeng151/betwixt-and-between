@@ -1,7 +1,13 @@
 <script lang="ts">
+	/**
+	 * Segment of an impact line. Strings render as auto-escaped text;
+	 * `{ bold }` renders as `<strong>` wrapping auto-escaped text. No raw
+	 * HTML passes through, so user-supplied values (entity names, etc.)
+	 * cannot inject markup.
+	 */
+	export type DeleteImpactPart = string | { bold: string };
 	export type DeleteImpact = {
-		/** Body text. May contain inline <strong> etc. — trusted source only. */
-		html: string;
+		parts: DeleteImpactPart[];
 		/** Yellow warning treatment instead of red. */
 		warn?: boolean;
 	};
@@ -49,7 +55,9 @@
 			{#each impacts as impact}
 				<li class:impact-warn={impact.warn}>
 					<span class="impact-icon">{impact.warn ? '⚠' : '✕'}</span>
-					<span>{@html impact.html}</span>
+					<span>
+						{#each impact.parts as part}{#if typeof part === 'string'}{part}{:else}<strong>{part.bold}</strong>{/if}{/each}
+					</span>
 				</li>
 			{/each}
 		</ul>

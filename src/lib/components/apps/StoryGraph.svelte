@@ -968,15 +968,15 @@
 {#if deleteConfirm}
   {@const dc = deleteConfirm}
   {@const impacts = [
-    { html: `The ${dc.type} <strong>${dc.name}</strong>` },
+    { parts: [`The ${dc.type} `, { bold: dc.name }] },
     ...(dc.relCount > 0
-      ? [{ html: `${dc.relCount} relationship${dc.relCount === 1 ? '' : 's'} involving it (allies, rivals, mentors, locations, POVs, etc.)` }]
+      ? [{ parts: [`${dc.relCount} relationship${dc.relCount === 1 ? '' : 's'} involving it (allies, rivals, mentors, locations, POVs, etc.)`] }]
       : []),
     ...(dc.intervalCount > 0
-      ? [{ html: `${dc.intervalCount} timeline interval${dc.intervalCount === 1 ? '' : 's'} involving it (presence on the timeline disappears)` }]
+      ? [{ parts: [`${dc.intervalCount} timeline interval${dc.intervalCount === 1 ? '' : 's'} involving it (presence on the timeline disappears)`] }]
       : []),
     ...(dc.childSceneCount > 0
-      ? [{ html: `<strong>${dc.childSceneCount} child Scene${dc.childSceneCount === 1 ? '' : 's'}</strong> inside this Act — deleted along with the Act.`, warn: true }]
+      ? [{ parts: [{ bold: `${dc.childSceneCount} child Scene${dc.childSceneCount === 1 ? '' : 's'}` }, ' inside this Act — deleted along with the Act.'], warn: true }]
       : [])
   ] satisfies DeleteImpact[]}
   <DeleteConfirmDialog
