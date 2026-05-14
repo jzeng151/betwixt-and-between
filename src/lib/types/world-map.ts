@@ -4,6 +4,8 @@ export type WorldMap = {
 	baseImageUrl: string | null;
 	width: number | null;
 	height: number | null;
+	locationId: string | null;
+	locationInactiveAt: string | null;
 	createdAt: string;
 	updatedAt: string;
 };

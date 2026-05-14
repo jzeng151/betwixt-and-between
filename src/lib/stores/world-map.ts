@@ -24,11 +24,11 @@ function createWorldMapStore() {
 		return map as WorldMap;
 	}
 
-	async function createMap(name: string): Promise<WorldMap> {
+	async function createMap(name: string, locationId: string | null = null): Promise<WorldMap> {
 		const res = await fetch('/api/maps', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name })
+			body: JSON.stringify({ name, locationId })
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: WorldMap = await res.json();
@@ -38,7 +38,13 @@ function createWorldMapStore() {
 
 	async function updateMap(
 		id: string,
-		fields: { name?: string; baseImageUrl?: string; width?: number; height?: number }
+		fields: {
+			name?: string;
+			baseImageUrl?: string;
+			width?: number;
+			height?: number;
+			locationId?: string | null;
+		}
 	): Promise<WorldMap> {
 		const res = await fetch(`/api/maps/${id}`, {
 			method: 'PATCH',
