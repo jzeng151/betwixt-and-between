@@ -97,7 +97,13 @@
 	<section class="maps-section" aria-label="Maps">
 		<p class="section-label">Maps</p>
 		{#if linkedMaps.length === 0}
-			<button type="button" class="maps-cta" onclick={createMapForLocation}>
+			<button
+				type="button"
+				class="maps-cta"
+				onclick={createMapForLocation}
+				disabled={readOnly}
+				title={readOnly ? 'Switch to edit mode to create a map' : ''}
+			>
 				+ Create a map for this Location
 			</button>
 		{:else}
