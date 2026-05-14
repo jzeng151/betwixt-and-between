@@ -1,7 +1,7 @@
 {
   "name": "betwixt-and-between",
   "private": true,
-  "version": "0.5.0.2",
+  "version": "0.6.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
