@@ -427,9 +427,9 @@
 		deleteError = '';
 		try {
 			const oldId = deleteConfirm.id;
+			await worldMapStore.deleteMap(oldId);
 			const nextId = $worldMaps.find((m) => m.id !== oldId)?.id ?? null;
 			activeMapId = nextId;
-			await worldMapStore.deleteMap(oldId);
 			if (nextId) await worldMapStore.loadMapRegions(nextId);
 			deleteConfirm = null;
 		} catch {
