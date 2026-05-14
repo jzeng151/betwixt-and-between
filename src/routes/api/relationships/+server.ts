@@ -4,6 +4,7 @@ import { RelationshipType } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { resolveRelationshipBounds } from '$lib/server/intervals.js';
+import { assertPartOfInvariants } from '$lib/server/location-hierarchy.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -51,6 +52,10 @@ export const POST: RequestHandler = async (event) => {
 	// the timeline's intervals model. Use POST /api/intervals instead.
 	if (type === 'appears_in') {
 		error(400, 'appears_in is no longer a writable relationship type — use /api/intervals');
+	}
+
+	if (type === 'part_of') {
+		await assertPartOfInvariants(db, userId, fromId, toId);
 	}
 
 	let startPosition: number | null = null;

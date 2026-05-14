@@ -85,6 +85,13 @@ export const verification = pgTable('verification', {
  *                    2026-05-05). Attaches a Note entity to a parent entity so
  *                    EntityDetail can render it under the parent's NOTES
  *                    section. `from` is always the Note; `to` is the parent.
+ *   part_of        — Location part_of Location (WorldMap v2 Step 2,
+ *                    2026-05-14). Models the Location hierarchy used by
+ *                    drill-down navigation. `from` is the child, `to` is the
+ *                    parent. Single-parent in v2: a Location may have at most
+ *                    one outgoing `part_of` edge; cycles rejected at write time.
+ *                    Both endpoints must be type='Location' (validated in
+ *                    assertPartOfEndpoints).
  */
 export const RelationshipType = [
 	'appears_in',
@@ -96,6 +103,7 @@ export const RelationshipType = [
 	'located_at',
 	'pov_of',
 	'note_of',
+	'part_of',
 	'other'
 ] as const;
 export type RelationshipType = (typeof RelationshipType)[number];

@@ -3,6 +3,7 @@ import { relationships } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { resolveRelationshipBounds } from '$lib/server/intervals.js';
+import { assertPartOfInvariants } from '$lib/server/location-hierarchy.js';
 import type { RequestHandler } from './$types';
 
 export const PATCH: RequestHandler = async (event) => {
@@ -68,6 +69,13 @@ export const PATCH: RequestHandler = async (event) => {
 		} catch (err) {
 			error(400, (err as Error).message);
 		}
+	}
+
+	// Validate part_of invariants when the (possibly new) type is part_of.
+	// PATCH doesn't accept fromId/toId, so endpoints are pinned to the existing row.
+	const effectiveType = type !== undefined ? type : rel.type;
+	if (effectiveType === 'part_of') {
+		await assertPartOfInvariants(db, userId, rel.fromId, rel.toId, rel.id);
 	}
 
 	const patch: Partial<typeof rel> = {
