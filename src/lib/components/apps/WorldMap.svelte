@@ -282,12 +282,22 @@
 	});
 
 	// If entityId was passed (clicked a Location from elsewhere), auto-select
+	// the map. Two routes from the entity to a map:
+	//   1) Step-1 anchor: worldMaps.locationId === entityId (preferred — the
+	//      Location explicitly owns this map).
+	//   2) Legacy fallback: a region on some map already links to this
+	//      Location (the pre-anchor behavior, kept until every map has a
+	//      locationId).
 	$effect(() => {
-		if (entityId && $worldMaps.length > 0) {
-			const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
-			if (targetRegion && targetRegion.mapId !== activeMapId) {
-				switchMap(targetRegion.mapId);
-			}
+		if (!entityId || $worldMaps.length === 0) return;
+		const anchored = $worldMaps.find((m) => m.locationId === entityId);
+		if (anchored && anchored.id !== activeMapId) {
+			switchMap(anchored.id);
+			return;
+		}
+		const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
+		if (targetRegion && targetRegion.mapId !== activeMapId) {
+			switchMap(targetRegion.mapId);
 		}
 	});
 
@@ -408,6 +418,12 @@
 	async function switchMap(mapId: string) {
 		activeMapId = mapId;
 		await worldMapStore.loadMapRegions(mapId);
+	}
+
+	async function changeLinkedLocation(value: string) {
+		if (!activeMapId) return;
+		const next = value === '' ? null : value;
+		await worldMapStore.updateMap(activeMapId, { locationId: next });
 	}
 
 	async function handleCreateMap() {
@@ -615,6 +631,20 @@
 					<input type="file" accept=".jpg,.jpeg,.png,.webp" onchange={handleImageUpload} hidden />
 				</label>
 			{/if}
+			{#if activeMap}
+				<select
+					class="map-location-picker"
+					title="Linked location — what this map depicts"
+					aria-label="Linked location"
+					value={activeMap.locationId ?? ''}
+					onchange={(e) => changeLinkedLocation((e.target as HTMLSelectElement).value)}
+				>
+					<option value="">(no linked location)</option>
+					{#each locations as loc}
+						<option value={loc.id}>{loc.name}</option>
+					{/each}
+				</select>
+			{/if}
 		</div>
 		<div class="map-canvas" bind:this={mapContainer}></div>
 		{#if !hasImage}
@@ -750,13 +780,19 @@
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 	}
 
-	.map-switcher {
+	.map-switcher,
+	.map-location-picker {
 		background: var(--color-surface);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		padding: 2px 6px;
 		font-size: 13px;
+	}
+
+	.map-location-picker {
+		margin-left: auto;
+		max-width: 180px;
 	}
 
 	.map-name-input {
