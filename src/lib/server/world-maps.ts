@@ -1,33 +1,34 @@
 /**
  * Server-side helpers for the `world_maps` table.
  *
- * Currently houses the polymorphic-FK guard for `location_id` (must point at
- * an entity of type='Location'). Same pattern as intervals.ts's act/scene FK
- * validation: Postgres can't CHECK a column's referent type cleanly, so the
- * invariant is upheld at the write layer plus a Vitest invariant test.
- *
- * v2 will grow this module with `recomputeWorldMapVariantsAll` (M11) when the
- * scene-range columns and variant resolution land in Step 3.
+ * Currently houses:
+ *   - assertLocationIdIsLocation: polymorphic-FK guard for `location_id`.
+ *   - assertWorldMapVariantBounds: polymorphic-FK guard for the four variant
+ *     temporal-bound FKs (start/end act, start/end scene). Same pattern as
+ *     intervals.ts FK validation: Postgres can't CHECK a column's referent type
+ *     cleanly, so the invariant is upheld at the write layer + Vitest invariant
+ *     tests.
+ *   - resolveWorldMapVariantBounds: thin wrapper over resolveRelationshipBounds.
+ *     Variants share the same 4-FK + 2-position shape as relationships.
+ *   - recomputeWorldMapVariantsAll: M11 cascade — recomputes start_position /
+ *     end_position on every variant after an Act reorder.
  */
 import { error } from '@sveltejs/kit';
-import { and, eq } from 'drizzle-orm';
-import { entities } from './db/schema.js';
+import { and, eq, sql } from 'drizzle-orm';
+import { entities, worldMaps } from './db/schema.js';
 import { isUuid } from './validation.js';
+import { resolveRelationshipBounds } from './intervals.js';
 
-type DB = {
+type SelectableDB = {
 	select: (...args: unknown[]) => {
 		from: (...args: unknown[]) => {
-			where: (...args: unknown[]) => Promise<Array<{ type: string }>>;
+			where: (...args: unknown[]) => Promise<Array<Record<string, unknown>>>;
 		};
 	};
 };
 
-/**
- * Assert that `locationId`, if provided, references an entity with
- * type='Location' owned by `userId`. Throws SvelteKit error(400) on failure.
- *
- * Pass-through for null/undefined: a map can be unlinked from any Location.
- */
+const POSITION_EPSILON = 1e-9;
+
 export async function assertLocationIdIsLocation(
 	db: unknown,
 	userId: string,
@@ -36,13 +37,171 @@ export async function assertLocationIdIsLocation(
 	if (locationId === null || locationId === undefined) return;
 	if (!isUuid(locationId)) error(400, 'location_id must be a UUID');
 
-	const rows = await (db as DB)
+	const rows = (await (db as SelectableDB)
 		.select({ type: entities.type })
 		.from(entities)
-		.where(and(eq(entities.id, locationId), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, locationId), eq(entities.userId, userId)))) as Array<{
+		type: string;
+	}>;
 
 	if (rows.length === 0) error(400, 'location_id does not reference an existing entity');
 	if (rows[0].type !== 'Location') {
 		error(400, `location_id must reference a Location entity (got type='${rows[0].type}')`);
 	}
+}
+
+export interface WorldMapVariantBoundsInput {
+	startActId?: string | null;
+	startSceneId?: string | null;
+	endActId?: string | null;
+	endSceneId?: string | null;
+}
+
+/**
+ * Validate the four variant temporal-bound FKs. Each FK must reference a
+ * user-owned entity of the appropriate type:
+ *   start_act_id   / end_act_id   → type='Act'
+ *   start_scene_id / end_scene_id → type='Scene'
+ *
+ * Null/undefined FKs are accepted (default-variant case + open-ended caller
+ * intent — caller decides whether the resulting bounds shape is valid; that
+ * is enforced by resolveWorldMapVariantBounds + the DB CHECK/EXCLUDE).
+ */
+export async function assertWorldMapVariantBounds(
+	db: unknown,
+	userId: string,
+	input: WorldMapVariantBoundsInput
+): Promise<void> {
+	const checks: Array<{ id: string | null | undefined; expected: 'Act' | 'Scene'; column: string }> = [
+		{ id: input.startActId, expected: 'Act', column: 'start_act_id' },
+		{ id: input.endActId, expected: 'Act', column: 'end_act_id' },
+		{ id: input.startSceneId, expected: 'Scene', column: 'start_scene_id' },
+		{ id: input.endSceneId, expected: 'Scene', column: 'end_scene_id' }
+	];
+
+	for (const check of checks) {
+		if (check.id === null || check.id === undefined) continue;
+		if (!isUuid(check.id)) error(400, `${check.column} must be a UUID`);
+
+		const rows = (await (db as SelectableDB)
+			.select({ type: entities.type })
+			.from(entities)
+			.where(and(eq(entities.id, check.id), eq(entities.userId, userId)))) as Array<{
+			type: string;
+		}>;
+
+		if (rows.length === 0) {
+			error(400, `${check.column} does not reference an existing entity`);
+		}
+		if (rows[0].type !== check.expected) {
+			error(
+				400,
+				`${check.column} must reference a ${check.expected} entity (got type='${rows[0].type}')`
+			);
+		}
+	}
+}
+
+/**
+ * Derive (startPosition, endPosition) for a world_map variant from its act/scene
+ * FK anchors. Variants share the same 4-FK shape as temporal relationships, so
+ * this delegates to resolveRelationshipBounds (Premise-4 math in one place).
+ */
+export async function resolveWorldMapVariantBounds(
+	db: Parameters<typeof resolveRelationshipBounds>[0],
+	input: WorldMapVariantBoundsInput,
+	userId: string
+): Promise<{ startPosition: number | null; endPosition: number | null }> {
+	return resolveRelationshipBounds(
+		db,
+		{
+			startActId: input.startActId ?? null,
+			startSceneId: input.startSceneId ?? null,
+			endActId: input.endActId ?? null,
+			endSceneId: input.endSceneId ?? null
+		},
+		userId
+	);
+}
+
+/**
+ * Walk all world_maps variants owned by user and recompute their derived
+ * start_position / end_position from FK anchors. Returns the count updated.
+ *
+ * Called inside recomputeAllIntervals' transaction so an Act reorder cascades
+ * atomically across intervals → relationships → world_map variants (M11).
+ *
+ * The EXCLUDE constraint stays satisfied because a uniform reshuffle of the
+ * global Act axis shifts all variants for a given Location by the same delta —
+ * their relative ordering and gaps survive (M11 invariance proof).
+ */
+export async function recomputeWorldMapVariantsAll(
+	db: Parameters<typeof resolveRelationshipBounds>[0],
+	userId: string
+): Promise<number> {
+	const rows = (await (db as unknown as SelectableDB)
+		.select()
+		.from(worldMaps)
+		.where(
+			and(
+				eq(worldMaps.userId, userId),
+				sql`(${worldMaps.startActId} IS NOT NULL OR ${worldMaps.endActId} IS NOT NULL)`
+			)
+		)) as Array<{
+		id: string;
+		startActId: string | null;
+		startSceneId: string | null;
+		endActId: string | null;
+		endSceneId: string | null;
+		startPosition: number | null;
+		endPosition: number | null;
+	}>;
+
+	if (rows.length === 0) return 0;
+
+	let updated = 0;
+	for (const row of rows) {
+		try {
+			const { startPosition, endPosition } = await resolveRelationshipBounds(
+				db,
+				{
+					startActId: row.startActId,
+					startSceneId: row.startSceneId,
+					endActId: row.endActId,
+					endSceneId: row.endSceneId
+				},
+				userId
+			);
+
+			const startDrift =
+				startPosition !== null &&
+				row.startPosition !== null &&
+				Math.abs(startPosition - row.startPosition) > POSITION_EPSILON;
+			const endDrift =
+				endPosition !== null &&
+				row.endPosition !== null &&
+				Math.abs(endPosition - row.endPosition) > POSITION_EPSILON;
+			const startChanged = (startPosition === null) !== (row.startPosition === null) || startDrift;
+			const endChanged = (endPosition === null) !== (row.endPosition === null) || endDrift;
+
+			if (!startChanged && !endChanged) continue;
+
+			await (db as unknown as {
+				update: (table: typeof worldMaps) => {
+					set: (vals: Record<string, unknown>) => {
+						where: (clause: unknown) => Promise<unknown>;
+					};
+				};
+			})
+				.update(worldMaps)
+				.set({ startPosition, endPosition })
+				.where(and(eq(worldMaps.id, row.id), eq(worldMaps.userId, userId)));
+			updated++;
+		} catch (err) {
+			throw new Error(
+				`recomputeWorldMapVariantsAll failed on world_map ${row.id}: ${(err as Error).message}`
+			);
+		}
+	}
+	return updated;
 }

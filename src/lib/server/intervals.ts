@@ -780,6 +780,11 @@ export async function recomputeAllIntervals(db: DB, userId: string): Promise<num
 	// act-reorder cascades are atomic (Phase 1B Lane A, 2026-05-02).
 	await recomputeRelationshipBoundsAll(db, userId);
 
+	// World-map variant bounds piggyback on the same cascade (M11 design lock).
+	// Imported lazily to break the world-maps.ts → intervals.ts dependency cycle.
+	const { recomputeWorldMapVariantsAll } = await import('./world-maps.js');
+	await recomputeWorldMapVariantsAll(db, userId);
+
 	return updated;
 }
 
