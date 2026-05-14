@@ -274,22 +274,39 @@
 	});
 
 	// ── Auto-select map ────────────────────────────────────────────────────
-
+	//
+	// Initial selection runs ONCE, with explicit priority — merging this with
+	// the post-mount entityId watcher would race two switchMap calls (and two
+	// region loads) on the same flush, letting the slower response overwrite
+	// the faster one's regions in the global store.
+	//   1) Step-1 anchor: worldMaps.locationId === entityId (preferred).
+	//   2) Legacy fallback: a region on some map already links to entityId.
+	//   3) First map.
+	let initialSelectionDone = false;
 	$effect(() => {
-		if ($worldMaps.length > 0 && !activeMapId) {
-			switchMap($worldMaps[0].id);
+		if (initialSelectionDone || $worldMaps.length === 0) return;
+		initialSelectionDone = true;
+		if (entityId) {
+			const anchored = $worldMaps.find((m) => m.locationId === entityId);
+			if (anchored) {
+				switchMap(anchored.id);
+				return;
+			}
+			const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
+			if (targetRegion) {
+				switchMap(targetRegion.mapId);
+				return;
+			}
 		}
+		switchMap($worldMaps[0].id);
 	});
 
-	// If entityId was passed (clicked a Location from elsewhere), auto-select
-	// the map. Two routes from the entity to a map:
-	//   1) Step-1 anchor: worldMaps.locationId === entityId (preferred — the
-	//      Location explicitly owns this map).
-	//   2) Legacy fallback: a region on some map already links to this
-	//      Location (the pre-anchor behavior, kept until every map has a
-	//      locationId).
+	// Reactive entityId changes after the initial selection: switch maps if a
+	// new Location was deep-linked into this same window. Single switchMap call
+	// per flush — no race with the initial-selection effect because that one
+	// has already locked itself out via initialSelectionDone.
 	$effect(() => {
-		if (!entityId || $worldMaps.length === 0) return;
+		if (!entityId || !initialSelectionDone || $worldMaps.length === 0) return;
 		const anchored = $worldMaps.find((m) => m.locationId === entityId);
 		if (anchored && anchored.id !== activeMapId) {
 			switchMap(anchored.id);
