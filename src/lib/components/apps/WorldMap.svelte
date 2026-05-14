@@ -37,6 +37,16 @@
 	let deleting = $state(false);
 	let deleteError = $state('');
 
+	// Variant editor state (Step 3)
+	let showVariantForm = $state(false);
+	let variantFormIsDefault = $state(false);
+	let variantFormStartActId = $state<string | null>(null);
+	let variantFormStartSceneId = $state<string | null>(null);
+	let variantFormEndActId = $state<string | null>(null);
+	let variantFormEndSceneId = $state<string | null>(null);
+	let variantFormError = $state('');
+	let duplicating = $state(false);
+
 	// Computed — $worldMaps / $mapRegions / $entities / $isInScope are Svelte store subscriptions
 	let activeMap = $derived($worldMaps.find((m) => m.id === activeMapId) ?? null);
 	let locations = $derived($entities.filter((e) => e.type === 'Location'));
@@ -588,6 +598,90 @@
 		renamingMapName = null;
 	}
 
+	// ── Variant editor ───────────────────────────────────────────────────────
+
+	function variantLabel(map: typeof activeMap): string {
+		if (!map) return '';
+		if (!map.locationId) return 'Unlinked';
+		if (map.startActId === null && map.endActId === null) return 'Default variant';
+		const startAct = $entities.find((e) => e.id === map.startActId);
+		const endAct = $entities.find((e) => e.id === map.endActId);
+		const startScene = map.startSceneId
+			? $entities.find((e) => e.id === map.startSceneId)
+			: null;
+		const endScene = map.endSceneId
+			? $entities.find((e) => e.id === map.endSceneId)
+			: null;
+		const startStr = startScene
+			? `${startAct?.name ?? '?'} · ${startScene.name}`
+			: (startAct?.name ?? '?');
+		const endStr = endScene
+			? `${endAct?.name ?? '?'} · ${endScene.name}`
+			: (endAct?.name ?? '?');
+		return `${startStr} → ${endStr}`;
+	}
+
+	function openVariantForm() {
+		if (!activeMap) return;
+		const isDefault = activeMap.startActId === null && activeMap.endActId === null;
+		variantFormIsDefault = isDefault;
+		variantFormStartActId = activeMap.startActId;
+		variantFormStartSceneId = activeMap.startSceneId;
+		variantFormEndActId = activeMap.endActId;
+		variantFormEndSceneId = activeMap.endSceneId;
+		variantFormError = '';
+		showVariantForm = true;
+	}
+
+	function closeVariantForm() {
+		showVariantForm = false;
+		variantFormError = '';
+	}
+
+	async function saveVariant() {
+		if (!activeMapId) return;
+		variantFormError = '';
+		const payload = variantFormIsDefault
+			? {
+					startActId: null,
+					startSceneId: null,
+					endActId: null,
+					endSceneId: null
+				}
+			: {
+					startActId: variantFormStartActId,
+					startSceneId: variantFormStartSceneId,
+					endActId: variantFormEndActId,
+					endSceneId: variantFormEndSceneId
+				};
+
+		if (!variantFormIsDefault) {
+			if (!payload.startActId || !payload.endActId) {
+				variantFormError = 'Pick a start and end Act for a scoped variant';
+				return;
+			}
+		}
+
+		try {
+			await worldMapStore.updateMap(activeMapId, payload);
+			showVariantForm = false;
+		} catch (err) {
+			variantFormError = (err as Error).message || 'Save failed';
+		}
+	}
+
+	async function handleDuplicate() {
+		if (!activeMapId || duplicating) return;
+		duplicating = true;
+		try {
+			const clone = await worldMapStore.duplicateMap(activeMapId);
+			await switchMap(clone.id);
+		} catch (err) {
+			console.error('Duplicate map failed:', err);
+		}
+		duplicating = false;
+	}
+
 	const PALETTE = ['#e8a838', '#3b82f6', '#ef4444', '#22c55e', '#a855f7', '#ec4899', '#f97316', '#06b6d4'];
 </script>
 
@@ -661,6 +755,25 @@
 						<option value={loc.id}>{loc.name}</option>
 					{/each}
 				</select>
+				{#if activeMap.locationId}
+					<button
+						class="map-variant-chip"
+						onclick={openVariantForm}
+						title="Edit variant scene range"
+						aria-label="Edit variant scene range"
+					>
+						{variantLabel(activeMap)}
+					</button>
+				{/if}
+				<button
+					class="btn-icon"
+					onclick={handleDuplicate}
+					disabled={duplicating}
+					title="Duplicate this map (clones regions; clears variant range)"
+					aria-label="Duplicate map"
+				>
+					⧉
+				</button>
 			{/if}
 		</div>
 		<div class="map-canvas" bind:this={mapContainer}></div>
@@ -746,6 +859,73 @@
 	</div>
 {/if}
 
+{#if showVariantForm && activeMap}
+	<div class="modal-overlay" role="dialog" aria-modal="true">
+		<div class="modal-content">
+			<h3>Variant range</h3>
+			<p class="variant-help">
+				Which story-time slice does this map depict? Default variant shows whenever
+				no scoped variant covers the playhead.
+			</p>
+
+			<label class="variant-default">
+				<input type="checkbox" bind:checked={variantFormIsDefault} />
+				Default variant (no scene range — shows when nothing else covers)
+			</label>
+
+			{#if !variantFormIsDefault}
+				<div class="variant-grid">
+					<label>
+						Start act
+						<select bind:value={variantFormStartActId}>
+							<option value={null}>—</option>
+							{#each acts as act}
+								<option value={act.id}>{act.name}</option>
+							{/each}
+						</select>
+					</label>
+					<label>
+						Start scene (optional)
+						<select bind:value={variantFormStartSceneId}>
+							<option value={null}>—</option>
+							{#each (variantFormStartActId ? scenesByAct.get(variantFormStartActId) ?? [] : []) as scene}
+								<option value={scene.id}>{scene.name}</option>
+							{/each}
+						</select>
+					</label>
+					<label>
+						End act
+						<select bind:value={variantFormEndActId}>
+							<option value={null}>—</option>
+							{#each acts as act}
+								<option value={act.id}>{act.name}</option>
+							{/each}
+						</select>
+					</label>
+					<label>
+						End scene (optional)
+						<select bind:value={variantFormEndSceneId}>
+							<option value={null}>—</option>
+							{#each (variantFormEndActId ? scenesByAct.get(variantFormEndActId) ?? [] : []) as scene}
+								<option value={scene.id}>{scene.name}</option>
+							{/each}
+						</select>
+					</label>
+				</div>
+			{/if}
+
+			{#if variantFormError}
+				<p class="variant-error">{variantFormError}</p>
+			{/if}
+
+			<div class="modal-actions">
+				<button class="btn-secondary" onclick={closeVariantForm}>Cancel</button>
+				<button class="btn-primary" onclick={saveVariant}>Save Variant</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 {#if deleteConfirm}
 	{@const dc = deleteConfirm}
 	{@const impacts = [
@@ -810,6 +990,71 @@
 	.map-location-picker {
 		margin-left: auto;
 		max-width: 180px;
+	}
+
+	.map-variant-chip {
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-rel-loc, var(--color-border));
+		border-radius: 12px;
+		padding: 2px 10px;
+		font-size: 12px;
+		font-family: inherit;
+		cursor: pointer;
+		max-width: 220px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.map-variant-chip:hover {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
+	.variant-help {
+		margin: 0 0 12px 0;
+		font-size: 12px;
+		color: var(--color-text-muted, #6b7280);
+	}
+
+	.variant-default {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 13px;
+		margin-bottom: 12px;
+		cursor: pointer;
+	}
+
+	.variant-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 10px 12px;
+	}
+
+	.variant-grid label {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		font-size: 11px;
+		color: var(--color-text-muted, #6b7280);
+	}
+
+	.variant-grid select {
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		padding: 4px 6px;
+		font-size: 12px;
+		font-family: inherit;
+	}
+
+	.variant-error {
+		margin: 10px 0 0 0;
+		color: var(--color-rel-rival, #ef4444);
+		font-size: 12px;
 	}
 
 	.map-name-input {
