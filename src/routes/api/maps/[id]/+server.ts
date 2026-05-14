@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { worldMaps, mapRegions } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { assertLocationIdIsLocation } from '$lib/server/world-maps.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -32,6 +33,13 @@ export const PATCH: RequestHandler = async (event) => {
 	if (typeof body.baseImageUrl === 'string') updates.baseImageUrl = body.baseImageUrl;
 	if (typeof body.width === 'number') updates.width = body.width;
 	if (typeof body.height === 'number') updates.height = body.height;
+	// locationId: explicit presence (including null) is meaningful — null means unlink.
+	if ('locationId' in body) {
+		await assertLocationIdIsLocation(db, userId, body.locationId);
+		updates.locationId = body.locationId ?? null;
+		// Clear or set the inactive marker depending on link/unlink direction.
+		updates.locationInactiveAt = body.locationId == null ? new Date() : null;
+	}
 
 	if (Object.keys(updates).length === 0) {
 		error(400, 'No valid fields to update');
