@@ -83,18 +83,31 @@
 	);
 
 	async function setParent(newParentId: string | null) {
-		// Single-parent: clear any existing part_of first, then create the new one.
-		if (currentPartOfRel) {
-			await relationships.deleteRelationship(currentPartOfRel.id);
+		// Single-parent: must clear the existing edge before creating a new one
+		// (server's single-parent invariant rejects two simultaneous part_of rows
+		// for the same child). If the new edge fails server validation we
+		// restore the old one so a failed edit can't leave the Location stranded
+		// without a parent.
+		const previous = currentPartOfRel;
+		if (previous) {
+			await relationships.deleteRelationship(previous.id);
 		}
-		if (newParentId) {
-			try {
-				await relationships.createRelationship(entityId, newParentId, 'part_of');
-			} catch (err) {
-				// Reload so the UI re-syncs with server truth on validation rejection.
+		if (!newParentId) return;
+		try {
+			await relationships.createRelationship(entityId, newParentId, 'part_of');
+		} catch (err) {
+			if (previous) {
+				try {
+					await relationships.createRelationship(previous.fromId, previous.toId, 'part_of');
+				} catch {
+					// Restore failed (e.g. another tab raced). Force a reload so the
+					// UI shows server truth instead of a stale optimistic state.
+					await relationships.load();
+				}
+			} else {
 				await relationships.load();
-				throw err;
 			}
+			throw err;
 		}
 	}
 

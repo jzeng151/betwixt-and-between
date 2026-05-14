@@ -407,9 +407,11 @@ describe('/api/maps/[id]/duplicate', () => {
 
 		expect(clone.id).not.toBe(map.id);
 		expect(clone.name).toBe('Original (copy)');
-		expect(clone.locationId).toBe(location);
-		// Variant bounds intentionally NOT carried over — clone is a default
-		// variant (and partial-unique still holds because the source was scoped).
+		// locationId intentionally dropped so the clone cannot collide with the
+		// source's default-variant slot via world_maps_one_default_per_location.
+		// The UI re-links the clone after the user confirms a new scope.
+		expect(clone.locationId).toBeNull();
+		// Variant bounds intentionally NOT carried over.
 		expect(clone.startActId).toBeNull();
 		expect(clone.endActId).toBeNull();
 		expect(clone.startPosition).toBeNull();
@@ -430,5 +432,21 @@ describe('/api/maps/[id]/duplicate', () => {
 		await expect(
 			dupRoute.POST(mkEvent({ params: { id: crypto.randomUUID() } }))
 		).rejects.toMatchObject({ status: 404 });
+	});
+
+	it('does not collide with the source default variant when source is a default', async () => {
+		// Source is a default (no variant bounds) attached to a Location. Without
+		// the locationId-drop fix the clone would trip world_maps_one_default_per_location.
+		const created = await mapRoute.POST(
+			mkEvent({ body: { name: 'Gondor base', locationId: location } })
+		);
+		const map = await readJson(created);
+		expect(map.locationId).toBe(location);
+		expect(map.startPosition).toBeNull();
+
+		const dupRes = await dupRoute.POST(mkEvent({ params: { id: map.id } }));
+		expect(dupRes.status).toBe(201);
+		const clone = await readJson(dupRes);
+		expect(clone.locationId).toBeNull();
 	});
 });
