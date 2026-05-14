@@ -5,7 +5,16 @@
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/stores/scope.js';
 	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+	import { relationships } from '$lib/stores/relationships.js';
+	import { playhead } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
+	import {
+		buildHierarchyIndex,
+		walkAncestors,
+		getChildren,
+		getParent
+	} from '$lib/location-hierarchy.js';
+	import { resolveActiveVariant } from '$lib/world-map-variants.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 
 	type LeafletNS = typeof import('leaflet');
@@ -57,6 +66,23 @@
 			.filter((e) => e.type === 'Act')
 			.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
 	);
+	// Location hierarchy (part_of) — index built once per relationships snapshot
+	let hierarchyIndex = $derived(buildHierarchyIndex($relationships));
+	let breadcrumbAncestors = $derived.by(() => {
+		const locId = activeMap?.locationId;
+		if (!locId) return [] as { id: string; name: string }[];
+		const ids = walkAncestors(hierarchyIndex, locId);
+		return ids
+			.map((id) => {
+				const e = $entities.find((x) => x.id === id);
+				return e ? { id: e.id, name: e.name } : null;
+			})
+			.filter((x): x is { id: string; name: string } => x !== null);
+	});
+
+	// Drill-down offer state: a child Location has no map yet — surface CTA.
+	let createMapOffer = $state<{ childId: string; childName: string } | null>(null);
+
 	let scenesByAct = $derived.by(() => {
 		const map = new Map<string, typeof $entities[0][]>();
 		for (const act of acts) {
@@ -99,6 +125,7 @@
 	onMount(() => {
 		worldMapStore.loadMaps();
 		intervalsStore.load();
+		relationships.load();
 
 		(async () => {
 			// Dynamic-import Leaflet (browser-only)
@@ -146,6 +173,7 @@
 			if (!popupEl) return;
 			const editBtn = popupEl.querySelector('[data-action="edit"]');
 			const deleteBtn = popupEl.querySelector('[data-action="delete"]');
+			const drillBtn = popupEl.querySelector('[data-action="drill"]');
 			const nameEl = popupEl.querySelector('.region-popup-name');
 			if (editBtn) {
 				editBtn.addEventListener('click', () => {
@@ -157,6 +185,19 @@
 				deleteBtn.addEventListener('click', () => {
 					handleDeleteRegion((deleteBtn as HTMLElement).dataset.regionId!);
 					leafletMap.closePopup();
+				});
+			}
+			if (drillBtn) {
+				drillBtn.addEventListener('click', () => {
+					const childId = (drillBtn as HTMLElement).dataset.locationId;
+					if (!childId) return;
+					leafletMap.closePopup();
+					if (!drillIntoLocation(childId)) {
+						const child = $entities.find((x) => x.id === childId);
+						if (child) {
+							createMapOffer = { childId: child.id, childName: child.name };
+						}
+					}
 				});
 			}
 			if (nameEl) {
@@ -289,7 +330,9 @@
 	// the post-mount entityId watcher would race two switchMap calls (and two
 	// region loads) on the same flush, letting the slower response overwrite
 	// the faster one's regions in the global store.
-	//   1) Step-1 anchor: worldMaps.locationId === entityId (preferred).
+	//   1) Step-1 anchor: resolveActiveVariant picks the variant covering the
+	//      current playhead for `entityId` (Step 3 promotes 'locationId match'
+	//      to 'locationId match at correct playhead position').
 	//   2) Legacy fallback: a region on some map already links to entityId.
 	//   3) First map.
 	let initialSelectionDone = false;
@@ -297,9 +340,9 @@
 		if (initialSelectionDone || $worldMaps.length === 0) return;
 		initialSelectionDone = true;
 		if (entityId) {
-			const anchored = $worldMaps.find((m) => m.locationId === entityId);
-			if (anchored) {
-				switchMap(anchored.id);
+			const variant = resolveActiveVariant($worldMaps, entityId, $playhead);
+			if (variant) {
+				switchMap(variant.id);
 				return;
 			}
 			const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
@@ -317,9 +360,9 @@
 	// has already locked itself out via initialSelectionDone.
 	$effect(() => {
 		if (!entityId || !initialSelectionDone || $worldMaps.length === 0) return;
-		const anchored = $worldMaps.find((m) => m.locationId === entityId);
-		if (anchored && anchored.id !== activeMapId) {
-			switchMap(anchored.id);
+		const variant = resolveActiveVariant($worldMaps, entityId, $playhead);
+		if (variant && variant.id !== activeMapId) {
+			switchMap(variant.id);
 			return;
 		}
 		const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
@@ -327,6 +370,67 @@
 			switchMap(targetRegion.mapId);
 		}
 	});
+
+	// ── Drill-down navigation ────────────────────────────────────────────────
+	//
+	// Click a region whose linked Location has children (via part_of).
+	// Resolution per design Decision #3 (2026-05-14):
+	//   - 0 drillable children → no-op (region popup behavior unchanged)
+	//   - exactly 1 child with a map → drill into that child's active variant
+	//   - exactly 1 child without a map → "Create a map for X?" CTA
+	//   - multiple children → defer (handled by popup chooser added in Step 7)
+	function drillIntoLocation(locationId: string) {
+		const variant = resolveActiveVariant($worldMaps, locationId, $playhead);
+		if (variant) {
+			entityId = locationId;
+			switchMap(variant.id);
+			return true;
+		}
+		return false;
+	}
+
+	function tryDrillFromRegionLocation(regionLocationId: string | null) {
+		if (!regionLocationId) return;
+		const children = getChildren(hierarchyIndex, regionLocationId);
+		if (children.length === 0) return;
+
+		const childMaps = children.map((cid) => ({
+			childId: cid,
+			map: resolveActiveVariant($worldMaps, cid, $playhead)
+		}));
+		const withMap = childMaps.filter((c) => c.map !== null);
+
+		if (withMap.length === 1) {
+			drillIntoLocation(withMap[0].childId);
+			return;
+		}
+
+		if (childMaps.length === 1 && !childMaps[0].map) {
+			const child = $entities.find((e) => e.id === childMaps[0].childId);
+			if (child) {
+				createMapOffer = { childId: child.id, childName: child.name };
+			}
+		}
+		// Multiple children OR multiple unmappped children: deferred until
+		// the picker UX lands. Single-click stays select-only in those cases.
+	}
+
+	function navigateBreadcrumb(locationId: string) {
+		drillIntoLocation(locationId);
+	}
+
+	async function acceptCreateMapOffer() {
+		if (!createMapOffer) return;
+		const offer = createMapOffer;
+		createMapOffer = null;
+		const created = await worldMapStore.createMap(`${offer.childName} map`, offer.childId);
+		entityId = offer.childId;
+		await switchMap(created.id);
+	}
+
+	function dismissCreateMapOffer() {
+		createMapOffer = null;
+	}
 
 	// ── Scene scope helpers ──────────────────────────────────────────────────
 
@@ -386,7 +490,29 @@
 		const locHtml = locName && region.locationId
 			? `<button class="region-popup-name" data-location-id="${region.locationId}">${locName}</button>`
 			: '<span class="region-popup-name">Unlinked region</span>';
-		return `<div class="region-popup">${locHtml}<div class="region-popup-actions"><button class="region-popup-btn" data-action="edit" data-region-id="${region.id}">Edit</button><button class="region-popup-btn region-popup-btn-danger" data-action="delete" data-region-id="${region.id}">Delete</button></div></div>`;
+
+		// Drill-down hint: if the region's linked Location has children, surface
+		// a "Drill into …" affordance. Single drillable child gets a direct
+		// label; multi-child case stays selection-only here (handled by
+		// tryDrillFromRegionLocation on background click).
+		let drillHtml = '';
+		if (region.locationId) {
+			const children = getChildren(hierarchyIndex, region.locationId);
+			if (children.length === 1) {
+				const child = $entities.find((e) => e.id === children[0]);
+				const childMap = child
+					? resolveActiveVariant($worldMaps, child.id, $playhead)
+					: null;
+				if (child) {
+					const verb = childMap ? 'Drill into' : 'Create map for';
+					drillHtml = `<button class="region-popup-btn region-popup-btn-drill" data-action="drill" data-location-id="${child.id}">${verb} ${child.name}</button>`;
+				}
+			} else if (children.length > 1) {
+				drillHtml = `<span class="region-popup-hint">${children.length} sublocations — open in Wiki to navigate</span>`;
+			}
+		}
+
+		return `<div class="region-popup">${locHtml}${drillHtml}<div class="region-popup-actions"><button class="region-popup-btn" data-action="edit" data-region-id="${region.id}">Edit</button><button class="region-popup-btn region-popup-btn-danger" data-action="delete" data-region-id="${region.id}">Delete</button></div></div>`;
 	}
 
 	function startEditRegion(regionId: string) {
@@ -697,6 +823,23 @@
 	     activeMap=null gap during map delete); overlay the upload prompt
 	     on top when no image is imported yet. -->
 	<div class="map-wrapper">
+		{#if breadcrumbAncestors.length > 0 && activeMap}
+			<nav class="map-breadcrumb" aria-label="Location hierarchy">
+				{#each breadcrumbAncestors as ancestor (ancestor.id)}
+					<button
+						type="button"
+						class="breadcrumb-link"
+						onclick={() => navigateBreadcrumb(ancestor.id)}
+					>
+						{ancestor.name}
+					</button>
+					<span class="breadcrumb-sep" aria-hidden="true">›</span>
+				{/each}
+				<span class="breadcrumb-current">
+					{$entities.find((e) => e.id === activeMap.locationId)?.name ?? '(current)'}
+				</span>
+			</nav>
+		{/if}
 		<div class="map-toolbar">
 			<select class="map-switcher" onchange={(e) => switchMap((e.target as HTMLSelectElement).value)}>
 				{#each $worldMaps as m}
@@ -859,6 +1002,25 @@
 	</div>
 {/if}
 
+{#if createMapOffer}
+	{@const offer = createMapOffer}
+	<div class="modal-overlay" role="dialog" aria-modal="true">
+		<div class="modal-content">
+			<h3>No map for {offer.childName} yet</h3>
+			<p class="variant-help">
+				Drilling in opens the sublocation's map. <strong>{offer.childName}</strong>
+				doesn't have one — want to create one?
+			</p>
+			<div class="modal-actions">
+				<button class="btn-secondary" onclick={dismissCreateMapOffer}>Not now</button>
+				<button class="btn-primary" onclick={acceptCreateMapOffer}>
+					Create a map for {offer.childName}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 {#if showVariantForm && activeMap}
 	<div class="modal-overlay" role="dialog" aria-modal="true">
 		<div class="modal-content">
@@ -990,6 +1152,43 @@
 	.map-location-picker {
 		margin-left: auto;
 		max-width: 180px;
+	}
+
+	.map-breadcrumb {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 4px 6px;
+		padding: 4px 10px;
+		background: var(--color-surface, transparent);
+		border-bottom: 1px solid var(--color-border, #2a2a2a);
+		font-size: 11px;
+		color: var(--color-text-muted, #6b7280);
+	}
+
+	.breadcrumb-link {
+		background: none;
+		border: none;
+		color: var(--color-text-muted, #6b7280);
+		font-size: 11px;
+		font-family: inherit;
+		padding: 0;
+		cursor: pointer;
+	}
+
+	.breadcrumb-link:hover {
+		color: var(--color-accent);
+		text-decoration: underline;
+	}
+
+	.breadcrumb-sep {
+		color: var(--color-text-muted, #6b7280);
+		opacity: 0.6;
+	}
+
+	.breadcrumb-current {
+		color: var(--color-text);
+		font-weight: 600;
 	}
 
 	.map-variant-chip {
@@ -1326,5 +1525,19 @@
 	:global(.region-popup-btn-danger:hover) {
 		background: #c0392b;
 		color: #fff;
+	}
+	:global(.region-popup-btn-drill) {
+		align-self: stretch;
+		color: var(--color-accent, #e8a838);
+		border-color: var(--color-accent, #e8a838);
+	}
+	:global(.region-popup-btn-drill:hover) {
+		background: var(--color-accent, #e8a838);
+		color: #1a1a1a;
+	}
+	:global(.region-popup-hint) {
+		font-size: 11px;
+		color: var(--color-text-muted, #6b7280);
+		font-style: italic;
 	}
 </style>
