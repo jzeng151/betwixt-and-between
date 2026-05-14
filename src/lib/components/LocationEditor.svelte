@@ -15,10 +15,13 @@
 -->
 
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import EditableField from './EditableField.svelte';
 	import EntityLink from './EntityLink.svelte';
 	import { entities } from '$lib/stores/entities.js';
 	import { relationships } from '$lib/stores/relationships.js';
+	import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
+	import { windowStore } from '$lib/stores/windows.js';
 	import { CHARACTER_COLORS } from '$lib/timeline-v2-helpers.js';
 
 	interface Props {
@@ -26,6 +29,29 @@
 		readOnly?: boolean;
 	}
 	const { entityId, readOnly = false }: Props = $props();
+
+	onMount(() => {
+		// Idempotent — store guards against duplicate loads via its writable.
+		worldMapStore.loadMaps();
+	});
+
+	const entity = $derived($entities.find((e) => e.id === entityId));
+	const linkedMaps = $derived($worldMaps.filter((m) => m.locationId === entityId));
+
+	// Open the actual WorldMap app window, keyed by this Location so its
+	// entityId effect resolves to a map with locationId === entityId.
+	// Note: ENTITY_APP routes Location → entity-detail (the surface we're
+	// already in), so we open 'world-map' explicitly rather than via
+	// openForEntity.
+	function openMap() {
+		windowStore.open('world-map', entityId);
+	}
+
+	async function createMapForLocation() {
+		if (!entity) return;
+		await worldMapStore.createMap(`${entity.name} map`, entityId);
+		windowStore.open('world-map', entityId);
+	}
 
 	const colorSwatches = CHARACTER_COLORS.map((hex) => ({
 		value: hex,
@@ -68,6 +94,25 @@
 		swatchOptions={colorSwatches}
 	/>
 
+	<section class="maps-section" aria-label="Maps">
+		<p class="section-label">Maps</p>
+		{#if linkedMaps.length === 0}
+			<button
+				type="button"
+				class="maps-cta"
+				onclick={createMapForLocation}
+				disabled={readOnly}
+				title={readOnly ? 'Switch to edit mode to create a map' : ''}
+			>
+				+ Create a map for this Location
+			</button>
+		{:else}
+			<button type="button" class="maps-cta" onclick={openMap}>
+				Open map{linkedMaps.length > 1 ? `s (${linkedMaps.length})` : ''}
+			</button>
+		{/if}
+	</section>
+
 	<section class="linked-section" aria-label="Linked entities">
 		<p class="section-label">Linked entities</p>
 		{#if linkedChips.length === 0}
@@ -100,10 +145,32 @@
 		gap: 12px;
 	}
 
+	.maps-section,
 	.linked-section {
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+	}
+
+	.maps-cta {
+		align-self: flex-start;
+		background: var(--color-surface, transparent);
+		color: var(--color-text);
+		border: 1px solid var(--color-border, #555);
+		border-radius: 4px;
+		padding: 4px 10px;
+		font-size: 11px;
+		cursor: pointer;
+	}
+
+	.maps-cta:hover:not(:disabled) {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
+	.maps-cta:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.section-label {

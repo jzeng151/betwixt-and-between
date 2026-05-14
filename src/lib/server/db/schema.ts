@@ -315,6 +315,23 @@ export const entityAliases = pgTable('entity_aliases', {
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 });
 
+// =============================================================================
+// world_maps — WorldMap v2 groundwork (2026-05-13)
+// =============================================================================
+//
+// `location_id` is a polymorphic FK to entities(id) where the target's type
+// must be 'Location'. Postgres cannot enforce that cleanly (same constraint
+// as intervals.start_act_id — see line ~241), so the invariant is upheld by:
+//   - write-time validation in /api/world-maps handlers
+//   - Vitest invariant test scanning every row
+//   - this schema comment
+// Nullable: a map can exist before being linked to a Location, and can outlive
+// a deleted Location via ON DELETE SET NULL (matches mapRegions.locationId).
+//
+// `location_inactive_at` records when SET NULL fired so the UI can surface
+// orphan maps for re-linking. NULL on healthy rows; non-NULL after a Location
+// referenced by `location_id` was deleted (or the user manually unlinked).
+// =============================================================================
 export const worldMaps = pgTable('world_maps', {
 	id: uuid('id').primaryKey().defaultRandom(),
 	userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
@@ -322,9 +339,13 @@ export const worldMaps = pgTable('world_maps', {
 	baseImageUrl: text('base_image_url'),
 	width: integer('width'),
 	height: integer('height'),
+	locationId: uuid('location_id').references(() => entities.id, { onDelete: 'set null' }),
+	locationInactiveAt: timestamp('location_inactive_at', { withTimezone: true }),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
-});
+}, (table) => [
+	index('world_maps_location_id_idx').on(table.locationId)
+]);
 
 export const mapRegions = pgTable('map_regions', {
 	id: uuid('id').primaryKey().defaultRandom(),

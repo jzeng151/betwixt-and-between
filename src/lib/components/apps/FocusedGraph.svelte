@@ -5,6 +5,7 @@
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
   import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/stores/playhead.js';
   import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
+  import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
@@ -378,6 +379,7 @@
   onMount(() => {
     intervalsStore.load();
     entityAliases.load();
+    worldMapStore.loadMaps();
     void (async () => {
       // FG canvas is independent of StoryGraph: each FG window has
       // its own per-window state (Lane A). We don't inherit the
@@ -726,12 +728,18 @@
     const id = contextMenu.entityId;
     const isFocal = focalSetIds.has(id);
     const isPinned = pinnedSet.has(id);
+    const entity = $entities.find((e) => e.id === id);
+    const hasLinkedMap =
+      entity?.type === 'Location' && $worldMaps.some((m) => m.locationId === id);
     const items: Array<{ label: string; onSelect: () => void }> = [
       {
         label: 'Open in window',
         onSelect: () => openEntity(id)
       }
     ];
+    if (hasLinkedMap) {
+      items.push({ label: 'Open map', onSelect: () => windowStore.open('world-map', id) });
+    }
     if (isFocal) {
       items.push({
         label: 'Remove from focal set',

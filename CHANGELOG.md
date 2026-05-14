@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0.0] - 2026-05-14
+
+### Added
+- **World Map v2 groundwork.** Maps can now be anchored to a Location entity. The `world_maps` table gains `location_id` (FK to entities, `ON DELETE SET NULL`, indexed) and `location_inactive_at` (records when the anchor was cleared, either by the user unlinking or by the linked Location being deleted). Polymorphic-FK contract — `location_id` must reference an entity with `type='Location'` — is enforced at the write layer (`assertLocationIdIsLocation`) and by a Vitest invariant test.
+- **Linked-location picker on the WorldMap toolbar.** Pick which Location a map depicts; pick `(no linked location)` to unlink. Persists per-map. Lays the foundation for v2 drill-down, variants, and spotlight cycling.
+- **"Maps" section in the Location editor.** When a Location has no anchored map, a "+ Create a map for this Location" button creates one and opens it. When at least one map is anchored, an "Open map(s)" button jumps straight to it in the WorldMap window.
+- **"Open map" context-menu action** in Story Graph and Focused Graph for Location nodes that have an anchored map — right-click → Open map → WorldMap window opens pre-switched to that location's map.
+
+### Changed
+- The WorldMap deep-link `entityId` effect now prefers `worldMaps.location_id === entityId` over the legacy region-link match, making the explicit Location anchor the primary deep-link target while keeping the region fallback alive for maps that haven't been linked yet.
+- Leaflet edit toolbar removed from `WorldMap.svelte`. Region editing moves into v2's dedicated editor surface; the always-on toolbar was dead UI on the v2 path.
+
 ## [0.5.0.2] - 2026-05-13
 
 ### Added

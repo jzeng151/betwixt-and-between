@@ -607,6 +607,72 @@ describe('/api/maps/[id]/upload-image', () => {
 		).rejects.toMatchObject({ status: 400 });
 	});
 
+	it('Step 1: POST creates map linked to a Location', async () => {
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Gondor' })
+			.returning();
+		const res = await CREATE_MAP(
+			mkEvent({ body: { name: 'Gondor map', locationId: loc.id } })
+		);
+		expect(res.status).toBe(201);
+		const body = await readJson(res);
+		expect(body.locationId).toBe(loc.id);
+	});
+
+	it('Step 1: POST rejects locationId pointing at a non-Location entity', async () => {
+		const [char] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Character', name: 'Frodo' })
+			.returning();
+		await expect(
+			CREATE_MAP(mkEvent({ body: { name: 'Bad', locationId: char.id } }))
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('Step 1: PATCH links and unlinks locationId', async () => {
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Rivendell' })
+			.returning();
+		const created = await readJson(
+			await CREATE_MAP(mkEvent({ body: { name: 'Map' } }))
+		);
+		expect(created.locationId).toBeNull();
+		expect(created.locationInactiveAt).toBeNull();
+
+		const linked = await readJson(
+			await mapIdRoute.PATCH(
+				mkEvent({ params: { id: created.id }, body: { locationId: loc.id } })
+			)
+		);
+		expect(linked.locationId).toBe(loc.id);
+		expect(linked.locationInactiveAt).toBeNull();
+
+		const unlinked = await readJson(
+			await mapIdRoute.PATCH(
+				mkEvent({ params: { id: created.id }, body: { locationId: null } })
+			)
+		);
+		expect(unlinked.locationId).toBeNull();
+		expect(unlinked.locationInactiveAt).not.toBeNull();
+	});
+
+	it('Step 1: PATCH rejects re-link to a non-Location entity', async () => {
+		const [char] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Character', name: 'Sam' })
+			.returning();
+		const created = await readJson(
+			await CREATE_MAP(mkEvent({ body: { name: 'Map' } }))
+		);
+		await expect(
+			mapIdRoute.PATCH(
+				mkEvent({ params: { id: created.id }, body: { locationId: char.id } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
 	it('upload-image succeeds with valid PNG', async () => {
 		const map = await readJson(
 			await CREATE_MAP(mkEvent({ body: { name: 'M' } }))

@@ -190,7 +190,10 @@
 					marker: false,
 					circlemarker: false
 				},
-				edit: { featureGroup: drawnItems, edit: false, remove: false }
+				// leaflet-draw's runtime accepts `false` here to disable the edit
+				// toolbar entirely, but @types/leaflet-draw only allows EditOptions.
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				edit: false as any
 			});
 			leafletMap.addControl(drawControl);
 		} else if (!hasImage && drawControl) {
@@ -271,20 +274,47 @@
 	});
 
 	// ── Auto-select map ────────────────────────────────────────────────────
-
+	//
+	// Initial selection runs ONCE, with explicit priority — merging this with
+	// the post-mount entityId watcher would race two switchMap calls (and two
+	// region loads) on the same flush, letting the slower response overwrite
+	// the faster one's regions in the global store.
+	//   1) Step-1 anchor: worldMaps.locationId === entityId (preferred).
+	//   2) Legacy fallback: a region on some map already links to entityId.
+	//   3) First map.
+	let initialSelectionDone = false;
 	$effect(() => {
-		if ($worldMaps.length > 0 && !activeMapId) {
-			switchMap($worldMaps[0].id);
+		if (initialSelectionDone || $worldMaps.length === 0) return;
+		initialSelectionDone = true;
+		if (entityId) {
+			const anchored = $worldMaps.find((m) => m.locationId === entityId);
+			if (anchored) {
+				switchMap(anchored.id);
+				return;
+			}
+			const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
+			if (targetRegion) {
+				switchMap(targetRegion.mapId);
+				return;
+			}
 		}
+		switchMap($worldMaps[0].id);
 	});
 
-	// If entityId was passed (clicked a Location from elsewhere), auto-select
+	// Reactive entityId changes after the initial selection: switch maps if a
+	// new Location was deep-linked into this same window. Single switchMap call
+	// per flush — no race with the initial-selection effect because that one
+	// has already locked itself out via initialSelectionDone.
 	$effect(() => {
-		if (entityId && $worldMaps.length > 0) {
-			const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
-			if (targetRegion && targetRegion.mapId !== activeMapId) {
-				switchMap(targetRegion.mapId);
-			}
+		if (!entityId || !initialSelectionDone || $worldMaps.length === 0) return;
+		const anchored = $worldMaps.find((m) => m.locationId === entityId);
+		if (anchored && anchored.id !== activeMapId) {
+			switchMap(anchored.id);
+			return;
+		}
+		const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
+		if (targetRegion && targetRegion.mapId !== activeMapId) {
+			switchMap(targetRegion.mapId);
 		}
 	});
 
@@ -405,6 +435,12 @@
 	async function switchMap(mapId: string) {
 		activeMapId = mapId;
 		await worldMapStore.loadMapRegions(mapId);
+	}
+
+	async function changeLinkedLocation(value: string) {
+		if (!activeMapId) return;
+		const next = value === '' ? null : value;
+		await worldMapStore.updateMap(activeMapId, { locationId: next });
 	}
 
 	async function handleCreateMap() {
@@ -612,6 +648,20 @@
 					<input type="file" accept=".jpg,.jpeg,.png,.webp" onchange={handleImageUpload} hidden />
 				</label>
 			{/if}
+			{#if activeMap}
+				<select
+					class="map-location-picker"
+					title="Linked location — what this map depicts"
+					aria-label="Linked location"
+					value={activeMap.locationId ?? ''}
+					onchange={(e) => changeLinkedLocation((e.target as HTMLSelectElement).value)}
+				>
+					<option value="">(no linked location)</option>
+					{#each locations as loc}
+						<option value={loc.id}>{loc.name}</option>
+					{/each}
+				</select>
+			{/if}
 		</div>
 		<div class="map-canvas" bind:this={mapContainer}></div>
 		{#if !hasImage}
@@ -747,13 +797,19 @@
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 	}
 
-	.map-switcher {
+	.map-switcher,
+	.map-location-picker {
 		background: var(--color-surface);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		padding: 2px 6px;
 		font-size: 13px;
+	}
+
+	.map-location-picker {
+		margin-left: auto;
+		max-width: 180px;
 	}
 
 	.map-name-input {
