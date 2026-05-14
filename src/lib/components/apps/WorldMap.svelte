@@ -425,18 +425,28 @@
 		if (!deleteConfirm) return;
 		deleting = true;
 		deleteError = '';
+		const oldId = deleteConfirm.id;
 		try {
-			const oldId = deleteConfirm.id;
 			await worldMapStore.deleteMap(oldId);
-			const nextId = $worldMaps.find((m) => m.id !== oldId)?.id ?? null;
-			activeMapId = nextId;
-			if (nextId) await worldMapStore.loadMapRegions(nextId);
-			deleteConfirm = null;
 		} catch {
 			deleteError = "Couldn't delete. The server rejected the request.";
-		} finally {
 			deleting = false;
+			return;
 		}
+		// Delete succeeded — the dialog is done. Switching maps and
+		// loading the next map's regions are post-delete UX; failures
+		// there are not delete failures and must not resurrect the dialog.
+		deleteConfirm = null;
+		const nextId = $worldMaps.find((m) => m.id !== oldId)?.id ?? null;
+		activeMapId = nextId;
+		if (nextId) {
+			try {
+				await worldMapStore.loadMapRegions(nextId);
+			} catch (err) {
+				console.error('Failed to load regions for switched map:', err);
+			}
+		}
+		deleting = false;
 	}
 
 	async function handleImageUpload(e: Event) {
