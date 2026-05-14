@@ -5,6 +5,7 @@
   import { intervals as intervalsStore } from '$lib/stores/intervals.js';
   import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/stores/playhead.js';
   import { windowStore } from '$lib/stores/windows.js';
+  import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
@@ -23,7 +24,7 @@
   import Legend from '$lib/components/Legend.svelte';
   import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 
-  onMount(() => { intervalsStore.load(); entityAliases.load(); });
+  onMount(() => { intervalsStore.load(); entityAliases.load(); worldMapStore.loadMaps(); });
 
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
@@ -680,11 +681,16 @@
   const contextMenuItems = $derived.by(() => {
     if (!contextMenu) return [];
     const id = contextMenu.entityId;
+    const entity = $entities.find((e) => e.id === id);
+    const hasLinkedMap = entity?.type === 'Location' && $worldMaps.some((m) => m.locationId === id);
     return [
       {
         label: 'Open in window',
         onSelect: () => openEntity(id)
       },
+      ...(hasLinkedMap
+        ? [{ label: 'Open map', onSelect: () => windowStore.open('world-map', id) }]
+        : []),
       {
         label: 'Open Focused Graph',
         onSelect: () => windowStore.openFocusedGraph([id], 'their_worlds')
