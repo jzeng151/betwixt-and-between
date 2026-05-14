@@ -89,7 +89,7 @@ describe('world_maps invariant: location_id polymorphic FK type alignment', () =
 		expect(violations[0].detail).toContain('Character');
 	});
 
-	it('SET NULL fires when the linked Location is deleted', async () => {
+	it('SET NULL fires when the linked Location is deleted and stamps location_inactive_at', async () => {
 		const [loc] = await db
 			.insert(entities)
 			.values({ userId, type: 'Location', name: 'Doomed City' })
@@ -98,12 +98,40 @@ describe('world_maps invariant: location_id polymorphic FK type alignment', () =
 			.insert(worldMaps)
 			.values({ userId, name: 'Doomed', locationId: loc.id })
 			.returning();
+		expect(map.locationInactiveAt).toBeNull();
 
 		await db.delete(entities).where(eq(entities.id, loc.id));
 
 		const [after] = await db.select().from(worldMaps).where(eq(worldMaps.id, map.id));
 		expect(after.locationId).toBeNull();
+		// Trigger from migration 0008 must stamp the timestamp so the orphan-map
+		// UI can distinguish deletion-driven unlinks from never-linked rows.
+		expect(after.locationInactiveAt).not.toBeNull();
 		const violations = await findViolations(db);
 		expect(violations).toEqual([]);
+	});
+
+	it('trigger clears location_inactive_at when a previously orphaned map is re-linked', async () => {
+		const [loc1] = await db
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'First' })
+			.returning();
+		const [map] = await db
+			.insert(worldMaps)
+			.values({ userId, name: 'Roamer', locationId: loc1.id })
+			.returning();
+		await db.delete(entities).where(eq(entities.id, loc1.id));
+		const [orphaned] = await db.select().from(worldMaps).where(eq(worldMaps.id, map.id));
+		expect(orphaned.locationInactiveAt).not.toBeNull();
+
+		const [loc2] = await db
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Second' })
+			.returning();
+		await db.update(worldMaps).set({ locationId: loc2.id }).where(eq(worldMaps.id, map.id));
+
+		const [reLinked] = await db.select().from(worldMaps).where(eq(worldMaps.id, map.id));
+		expect(reLinked.locationId).toBe(loc2.id);
+		expect(reLinked.locationInactiveAt).toBeNull();
 	});
 });

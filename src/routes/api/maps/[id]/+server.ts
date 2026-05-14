@@ -34,11 +34,12 @@ export const PATCH: RequestHandler = async (event) => {
 	if (typeof body.width === 'number') updates.width = body.width;
 	if (typeof body.height === 'number') updates.height = body.height;
 	// locationId: explicit presence (including null) is meaningful — null means unlink.
+	// location_inactive_at is managed by the world_maps_stamp_location_inactive_at
+	// trigger (migration 0008) so every unlink path — user PATCH, ON DELETE SET NULL
+	// cascade — stamps uniformly.
 	if ('locationId' in body) {
 		await assertLocationIdIsLocation(db, userId, body.locationId);
 		updates.locationId = body.locationId ?? null;
-		// Clear or set the inactive marker depending on link/unlink direction.
-		updates.locationInactiveAt = body.locationId == null ? new Date() : null;
 	}
 
 	if (Object.keys(updates).length === 0) {
