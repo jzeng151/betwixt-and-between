@@ -125,8 +125,9 @@ export const PATCH: RequestHandler = async (event) => {
 			.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)))
 			.returning();
 	} catch (err) {
-		const code = (err as { code?: string }).code ?? '';
-		const msg = (err as Error).message ?? '';
+		const wrapped = err as { code?: string; cause?: { code?: string }; message?: string };
+		const code = wrapped.code ?? wrapped.cause?.code ?? '';
+		const msg = `${wrapped.message ?? ''} ${(wrapped.cause as { message?: string } | undefined)?.message ?? ''}`;
 		if (code === '23P01' || msg.includes('world_maps_variant_no_overlap')) {
 			error(409, 'A variant for this Location already covers part of that range');
 		}

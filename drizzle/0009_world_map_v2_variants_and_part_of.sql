@@ -45,6 +45,11 @@ ALTER TABLE "world_maps" ADD CONSTRAINT "world_maps_variant_position_order" CHEC
   start_position IS NULL OR end_position IS NULL OR start_position < end_position
 );--> statement-breakpoint
 
+-- DEFERRABLE INITIALLY DEFERRED so that recomputeWorldMapVariantsAll can
+-- rewrite multiple variants in a single transaction without tripping
+-- transient overlap between row-N's old position and row-(N+1)'s new position
+-- during reorder cascades (M11). On standalone INSERT/UPDATE outside a
+-- transaction, the constraint still fires immediately at statement end.
 ALTER TABLE "world_maps" ADD CONSTRAINT "world_maps_variant_no_overlap" EXCLUDE USING gist (
   location_id WITH =,
   numrange(start_position::numeric, end_position::numeric, '[)') WITH &&
@@ -52,7 +57,7 @@ ALTER TABLE "world_maps" ADD CONSTRAINT "world_maps_variant_no_overlap" EXCLUDE 
   location_id IS NOT NULL
   AND start_position IS NOT NULL
   AND end_position IS NOT NULL
-);--> statement-breakpoint
+) DEFERRABLE INITIALLY DEFERRED;--> statement-breakpoint
 
 CREATE UNIQUE INDEX "world_maps_one_default_per_location" ON "world_maps" ("location_id")
   WHERE location_id IS NOT NULL AND start_position IS NULL;

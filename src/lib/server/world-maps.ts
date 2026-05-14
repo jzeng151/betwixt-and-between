@@ -131,9 +131,11 @@ export async function resolveWorldMapVariantBounds(
  * Called inside recomputeAllIntervals' transaction so an Act reorder cascades
  * atomically across intervals → relationships → world_map variants (M11).
  *
- * The EXCLUDE constraint stays satisfied because a uniform reshuffle of the
- * global Act axis shifts all variants for a given Location by the same delta —
- * their relative ordering and gaps survive (M11 invariance proof).
+ * The EXCLUDE constraint is declared DEFERRABLE INITIALLY DEFERRED so the
+ * per-row updates inside this loop can transiently overlap between row-N's
+ * old position and row-(N+1)'s new position during a swap-style reorder.
+ * Final check happens at transaction commit; if the final state still
+ * overlaps anywhere, the whole reorder rolls back.
  */
 export async function recomputeWorldMapVariantsAll(
 	db: Parameters<typeof resolveRelationshipBounds>[0],
