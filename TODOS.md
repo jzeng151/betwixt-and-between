@@ -62,6 +62,13 @@ For full per-version detail see `CHANGELOG.md`. For design specs see
 - "Open map" context-menu action in StoryGraph + FocusedGraph for Location nodes.
 - Deep-link `entityId` effect prefers explicit `location_id` over region-link match.
 
+### v0.7.0.0 — World Map v2 Steps 2 + 3
+- **Step 2 (drill-down)** — region-popup "Drill into [Child]" action; "Create a map for [Child]?" offer when child has no map yet; breadcrumb bar walking `part_of` ancestors with click-to-pop navigation.
+- **Step 3 (variants)** — `world_maps.start_act_id` / `start_scene_id` / `end_act_id` / `end_scene_id` + derived positions; btree_gist EXTENSION + EXCLUDE no-overlap (DEFERRABLE INITIALLY DEFERRED for M11) + CHECK position order + partial-unique single-default; `assertWorldMapVariantBounds` (M10) + `recomputeWorldMapVariantsAll` hooked into `recomputeAllIntervals` (M11); toolbar variant chip + scene-range editor modal; `POST /api/maps/[id]/duplicate` clones row + regions, drops variant bounds.
+- **`part_of` relationship kind** Location → Location with single-parent + cycle invariants enforced by `assertPartOfInvariants`; LocationEditor parent picker + sublocations list; routed through `relationship-colors` + `edge-policy`.
+- **Client projection helpers** — pure `resolveActiveVariant(maps, locationId, playhead)` + `buildHierarchyIndex` / `walkAncestors` / `getChildren` (M3 client projection). Auto-select effects route deep-links through the variant resolver.
+- 18 integration tests cover the new constraints + validation + duplicate-map behavior.
+
 ### Spotlight visualization layer (Phase 1.5 follow-ons)
 - **T11-mystery** — `Relationship.revealedAtPosition`, `updateRelationship`, edge right-click in `GraphCanvas`, `mysteryMode` rendering with `--color-rel-mystery`, `▼ Advanced` disclosure in StoryGraph create form, `EditRelationshipModal`.
 - **T10-ghost** — `GraphEdge.ghostMode` past/future, ±2-act window, dasharray + opacity per past/future, mystery > ghost precedence honored.
@@ -75,15 +82,16 @@ For full per-version detail see `CHANGELOG.md`. For design specs see
 
 ### World Map v2 — Story-Time Engine on Spatial Surfaces
 
-Branch `feat/world-map-v2-groundwork`, PR #42. Design doc:
+Branch `feat/world-map-v2-step-2-3`. Design doc:
 `~/.gstack/projects/betwixt-and-between/steve-feat-app-qol-design-20260513-175833.md`
-(includes Plan-Eng-Review Addendum v2.1 with locks M1–M11).
+(includes Plan-Eng-Review Addendum v2.1 with locks M1–M11). Plan for
+this branch: `docs/plans/world-map-v2-step-2-3.md`.
 
 7-step build order, each shippable on its own:
 
 - [x] **Step 1 — Map-Location linking UI** (v0.6.0.0). Picker in WorldMap settings + "Open this Location's map" entry points.
-- [ ] **Step 2 — Drill-down navigation.** Click polygon whose linked Location has a child Location with a map → open child map. Breadcrumb up. "Create a map for X?" offer when child has no map.
-- [ ] **Step 3 — Map variants.** Scene-range picker on map settings; variant resolution at playback (find variant whose range covers playhead; fall back to default); editor enforces non-overlapping at save (M9 EXCLUDE constraint); duplicate-map action clones variant with regions.
+- [x] **Step 2 — Drill-down navigation** (v0.7.0.0). Region-popup drill action; breadcrumb bar; "Create a map for X?" offer.
+- [x] **Step 3 — Map variants** (v0.7.0.0). Scene-range editor; resolveActiveVariant projection; EXCLUDE / partial-unique / CHECK at DB level; duplicate-map endpoint; M11 reorder cascade hook.
 - [ ] **Step 4 — `Artifact` entity-type.** Palette chip, drag-onto-map placement (M1 `map_placements` first-class table), intervals binding via scene-range picker, `targetEntityId` picker, Leaflet marker with target's icon (overridable per Artifact).
 - [ ] **Step 5 — Movement playback.** Two adjacent Artifacts with same `targetEntityId` + same `mapId` + abutting intervals → tween marker position between them as playhead crosses boundary. Optional trail polyline.
 - [ ] **Step 6 — `EventChain` entity-type.** Ordered artifact picker, payload composer, scope selector (`active-scene` / `persistent` / `within-N-seconds`). Playback runtime tracks per-chain progress; persistent scope saves to `event_chain_progress` (M7); CAS update for safety.
