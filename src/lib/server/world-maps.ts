@@ -141,13 +141,17 @@ export async function recomputeWorldMapVariantsAll(
 	db: Parameters<typeof resolveRelationshipBounds>[0],
 	userId: string
 ): Promise<number> {
+	// Include rows whose act FKs are fully null but still carry stale positions
+	// (e.g. ON DELETE SET NULL nulled both act FKs but start_position/end_position
+	// remain) so we can clear them. Without this filter such rows would never be
+	// revisited and would keep stale ranges visible to resolveActiveVariant.
 	const rows = (await (db as unknown as SelectableDB)
 		.select()
 		.from(worldMaps)
 		.where(
 			and(
 				eq(worldMaps.userId, userId),
-				sql`(${worldMaps.startActId} IS NOT NULL OR ${worldMaps.endActId} IS NOT NULL)`
+				sql`(${worldMaps.startActId} IS NOT NULL OR ${worldMaps.endActId} IS NOT NULL OR ${worldMaps.startPosition} IS NOT NULL OR ${worldMaps.endPosition} IS NOT NULL)`
 			)
 		)) as Array<{
 		id: string;
@@ -164,16 +168,31 @@ export async function recomputeWorldMapVariantsAll(
 	let updated = 0;
 	for (const row of rows) {
 		try {
-			const { startPosition, endPosition } = await resolveRelationshipBounds(
-				db,
-				{
-					startActId: row.startActId,
-					startSceneId: row.startSceneId,
-					endActId: row.endActId,
-					endSceneId: row.endSceneId
-				},
-				userId
-			);
+			// Degenerate after ON DELETE SET NULL: exactly one act FK survived, or
+			// both nulled while positions stayed. Treat as default variant and clear
+			// derived positions rather than throwing from resolveRelationshipBounds.
+			const oneActOnly =
+				(row.startActId === null) !== (row.endActId === null);
+			const bothActsNull = row.startActId === null && row.endActId === null;
+			let startPosition: number | null;
+			let endPosition: number | null;
+			if (oneActOnly || bothActsNull) {
+				startPosition = null;
+				endPosition = null;
+			} else {
+				const resolved = await resolveRelationshipBounds(
+					db,
+					{
+						startActId: row.startActId,
+						startSceneId: row.startSceneId,
+						endActId: row.endActId,
+						endSceneId: row.endSceneId
+					},
+					userId
+				);
+				startPosition = resolved.startPosition;
+				endPosition = resolved.endPosition;
+			}
 
 			const startDrift =
 				startPosition !== null &&

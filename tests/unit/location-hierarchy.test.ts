@@ -24,7 +24,7 @@ function mkRel(fromId: string, toId: string, type: Relationship['type'] = 'part_
 
 describe('buildHierarchyIndex', () => {
 	it('ignores non-part_of relationships', () => {
-		const rels = [mkRel('a', 'b', 'knows'), mkRel('c', 'd', 'part_of')];
+		const rels = [mkRel('a', 'b', 'allied_with'), mkRel('c', 'd', 'part_of')];
 		const idx = buildHierarchyIndex(rels);
 		expect(idx.parentOf.size).toBe(1);
 		expect(idx.parentOf.get('c')).toBe('d');

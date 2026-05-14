@@ -59,5 +59,25 @@ ALTER TABLE "world_maps" ADD CONSTRAINT "world_maps_variant_no_overlap" EXCLUDE 
   AND end_position IS NOT NULL
 ) DEFERRABLE INITIALLY DEFERRED;--> statement-breakpoint
 
+-- Pre-existing v1 world_maps rows all have NULL start_position (the columns
+-- were just added), so any Location previously linked to multiple maps would
+-- violate world_maps_one_default_per_location at index creation. Normalize
+-- first: for each (user_id, location_id) cluster, keep the earliest-created
+-- row attached and unlink the rest (set location_id = NULL). The orphaned
+-- rows survive and can be re-linked through the new variant UI.
+WITH duplicates AS (
+  SELECT id,
+         ROW_NUMBER() OVER (
+           PARTITION BY user_id, location_id
+           ORDER BY created_at ASC, id ASC
+         ) AS rn
+  FROM world_maps
+  WHERE location_id IS NOT NULL
+    AND start_position IS NULL
+)
+UPDATE world_maps
+SET location_id = NULL
+WHERE id IN (SELECT id FROM duplicates WHERE rn > 1);--> statement-breakpoint
+
 CREATE UNIQUE INDEX "world_maps_one_default_per_location" ON "world_maps" ("location_id")
   WHERE location_id IS NOT NULL AND start_position IS NULL;
