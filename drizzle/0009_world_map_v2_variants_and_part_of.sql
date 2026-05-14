@@ -80,4 +80,15 @@ SET location_id = NULL
 WHERE id IN (SELECT id FROM duplicates WHERE rn > 1);--> statement-breakpoint
 
 CREATE UNIQUE INDEX "world_maps_one_default_per_location" ON "world_maps" ("location_id")
-  WHERE location_id IS NOT NULL AND start_position IS NULL;
+  WHERE location_id IS NOT NULL AND start_position IS NULL;--> statement-breakpoint
+
+-- Single-parent invariant for part_of. assertPartOfInvariants does a read-then-
+-- write check that is racy under concurrent POSTs; this partial-unique index
+-- makes the DB the final arbiter so two simultaneous requests for the same
+-- child can't both win. 23505 from this index is translated to HTTP 409 in
+-- POST /api/relationships and PATCH /api/relationships/[id]. Cycle races are
+-- NOT transactionally protected at the DB level — the depth guard in
+-- walkAncestors keeps traversal bounded if one slips through, and the next
+-- write or recompute can normalize.
+CREATE UNIQUE INDEX "relationships_one_part_of_parent" ON "relationships" ("user_id", "from_id")
+  WHERE type = 'part_of';

@@ -33,39 +33,45 @@ export const POST: RequestHandler = async (event) => {
 		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
 	if (!source) error(404, 'Map not found');
 
-	const [clone] = await db
-		.insert(worldMaps)
-		.values({
-			userId,
-			name: `${source.name} (copy)`,
-			baseImageUrl: source.baseImageUrl,
-			width: source.width,
-			height: source.height,
-			locationId: null
-			// variant bounds + locationId intentionally omitted — see comment above
-		})
-		.returning();
+	// Clone + region copy run in a single transaction so a mid-request failure
+	// (FK violation on the region insert, transient DB error) rolls back the
+	// clone row instead of leaving an orphan map with no regions.
+	const result = await db.transaction(async (tx) => {
+		const [clone] = await tx
+			.insert(worldMaps)
+			.values({
+				userId,
+				name: `${source.name} (copy)`,
+				baseImageUrl: source.baseImageUrl,
+				width: source.width,
+				height: source.height,
+				locationId: null
+				// variant bounds + locationId intentionally omitted — see comment above
+			})
+			.returning();
 
-	const sourceRegions = await db
-		.select()
-		.from(mapRegions)
-		.where(eq(mapRegions.mapId, source.id));
+		const sourceRegions = await tx
+			.select()
+			.from(mapRegions)
+			.where(eq(mapRegions.mapId, source.id));
 
-	if (sourceRegions.length > 0) {
-		await db.insert(mapRegions).values(
-			sourceRegions.map((r) => ({
-				mapId: clone.id,
-				locationId: r.locationId,
-				polygon: JSON.parse(JSON.stringify(r.polygon)),
-				color: r.color
-			}))
-		);
-	}
+		let cloneRegions: typeof sourceRegions = [];
+		if (sourceRegions.length > 0) {
+			cloneRegions = await tx
+				.insert(mapRegions)
+				.values(
+					sourceRegions.map((r) => ({
+						mapId: clone.id,
+						locationId: r.locationId,
+						polygon: JSON.parse(JSON.stringify(r.polygon)),
+						color: r.color
+					}))
+				)
+				.returning();
+		}
 
-	const cloneRegions = await db
-		.select()
-		.from(mapRegions)
-		.where(eq(mapRegions.mapId, clone.id));
+		return { clone, cloneRegions };
+	});
 
-	return json({ ...clone, regions: cloneRegions }, { status: 201 });
+	return json({ ...result.clone, regions: result.cloneRegions }, { status: 201 });
 };

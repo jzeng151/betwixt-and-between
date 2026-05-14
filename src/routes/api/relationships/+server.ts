@@ -98,8 +98,16 @@ export const POST: RequestHandler = async (event) => {
 			.returning();
 	} catch (err) {
 		const code = (err as { code?: string }).code ?? '';
-		const msg = (err as Error).message ?? '';
-		if (code === '23505' || msg.includes('unique') || msg.includes('duplicate')) {
+		const causeCode = (err as { cause?: { code?: string } }).cause?.code ?? '';
+		const msg = `${(err as Error).message ?? ''} ${(err as { cause?: { message?: string } }).cause?.message ?? ''}`;
+		if (
+			code === '23505' ||
+			causeCode === '23505' ||
+			msg.includes('relationships_one_part_of_parent')
+		) {
+			if (type === 'part_of' || msg.includes('relationships_one_part_of_parent')) {
+				error(409, 'This location already has a parent — remove the existing part_of edge first');
+			}
 			error(409, 'A relationship with these temporal bounds already exists');
 		}
 		throw err;
