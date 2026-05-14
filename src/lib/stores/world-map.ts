@@ -24,11 +24,20 @@ function createWorldMapStore() {
 		return map as WorldMap;
 	}
 
-	async function createMap(name: string, locationId: string | null = null): Promise<WorldMap> {
+	async function createMap(
+		name: string,
+		locationId: string | null = null,
+		variantBounds?: {
+			startActId?: string | null;
+			startSceneId?: string | null;
+			endActId?: string | null;
+			endSceneId?: string | null;
+		}
+	): Promise<WorldMap> {
 		const res = await fetch('/api/maps', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, locationId })
+			body: JSON.stringify({ name, locationId, ...(variantBounds ?? {}) })
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: WorldMap = await res.json();
@@ -44,6 +53,10 @@ function createWorldMapStore() {
 			width?: number;
 			height?: number;
 			locationId?: string | null;
+			startActId?: string | null;
+			startSceneId?: string | null;
+			endActId?: string | null;
+			endSceneId?: string | null;
 		}
 	): Promise<WorldMap> {
 		const res = await fetch(`/api/maps/${id}`, {
@@ -104,6 +117,19 @@ function createWorldMapStore() {
 		}
 	}
 
+	async function duplicateMap(mapId: string): Promise<WorldMap> {
+		const res = await fetch(`/api/maps/${mapId}/duplicate`, { method: 'POST' });
+		if (!res.ok) throw new Error(await res.text());
+		const data = await res.json();
+		const { regions: cloneRegions, ...clone } = data;
+		maps.update((all) => [...all, clone as WorldMap]);
+		// New regions belong to a different mapId, so they won't collide with the
+		// currently-loaded set. Append rather than replace — caller switches to
+		// the clone via the picker, which triggers loadMapRegions if needed.
+		regions.update((all) => [...all, ...(cloneRegions as MapRegion[])]);
+		return clone as WorldMap;
+	}
+
 	async function uploadImage(mapId: string, file: File): Promise<WorldMap> {
 		const formData = new FormData();
 		formData.append('file', file);
@@ -125,6 +151,7 @@ function createWorldMapStore() {
 		createMap,
 		updateMap,
 		deleteMap,
+		duplicateMap,
 		createRegion,
 		updateRegion,
 		deleteRegion,
