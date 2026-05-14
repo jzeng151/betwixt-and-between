@@ -190,7 +190,10 @@
 					marker: false,
 					circlemarker: false
 				},
-				edit: { featureGroup: drawnItems, edit: false, remove: false }
+				// leaflet-draw's runtime accepts `false` here to disable the edit
+				// toolbar entirely, but @types/leaflet-draw only allows EditOptions.
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				edit: false as any
 			});
 			leafletMap.addControl(drawControl);
 		} else if (!hasImage && drawControl) {
