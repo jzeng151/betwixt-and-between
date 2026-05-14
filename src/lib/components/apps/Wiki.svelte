@@ -17,6 +17,7 @@
 	import { timelineFilter } from '$lib/stores/timelineFilter.js';
 	import { WIKI_NAV, type WikiNavContext } from '$lib/contexts/wiki-nav.js';
 	import type { EntityType } from '$lib/server/db/schema.js';
+	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 	import EntityDetail from '$lib/components/EntityDetail.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 
@@ -178,8 +179,9 @@
 
 			<div class="sidebar-list">
 				{#each grouped as group}
-					<div class="type-group">
+					<div class="type-group" style="--type-color: {getEntityTypeColor(group.type)}">
 						<div class="type-divider">
+							<span class="type-stripe" aria-hidden="true"></span>
 							<span class="type-divider-label">{TYPE_LABEL[group.type]}</span>
 						</div>
 						{#each group.entries as entry}
@@ -207,6 +209,7 @@
 						type="button"
 						class="type-pill"
 						class:on={activeTypes.has(t)}
+						style="--type-color: {getEntityTypeColor(t)}"
 						onclick={() => toggleType(t)}
 						title={`Toggle ${TYPE_LABEL[t]}`}
 					>
@@ -284,12 +287,20 @@
 	.type-divider {
 		display: flex;
 		align-items: center;
-		padding: 6px 12px 4px;
+		gap: 8px;
+		padding: 10px 12px 4px;
+	}
+	.type-stripe {
+		display: block;
+		width: 3px;
+		height: 12px;
+		border-radius: 2px;
+		background: var(--type-color, var(--color-text-muted));
 	}
 	.type-divider-label {
-		font-size: 9px;
+		font-size: 11px;
 		font-weight: 600;
-		color: var(--color-text-muted);
+		color: var(--type-color, var(--color-text));
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
 	}
@@ -350,11 +361,11 @@
 		cursor: pointer;
 	}
 	.type-pill.on {
-		color: var(--color-accent);
-		border-color: var(--color-accent);
+		color: var(--type-color, var(--color-accent));
+		border-color: var(--type-color, var(--color-accent));
 	}
 	.type-pill:hover {
-		color: var(--color-text);
+		color: var(--type-color, var(--color-text));
 	}
 
 	.wiki-content {

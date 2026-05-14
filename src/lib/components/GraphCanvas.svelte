@@ -580,7 +580,7 @@
 				y2={edge.y2}
 				stroke={strokeColor}
 				stroke-width={edge.width ?? 1.5}
-				stroke-opacity={strokeOpacity}
+				opacity={strokeOpacity}
 				stroke-dasharray={strokeDash}
 				marker-end={edge.arrow && !isMystery ? `url(#${arrowMarkerId})` : undefined}
 				pointer-events="none"

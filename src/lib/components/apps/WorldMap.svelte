@@ -6,6 +6,7 @@
 	import { isInScope } from '$lib/stores/scope.js';
 	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
 	import { windowStore } from '$lib/stores/windows.js';
+	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 
 	type LeafletNS = typeof import('leaflet');
 
@@ -16,6 +17,8 @@
 	let imageOverlay: any = null;
 	let regionLayers: any[] = [];
 	let drawnItems: any = null;
+	let drawControl: any = null;
+	let zoomControl: any = null;
 	let L: LeafletNS = $state(null as any);
 
 	// UI state
@@ -29,6 +32,10 @@
 	let editingRegionId: string | null = $state(null);
 	let editingOriginalLocationId: string | null = $state(null);
 	let mapReady = $state(false);
+	let renamingMapName = $state<string | null>(null);
+	let deleteConfirm = $state<{ id: string; name: string; regionCount: number } | null>(null);
+	let deleting = $state(false);
+	let deleteError = $state('');
 
 	// Computed — $worldMaps / $mapRegions / $entities / $isInScope are Svelte store subscriptions
 	let activeMap = $derived($worldMaps.find((m) => m.id === activeMapId) ?? null);
@@ -111,28 +118,11 @@
 			crs: L.CRS.Simple,
 			minZoom: -2,
 			maxZoom: 4,
-			zoomControl: true,
+			zoomControl: false,
 			attributionControl: false
 		});
 
 		leafletMap.addLayer(drawnItems);
-
-		// Draw control
-		const drawControl = new L.Control.Draw({
-			draw: {
-				polygon: {
-					allowIntersection: false,
-					shapeOptions: { color: accentColor, weight: 2 }
-				},
-				polyline: false,
-				circle: false,
-				rectangle: false,
-				marker: false,
-				circlemarker: false
-			},
-			edit: { featureGroup: drawnItems, remove: true }
-		});
-		leafletMap.addControl(drawControl);
 
 		leafletMap.on(L.Draw.Event.CREATED, (e: any) => {
 			const layer = e.layer;
@@ -179,6 +169,40 @@
 		}
 	});
 
+	$effect(() => {
+		// Draw tools only make sense once an image has been imported, so
+		// gate them on hasImage. The map-canvas mounts before any image is
+		// present (to keep Leaflet initialized across the upload prompt),
+		// so we attach/detach the control instead of conditionally rendering.
+		if (!leafletMap || !L) return;
+		if (hasImage && !drawControl) {
+			zoomControl = L.control.zoom();
+			leafletMap.addControl(zoomControl);
+			drawControl = new L.Control.Draw({
+				draw: {
+					polygon: {
+						allowIntersection: false,
+						shapeOptions: { color: accentColor, weight: 2 }
+					},
+					polyline: false,
+					circle: false,
+					rectangle: false,
+					marker: false,
+					circlemarker: false
+				},
+				edit: { featureGroup: drawnItems, edit: false, remove: false }
+			});
+			leafletMap.addControl(drawControl);
+		} else if (!hasImage && drawControl) {
+			leafletMap.removeControl(drawControl);
+			drawControl = null;
+			if (zoomControl) {
+				leafletMap.removeControl(zoomControl);
+				zoomControl = null;
+			}
+		}
+	});
+
 	// ── Render bitmap overlay ──────────────────────────────────────────────
 
 	$effect(() => {
@@ -195,6 +219,11 @@
 		if (map.baseImageUrl && map.width && map.height) {
 			const bounds = L.latLngBounds([[0, 0], [map.height, map.width]]);
 			imageOverlay = L.imageOverlay(map.baseImageUrl, bounds).addTo(leafletMap);
+			// When this effect fires from the {#if !hasImage}→{:else} branch
+			// swap (first upload), the map-canvas div was just mounted and
+			// Leaflet measured the container at 0×0. Force a re-measure so
+			// fitBounds has real pixel dimensions to work with.
+			leafletMap.invalidateSize();
 			leafletMap.fitBounds(bounds, { padding: [20, 20] });
 		}
 	});
@@ -384,13 +413,40 @@
 		await worldMapStore.loadMapRegions(map.id);
 	}
 
-	async function handleDeleteMap() {
-		if (!activeMapId) return;
-		await worldMapStore.deleteMap(activeMapId);
-		activeMapId = $worldMaps.length > 0 ? $worldMaps[0].id : null;
-		if (activeMapId) {
-			await worldMapStore.loadMapRegions(activeMapId);
+	function openDeleteConfirm() {
+		if (!activeMap) return;
+		const regionCount = $mapRegions.filter((r) => r.mapId === activeMap.id).length;
+		deleteConfirm = { id: activeMap.id, name: activeMap.name, regionCount };
+		deleting = false;
+		deleteError = '';
+	}
+
+	async function confirmDelete() {
+		if (!deleteConfirm) return;
+		deleting = true;
+		deleteError = '';
+		const oldId = deleteConfirm.id;
+		try {
+			await worldMapStore.deleteMap(oldId);
+		} catch {
+			deleteError = "Couldn't delete. The server rejected the request.";
+			deleting = false;
+			return;
 		}
+		// Delete succeeded — the dialog is done. Switching maps and
+		// loading the next map's regions are post-delete UX; failures
+		// there are not delete failures and must not resurrect the dialog.
+		deleteConfirm = null;
+		const nextId = $worldMaps.find((m) => m.id !== oldId)?.id ?? null;
+		activeMapId = nextId;
+		if (nextId) {
+			try {
+				await worldMapStore.loadMapRegions(nextId);
+			} catch (err) {
+				console.error('Failed to load regions for switched map:', err);
+			}
+		}
+		deleting = false;
 	}
 
 	async function handleImageUpload(e: Event) {
@@ -478,10 +534,22 @@
 		resetRegionForm();
 	}
 
-	async function handleRenameMap(e: Event) {
-		const input = e.target as HTMLInputElement;
-		if (!activeMapId || !input.value.trim()) return;
-		await worldMapStore.updateMap(activeMapId, { name: input.value.trim() });
+	function startRename() {
+		if (!activeMap) return;
+		renamingMapName = activeMap.name;
+	}
+
+	async function commitRename() {
+		if (!activeMapId || renamingMapName === null) return;
+		const trimmed = renamingMapName.trim();
+		const original = activeMap?.name ?? '';
+		renamingMapName = null;
+		if (!trimmed || trimmed === original) return;
+		await worldMapStore.updateMap(activeMapId, { name: trimmed });
+	}
+
+	function cancelRename() {
+		renamingMapName = null;
 	}
 
 	const PALETTE = ['#e8a838', '#3b82f6', '#ef4444', '#22c55e', '#a855f7', '#ec4899', '#f97316', '#06b6d4'];
@@ -493,8 +561,11 @@
 		<p class="empty-title">No maps yet</p>
 		<button class="btn-primary" onclick={handleCreateMap}>Create your first map</button>
 	</div>
-{:else if activeMap && !hasImage}
-	<!-- Map exists but no bitmap imported -->
+{:else}
+	<!-- Active map. Always render the map-canvas (so Leaflet initializes
+	     once on open and survives the hasImage transition AND the brief
+	     activeMap=null gap during map delete); overlay the upload prompt
+	     on top when no image is imported yet. -->
 	<div class="map-wrapper">
 		<div class="map-toolbar">
 			<select class="map-switcher" onchange={(e) => switchMap((e.target as HTMLSelectElement).value)}>
@@ -502,52 +573,59 @@
 					<option value={m.id} selected={m.id === activeMapId}>{m.name}</option>
 				{/each}
 			</select>
-			<input
-				class="map-name-input"
-				type="text"
-				value={activeMap?.name ?? ''}
-				onblur={handleRenameMap}
-				onkeydown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-			/>
+			{#if renamingMapName !== null}
+				<!-- svelte-ignore a11y_autofocus -->
+				<input
+					class="map-name-input"
+					type="text"
+					bind:value={renamingMapName}
+					autofocus
+					onblur={commitRename}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+						if (e.key === 'Escape') cancelRename();
+					}}
+				/>
+			{:else}
+				<button
+					class="btn-icon"
+					onclick={startRename}
+					title="Rename map"
+					aria-label="Rename map"
+					disabled={!activeMap}
+				>
+					<svg width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden="true">
+						<path d="M7.5 1.5 l2 2 -6 6 -2.5 0.5 0.5-2.5 6-6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" fill="none"/>
+					</svg>
+				</button>
+			{/if}
 			<button class="btn-icon" onclick={handleCreateMap} title="New map">+</button>
-			<button class="btn-icon btn-danger" onclick={handleDeleteMap} title="Delete map">×</button>
-		</div>
-		<div class="upload-area">
-			<p>Import a map image to get started</p>
-			<label class="btn-primary upload-btn">
-				Import image
-				<input type="file" accept=".jpg,.jpeg,.png,.webp" onchange={handleImageUpload} hidden />
-			</label>
-			{#if uploadError}
-				<p class="upload-error">{uploadError} <button onclick={() => uploadError = null}>✕</button></p>
+			<button
+				class="btn-icon btn-danger"
+				onclick={openDeleteConfirm}
+				title="Delete map"
+				disabled={!activeMap}>×</button
+			>
+			{#if hasImage}
+				<label class="btn-icon" title="Replace image">
+					📁
+					<input type="file" accept=".jpg,.jpeg,.png,.webp" onchange={handleImageUpload} hidden />
+				</label>
 			{/if}
 		</div>
-	</div>
-{:else}
-	<!-- Active map with bitmap -->
-	<div class="map-wrapper">
-		<div class="map-toolbar">
-			<select class="map-switcher" onchange={(e) => switchMap((e.target as HTMLSelectElement).value)}>
-				{#each $worldMaps as m}
-					<option value={m.id} selected={m.id === activeMapId}>{m.name}</option>
-				{/each}
-			</select>
-			<input
-				class="map-name-input"
-				type="text"
-				value={activeMap?.name ?? ''}
-				onblur={handleRenameMap}
-				onkeydown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-			/>
-			<button class="btn-icon" onclick={handleCreateMap} title="New map">+</button>
-			<button class="btn-icon btn-danger" onclick={handleDeleteMap} title="Delete map">×</button>
-			<label class="btn-icon" title="Replace image">
-				📁
-				<input type="file" accept=".jpg,.jpeg,.png,.webp" onchange={handleImageUpload} hidden />
-			</label>
-		</div>
 		<div class="map-canvas" bind:this={mapContainer}></div>
-		{#if $mapRegions.length === 0 && !showRegionForm}
+		{#if !hasImage}
+			<div class="upload-area">
+				<p>Import a map image to get started</p>
+				<label class="btn-primary upload-btn">
+					Import image
+					<input type="file" accept=".jpg,.jpeg,.png,.webp" onchange={handleImageUpload} hidden />
+				</label>
+				{#if uploadError}
+					<p class="upload-error">{uploadError} <button onclick={() => uploadError = null}>✕</button></p>
+				{/if}
+			</div>
+		{:else if $mapRegions.length === 0 && !showRegionForm}
 			<div class="hint-overlay">Use the draw tool to create regions linked to locations.</div>
 		{/if}
 	</div>
@@ -618,6 +696,31 @@
 	</div>
 {/if}
 
+{#if deleteConfirm}
+	{@const dc = deleteConfirm}
+	{@const impacts = [
+		{ parts: ['The map ', { bold: dc.name }, ' and its background image'] },
+		...(dc.regionCount > 0
+			? [
+					{
+						parts: [
+							`${dc.regionCount} region${dc.regionCount === 1 ? '' : 's'} drawn on this map (location links remain intact)`
+						]
+					}
+				]
+			: [])
+	] satisfies DeleteImpact[]}
+	<DeleteConfirmDialog
+		name={dc.name}
+		{impacts}
+		confirmLabel="Delete Map"
+		{deleting}
+		error={deleteError}
+		onConfirm={confirmDelete}
+		onCancel={() => (deleteConfirm = null)}
+	/>
+{/if}
+
 <style>
 	.map-wrapper {
 		position: relative;
@@ -660,10 +763,7 @@
 		font-size: 13px;
 		width: 120px;
 		outline: none;
-		border-bottom: 1px solid transparent;
-	}
-	.map-name-input:focus {
-		border-bottom-color: var(--color-accent);
+		border-bottom: 1px solid var(--color-accent);
 	}
 
 	.map-canvas {
@@ -705,20 +805,16 @@
 	}
 
 	.upload-area {
-		flex: 1;
+		position: absolute;
+		inset: 0;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
 		gap: 12px;
-		background: color-mix(in srgb, var(--color-surface) 85%, transparent);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
-		border-radius: 8px;
-		margin: 48px 16px 16px;
+		background: var(--color-surface);
 		padding: 32px;
-		border: 1px solid var(--color-border);
-		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+		z-index: 10;
 	}
 
 	.upload-area p {

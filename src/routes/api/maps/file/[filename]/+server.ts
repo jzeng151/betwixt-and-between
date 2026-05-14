@@ -21,10 +21,17 @@ export const GET: RequestHandler = async (event) => {
 	if (bucket) {
 		const obj = await bucket.get(filename);
 		if (!obj) error(404, 'Not found');
-		const headers = new Headers();
-		obj.writeHttpMetadata(headers);
-		headers.set('cache-control', 'public, max-age=31536000, immutable');
-		return new Response(obj.body, { headers });
+		// Build headers from httpMetadata directly. We previously used
+		// obj.writeHttpMetadata(headers), but in `vite dev` with adapter-
+		// cloudflare's platform proxy that method is RPC-bridged through
+		// miniflare and fails on the Headers arg ("Cannot stringify
+		// arbitrary non-POJOs"). httpMetadata is a POJO so reads cleanly.
+		return new Response(obj.body, {
+			headers: {
+				'content-type': obj.httpMetadata?.contentType ?? contentTypeFor(filename),
+				'cache-control': 'public, max-age=31536000, immutable',
+			},
+		});
 	}
 
 	try {

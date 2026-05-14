@@ -10,6 +10,7 @@
 
 <script lang="ts">
   import type { Entity } from '$lib/stores/entities.js';
+  import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 
   interface Props {
     characters: Entity[];
@@ -73,9 +74,9 @@
     />
   </div>
 
-  <section class="palette-section">
+  <section class="palette-section" style="--type-color: {getEntityTypeColor('Character')}">
     <header class="palette-label">
-      <span>Characters</span>
+      <span class="palette-label-text"><span class="palette-stripe" aria-hidden="true"></span>Characters</span>
       <button
         class="palette-filter"
         aria-label={charactersCollapsed ? 'Show characters' : 'Hide characters'}
@@ -110,9 +111,9 @@
     {/if}
   </section>
 
-  <section class="palette-section">
+  <section class="palette-section" style="--type-color: {getEntityTypeColor('Event')}">
     <header class="palette-label">
-      <span>Events</span>
+      <span class="palette-label-text"><span class="palette-stripe" aria-hidden="true"></span>Events</span>
       <button
         class="palette-add-btn"
         aria-label="Add event"
@@ -193,15 +194,27 @@
     border-bottom: none;
   }
   .palette-label {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
-    color: var(--color-text-muted, #6b7280);
+    color: var(--type-color, var(--color-text-muted, #6b7280));
     text-transform: uppercase;
     letter-spacing: 0.12em;
     margin-bottom: 10px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+  }
+  .palette-label-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .palette-stripe {
+    display: inline-block;
+    width: 3px;
+    height: 12px;
+    border-radius: 2px;
+    background: var(--type-color, var(--color-text-muted));
   }
   .palette-filter {
     display: inline-flex;
