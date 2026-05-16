@@ -85,6 +85,13 @@ export const verification = pgTable('verification', {
  *                    2026-05-05). Attaches a Note entity to a parent entity so
  *                    EntityDetail can render it under the parent's NOTES
  *                    section. `from` is always the Note; `to` is the parent.
+ *   part_of        — Location part_of Location (WorldMap v2 Step 2,
+ *                    2026-05-14). Models the Location hierarchy used by
+ *                    drill-down navigation. `from` is the child, `to` is the
+ *                    parent. Single-parent in v2: a Location may have at most
+ *                    one outgoing `part_of` edge; cycles rejected at write time.
+ *                    Both endpoints must be type='Location' (validated in
+ *                    assertPartOfEndpoints).
  */
 export const RelationshipType = [
 	'appears_in',
@@ -96,6 +103,7 @@ export const RelationshipType = [
 	'located_at',
 	'pov_of',
 	'note_of',
+	'part_of',
 	'other'
 ] as const;
 export type RelationshipType = (typeof RelationshipType)[number];
@@ -332,6 +340,29 @@ export const entityAliases = pgTable('entity_aliases', {
 // orphan maps for re-linking. NULL on healthy rows; non-NULL after a Location
 // referenced by `location_id` was deleted (or the user manually unlinked).
 // =============================================================================
+// =============================================================================
+// world_maps variant columns — WorldMap v2 Step 3 (2026-05-14)
+// =============================================================================
+//
+// A "variant" is a world_map row that depicts a particular Location during a
+// scoped story-time window. start_act_id / end_act_id reference Act entities;
+// start_scene_id / end_scene_id reference Scene entities. Polymorphic FK
+// invariants enforced at the write layer (assertWorldMapVariantBounds) and by
+// Vitest invariant tests — same precedent as intervals.start_act_id.
+//
+// start_position / end_position are derived from the FK refs using the same
+// Premise-4 math that intervals + relationships use. They are recomputed on
+// write and re-cascaded on Act reorder via recomputeWorldMapVariantsAll
+// (M11 design lock).
+//
+// A row with all four FKs NULL is the "default variant" for its Location:
+// it wins variant resolution whenever no temporally-scoped variant covers
+// the playhead. The partial-unique world_maps_one_default_per_location
+// guarantees at most one default per Location.
+//
+// Open-ended variants (start non-NULL, end NULL — or vice versa) are not
+// supported in v2 — the EXCLUDE WHERE clause requires both positions present.
+// =============================================================================
 export const worldMaps = pgTable('world_maps', {
 	id: uuid('id').primaryKey().defaultRandom(),
 	userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
@@ -341,10 +372,22 @@ export const worldMaps = pgTable('world_maps', {
 	height: integer('height'),
 	locationId: uuid('location_id').references(() => entities.id, { onDelete: 'set null' }),
 	locationInactiveAt: timestamp('location_inactive_at', { withTimezone: true }),
+	// Variant temporal bounds (Step 3). All four nullable: NULL means default variant.
+	startActId: uuid('start_act_id').references(() => entities.id, { onDelete: 'set null' }),
+	startSceneId: uuid('start_scene_id').references(() => entities.id, { onDelete: 'set null' }),
+	endActId: uuid('end_act_id').references(() => entities.id, { onDelete: 'set null' }),
+	endSceneId: uuid('end_scene_id').references(() => entities.id, { onDelete: 'set null' }),
+	startPosition: doublePrecision('start_position'),
+	endPosition: doublePrecision('end_position'),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
 	index('world_maps_location_id_idx').on(table.locationId)
+	// EXCLUDE constraint (world_maps_variant_no_overlap), CHECK
+	// (world_maps_variant_position_order) and partial-unique
+	// (world_maps_one_default_per_location) defined in
+	// 0009_world_map_v2_variants_and_part_of.sql — Drizzle's table DSL
+	// does not support EXCLUDE, partial UNIQUE indexes, or extensions.
 ]);
 
 export const mapRegions = pgTable('map_regions', {

@@ -1,6 +1,27 @@
 import { writable } from 'svelte/store';
 import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } from '$lib/types/world-map.js';
 
+// SvelteKit's `error()` helper returns JSON like { message: "..." }. Surfacing
+// the raw text into the UI shows users `{"message":"..."}`; parse and lift the
+// message instead so the variant-conflict copy reads naturally.
+async function errorMessage(res: Response): Promise<string> {
+	const text = await res.text();
+	try {
+		const parsed: unknown = JSON.parse(text);
+		if (
+			parsed &&
+			typeof parsed === 'object' &&
+			'message' in parsed &&
+			typeof (parsed as Record<string, unknown>).message === 'string'
+		) {
+			return (parsed as { message: string }).message;
+		}
+	} catch {
+		// fall through to raw text
+	}
+	return text;
+}
+
 function createWorldMapStore() {
 	const maps = writable<WorldMap[]>([]);
 	const regions = writable<MapRegion[]>([]);
@@ -24,13 +45,22 @@ function createWorldMapStore() {
 		return map as WorldMap;
 	}
 
-	async function createMap(name: string, locationId: string | null = null): Promise<WorldMap> {
+	async function createMap(
+		name: string,
+		locationId: string | null = null,
+		variantBounds?: {
+			startActId?: string | null;
+			startSceneId?: string | null;
+			endActId?: string | null;
+			endSceneId?: string | null;
+		}
+	): Promise<WorldMap> {
 		const res = await fetch('/api/maps', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, locationId })
+			body: JSON.stringify({ name, locationId, ...(variantBounds ?? {}) })
 		});
-		if (!res.ok) throw new Error(await res.text());
+		if (!res.ok) throw new Error(await errorMessage(res));
 		const created: WorldMap = await res.json();
 		maps.update((all) => [...all, created]);
 		return created;
@@ -44,6 +74,10 @@ function createWorldMapStore() {
 			width?: number;
 			height?: number;
 			locationId?: string | null;
+			startActId?: string | null;
+			startSceneId?: string | null;
+			endActId?: string | null;
+			endSceneId?: string | null;
 		}
 	): Promise<WorldMap> {
 		const res = await fetch(`/api/maps/${id}`, {
@@ -51,7 +85,7 @@ function createWorldMapStore() {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(fields)
 		});
-		if (!res.ok) throw new Error(await res.text());
+		if (!res.ok) throw new Error(await errorMessage(res));
 		const updated: WorldMap = await res.json();
 		maps.update((all) => all.map((m) => (m.id === id ? updated : m)));
 		return updated;
@@ -73,7 +107,7 @@ function createWorldMapStore() {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload)
 		});
-		if (!res.ok) throw new Error(await res.text());
+		if (!res.ok) throw new Error(await errorMessage(res));
 		const created: MapRegion = await res.json();
 		regions.update((all) => [...all, created]);
 		return created;
@@ -89,7 +123,7 @@ function createWorldMapStore() {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload)
 		});
-		if (!res.ok) throw new Error(await res.text());
+		if (!res.ok) throw new Error(await errorMessage(res));
 		const updated: MapRegion = await res.json();
 		regions.update((all) => all.map((r) => (r.id === regionId ? updated : r)));
 		return updated;
@@ -104,6 +138,19 @@ function createWorldMapStore() {
 		}
 	}
 
+	async function duplicateMap(mapId: string): Promise<WorldMap> {
+		const res = await fetch(`/api/maps/${mapId}/duplicate`, { method: 'POST' });
+		if (!res.ok) throw new Error(await errorMessage(res));
+		const data = await res.json();
+		const { regions: cloneRegions, ...clone } = data;
+		maps.update((all) => [...all, clone as WorldMap]);
+		// New regions belong to a different mapId, so they won't collide with the
+		// currently-loaded set. Append rather than replace — caller switches to
+		// the clone via the picker, which triggers loadMapRegions if needed.
+		regions.update((all) => [...all, ...(cloneRegions as MapRegion[])]);
+		return clone as WorldMap;
+	}
+
 	async function uploadImage(mapId: string, file: File): Promise<WorldMap> {
 		const formData = new FormData();
 		formData.append('file', file);
@@ -111,7 +158,7 @@ function createWorldMapStore() {
 			method: 'POST',
 			body: formData
 		});
-		if (!res.ok) throw new Error(await res.text());
+		if (!res.ok) throw new Error(await errorMessage(res));
 		const updated: WorldMap = await res.json();
 		maps.update((all) => all.map((m) => (m.id === mapId ? updated : m)));
 		return updated;
@@ -125,6 +172,7 @@ function createWorldMapStore() {
 		createMap,
 		updateMap,
 		deleteMap,
+		duplicateMap,
 		createRegion,
 		updateRegion,
 		deleteRegion,

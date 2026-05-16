@@ -64,6 +64,13 @@
       "when": 1778775600000,
       "tag": "0008_world_map_location_inactive_at_trigger",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778792400000,
+      "tag": "0009_world_map_v2_variants_and_part_of",
+      "breakpoints": true
     }
   ]
 }

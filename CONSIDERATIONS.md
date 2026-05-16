@@ -629,3 +629,13 @@ Branch: `feat/timeline-redesign`. Phase 1.6 in `TODOS.md` Section 13. Design pla
 - **T5** — Bar translation (drag whole bar to shift temporally)
 - **T6** — Wiki rework: alphabetical entity browser, fill EntityDetail branches for Character/Location/Note, migrate `ENTITY_APP[Character/Location/Note]` to `'entity-detail'`
 - **T7** — Bulk paste / import UI (uses already-shipped `/api/entities/batch`)
+
+### [2026-05-15] Svelte a11y + reactivity warning suppressions — caveats
+
+Two `svelte-ignore` comments added today hide warnings that *would* catch real bugs if certain assumptions changed. Documenting so a future grep finds them:
+
+- **`a11y_no_noninteractive_tabindex` on `CharacterEditorBody.svelte:349` (avatar-stack div).** Suppression covers both branches of `tabindex={readOnly ? -1 : 0}`. Today the readOnly branch is correct (tabindex=-1 = inert, no role, no handler). The ignore will also hide a regression where someone accidentally sets `tabindex=0` in readOnly mode without adding `role="button"` — there would be no compile-time warning. If readOnly behavior changes, re-check by hand.
+
+- **`state_referenced_locally` on `Window.svelte:36-37` (`MIN_W`/`MIN_H`).** These are computed once from the `compact` prop at instance creation. Today no caller toggles `compact` at runtime (set per window type and fixed for the window's lifetime per the May 12 wiring), so the captured-once semantics are correct. If `compact` ever becomes dynamic (e.g., a user-toggleable "compact mode" toggle on a live window), `MIN_W`/`MIN_H` will silently stale — convert to `$derived` and remove the ignore.
+
+Other `state_referenced_locally` suppressions added in the same pass (`EntityDetail.svelte:96/100`, `CharacterEditorBody.svelte:118`, `Settings.svelte:40/41`) are unambiguous — initial-mode/prev-value-guard/apply-on-mount patterns where capturing-once is the entire point.

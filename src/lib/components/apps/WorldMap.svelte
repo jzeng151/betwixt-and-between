@@ -5,7 +5,11 @@
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/stores/scope.js';
 	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+	import { relationships } from '$lib/stores/relationships.js';
+	import { playhead } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
+	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
+	import { resolveActiveVariant } from '$lib/world-map-variants.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 
 	type LeafletNS = typeof import('leaflet');
@@ -37,6 +41,16 @@
 	let deleting = $state(false);
 	let deleteError = $state('');
 
+	// Variant editor state (Step 3)
+	let showVariantForm = $state(false);
+	let variantFormIsDefault = $state(false);
+	let variantFormStartActId = $state<string | null>(null);
+	let variantFormStartSceneId = $state<string | null>(null);
+	let variantFormEndActId = $state<string | null>(null);
+	let variantFormEndSceneId = $state<string | null>(null);
+	let variantFormError = $state('');
+	let duplicating = $state(false);
+
 	// Computed — $worldMaps / $mapRegions / $entities / $isInScope are Svelte store subscriptions
 	let activeMap = $derived($worldMaps.find((m) => m.id === activeMapId) ?? null);
 	let locations = $derived($entities.filter((e) => e.type === 'Location'));
@@ -47,6 +61,34 @@
 			.filter((e) => e.type === 'Act')
 			.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
 	);
+	// Location hierarchy (part_of) — index built once per relationships snapshot
+	let hierarchyIndex = $derived(buildHierarchyIndex($relationships));
+	let breadcrumbAncestors = $derived.by(() => {
+		const locId = activeMap?.locationId;
+		if (!locId) return [] as { id: string; name: string }[];
+		const ids = walkAncestors(hierarchyIndex, locId);
+		return ids
+			.map((id) => {
+				const e = $entities.find((x) => x.id === id);
+				return e ? { id: e.id, name: e.name } : null;
+			})
+			.filter((x): x is { id: string; name: string } => x !== null);
+	});
+
+	// Locations valid to link inside the current map's regions: every Location
+	// except the map's own anchor + that anchor's ancestors. Assigning an
+	// ancestor to a region inside its own descendant's map would create a cycle
+	// in the part_of hierarchy.
+	let regionFormLocations = $derived.by(() => {
+		const anchor = activeMap?.locationId ?? null;
+		if (!anchor) return locations;
+		const blocked = new Set<string>([anchor, ...walkAncestors(hierarchyIndex, anchor)]);
+		return locations.filter((l) => !blocked.has(l.id));
+	});
+
+	// Drill-down offer state: a child Location has no map yet — surface CTA.
+	let createMapOffer = $state<{ childId: string; childName: string } | null>(null);
+
 	let scenesByAct = $derived.by(() => {
 		const map = new Map<string, typeof $entities[0][]>();
 		for (const act of acts) {
@@ -89,6 +131,7 @@
 	onMount(() => {
 		worldMapStore.loadMaps();
 		intervalsStore.load();
+		relationships.load();
 
 		(async () => {
 			// Dynamic-import Leaflet (browser-only)
@@ -136,6 +179,7 @@
 			if (!popupEl) return;
 			const editBtn = popupEl.querySelector('[data-action="edit"]');
 			const deleteBtn = popupEl.querySelector('[data-action="delete"]');
+			const drillBtn = popupEl.querySelector('[data-action="drill"]');
 			const nameEl = popupEl.querySelector('.region-popup-name');
 			if (editBtn) {
 				editBtn.addEventListener('click', () => {
@@ -147,6 +191,19 @@
 				deleteBtn.addEventListener('click', () => {
 					handleDeleteRegion((deleteBtn as HTMLElement).dataset.regionId!);
 					leafletMap.closePopup();
+				});
+			}
+			if (drillBtn) {
+				drillBtn.addEventListener('click', () => {
+					const childId = (drillBtn as HTMLElement).dataset.locationId;
+					if (!childId) return;
+					leafletMap.closePopup();
+					if (!drillIntoLocation(childId)) {
+						const child = $entities.find((x) => x.id === childId);
+						if (child) {
+							createMapOffer = { childId: child.id, childName: child.name };
+						}
+					}
 				});
 			}
 			if (nameEl) {
@@ -279,17 +336,28 @@
 	// the post-mount entityId watcher would race two switchMap calls (and two
 	// region loads) on the same flush, letting the slower response overwrite
 	// the faster one's regions in the global store.
-	//   1) Step-1 anchor: worldMaps.locationId === entityId (preferred).
+	//   1) Step-1 anchor: resolveActiveVariant picks the variant covering the
+	//      current playhead for `entityId` (Step 3 promotes 'locationId match'
+	//      to 'locationId match at correct playhead position').
 	//   2) Legacy fallback: a region on some map already links to entityId.
 	//   3) First map.
 	let initialSelectionDone = false;
+	// Tracks the last `entityId` prop value the watcher has resolved to a map.
+	// Plain `let` (not $state) so writes don't trigger effect re-runs. The
+	// watcher below compares against it to distinguish a real prop change (new
+	// deep-link) from a reactive re-run caused by internal navigation
+	// (switchMap → activeMapId/$mapRegions change). Without this, the watcher
+	// would force the map back to entityId's variant every time the user
+	// switched maps via the dropdown or drilled into a sublocation.
+	let lastAppliedEntityId: string | undefined = undefined;
 	$effect(() => {
 		if (initialSelectionDone || $worldMaps.length === 0) return;
 		initialSelectionDone = true;
+		lastAppliedEntityId = entityId;
 		if (entityId) {
-			const anchored = $worldMaps.find((m) => m.locationId === entityId);
-			if (anchored) {
-				switchMap(anchored.id);
+			const variant = resolveActiveVariant($worldMaps, entityId, $playhead);
+			if (variant) {
+				switchMap(variant.id);
 				return;
 			}
 			const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
@@ -301,15 +369,16 @@
 		switchMap($worldMaps[0].id);
 	});
 
-	// Reactive entityId changes after the initial selection: switch maps if a
-	// new Location was deep-linked into this same window. Single switchMap call
-	// per flush — no race with the initial-selection effect because that one
-	// has already locked itself out via initialSelectionDone.
+	// React to an external deep-link change (parent rewrote win.entityId) by
+	// switching to that Location's active variant. Internal navigation must
+	// NOT trip this — see `lastAppliedEntityId` above.
 	$effect(() => {
 		if (!entityId || !initialSelectionDone || $worldMaps.length === 0) return;
-		const anchored = $worldMaps.find((m) => m.locationId === entityId);
-		if (anchored && anchored.id !== activeMapId) {
-			switchMap(anchored.id);
+		if (entityId === lastAppliedEntityId) return;
+		lastAppliedEntityId = entityId;
+		const variant = resolveActiveVariant($worldMaps, entityId, $playhead);
+		if (variant && variant.id !== activeMapId) {
+			switchMap(variant.id);
 			return;
 		}
 		const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
@@ -317,6 +386,46 @@
 			switchMap(targetRegion.mapId);
 		}
 	});
+
+	// ── Drill-down navigation ────────────────────────────────────────────────
+	//
+	// Click a region whose linked Location has children (via part_of).
+	// Resolution per design Decision #3 (2026-05-14):
+	//   - 0 drillable children → no-op (region popup behavior unchanged)
+	//   - exactly 1 child with a map → drill into that child's active variant
+	//   - exactly 1 child without a map → "Create a map for X?" CTA
+	//   - multiple children → defer (handled by popup chooser added in Step 7)
+	// Navigate to a Location's active variant. Deliberately does NOT mutate
+	// the `entityId` prop: that prop is the *external* deep-link signal watched
+	// by the reactive effect below. Mutating it from in-component navigation
+	// causes a feedback loop — the parent's prop expression keeps re-supplying
+	// the original entityId, which trips the watcher into switching the map
+	// back. switchMap is enough; breadcrumb + active map both derive from
+	// activeMap.locationId, not from entityId.
+	function drillIntoLocation(locationId: string) {
+		const variant = resolveActiveVariant($worldMaps, locationId, $playhead);
+		if (variant) {
+			switchMap(variant.id);
+			return true;
+		}
+		return false;
+	}
+
+	function navigateBreadcrumb(locationId: string) {
+		drillIntoLocation(locationId);
+	}
+
+	async function acceptCreateMapOffer() {
+		if (!createMapOffer) return;
+		const offer = createMapOffer;
+		createMapOffer = null;
+		const created = await worldMapStore.createMap(`${offer.childName} map`, offer.childId);
+		await switchMap(created.id);
+	}
+
+	function dismissCreateMapOffer() {
+		createMapOffer = null;
+	}
 
 	// ── Scene scope helpers ──────────────────────────────────────────────────
 
@@ -376,7 +485,23 @@
 		const locHtml = locName && region.locationId
 			? `<button class="region-popup-name" data-location-id="${region.locationId}">${locName}</button>`
 			: '<span class="region-popup-name">Unlinked region</span>';
-		return `<div class="region-popup">${locHtml}<div class="region-popup-actions"><button class="region-popup-btn" data-action="edit" data-region-id="${region.id}">Edit</button><button class="region-popup-btn region-popup-btn-danger" data-action="delete" data-region-id="${region.id}">Delete</button></div></div>`;
+
+		// Drill-down: clicking the region's linked Location should descend into
+		// that Location's own map (one level deeper than the current map). If
+		// the Location has no map yet, surface the "Create map for X" CTA.
+		// Skip the affordance when the region links to the current map's
+		// anchor Location (drilling would be a no-op).
+		let drillHtml = '';
+		if (region.locationId && region.locationId !== activeMap?.locationId) {
+			const loc = $entities.find((e) => e.id === region.locationId);
+			if (loc) {
+				const locVariant = resolveActiveVariant($worldMaps, region.locationId, $playhead);
+				const verb = locVariant ? 'Zoom in to' : 'Create map for';
+				drillHtml = `<button class="region-popup-btn region-popup-btn-drill" data-action="drill" data-location-id="${region.locationId}">${verb} ${loc.name}</button>`;
+			}
+		}
+
+		return `<div class="region-popup">${locHtml}${drillHtml}<div class="region-popup-actions"><button class="region-popup-btn" data-action="edit" data-region-id="${region.id}">Edit</button><button class="region-popup-btn region-popup-btn-danger" data-action="delete" data-region-id="${region.id}">Delete</button></div></div>`;
 	}
 
 	function startEditRegion(regionId: string) {
@@ -416,6 +541,10 @@
 				}
 			}
 		}
+		// The server may have dropped an implied part_of edge — refresh the
+		// store so breadcrumb + drill-down stop pretending the sublocation
+		// is still part of this map's anchor.
+		await relationships.load();
 		if (editingRegionId === regionId) resetRegionForm();
 	}
 
@@ -541,6 +670,11 @@
 			}
 		}
 
+		// The server may have just upserted (or dropped) the implied part_of
+		// edge between region.locationId and this map's anchor. Refresh so the
+		// breadcrumb/drill-down hierarchy sees the new sublocation.
+		await relationships.load();
+
 		// Write intervals for the selected location
 		if (saveLocationId && saveSceneIds.size > 0) {
 			// Clear existing intervals for this location first (both create and edit)
@@ -588,6 +722,90 @@
 		renamingMapName = null;
 	}
 
+	// ── Variant editor ───────────────────────────────────────────────────────
+
+	function variantLabel(map: typeof activeMap): string {
+		if (!map) return '';
+		if (!map.locationId) return 'Unlinked';
+		if (map.startActId === null && map.endActId === null) return 'Default variant';
+		const startAct = $entities.find((e) => e.id === map.startActId);
+		const endAct = $entities.find((e) => e.id === map.endActId);
+		const startScene = map.startSceneId
+			? $entities.find((e) => e.id === map.startSceneId)
+			: null;
+		const endScene = map.endSceneId
+			? $entities.find((e) => e.id === map.endSceneId)
+			: null;
+		const startStr = startScene
+			? `${startAct?.name ?? '?'} · ${startScene.name}`
+			: (startAct?.name ?? '?');
+		const endStr = endScene
+			? `${endAct?.name ?? '?'} · ${endScene.name}`
+			: (endAct?.name ?? '?');
+		return `${startStr} → ${endStr}`;
+	}
+
+	function openVariantForm() {
+		if (!activeMap) return;
+		const isDefault = activeMap.startActId === null && activeMap.endActId === null;
+		variantFormIsDefault = isDefault;
+		variantFormStartActId = activeMap.startActId;
+		variantFormStartSceneId = activeMap.startSceneId;
+		variantFormEndActId = activeMap.endActId;
+		variantFormEndSceneId = activeMap.endSceneId;
+		variantFormError = '';
+		showVariantForm = true;
+	}
+
+	function closeVariantForm() {
+		showVariantForm = false;
+		variantFormError = '';
+	}
+
+	async function saveVariant() {
+		if (!activeMapId) return;
+		variantFormError = '';
+		const payload = variantFormIsDefault
+			? {
+					startActId: null,
+					startSceneId: null,
+					endActId: null,
+					endSceneId: null
+				}
+			: {
+					startActId: variantFormStartActId,
+					startSceneId: variantFormStartSceneId,
+					endActId: variantFormEndActId,
+					endSceneId: variantFormEndSceneId
+				};
+
+		if (!variantFormIsDefault) {
+			if (!payload.startActId || !payload.endActId) {
+				variantFormError = 'Pick a start and end Act for a scoped variant';
+				return;
+			}
+		}
+
+		try {
+			await worldMapStore.updateMap(activeMapId, payload);
+			showVariantForm = false;
+		} catch (err) {
+			variantFormError = (err as Error).message || 'Save failed';
+		}
+	}
+
+	async function handleDuplicate() {
+		if (!activeMapId || duplicating) return;
+		duplicating = true;
+		try {
+			const clone = await worldMapStore.duplicateMap(activeMapId);
+			await switchMap(clone.id);
+		} catch (err) {
+			console.error('Duplicate map failed:', err);
+		}
+		duplicating = false;
+	}
+
 	const PALETTE = ['#e8a838', '#3b82f6', '#ef4444', '#22c55e', '#a855f7', '#ec4899', '#f97316', '#06b6d4'];
 </script>
 
@@ -602,11 +820,35 @@
 	     once on open and survives the hasImage transition AND the brief
 	     activeMap=null gap during map delete); overlay the upload prompt
 	     on top when no image is imported yet. -->
-	<div class="map-wrapper">
+	<div
+		class="map-wrapper"
+		class:has-breadcrumb={breadcrumbAncestors.length > 0 && activeMap}
+	>
+		{#if breadcrumbAncestors.length > 0 && activeMap}
+			<nav class="map-breadcrumb" aria-label="Location hierarchy">
+				{#each breadcrumbAncestors as ancestor (ancestor.id)}
+					<button
+						type="button"
+						class="breadcrumb-link"
+						onclick={() => navigateBreadcrumb(ancestor.id)}
+					>
+						{ancestor.name}
+					</button>
+					<span class="breadcrumb-sep" aria-hidden="true">›</span>
+				{/each}
+				<span class="breadcrumb-current">
+					{$entities.find((e) => e.id === activeMap.locationId)?.name ?? '(current)'}
+				</span>
+			</nav>
+		{/if}
 		<div class="map-toolbar">
-			<select class="map-switcher" onchange={(e) => switchMap((e.target as HTMLSelectElement).value)}>
+			<select
+				class="map-switcher"
+				value={activeMapId}
+				onchange={(e) => switchMap((e.target as HTMLSelectElement).value)}
+			>
 				{#each $worldMaps as m}
-					<option value={m.id} selected={m.id === activeMapId}>{m.name}</option>
+					<option value={m.id}>{m.name}</option>
 				{/each}
 			</select>
 			{#if renamingMapName !== null}
@@ -661,6 +903,25 @@
 						<option value={loc.id}>{loc.name}</option>
 					{/each}
 				</select>
+				{#if activeMap.locationId}
+					<button
+						class="map-variant-chip"
+						onclick={openVariantForm}
+						title="Edit variant scene range"
+						aria-label="Edit variant scene range"
+					>
+						{variantLabel(activeMap)}
+					</button>
+				{/if}
+				<button
+					class="btn-icon"
+					onclick={handleDuplicate}
+					disabled={duplicating}
+					title="Duplicate this map (clones regions; clears variant range)"
+					aria-label="Duplicate map"
+				>
+					⧉
+				</button>
 			{/if}
 		</div>
 		<div class="map-canvas" bind:this={mapContainer}></div>
@@ -690,7 +951,7 @@
 				Linked Location
 				<select bind:value={regionFormLocationId}>
 					<option value={null}>None (unlinked)</option>
-					{#each locations as loc}
+					{#each regionFormLocations as loc}
 						<option value={loc.id}>{loc.name}</option>
 					{/each}
 				</select>
@@ -741,6 +1002,93 @@
 			<div class="modal-actions">
 				<button class="btn-secondary" onclick={handleCancelRegion}>Cancel</button>
 				<button class="btn-primary" onclick={handleSaveRegion}>Save Region</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if createMapOffer}
+	{@const offer = createMapOffer}
+	<div class="modal-overlay" role="dialog" aria-modal="true">
+		<div class="modal-content">
+			<h3>No map for {offer.childName} yet</h3>
+			<p class="variant-help">
+				Drilling in opens the sublocation's map. <strong>{offer.childName}</strong>
+				doesn't have one — want to create one?
+			</p>
+			<div class="modal-actions">
+				<button class="btn-secondary" onclick={dismissCreateMapOffer}>Not now</button>
+				<button class="btn-primary" onclick={acceptCreateMapOffer}>
+					Create a map for {offer.childName}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if showVariantForm && activeMap}
+	<div class="modal-overlay" role="dialog" aria-modal="true">
+		<div class="modal-content">
+			<h3>Variant range</h3>
+			<p class="variant-help">
+				Which story-time slice does this map depict? Default variant shows whenever
+				no scoped variant covers the playhead. A single-Act variant is fine — pick
+				the same Act for start and end.
+			</p>
+
+			<label class="variant-default">
+				<input type="checkbox" bind:checked={variantFormIsDefault} />
+				Default variant (no scene range — shows when nothing else covers)
+			</label>
+
+			{#if !variantFormIsDefault}
+				<div class="variant-grid">
+					<label>
+						Start act
+						<select bind:value={variantFormStartActId}>
+							<option value={null}>—</option>
+							{#each acts as act}
+								<option value={act.id}>{act.name}</option>
+							{/each}
+						</select>
+					</label>
+					<label>
+						Start scene (optional)
+						<select bind:value={variantFormStartSceneId}>
+							<option value={null}>—</option>
+							{#each (variantFormStartActId ? scenesByAct.get(variantFormStartActId) ?? [] : []) as scene}
+								<option value={scene.id}>{scene.name}</option>
+							{/each}
+						</select>
+					</label>
+					<label>
+						End act
+						<select bind:value={variantFormEndActId}>
+							<option value={null}>—</option>
+							{#each acts as act}
+								<option value={act.id}>{act.name}</option>
+							{/each}
+						</select>
+					</label>
+					<label>
+						End scene (optional)
+						<select bind:value={variantFormEndSceneId}>
+							<option value={null}>—</option>
+							{#each (variantFormEndActId ? scenesByAct.get(variantFormEndActId) ?? [] : []) as scene}
+								<option value={scene.id}>{scene.name}</option>
+							{/each}
+						</select>
+					</label>
+				</div>
+			{/if}
+
+			{#if variantFormError}
+				<p class="variant-error">{variantFormError}</p>
+			{/if}
+
+			<div class="modal-actions">
+				<button class="btn-secondary" onclick={closeVariantForm}>Cancel</button>
+				<button class="btn-primary" onclick={saveVariant}>Save Variant</button>
 			</div>
 		</div>
 	</div>
@@ -797,6 +1145,12 @@
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 	}
 
+	.map-wrapper.has-breadcrumb .map-toolbar {
+		/* Breadcrumb bar sits in normal flow above the canvas; nudge the
+		   absolutely-positioned toolbar below it so the two don't overlap. */
+		top: 36px;
+	}
+
 	.map-switcher,
 	.map-location-picker {
 		background: var(--color-surface);
@@ -810,6 +1164,108 @@
 	.map-location-picker {
 		margin-left: auto;
 		max-width: 180px;
+	}
+
+	.map-breadcrumb {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 4px 6px;
+		padding: 4px 10px;
+		background: var(--color-surface, transparent);
+		border-bottom: 1px solid var(--color-border, #2a2a2a);
+		font-size: 11px;
+		color: var(--color-text-muted, #6b7280);
+	}
+
+	.breadcrumb-link {
+		background: none;
+		border: none;
+		color: var(--color-text-muted, #6b7280);
+		font-size: 11px;
+		font-family: inherit;
+		padding: 0;
+		cursor: pointer;
+	}
+
+	.breadcrumb-link:hover {
+		color: var(--color-accent);
+		text-decoration: underline;
+	}
+
+	.breadcrumb-sep {
+		color: var(--color-text-muted, #6b7280);
+		opacity: 0.6;
+	}
+
+	.breadcrumb-current {
+		color: var(--color-text);
+		font-weight: 600;
+	}
+
+	.map-variant-chip {
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-rel-loc, var(--color-border));
+		border-radius: 12px;
+		padding: 2px 10px;
+		font-size: 12px;
+		font-family: inherit;
+		cursor: pointer;
+		max-width: 220px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.map-variant-chip:hover {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
+	.variant-help {
+		margin: 0 0 12px 0;
+		font-size: 12px;
+		color: var(--color-text-muted, #6b7280);
+	}
+
+	.variant-default {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 13px;
+		margin-bottom: 12px;
+		cursor: pointer;
+	}
+
+	.variant-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 10px 12px;
+	}
+
+	.variant-grid label {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		font-size: 11px;
+		color: var(--color-text-muted, #6b7280);
+	}
+
+	.variant-grid select {
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		padding: 4px 6px;
+		font-size: 12px;
+		font-family: inherit;
+	}
+
+	.variant-error {
+		margin: 10px 0 0 0;
+		color: var(--color-rel-rival, #ef4444);
+		font-size: 12px;
 	}
 
 	.map-name-input {
@@ -1081,5 +1537,19 @@
 	:global(.region-popup-btn-danger:hover) {
 		background: #c0392b;
 		color: #fff;
+	}
+	:global(.region-popup-btn-drill) {
+		align-self: stretch;
+		color: var(--color-accent, #e8a838);
+		border-color: var(--color-accent, #e8a838);
+	}
+	:global(.region-popup-btn-drill:hover) {
+		background: var(--color-accent, #e8a838);
+		color: #1a1a1a;
+	}
+	:global(.region-popup-hint) {
+		font-size: 11px;
+		color: var(--color-text-muted, #6b7280);
+		font-style: italic;
 	}
 </style>

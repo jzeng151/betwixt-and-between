@@ -3,6 +3,7 @@ import { worldMaps, mapRegions, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
+import { ensurePartOf } from '$lib/server/location-hierarchy.js';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
@@ -58,10 +59,25 @@ export const POST: RequestHandler = async (event) => {
 	if (typeof locationId === 'string') values.locationId = locationId;
 	if (typeof color === 'string') values.color = color;
 
+	// Insert + part_of upsert are wrapped in a single transaction so a cycle /
+	// single-parent / type failure in ensurePartOf rolls back the region row.
+	// Otherwise a retry creates a duplicate region while the implied edge is
+	// still missing.
+	let created;
 	try {
-		const [created] = await db.insert(mapRegions).values(values).returning();
-		return json(created, { status: 201 });
+		created = await db.transaction(async (tx) => {
+			const [row] = await tx.insert(mapRegions).values(values).returning();
+			if (typeof locationId === 'string' && map.locationId) {
+				await ensurePartOf(tx, userId, locationId, map.locationId);
+			}
+			return row;
+		});
 	} catch (err) {
+		// SvelteKit HttpError thrown from ensurePartOf surfaces .status; preserve it.
+		const status = (err as { status?: number }).status;
+		if (typeof status === 'number') throw err;
 		error(400, (err as Error).message);
 	}
+
+	return json(created, { status: 201 });
 };

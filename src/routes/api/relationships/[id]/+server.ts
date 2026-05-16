@@ -3,6 +3,7 @@ import { relationships } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { resolveRelationshipBounds } from '$lib/server/intervals.js';
+import { assertPartOfInvariants } from '$lib/server/location-hierarchy.js';
 import type { RequestHandler } from './$types';
 
 export const PATCH: RequestHandler = async (event) => {
@@ -70,6 +71,13 @@ export const PATCH: RequestHandler = async (event) => {
 		}
 	}
 
+	// Validate part_of invariants when the (possibly new) type is part_of.
+	// PATCH doesn't accept fromId/toId, so endpoints are pinned to the existing row.
+	const effectiveType = type !== undefined ? type : rel.type;
+	if (effectiveType === 'part_of') {
+		await assertPartOfInvariants(db, userId, rel.fromId, rel.toId, rel.id);
+	}
+
 	const patch: Partial<typeof rel> = {
 		startActId: mergedStartActId,
 		startSceneId: mergedStartSceneId,
@@ -91,8 +99,16 @@ export const PATCH: RequestHandler = async (event) => {
 			.returning();
 	} catch (err) {
 		const code = (err as { code?: string }).code ?? '';
-		const msg = (err as Error).message ?? '';
-		if (code === '23505' || msg.includes('unique') || msg.includes('duplicate')) {
+		const causeCode = (err as { cause?: { code?: string } }).cause?.code ?? '';
+		const msg = `${(err as Error).message ?? ''} ${(err as { cause?: { message?: string } }).cause?.message ?? ''}`;
+		if (
+			code === '23505' ||
+			causeCode === '23505' ||
+			msg.includes('relationships_one_part_of_parent')
+		) {
+			if (msg.includes('relationships_one_part_of_parent')) {
+				error(409, 'This location already has a parent — remove the existing part_of edge first');
+			}
 			error(409, 'A relationship with these temporal bounds already exists');
 		}
 		throw err;

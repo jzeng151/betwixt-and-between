@@ -17,6 +17,7 @@
  */
 
 import { PGlite } from '@electric-sql/pglite';
+import { btree_gist } from '@electric-sql/pglite/contrib/btree_gist';
 import { drizzle } from 'drizzle-orm/pglite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -50,7 +51,10 @@ function loadMigrations(): string[] {
 const MIGRATION_STATEMENTS = loadMigrations();
 
 export async function createTestDb() {
-	const client = new PGlite();
+	// btree_gist is needed for the world_maps variant EXCLUDE constraint
+	// (migration 0009). PGlite ships the extension bundle but only loads
+	// it when explicitly registered here.
+	const client = new PGlite({ extensions: { btree_gist } });
 	await client.waitReady;
 	for (const stmt of MIGRATION_STATEMENTS) {
 		await client.exec(stmt);

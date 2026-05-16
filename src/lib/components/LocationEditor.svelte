@@ -23,6 +23,11 @@
 	import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
 	import { windowStore } from '$lib/stores/windows.js';
 	import { CHARACTER_COLORS } from '$lib/timeline-v2-helpers.js';
+	import {
+		buildHierarchyIndex,
+		getChildren,
+		getParent
+	} from '$lib/location-hierarchy.js';
 
 	interface Props {
 		entityId: string;
@@ -37,6 +42,83 @@
 
 	const entity = $derived($entities.find((e) => e.id === entityId));
 	const linkedMaps = $derived($worldMaps.filter((m) => m.locationId === entityId));
+
+	// Location-hierarchy state — derived from part_of relationships
+	const hierarchyIndex = $derived(buildHierarchyIndex($relationships));
+	const parentId = $derived(getParent(hierarchyIndex, entityId));
+	const parentEntity = $derived(
+		parentId ? $entities.find((e) => e.id === parentId) ?? null : null
+	);
+	const childIds = $derived(getChildren(hierarchyIndex, entityId));
+	const childEntities = $derived(
+		childIds
+			.map((id) => $entities.find((e) => e.id === id))
+			.filter((e): e is NonNullable<typeof e> => e !== undefined)
+	);
+	// Candidate parents = every other Location entity not already a descendant.
+	// Descendants exclude both `entityId` and anything reachable via childrenOf
+	// chains so the picker cannot create a cycle (server would reject anyway).
+	const descendantIds = $derived.by(() => {
+		const out = new Set<string>([entityId]);
+		const queue = [entityId];
+		while (queue.length > 0) {
+			const cur = queue.shift()!;
+			for (const child of getChildren(hierarchyIndex, cur)) {
+				if (!out.has(child)) {
+					out.add(child);
+					queue.push(child);
+				}
+			}
+		}
+		return out;
+	});
+	const parentCandidates = $derived(
+		$entities.filter((e) => e.type === 'Location' && !descendantIds.has(e.id))
+	);
+
+	// part_of relationship row whose `from` is THIS location (single-parent invariant
+	// guarantees at most one). Used to delete / replace on picker change.
+	const currentPartOfRel = $derived(
+		$relationships.find((r) => r.type === 'part_of' && r.fromId === entityId) ?? null
+	);
+
+	async function setParent(newParentId: string | null) {
+		// Single-parent: must clear the existing edge before creating a new one
+		// (server's single-parent invariant rejects two simultaneous part_of rows
+		// for the same child). If the new edge fails server validation we
+		// restore the old one so a failed edit can't leave the Location stranded
+		// without a parent.
+		const previous = currentPartOfRel;
+		if (previous) {
+			await relationships.deleteRelationship(previous.id);
+		}
+		if (!newParentId) return;
+		try {
+			await relationships.createRelationship(entityId, newParentId, 'part_of');
+		} catch (err) {
+			if (previous) {
+				try {
+					await relationships.createRelationship(previous.fromId, previous.toId, 'part_of');
+				} catch {
+					// Restore failed (e.g. another tab raced). Force a reload so the
+					// UI shows server truth instead of a stale optimistic state.
+					await relationships.load();
+				}
+			} else {
+				await relationships.load();
+			}
+			throw err;
+		}
+	}
+
+	function onParentChange(event: Event) {
+		const value = (event.target as HTMLSelectElement).value;
+		void setParent(value === '' ? null : value);
+	}
+
+	function openChild(childId: string) {
+		windowStore.open('entity-detail', childId);
+	}
 
 	// Open the actual WorldMap app window, keyed by this Location so its
 	// entityId effect resolves to a map with locationId === entityId.
@@ -94,6 +176,43 @@
 		swatchOptions={colorSwatches}
 	/>
 
+	<section class="hierarchy-section" aria-label="Location hierarchy">
+		<p class="section-label">Part of</p>
+		{#if readOnly}
+			<p class="hierarchy-readonly">
+				{parentEntity ? parentEntity.name : 'No parent location'}
+			</p>
+		{:else}
+			<select
+				class="hierarchy-select"
+				value={parentId ?? ''}
+				onchange={onParentChange}
+				aria-label="Select parent location"
+			>
+				<option value="">— no parent —</option>
+				{#each parentCandidates as candidate (candidate.id)}
+					<option value={candidate.id}>{candidate.name}</option>
+				{/each}
+			</select>
+		{/if}
+
+		{#if childEntities.length > 0}
+			<p class="section-label" style="margin-top: 6px;">Sublocations</p>
+			<div class="chip-row">
+				{#each childEntities as child (child.id)}
+					<button
+						type="button"
+						class="sublocation-chip"
+						onclick={() => openChild(child.id)}
+						title="Open {child.name}"
+					>
+						{child.name}
+					</button>
+				{/each}
+			</div>
+		{/if}
+	</section>
+
 	<section class="maps-section" aria-label="Maps">
 		<p class="section-label">Maps</p>
 		{#if linkedMaps.length === 0}
@@ -146,10 +265,46 @@
 	}
 
 	.maps-section,
-	.linked-section {
+	.linked-section,
+	.hierarchy-section {
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+	}
+
+	.hierarchy-select {
+		align-self: flex-start;
+		background: var(--color-surface, transparent);
+		color: var(--color-text);
+		border: 1px solid var(--color-border, #555);
+		border-radius: 4px;
+		padding: 4px 8px;
+		font-size: 11px;
+		font-family: inherit;
+		min-width: 180px;
+	}
+
+	.hierarchy-readonly {
+		margin: 0;
+		font-size: 11px;
+		color: var(--color-text-muted, #6b7280);
+		font-style: italic;
+	}
+
+	.sublocation-chip {
+		background: var(--color-surface, transparent);
+		color: var(--color-text);
+		border: 1px solid var(--color-rel-loc, var(--color-border, #555));
+		border-radius: 12px;
+		padding: 2px 8px;
+		font-size: 11px;
+		font-family: inherit;
+		cursor: pointer;
+	}
+
+	.sublocation-chip:hover {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
 	}
 
 	.maps-cta {

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0.0] - 2026-05-14
+
+### Added
+- **World Map v2 — Step 2 (drill-down navigation).** Click a region whose linked Location has exactly one `part_of` child Location with a map → drill into that child's active variant. If the child has no map, a "Create a map for X?" affordance offers to create one inline. A breadcrumb bar above the toolbar shows the ancestor chain via `part_of`, each ancestor clickable to pop back up.
+- **World Map v2 — Step 3 (map variants).** A single Location can now be depicted by multiple maps each scoped to a story-time range. The variant chip in the toolbar opens a modal with a Default-variant checkbox + four FK dropdowns (start act / start scene / end act / end scene). Variant resolution at render-time picks the variant whose `[start_position, end_position)` covers the playhead; default variant (all-NULL bounds) wins as fallback. Auto-select effects route deep-links through `resolveActiveVariant`.
+- **`part_of` relationship kind** (Location → Location, child → parent). Wired through `relationship-colors`, `edge-policy`, and the StoryGraph create-form list. Single-parent invariant in v2; cycles rejected at write time.
+- **LocationEditor "Part of" picker + Sublocations list.** Select the parent Location from a dropdown (filtered to non-descendants). Incoming children render as clickable chips that open the child's EntityDetail.
+- **Duplicate-map endpoint** (`POST /api/maps/[id]/duplicate`) clones a map row + all its regions. Variant bounds are intentionally NOT carried over so the clone starts as a default variant; the UI prompts for a new range. Toolbar "⧉" button invokes it and switches to the clone.
+- **DB-level integrity for variants (M9).** Migration `0009_world_map_v2_variants_and_part_of.sql` adds:
+  - `btree_gist` extension (PGlite ships it as a contrib bundle; test harness now loads it).
+  - `world_maps_variant_no_overlap` EXCLUDE constraint (DEFERRABLE INITIALLY DEFERRED so M11 reorder cascades can transiently overlap inside a transaction).
+  - `world_maps_variant_position_order` CHECK (`start_position < end_position` when both set).
+  - `world_maps_one_default_per_location` partial-unique index.
+- **M11 reorder cascade extension.** `recomputeAllIntervals` now propagates into `recomputeWorldMapVariantsAll` (lazy-imported to break the world-maps → intervals cycle) so Act-position changes atomically refresh derived variant positions.
+- **18 integration tests** covering EXCLUDE / partial-unique / CHECK violations, polymorphic-FK invariants (M10), M11 reorder cascade, `part_of` validation (type / cycle / single-parent), and duplicate-map clone semantics.
+
+### Changed
+- `WorldMap.svelte` auto-select effects (initial + deep-link reactive) now resolve via `resolveActiveVariant` rather than first-match — when a Location has multiple variants, the one covering the current playhead wins.
+- POST/PATCH `/api/maps` accept the four variant FKs; constraint-code translation now unwraps Drizzle's `cause` field so EXCLUDE/CHECK/partial-unique violations return 4xx with helpful messages instead of raw 500s.
+
 ## [0.6.0.0] - 2026-05-14
 
 ### Added

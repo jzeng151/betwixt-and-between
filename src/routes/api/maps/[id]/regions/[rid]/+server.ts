@@ -3,6 +3,7 @@ import { mapRegions, worldMaps, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
+import { ensurePartOf, removeImpliedPartOf } from '$lib/server/location-hierarchy.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -75,11 +76,40 @@ export const PATCH: RequestHandler = async (event) => {
 
 	if (Object.keys(updates).length === 0) error(400, 'No valid fields to update');
 
-	const [updated] = await db
-		.update(mapRegions)
-		.set(updates)
-		.where(eq(mapRegions.id, event.params.rid))
-		.returning();
+	// Region UPDATE + part_of remove/upsert are atomic. Otherwise a partial
+	// failure (ensurePartOf rejects on cycle/single-parent) leaves the region
+	// pointing at the new location with the old implied edge gone and no new
+	// one in place.
+	let updated;
+	try {
+		updated = await db.transaction(async (tx) => {
+			const [row] = await tx
+				.update(mapRegions)
+				.set(updates)
+				.where(eq(mapRegions.id, event.params.rid))
+				.returning();
+
+			const locationChanged =
+				'locationId' in updates && updates.locationId !== region.locationId;
+			if (locationChanged) {
+				const [parentMap] = await tx
+					.select({ locationId: worldMaps.locationId })
+					.from(worldMaps)
+					.where(eq(worldMaps.id, event.params.id));
+				if (parentMap?.locationId && region.locationId) {
+					await removeImpliedPartOf(tx, userId, region.locationId, parentMap.locationId);
+				}
+				if (parentMap?.locationId && typeof updates.locationId === 'string') {
+					await ensurePartOf(tx, userId, updates.locationId, parentMap.locationId);
+				}
+			}
+			return row;
+		});
+	} catch (err) {
+		const status = (err as { status?: number }).status;
+		if (typeof status === 'number') throw err;
+		error(400, (err as Error).message);
+	}
 
 	return json(updated);
 };
@@ -90,6 +120,22 @@ export const DELETE: RequestHandler = async (event) => {
 	const region = await assertOwnedRegion(db, event.params.id, event.params.rid, userId);
 	if (!region) error(404, 'Region not found');
 
-	await db.delete(mapRegions).where(eq(mapRegions.id, event.params.rid));
+	// Region DELETE + implied edge cleanup are atomic. The orphan check
+	// (cross-map sibling lookup) and the edge delete must see a consistent
+	// view: if a concurrent region INSERT lands between them outside a tx,
+	// we could wrongly drop an edge that should still hold.
+	await db.transaction(async (tx) => {
+		await tx.delete(mapRegions).where(eq(mapRegions.id, event.params.rid));
+		if (region.locationId) {
+			const [parentMap] = await tx
+				.select({ locationId: worldMaps.locationId })
+				.from(worldMaps)
+				.where(eq(worldMaps.id, event.params.id));
+			if (parentMap?.locationId) {
+				await removeImpliedPartOf(tx, userId, region.locationId, parentMap.locationId);
+			}
+		}
+	});
+
 	return new Response(null, { status: 204 });
 };

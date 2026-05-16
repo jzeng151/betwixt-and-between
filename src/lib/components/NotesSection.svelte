@@ -104,6 +104,8 @@
 						}}
 					>
 						<span class="caret">{isOpen ? '▼' : '▶'}</span>
+						<!-- svelte-ignore a11y_click_events_have_key_events -->
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<span class="note-title" onclick={(e) => e.stopPropagation()}>
 							{#if readOnly}
 								<span class="note-title-text">{note.name}</span>
