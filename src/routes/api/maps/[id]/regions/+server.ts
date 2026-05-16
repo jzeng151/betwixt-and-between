@@ -59,18 +59,24 @@ export const POST: RequestHandler = async (event) => {
 	if (typeof locationId === 'string') values.locationId = locationId;
 	if (typeof color === 'string') values.color = color;
 
+	// Insert + part_of upsert are wrapped in a single transaction so a cycle /
+	// single-parent / type failure in ensurePartOf rolls back the region row.
+	// Otherwise a retry creates a duplicate region while the implied edge is
+	// still missing.
 	let created;
 	try {
-		[created] = await db.insert(mapRegions).values(values).returning();
+		created = await db.transaction(async (tx) => {
+			const [row] = await tx.insert(mapRegions).values(values).returning();
+			if (typeof locationId === 'string' && map.locationId) {
+				await ensurePartOf(tx, userId, locationId, map.locationId);
+			}
+			return row;
+		});
 	} catch (err) {
+		// SvelteKit HttpError thrown from ensurePartOf surfaces .status; preserve it.
+		const status = (err as { status?: number }).status;
+		if (typeof status === 'number') throw err;
 		error(400, (err as Error).message);
-	}
-
-	// Linking a region to a Location implies that Location is part_of the
-	// map's anchor Location. Upsert the part_of edge so breadcrumbs and
-	// drill-down reflect the hierarchy the user just authored.
-	if (typeof locationId === 'string' && map.locationId) {
-		await ensurePartOf(db, userId, locationId, map.locationId);
 	}
 
 	return json(created, { status: 201 });

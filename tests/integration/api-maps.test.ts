@@ -882,6 +882,105 @@ describe('region → implied part_of edge', () => {
 	});
 });
 
+describe('removeImpliedPartOf — cross-map sibling check (Codex P1)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	it('preserves the part_of edge when a sibling variant map still draws the child region', async () => {
+		const polygon = [
+			[0, 0],
+			[10, 0],
+			[10, 10],
+			[0, 10]
+		];
+
+		const { seedActs } = await import('../helpers/test-db.js');
+		const { act0, act1, act2 } = await seedActs(currentDb, userId);
+
+		const [parent] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Parent', position: 0 })
+			.returning();
+		const [child] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Child', position: 1 })
+			.returning();
+
+		// Two non-overlapping variant maps for the same parent location.
+		// Bounds [act0,act0] and [act2,act2] — different position ranges,
+		// neither is a default, so the one-default-per-location and
+		// variant-no-overlap constraints both pass.
+		const mapA = await readJson(
+			await CREATE_MAP(
+				mkEvent({
+					body: {
+						name: 'Parent map A',
+						locationId: parent.id,
+						startActId: act0,
+						endActId: act0
+					}
+				})
+			)
+		);
+		const mapB = await readJson(
+			await CREATE_MAP(
+				mkEvent({
+					body: {
+						name: 'Parent map B',
+						locationId: parent.id,
+						startActId: act2,
+						endActId: act2
+					}
+				})
+			)
+		);
+		void act1;
+
+		// Draw the child on BOTH maps.
+		const regionA = await readJson(
+			await CREATE_REGION(
+				mkEvent({ params: { id: mapA.id }, body: { polygon, locationId: child.id } })
+			)
+		);
+		await CREATE_REGION(
+			mkEvent({ params: { id: mapB.id }, body: { polygon, locationId: child.id } })
+		);
+
+		// The implied edge should exist.
+		const edgeBefore = await currentDb
+			.select()
+			.from(relationships)
+			.where(
+				and(
+					eq(relationships.fromId, child.id),
+					eq(relationships.toId, parent.id),
+					eq(relationships.type, 'part_of')
+				)
+			);
+		expect(edgeBefore).toHaveLength(1);
+
+		// Delete the region on mapA. Edge MUST survive because mapB still draws it.
+		await regionIdRoute.DELETE(
+			mkEvent({ params: { id: mapA.id, rid: regionA.id } })
+		);
+
+		const edgeAfter = await currentDb
+			.select()
+			.from(relationships)
+			.where(
+				and(
+					eq(relationships.fromId, child.id),
+					eq(relationships.toId, parent.id),
+					eq(relationships.type, 'part_of')
+				)
+			);
+		expect(edgeAfter).toHaveLength(1);
+	});
+});
+
 describe('POST /api/maps — scene-FK normalization (Codex P2)', () => {
 	beforeEach(async () => {
 		currentDb = await createTestDb();

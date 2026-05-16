@@ -120,29 +120,31 @@ export async function assertPartOfInvariants(
 }
 
 /**
- * Drop the part_of edge from `fromId` → `toId` ONLY if no region in `mapId`
- * still links to `fromId`. The "region implies part_of" semantic is implied
- * by *at least one* polygon assignment on the anchor's map — if another
- * region still references the location, the implication stands. If none do,
- * the implication is gone and the edge should follow.
+ * Drop the part_of edge from `fromId` → `toId` ONLY if no region on ANY map
+ * whose anchor location is `toId` still links to `fromId`. The "region
+ * implies part_of" semantic is implied by *at least one* polygon assignment
+ * on *any* map anchored at the parent — Step 3 variants mean a single
+ * parent Location may have multiple maps, and the implication holds as long
+ * as any sibling variant still draws the child.
  *
- * The orphan check is scoped to `mapId` (not global), since the same
- * Location may be drawn as multiple polygons on the same map (rare, but
- * legal). A different map's region wouldn't carry this same edge because
- * each map's anchor is different.
+ * Cross-map check is required: scoping the orphan check to a single mapId
+ * would wrongly delete the edge when the user removes a polygon on variant
+ * A even though variant B of the same parent still draws the child.
  */
 export async function removeImpliedPartOf(
 	db: unknown,
 	userId: string,
 	fromId: string | null | undefined,
-	toId: string | null | undefined,
-	mapId: string
+	toId: string | null | undefined
 ): Promise<void> {
 	if (!fromId || !toId) return;
 
 	type SelectableDB = {
 		select: (...args: unknown[]) => {
 			from: (...args: unknown[]) => {
+				innerJoin?: (...args: unknown[]) => {
+					where: (...args: unknown[]) => Promise<Array<Record<string, unknown>>>;
+				};
 				where: (...args: unknown[]) => Promise<Array<Record<string, unknown>>>;
 			};
 		};
@@ -151,12 +153,17 @@ export async function removeImpliedPartOf(
 		};
 	};
 
-	const { mapRegions } = await import('./db/schema.js');
+	const { mapRegions, worldMaps } = await import('./db/schema.js');
 	const stillLinked = (await (db as SelectableDB)
 		.select({ id: mapRegions.id })
 		.from(mapRegions)
+		.innerJoin!(worldMaps, eq(worldMaps.id, mapRegions.mapId))
 		.where(
-			and(eq(mapRegions.mapId, mapId), eq(mapRegions.locationId, fromId))
+			and(
+				eq(worldMaps.userId, userId),
+				eq(worldMaps.locationId, toId),
+				eq(mapRegions.locationId, fromId)
+			)
 		)) as Array<{ id: string }>;
 	if (stillLinked.length > 0) return;
 
