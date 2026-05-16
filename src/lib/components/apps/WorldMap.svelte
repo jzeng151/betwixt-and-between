@@ -428,7 +428,10 @@
 	$effect(() => {
 		const locId = activeMap?.locationId;
 		if (!locId) {
-			void placementsStore.load({ locationId: '__none__' });
+			// No anchor Location → no placements to show. Clear the store locally
+			// rather than issuing a request the server would reject as invalid
+			// UUID syntax (locationId column is uuid, no sentinel works).
+			placementsStore.reset();
 			return;
 		}
 		void placementsStore.load({ locationId: locId });

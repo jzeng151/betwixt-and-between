@@ -700,6 +700,16 @@ export async function recomputeIntervalsForAct(db: DB, actId: string, userId: st
 			.where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
 		updated++;
 	}
+
+	// Scene-anchored map_placements also need their derived positions refreshed
+	// after a scene-within-act mutation (Step 4, Codex #2). Coarse: walk the
+	// user's placement rows. Placements are expected to be few per user; the
+	// per-row recompute short-circuits when nothing drifts.
+	// Note: relationships' scene-anchored rows have the same pre-existing gap
+	// — they only refresh inside recomputeAllIntervals. Out of scope here.
+	const { recomputePlacementBoundsAll } = await import('./map-placements.js');
+	await recomputePlacementBoundsAll(db, userId);
+
 	return updated;
 }
 
@@ -978,6 +988,20 @@ export async function moveSceneToAct(
 			endActId: newActId,
 		})
 		.where(and(eq(intervals.endSceneId, sceneId), eq(intervals.userId, userId)));
+
+	// Mirror the act-FK rewrite onto map_placements anchored to this scene
+	// (Step 4, Codex #2). A placement whose start/end_scene_id is this scene
+	// would otherwise keep pointing at the old parent Act, and playhead
+	// filtering would be wrong until the next full Act-level recompute.
+	const { mapPlacements: mapPlacementsTbl } = await import('./db/schema.js');
+	await db
+		.update(mapPlacementsTbl)
+		.set({ startActId: newActId })
+		.where(and(eq(mapPlacementsTbl.startSceneId, sceneId), eq(mapPlacementsTbl.userId, userId)));
+	await db
+		.update(mapPlacementsTbl)
+		.set({ endActId: newActId })
+		.where(and(eq(mapPlacementsTbl.endSceneId, sceneId), eq(mapPlacementsTbl.userId, userId)));
 
 	if (oldActId !== newActId) {
 		await recomputeIntervalsForAct(db, oldActId, userId);

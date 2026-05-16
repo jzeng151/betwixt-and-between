@@ -80,7 +80,11 @@ function createPlacementsStore() {
 		placements.update((all) => all.filter((p) => p.id !== id));
 	}
 
-	return { subscribe: placements.subscribe, load, create, update, delete: remove };
+	function reset(): void {
+		placements.set([]);
+	}
+
+	return { subscribe: placements.subscribe, load, create, update, delete: remove, reset };
 }
 
 export const mapPlacements = createPlacementsStore();

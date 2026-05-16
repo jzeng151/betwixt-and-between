@@ -114,16 +114,22 @@ export const PATCH: RequestHandler = async (event) => {
 				let startPosition: number | null = null;
 				let endPosition: number | null = null;
 				if (mergedStartActId !== null || mergedEndActId !== null) {
-					const bounds = await resolvePlacementBounds(
-						tx,
-						{
-							startActId: mergedStartActId,
-							startSceneId: mergedStartSceneId,
-							endActId: mergedEndActId,
-							endSceneId: mergedEndSceneId
-						},
-						userId
-					);
+					let bounds: { startPosition: number | null; endPosition: number | null };
+					try {
+						bounds = await resolvePlacementBounds(
+							tx,
+							{
+								startActId: mergedStartActId,
+								startSceneId: mergedStartSceneId,
+								endActId: mergedEndActId,
+								endSceneId: mergedEndSceneId
+							},
+							userId
+						);
+					} catch (e) {
+						if ((e as { status?: number }).status) throw e;
+						error(400, `Invalid placement bounds: ${(e as Error).message}`);
+					}
 					startPosition = bounds.startPosition;
 					endPosition = bounds.endPosition;
 				}

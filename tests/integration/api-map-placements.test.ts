@@ -396,4 +396,69 @@ describe('M11 — placement bounds recompute on Act reorder', () => {
 		expect(after.startPosition).toBeCloseTo(2);
 		expect(after.endPosition).toBeCloseTo(3);
 	});
+
+	it('recomputes placement positions when a scene moves to another act (Codex #2)', async () => {
+		const { moveSceneToAct } = await import('../../src/lib/server/intervals.js');
+		const acts = await seedActs(currentDb, userId);
+		const ch = await seedCharacter();
+		const [sceneInAct0] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Scene', name: 's0', parentId: acts.act0, position: 0 })
+			.returning();
+
+		const created = await readJson(
+			await CREATE_PLACEMENT(
+				mkEvent({
+					body: {
+						placeableId: ch.id,
+						x: 0.1,
+						y: 0.1,
+						startActId: acts.act0,
+						startSceneId: sceneInAct0.id,
+						endActId: acts.act0,
+						endSceneId: sceneInAct0.id
+					}
+				})
+			)
+		);
+		expect(created.startPosition).toBeCloseTo(0);
+		expect(created.endPosition).toBeCloseTo(1);
+
+		await moveSceneToAct(currentDb, sceneInAct0.id, acts.act2, 0, userId);
+
+		const [after] = await currentDb
+			.select()
+			.from(mapPlacements)
+			.where(eq(mapPlacements.id, created.id));
+		expect(after.startActId).toBe(acts.act2);
+		expect(after.endActId).toBe(acts.act2);
+		expect(after.startPosition).toBeCloseTo(2);
+		expect(after.endPosition).toBeCloseTo(3);
+	});
+});
+
+describe('POST/PATCH invalid bounds surface as 400 (Codex #1)', () => {
+	it('POST with mismatched scene parent returns 400, not 500', async () => {
+		const acts = await seedActs(currentDb, userId);
+		const ch = await seedCharacter();
+		// Scene's parent is act0 but the placement anchors to act1 — mismatch.
+		const [sceneInAct0] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Scene', name: 's0', parentId: acts.act0, position: 0 })
+			.returning();
+		await expect(
+			CREATE_PLACEMENT(
+				mkEvent({
+					body: {
+						placeableId: ch.id,
+						x: 0.1,
+						y: 0.1,
+						startActId: acts.act1,
+						startSceneId: sceneInAct0.id,
+						endActId: acts.act1
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
 });

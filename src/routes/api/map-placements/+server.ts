@@ -100,16 +100,25 @@ export const POST: RequestHandler = async (event) => {
 			let startPosition: number | null = null;
 			let endPosition: number | null = null;
 			if (normalizedStartActId !== null || normalizedEndActId !== null) {
-				const bounds = await resolvePlacementBounds(
-					tx,
-					{
-						startActId: normalizedStartActId,
-						startSceneId: normalizedStartSceneId,
-						endActId: normalizedEndActId,
-						endSceneId: normalizedEndSceneId
-					},
-					userId
-				);
+				let bounds: { startPosition: number | null; endPosition: number | null };
+				try {
+					bounds = await resolvePlacementBounds(
+						tx,
+						{
+							startActId: normalizedStartActId,
+							startSceneId: normalizedStartSceneId,
+							endActId: normalizedEndActId,
+							endSceneId: normalizedEndSceneId
+						},
+						userId
+					);
+				} catch (e) {
+					// resolvePlacementBounds / computeIntervalPositions throw plain
+					// Errors on invalid temporal input (start > end, scene parented
+					// to a different act, etc.). Surface as 400 client error.
+					if ((e as { status?: number }).status) throw e;
+					error(400, `Invalid placement bounds: ${(e as Error).message}`);
+				}
 				startPosition = bounds.startPosition;
 				endPosition = bounds.endPosition;
 			}
