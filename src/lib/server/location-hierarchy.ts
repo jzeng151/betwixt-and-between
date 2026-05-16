@@ -27,6 +27,14 @@ type DB = {
 			where: (...args: unknown[]) => Promise<Array<Record<string, unknown>>>;
 		};
 	};
+	insert: (...args: unknown[]) => {
+		values: (...args: unknown[]) => Promise<unknown>;
+	};
+	update: (...args: unknown[]) => {
+		set: (...args: unknown[]) => {
+			where: (...args: unknown[]) => Promise<unknown>;
+		};
+	};
 };
 
 /**
@@ -109,4 +117,122 @@ export async function assertPartOfInvariants(
 		cursor = next;
 	}
 	error(400, 'part_of chain exceeded max hierarchy depth');
+}
+
+/**
+ * Drop the part_of edge from `fromId` → `toId` ONLY if no region in `mapId`
+ * still links to `fromId`. The "region implies part_of" semantic is implied
+ * by *at least one* polygon assignment on the anchor's map — if another
+ * region still references the location, the implication stands. If none do,
+ * the implication is gone and the edge should follow.
+ *
+ * The orphan check is scoped to `mapId` (not global), since the same
+ * Location may be drawn as multiple polygons on the same map (rare, but
+ * legal). A different map's region wouldn't carry this same edge because
+ * each map's anchor is different.
+ */
+export async function removeImpliedPartOf(
+	db: unknown,
+	userId: string,
+	fromId: string | null | undefined,
+	toId: string | null | undefined,
+	mapId: string
+): Promise<void> {
+	if (!fromId || !toId) return;
+
+	type SelectableDB = {
+		select: (...args: unknown[]) => {
+			from: (...args: unknown[]) => {
+				where: (...args: unknown[]) => Promise<Array<Record<string, unknown>>>;
+			};
+		};
+		delete: (...args: unknown[]) => {
+			where: (...args: unknown[]) => Promise<unknown>;
+		};
+	};
+
+	const { mapRegions } = await import('./db/schema.js');
+	const stillLinked = (await (db as SelectableDB)
+		.select({ id: mapRegions.id })
+		.from(mapRegions)
+		.where(
+			and(eq(mapRegions.mapId, mapId), eq(mapRegions.locationId, fromId))
+		)) as Array<{ id: string }>;
+	if (stillLinked.length > 0) return;
+
+	await (db as SelectableDB)
+		.delete(relationships)
+		.where(
+			and(
+				eq(relationships.userId, userId),
+				eq(relationships.fromId, fromId),
+				eq(relationships.toId, toId),
+				eq(relationships.type, 'part_of')
+			)
+		);
+}
+
+/**
+ * Upsert the part_of edge from `fromId` → `toId`. Used by the map-region
+ * write path: assigning a Location to a region inside a map of Location P
+ * implies the assigned Location is part_of P.
+ *
+ * Single-parent invariant: if `fromId` already has a different parent edge,
+ * the existing edge is rewritten to point at `toId` (the polygon assignment
+ * is treated as authoritative). Cycle / type guards still run through
+ * assertPartOfInvariants. No-op when fromId/toId match or either is missing.
+ */
+export async function ensurePartOf(
+	db: unknown,
+	userId: string,
+	fromId: string | null | undefined,
+	toId: string | null | undefined
+): Promise<void> {
+	if (!fromId || !toId || fromId === toId) return;
+
+	const existing = (await (db as DB)
+		.select({ id: relationships.id, toId: relationships.toId })
+		.from(relationships)
+		.where(
+			and(
+				eq(relationships.userId, userId),
+				eq(relationships.fromId, fromId),
+				eq(relationships.type, 'part_of')
+			)
+		)) as Array<{ id: string; toId: string }>;
+
+	if (existing.length > 0 && existing[0].toId === toId) return;
+
+	if (existing.length > 0) {
+		await assertPartOfInvariants(db, userId, fromId, toId, existing[0].id);
+		await (db as DB)
+			.update(relationships)
+			.set({
+				toId,
+				startActId: null,
+				startSceneId: null,
+				endActId: null,
+				endSceneId: null,
+				startPosition: null,
+				endPosition: null
+			})
+			.where(eq(relationships.id, existing[0].id));
+		return;
+	}
+
+	await assertPartOfInvariants(db, userId, fromId, toId);
+	await (db as DB).insert(relationships).values({
+		userId,
+		fromId,
+		toId,
+		type: 'part_of',
+		label: null,
+		startActId: null,
+		startSceneId: null,
+		endActId: null,
+		endSceneId: null,
+		startPosition: null,
+		endPosition: null,
+		revealedAtPosition: null
+	});
 }

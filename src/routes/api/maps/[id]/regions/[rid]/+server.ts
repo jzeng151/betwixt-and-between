@@ -3,6 +3,7 @@ import { mapRegions, worldMaps, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
+import { ensurePartOf, removeImpliedPartOf } from '$lib/server/location-hierarchy.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -81,6 +82,30 @@ export const PATCH: RequestHandler = async (event) => {
 		.where(eq(mapRegions.id, event.params.rid))
 		.returning();
 
+	// Re-assert the part_of edge whenever the region's Location changes.
+	// If the location was unlinked or changed, drop the previous edge if no
+	// other region in this map still references it. Then add the new edge.
+	const locationChanged =
+		'locationId' in updates && updates.locationId !== region.locationId;
+	if (locationChanged) {
+		const [parentMap] = await db
+			.select({ locationId: worldMaps.locationId })
+			.from(worldMaps)
+			.where(eq(worldMaps.id, event.params.id));
+		if (parentMap?.locationId && region.locationId) {
+			await removeImpliedPartOf(
+				db,
+				userId,
+				region.locationId,
+				parentMap.locationId,
+				event.params.id
+			);
+		}
+		if (parentMap?.locationId && typeof updates.locationId === 'string') {
+			await ensurePartOf(db, userId, updates.locationId, parentMap.locationId);
+		}
+	}
+
 	return json(updated);
 };
 
@@ -91,5 +116,24 @@ export const DELETE: RequestHandler = async (event) => {
 	if (!region) error(404, 'Region not found');
 
 	await db.delete(mapRegions).where(eq(mapRegions.id, event.params.rid));
+
+	// Drop the implied part_of edge if this was the last region in this map
+	// referencing region.locationId.
+	if (region.locationId) {
+		const [parentMap] = await db
+			.select({ locationId: worldMaps.locationId })
+			.from(worldMaps)
+			.where(eq(worldMaps.id, event.params.id));
+		if (parentMap?.locationId) {
+			await removeImpliedPartOf(
+				db,
+				userId,
+				region.locationId,
+				parentMap.locationId,
+				event.params.id
+			);
+		}
+	}
+
 	return new Response(null, { status: 204 });
 };

@@ -129,13 +129,22 @@ export const PATCH: RequestHandler = async (event) => {
 		const code = wrapped.code ?? wrapped.cause?.code ?? '';
 		const msg = `${wrapped.message ?? ''} ${(wrapped.cause as { message?: string } | undefined)?.message ?? ''}`;
 		if (code === '23P01' || msg.includes('world_maps_variant_no_overlap')) {
-			error(409, 'A variant for this Location already covers part of that range');
+			error(
+				409,
+				"Couldn't save the variant. Another variant for this Location already covers part of that range."
+			);
 		}
 		if (code === '23505' || msg.includes('world_maps_one_default_per_location')) {
-			error(409, 'A default variant for this Location already exists');
+			error(
+				409,
+				"Couldn't save the variant. A default variant for this Location already exists."
+			);
 		}
 		if (code === '23514' || msg.includes('world_maps_variant_position_order')) {
-			error(400, 'Variant start_position must be strictly less than end_position');
+			error(
+				400,
+				"Couldn't save the variant. The end must come after the start."
+			);
 		}
 		throw err;
 	}

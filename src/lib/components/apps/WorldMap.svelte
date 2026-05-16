@@ -8,12 +8,7 @@
 	import { relationships } from '$lib/stores/relationships.js';
 	import { playhead } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
-	import {
-		buildHierarchyIndex,
-		walkAncestors,
-		getChildren,
-		getParent
-	} from '$lib/location-hierarchy.js';
+	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
 	import { resolveActiveVariant } from '$lib/world-map-variants.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 
@@ -78,6 +73,17 @@
 				return e ? { id: e.id, name: e.name } : null;
 			})
 			.filter((x): x is { id: string; name: string } => x !== null);
+	});
+
+	// Locations valid to link inside the current map's regions: every Location
+	// except the map's own anchor + that anchor's ancestors. Assigning an
+	// ancestor to a region inside its own descendant's map would create a cycle
+	// in the part_of hierarchy.
+	let regionFormLocations = $derived.by(() => {
+		const anchor = activeMap?.locationId ?? null;
+		if (!anchor) return locations;
+		const blocked = new Set<string>([anchor, ...walkAncestors(hierarchyIndex, anchor)]);
+		return locations.filter((l) => !blocked.has(l.id));
 	});
 
 	// Drill-down offer state: a child Location has no map yet — surface CTA.
@@ -336,9 +342,18 @@
 	//   2) Legacy fallback: a region on some map already links to entityId.
 	//   3) First map.
 	let initialSelectionDone = false;
+	// Tracks the last `entityId` prop value the watcher has resolved to a map.
+	// Plain `let` (not $state) so writes don't trigger effect re-runs. The
+	// watcher below compares against it to distinguish a real prop change (new
+	// deep-link) from a reactive re-run caused by internal navigation
+	// (switchMap → activeMapId/$mapRegions change). Without this, the watcher
+	// would force the map back to entityId's variant every time the user
+	// switched maps via the dropdown or drilled into a sublocation.
+	let lastAppliedEntityId: string | undefined = undefined;
 	$effect(() => {
 		if (initialSelectionDone || $worldMaps.length === 0) return;
 		initialSelectionDone = true;
+		lastAppliedEntityId = entityId;
 		if (entityId) {
 			const variant = resolveActiveVariant($worldMaps, entityId, $playhead);
 			if (variant) {
@@ -354,12 +369,13 @@
 		switchMap($worldMaps[0].id);
 	});
 
-	// Reactive entityId changes after the initial selection: switch maps if a
-	// new Location was deep-linked into this same window. Single switchMap call
-	// per flush — no race with the initial-selection effect because that one
-	// has already locked itself out via initialSelectionDone.
+	// React to an external deep-link change (parent rewrote win.entityId) by
+	// switching to that Location's active variant. Internal navigation must
+	// NOT trip this — see `lastAppliedEntityId` above.
 	$effect(() => {
 		if (!entityId || !initialSelectionDone || $worldMaps.length === 0) return;
+		if (entityId === lastAppliedEntityId) return;
+		lastAppliedEntityId = entityId;
 		const variant = resolveActiveVariant($worldMaps, entityId, $playhead);
 		if (variant && variant.id !== activeMapId) {
 			switchMap(variant.id);
@@ -379,40 +395,20 @@
 	//   - exactly 1 child with a map → drill into that child's active variant
 	//   - exactly 1 child without a map → "Create a map for X?" CTA
 	//   - multiple children → defer (handled by popup chooser added in Step 7)
+	// Navigate to a Location's active variant. Deliberately does NOT mutate
+	// the `entityId` prop: that prop is the *external* deep-link signal watched
+	// by the reactive effect below. Mutating it from in-component navigation
+	// causes a feedback loop — the parent's prop expression keeps re-supplying
+	// the original entityId, which trips the watcher into switching the map
+	// back. switchMap is enough; breadcrumb + active map both derive from
+	// activeMap.locationId, not from entityId.
 	function drillIntoLocation(locationId: string) {
 		const variant = resolveActiveVariant($worldMaps, locationId, $playhead);
 		if (variant) {
-			entityId = locationId;
 			switchMap(variant.id);
 			return true;
 		}
 		return false;
-	}
-
-	function tryDrillFromRegionLocation(regionLocationId: string | null) {
-		if (!regionLocationId) return;
-		const children = getChildren(hierarchyIndex, regionLocationId);
-		if (children.length === 0) return;
-
-		const childMaps = children.map((cid) => ({
-			childId: cid,
-			map: resolveActiveVariant($worldMaps, cid, $playhead)
-		}));
-		const withMap = childMaps.filter((c) => c.map !== null);
-
-		if (withMap.length === 1) {
-			drillIntoLocation(withMap[0].childId);
-			return;
-		}
-
-		if (childMaps.length === 1 && !childMaps[0].map) {
-			const child = $entities.find((e) => e.id === childMaps[0].childId);
-			if (child) {
-				createMapOffer = { childId: child.id, childName: child.name };
-			}
-		}
-		// Multiple children OR multiple unmappped children: deferred until
-		// the picker UX lands. Single-click stays select-only in those cases.
 	}
 
 	function navigateBreadcrumb(locationId: string) {
@@ -424,7 +420,6 @@
 		const offer = createMapOffer;
 		createMapOffer = null;
 		const created = await worldMapStore.createMap(`${offer.childName} map`, offer.childId);
-		entityId = offer.childId;
 		await switchMap(created.id);
 	}
 
@@ -491,24 +486,18 @@
 			? `<button class="region-popup-name" data-location-id="${region.locationId}">${locName}</button>`
 			: '<span class="region-popup-name">Unlinked region</span>';
 
-		// Drill-down hint: if the region's linked Location has children, surface
-		// a "Drill into …" affordance. Single drillable child gets a direct
-		// label; multi-child case stays selection-only here (handled by
-		// tryDrillFromRegionLocation on background click).
+		// Drill-down: clicking the region's linked Location should descend into
+		// that Location's own map (one level deeper than the current map). If
+		// the Location has no map yet, surface the "Create map for X" CTA.
+		// Skip the affordance when the region links to the current map's
+		// anchor Location (drilling would be a no-op).
 		let drillHtml = '';
-		if (region.locationId) {
-			const children = getChildren(hierarchyIndex, region.locationId);
-			if (children.length === 1) {
-				const child = $entities.find((e) => e.id === children[0]);
-				const childMap = child
-					? resolveActiveVariant($worldMaps, child.id, $playhead)
-					: null;
-				if (child) {
-					const verb = childMap ? 'Drill into' : 'Create map for';
-					drillHtml = `<button class="region-popup-btn region-popup-btn-drill" data-action="drill" data-location-id="${child.id}">${verb} ${child.name}</button>`;
-				}
-			} else if (children.length > 1) {
-				drillHtml = `<span class="region-popup-hint">${children.length} sublocations — open in Wiki to navigate</span>`;
+		if (region.locationId && region.locationId !== activeMap?.locationId) {
+			const loc = $entities.find((e) => e.id === region.locationId);
+			if (loc) {
+				const locVariant = resolveActiveVariant($worldMaps, region.locationId, $playhead);
+				const verb = locVariant ? 'Zoom in to' : 'Create map for';
+				drillHtml = `<button class="region-popup-btn region-popup-btn-drill" data-action="drill" data-location-id="${region.locationId}">${verb} ${loc.name}</button>`;
 			}
 		}
 
@@ -552,6 +541,10 @@
 				}
 			}
 		}
+		// The server may have dropped an implied part_of edge — refresh the
+		// store so breadcrumb + drill-down stop pretending the sublocation
+		// is still part of this map's anchor.
+		await relationships.load();
 		if (editingRegionId === regionId) resetRegionForm();
 	}
 
@@ -676,6 +669,11 @@
 				console.error('Failed to create region:', err);
 			}
 		}
+
+		// The server may have just upserted (or dropped) the implied part_of
+		// edge between region.locationId and this map's anchor. Refresh so the
+		// breadcrumb/drill-down hierarchy sees the new sublocation.
+		await relationships.load();
 
 		// Write intervals for the selected location
 		if (saveLocationId && saveSceneIds.size > 0) {
@@ -822,7 +820,10 @@
 	     once on open and survives the hasImage transition AND the brief
 	     activeMap=null gap during map delete); overlay the upload prompt
 	     on top when no image is imported yet. -->
-	<div class="map-wrapper">
+	<div
+		class="map-wrapper"
+		class:has-breadcrumb={breadcrumbAncestors.length > 0 && activeMap}
+	>
 		{#if breadcrumbAncestors.length > 0 && activeMap}
 			<nav class="map-breadcrumb" aria-label="Location hierarchy">
 				{#each breadcrumbAncestors as ancestor (ancestor.id)}
@@ -841,9 +842,13 @@
 			</nav>
 		{/if}
 		<div class="map-toolbar">
-			<select class="map-switcher" onchange={(e) => switchMap((e.target as HTMLSelectElement).value)}>
+			<select
+				class="map-switcher"
+				value={activeMapId}
+				onchange={(e) => switchMap((e.target as HTMLSelectElement).value)}
+			>
 				{#each $worldMaps as m}
-					<option value={m.id} selected={m.id === activeMapId}>{m.name}</option>
+					<option value={m.id}>{m.name}</option>
 				{/each}
 			</select>
 			{#if renamingMapName !== null}
@@ -946,7 +951,7 @@
 				Linked Location
 				<select bind:value={regionFormLocationId}>
 					<option value={null}>None (unlinked)</option>
-					{#each locations as loc}
+					{#each regionFormLocations as loc}
 						<option value={loc.id}>{loc.name}</option>
 					{/each}
 				</select>
@@ -1027,7 +1032,8 @@
 			<h3>Variant range</h3>
 			<p class="variant-help">
 				Which story-time slice does this map depict? Default variant shows whenever
-				no scoped variant covers the playhead.
+				no scoped variant covers the playhead. A single-Act variant is fine — pick
+				the same Act for start and end.
 			</p>
 
 			<label class="variant-default">
@@ -1137,6 +1143,12 @@
 		border-radius: 6px;
 		padding: 4px 8px;
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+	}
+
+	.map-wrapper.has-breadcrumb .map-toolbar {
+		/* Breadcrumb bar sits in normal flow above the canvas; nudge the
+		   absolutely-positioned toolbar below it so the two don't overlap. */
+		top: 36px;
 	}
 
 	.map-switcher,

@@ -3,6 +3,7 @@ import { worldMaps, mapRegions, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
+import { ensurePartOf } from '$lib/server/location-hierarchy.js';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
@@ -58,10 +59,19 @@ export const POST: RequestHandler = async (event) => {
 	if (typeof locationId === 'string') values.locationId = locationId;
 	if (typeof color === 'string') values.color = color;
 
+	let created;
 	try {
-		const [created] = await db.insert(mapRegions).values(values).returning();
-		return json(created, { status: 201 });
+		[created] = await db.insert(mapRegions).values(values).returning();
 	} catch (err) {
 		error(400, (err as Error).message);
 	}
+
+	// Linking a region to a Location implies that Location is part_of the
+	// map's anchor Location. Upsert the part_of edge so breadcrumbs and
+	// drill-down reflect the hierarchy the user just authored.
+	if (typeof locationId === 'string' && map.locationId) {
+		await ensurePartOf(db, userId, locationId, map.locationId);
+	}
+
+	return json(created, { status: 201 });
 };
