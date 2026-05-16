@@ -2,8 +2,8 @@
  * intervals — Phase 1A PR 1 chokepoint
  *
  * Single source of truth for ALL writes to the `intervals` table. Raw INSERT or
- * UPDATE outside this file is forbidden — see CONSIDERATIONS.md → "Dual-write
- * invariant strategy."
+ * UPDATE outside this file is forbidden — see docs/adr/0003-premise-4-position-math.md
+ * → "Dual-write invariant strategy".
  *
  * **Multi-tenant scoping (T8b S5', 2026-05-08):** every public function takes
  * a `userId` and scopes every SELECT/UPDATE/DELETE/INSERT by it. Cross-user
@@ -26,7 +26,7 @@
  *      recomputeAllIntervals(db, userId)
  *      Act-mutation handler. Walks every interval owned by user.
  *
- * Math (CONSIDERATIONS.md → "The math, with variable definitions"):
+ * Math (docs/adr/0003-premise-4-position-math.md → "The math"):
  *
  *   Acts at root (parent_id IS NULL, type='Act') are ordered by
  *   `entities.position`. The act's index in that ordering is its position on
@@ -463,8 +463,9 @@ export async function writeInterval(
 		}
 	}
 
-	/* Same-entity overlap rejection (CONSIDERATIONS.md → /plan-eng-review item 1.2,
-	   locked 2026-04-28). Must run after position derivation, before the insert. */
+	/* Same-entity overlap rejection (docs/adr/0003-premise-4-position-math.md →
+	   "Half-open convention" — adjacent intervals must be non-overlapping by
+	   construction). Must run after position derivation, before the insert. */
 	await assertNoOverlap(db, normalized.entityId, derived.startPosition, derived.endPosition, undefined, userId);
 
 	const [created] = await db
@@ -648,7 +649,7 @@ export async function updateInterval(
 /**
  * Recompute positions for every interval anchored to a Scene within `actId`.
  *
- * Branch on scene FK presence (CONSIDERATIONS.md → "Position recomputation rules"):
+ * Branch on scene FK presence (docs/adr/0003-premise-4-position-math.md → "Position recomputation"):
  *   - start_scene_id NOT NULL → re-derive start_position
  *   - start_scene_id IS NULL  → leave start_position UNCHANGED (fraction-positioned, frozen)
  *   - same for end side, independently

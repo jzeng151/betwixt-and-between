@@ -40,3 +40,8 @@ test.db
 
 # User-uploaded map images (R2 in prod, local fs in dev)
 static/maps/
+
+# Engineering docs — generated + locally authored, not tracked.
+# Regenerate the generated ones with `npm run docs:all`.
+# Anchored to root so scripts/docs/ (the generators) is unaffected.
+/docs/

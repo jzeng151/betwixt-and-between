@@ -2,8 +2,9 @@
  * Pure helpers for V2 timeline rendering. Extracted to a non-Svelte file
  * so they can be unit-tested without component-test infrastructure.
  *
- * See CONSIDERATIONS.md → "/plan-design-review resolutions item 3" for
- * the width-breakpoint contract.
+ * The width-breakpoint contract for narrow timeline-bar label rendering
+ * (truncation vs ellipsis vs hidden) is the implementation in this file —
+ * see `formatPresenceRange` and adjacent helpers.
  */
 
 export function actRange(actIndex: number): { start: number; end: number } {
@@ -94,7 +95,7 @@ export function widthClassForBar(widthPx: number): WidthClass {
  * computed start and end positions on the global story-time axis.
  *
  * Positions follow the half-open convention [start, end) per
- * CONSIDERATIONS.md → "Convention: half-open intervals."
+ * docs/adr/0003-premise-4-position-math.md → "Half-open convention".
  *
  * Examples:
  *   (1.0, 2.0)         → "Act 1"                         (full-act presence)

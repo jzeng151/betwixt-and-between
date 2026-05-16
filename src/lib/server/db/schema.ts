@@ -242,7 +242,7 @@ export const windowCanvasState = pgTable(
 // Half-open convention: [start_position, end_position). start inclusive,
 // end exclusive. CHECK enforces start < end (strict).
 //
-// Position math (CONSIDERATIONS.md → "Premise 4"):
+// Position math (docs/adr/0003-premise-4-position-math.md → "The math"):
 //   Act i occupies [i, i + 1)
 //   Scene k of m within Act i occupies [i + k/m, i + (k+1)/m)
 //
@@ -250,9 +250,9 @@ export const windowCanvasState = pgTable(
 // start_scene_id / end_scene_id must reference entities of type='Scene'. Postgres
 // cannot enforce a polymorphic FK constraint cleanly; writeInterval validates at
 // write time + the Vitest invariant test asserts type alignment on every row
-// (CONSIDERATIONS.md → /plan-eng-review resolution item 2).
+// (docs/adr/0003-premise-4-position-math.md → "Trade-offs" → polymorphic FKs).
 //
-// ON DELETE behavior (CONSIDERATIONS.md → "ON DELETE behavior"):
+// ON DELETE behavior (docs/adr/0003-premise-4-position-math.md → "ON DELETE behavior"):
 //   entity_id          → CASCADE (delete character → delete their intervals)
 //   start_act_id       → CASCADE (delete act → intervals starting in it lose meaning)
 //   end_act_id         → CASCADE (delete act → intervals ending in it lose meaning)
