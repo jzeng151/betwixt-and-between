@@ -11,6 +11,10 @@
 	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
 	import { resolveActiveVariant } from '$lib/world-map-variants.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
+	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
+	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
+	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
+	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 
 	type LeafletNS = typeof import('leaflet');
 
@@ -20,6 +24,12 @@
 	let leafletMap: any = $state(null);
 	let imageOverlay: any = null;
 	let regionLayers: any[] = [];
+	let placementMarkers: any[] = [];
+	// Step 4 — armed placeable id (chip selected in PlaceablesPalette). When
+	// non-null, the next click on the Leaflet canvas creates a placement at the
+	// clicked fractional coords for this entity.
+	let armedPlaceableId = $state<string | null>(null);
+	let placementError = $state('');
 	let drawnItems: any = null;
 	let drawControl: any = null;
 	let zoomControl: any = null;
@@ -213,10 +223,66 @@
 					leafletMap.closePopup();
 				});
 			}
+
+			// Step 4 — placement popup buttons.
+			const openEntityBtn = popupEl.querySelector('[data-action="open-entity"]');
+			const deletePlacementBtn = popupEl.querySelector('[data-action="delete-placement"]');
+			if (openEntityBtn) {
+				openEntityBtn.addEventListener('click', () => {
+					const id = (openEntityBtn as HTMLElement).dataset.entityId;
+					if (id) windowStore.open('entity-detail', id);
+					leafletMap.closePopup();
+				});
+			}
+			if (deletePlacementBtn) {
+				deletePlacementBtn.addEventListener('click', () => {
+					const id = (deletePlacementBtn as HTMLElement).dataset.placementId;
+					if (id) void deletePlacement(id);
+					leafletMap.closePopup();
+				});
+			}
+		});
+
+		// Step 4 — placement-creation click. When a chip is armed in the
+		// PlaceablesPalette, the next map click drops a placement at the
+		// clicked location. We translate Leaflet (lat=y, lng=x) into fractional
+		// coords against the source-image dimensions so re-export at a new
+		// resolution (B11) leaves the placement at the same relative point.
+		leafletMap.on('click', (e: any) => {
+			if (!armedPlaceableId) return;
+			if (!activeMap?.width || !activeMap?.height) return;
+			const fx = e.latlng.lng / activeMap.width;
+			const fy = e.latlng.lat / activeMap.height;
+			if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
+			void createPlacementAt(armedPlaceableId, fx, fy);
 		});
 
 		// Set initial view
 		leafletMap.setView([0, 0], 1);
+	}
+
+	async function createPlacementAt(placeableId: string, x: number, y: number) {
+		placementError = '';
+		try {
+			await placementsStore.create({
+				placeableId,
+				locationId: activeMap?.locationId ?? null,
+				mapId: activeMap?.id ?? null,
+				x,
+				y
+			});
+			armedPlaceableId = null;
+		} catch (err) {
+			placementError = err instanceof Error ? err.message : String(err);
+		}
+	}
+
+	async function deletePlacement(id: string) {
+		try {
+			await placementsStore.delete(id);
+		} catch (err) {
+			placementError = err instanceof Error ? err.message : String(err);
+		}
 	}
 
 	$effect(() => {
@@ -327,6 +393,65 @@
 			});
 
 			regionLayers.push(layer);
+		}
+	});
+
+	// ── Load + render placements (Step 4) ─────────────────────────────────
+	//
+	// Load placements scoped to the active map's anchor Location. Per M3, the
+	// projection is keyed on location_id so a variant swap doesn't drop the
+	// placements. Loads on map change; per-tick rendering filters in-memory by
+	// playhead via placementsAtPlayhead (no DB roundtrip on tick).
+	$effect(() => {
+		const locId = activeMap?.locationId;
+		if (!locId) {
+			void placementsStore.load({ locationId: '__none__' });
+			return;
+		}
+		void placementsStore.load({ locationId: locId });
+	});
+
+	$effect(() => {
+		if (!leafletMap || !L) return;
+		const map = activeMap;
+		const playheadValue = $playhead;
+		const all = $placementsStore;
+
+		for (const m of placementMarkers) {
+			leafletMap.removeLayer(m);
+		}
+		placementMarkers = [];
+
+		if (!map?.width || !map?.height) return;
+
+		// Null playhead = pre-scrub state. Show the all-default placements only.
+		const t = playheadValue ?? 0;
+		const active = placementsAtPlayhead(all, t);
+		for (const placement of active) {
+			const placeable = $entities.find((e) => e.id === placement.placeableId);
+			if (!placeable) continue;
+			const lat = placement.y * map.height;
+			const lng = placement.x * map.width;
+			const color = getEntityTypeColor(placeable.type);
+			const html = `<span class="placement-pin" style="background:${color}"></span>`;
+			const icon = L.divIcon({
+				className: 'placement-marker',
+				html,
+				iconSize: [16, 16],
+				iconAnchor: [8, 8]
+			});
+			const marker = L.marker([lat, lng], { icon }).addTo(leafletMap);
+			marker.bindTooltip(`${placeable.name} (${placeable.type})`, { direction: 'top' });
+			const popupHtml = `
+				<div class="placement-popup">
+					<div class="placement-popup-name">${placeable.name}</div>
+					<div class="placement-popup-type">${placeable.type}</div>
+					<button data-action="open-entity" data-entity-id="${placeable.id}" type="button">Open ${placeable.type}</button>
+					<button data-action="delete-placement" data-placement-id="${placement.id}" type="button" class="danger">Delete placement</button>
+				</div>
+			`;
+			marker.bindPopup(popupHtml, { closeButton: false, minWidth: 160 });
+			placementMarkers.push(marker);
 		}
 	});
 
@@ -924,7 +1049,20 @@
 				</button>
 			{/if}
 		</div>
-		<div class="map-canvas" bind:this={mapContainer}></div>
+		<div
+			class="map-canvas"
+			class:armed={armedPlaceableId !== null}
+			bind:this={mapContainer}
+		></div>
+		{#if hasImage}
+			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
+			{#if placementError}
+				<div class="placement-error" role="alert">
+					{placementError}
+					<button type="button" onclick={() => (placementError = '')}>✕</button>
+				</div>
+			{/if}
+		{/if}
 		{#if !hasImage}
 			<div class="upload-area">
 				<p>Import a map image to get started</p>
@@ -1551,5 +1689,62 @@
 		font-size: 11px;
 		color: var(--color-text-muted, #6b7280);
 		font-style: italic;
+	}
+
+	/* Step 4 — placement marker + popup styles. Scoped :global because the
+	   markup is owned by Leaflet (divIcon HTML / bindPopup HTML). */
+	.map-canvas.armed { cursor: crosshair; }
+	:global(.placement-marker) { background: transparent; border: none; }
+	:global(.placement-pin) {
+		display: block;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		border: 2px solid var(--color-bg, #1a1a1a);
+		box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+	}
+	:global(.placement-popup) {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 140px;
+	}
+	:global(.placement-popup-name) { font-weight: 600; }
+	:global(.placement-popup-type) {
+		font-size: 11px;
+		color: var(--color-text-muted, #6b7280);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+	:global(.placement-popup button) {
+		font-size: 12px;
+		padding: 3px 8px;
+		border-radius: 4px;
+		border: 1px solid var(--color-border, #333);
+		background: var(--color-bg, #1a1a1a);
+		color: var(--color-text, #ddd);
+		cursor: pointer;
+	}
+	:global(.placement-popup button.danger) {
+		border-color: #b91c1c;
+		color: #fca5a5;
+	}
+
+	.placement-error {
+		padding: 6px 10px;
+		font-size: 12px;
+		background: #7f1d1d;
+		color: #fee2e2;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+	.placement-error button {
+		background: transparent;
+		border: none;
+		color: inherit;
+		cursor: pointer;
+		font-size: 14px;
+		line-height: 1;
 	}
 </style>

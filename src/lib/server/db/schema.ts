@@ -15,8 +15,31 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
-export const EntityType = ['Character', 'Location', 'Event', 'Act', 'Scene', 'Note'] as const;
+// 'Artifact', 'Item', 'Door' added in WorldMap v2 Step 4 (2026-05-16) as
+// placeable entity types for map_placements.placeable_id (alongside the
+// pre-existing 'Character'). They are full entities (Wiki-pageable, can
+// participate in relationships) but ship in Step 4 with minimal
+// surface-specific UI: they reuse EntityDetail's default-section editor and
+// appear as Palette chips. Richer per-type editors are deferred until use
+// patterns emerge.
+export const EntityType = [
+	'Character',
+	'Location',
+	'Event',
+	'Act',
+	'Scene',
+	'Note',
+	'Artifact',
+	'Item',
+	'Door'
+] as const;
 export type EntityType = (typeof EntityType)[number];
+
+// Subset of EntityType allowed in map_placements.placeable_id. Enforced in
+// the API layer (assertPlaceableId) and via Vitest invariant tests; same
+// pattern as intervals.start_act_id polymorphic FK guards.
+export const PlaceableEntityType = ['Character', 'Artifact', 'Item', 'Door'] as const;
+export type PlaceableEntityType = (typeof PlaceableEntityType)[number];
 
 // ── Auth tables (Better-Auth) ──────────────────────────────────────────────
 
@@ -242,7 +265,7 @@ export const windowCanvasState = pgTable(
 // Half-open convention: [start_position, end_position). start inclusive,
 // end exclusive. CHECK enforces start < end (strict).
 //
-// Position math (CONSIDERATIONS.md → "Premise 4"):
+// Position math (docs/adr/0003-premise-4-position-math.md → "The math"):
 //   Act i occupies [i, i + 1)
 //   Scene k of m within Act i occupies [i + k/m, i + (k+1)/m)
 //
@@ -250,9 +273,9 @@ export const windowCanvasState = pgTable(
 // start_scene_id / end_scene_id must reference entities of type='Scene'. Postgres
 // cannot enforce a polymorphic FK constraint cleanly; writeInterval validates at
 // write time + the Vitest invariant test asserts type alignment on every row
-// (CONSIDERATIONS.md → /plan-eng-review resolution item 2).
+// (docs/adr/0003-premise-4-position-math.md → "Trade-offs" → polymorphic FKs).
 //
-// ON DELETE behavior (CONSIDERATIONS.md → "ON DELETE behavior"):
+// ON DELETE behavior (docs/adr/0003-premise-4-position-math.md → "ON DELETE behavior"):
 //   entity_id          → CASCADE (delete character → delete their intervals)
 //   start_act_id       → CASCADE (delete act → intervals starting in it lose meaning)
 //   end_act_id         → CASCADE (delete act → intervals ending in it lose meaning)
@@ -389,6 +412,82 @@ export const worldMaps = pgTable('world_maps', {
 	// 0009_world_map_v2_variants_and_part_of.sql — Drizzle's table DSL
 	// does not support EXCLUDE, partial UNIQUE indexes, or extensions.
 ]);
+
+// =============================================================================
+// map_placements — WorldMap v2 Step 4 (2026-05-16)
+// =============================================================================
+//
+// First-class placement instances. A placement binds a *placeable entity*
+// (Character / Artifact / Item / Door — see PlaceableEntityType) to a
+// Location and a fractional point on the map at (x, y) ∈ [0, 1]². Each
+// placement also carries its own active window in story-time via the same
+// 4-FK + 2-derived-position shape as relationships and world_maps variants.
+//
+// `location_id` is the durable anchor (M2): even if a variant swaps the map
+// image, the placement still resolves at the same fraction-of-image point on
+// whichever variant is active at the playhead. `map_id` is a write-time hint
+// (where the author drew it) and SET NULL on map delete — the placement
+// survives via location resolution.
+//
+// `placeable_id` is a polymorphic FK to entities(id) constrained to
+// PlaceableEntityType at the write layer (assertPlaceableId) + Vitest
+// invariant tests + this comment. Postgres cannot CHECK a column's referent
+// type cleanly (same precedent as intervals.start_act_id, world_maps.location_id).
+//
+// ON DELETE behavior (M8):
+//   placeable_id → CASCADE  (delete character → all their placements gone)
+//   location_id  → SET NULL (orphan placement; UI surfaces it for re-anchor)
+//   map_id       → SET NULL (the hint goes; placement still resolves via location)
+//   start_act_id / end_act_id     → SET NULL + position recompute (M11)
+//   start_scene_id / end_scene_id → SET NULL + position recompute (M11)
+//
+// Coords (B11): stored as fractions of source-image dimensions in [0, 1].
+// Render-time multiplication against current image dimensions means image
+// re-export at a different resolution leaves placements at the same relative
+// point. Enforced by check `map_placements_xy_unit_range`.
+// =============================================================================
+export const mapPlacements = pgTable(
+	'map_placements',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+		placeableId: uuid('placeable_id')
+			.notNull()
+			.references(() => entities.id, { onDelete: 'cascade' }),
+		locationId: uuid('location_id').references(() => entities.id, { onDelete: 'set null' }),
+		mapId: uuid('map_id').references(() => worldMaps.id, { onDelete: 'set null' }),
+		x: doublePrecision('x').notNull(),
+		y: doublePrecision('y').notNull(),
+		startActId: uuid('start_act_id').references(() => entities.id, { onDelete: 'set null' }),
+		startSceneId: uuid('start_scene_id').references(() => entities.id, { onDelete: 'set null' }),
+		endActId: uuid('end_act_id').references(() => entities.id, { onDelete: 'set null' }),
+		endSceneId: uuid('end_scene_id').references(() => entities.id, { onDelete: 'set null' }),
+		startPosition: doublePrecision('start_position'),
+		endPosition: doublePrecision('end_position'),
+		// Free-form per-placement overrides (icon override, label, hint).
+		// Kept jsonb to avoid schema churn while step 4 surfaces firm up.
+		data: jsonb('data').notNull().default({}).$type<Record<string, unknown>>(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		index('map_placements_location_position_idx').on(
+			table.locationId,
+			table.startPosition,
+			table.endPosition
+		),
+		index('map_placements_placeable_idx').on(table.placeableId),
+		index('map_placements_map_idx').on(table.mapId),
+		check(
+			'map_placements_xy_unit_range',
+			sql`${table.x} >= 0 AND ${table.x} <= 1 AND ${table.y} >= 0 AND ${table.y} <= 1`
+		),
+		check(
+			'map_placements_position_order',
+			sql`(${table.startPosition} IS NULL AND ${table.endPosition} IS NULL) OR (${table.startPosition} IS NOT NULL AND ${table.endPosition} IS NOT NULL AND ${table.startPosition} < ${table.endPosition})`
+		)
+	]
+);
 
 export const mapRegions = pgTable('map_regions', {
 	id: uuid('id').primaryKey().defaultRandom(),

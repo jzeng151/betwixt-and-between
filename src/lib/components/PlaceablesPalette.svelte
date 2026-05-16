@@ -1,0 +1,188 @@
+<script lang="ts">
+	/**
+	 * PlaceablesPalette — chip rail of placeable entities (Character / Artifact /
+	 * Item / Door) used by the WorldMap to drop placements onto the active map.
+	 *
+	 * Interaction model: click a chip → component arms it (highlighted) and
+	 * dispatches `arm` with the chip's entity id. Parent (WorldMap) listens for
+	 * the next map click and POSTs a placement at the clicked fractional coords.
+	 * Click the armed chip again → dispatches `arm` with null → cancel.
+	 *
+	 * The palette also exposes "+ New" affordances for the three new entity
+	 * types (Artifact / Item / Door) so authors can mint a placeable inline
+	 * without leaving the map. New Characters are still authored in the
+	 * Characters app — this palette only creates *placeable* artifact-likes.
+	 */
+	import { entities } from '$lib/stores/entities.js';
+	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
+	import type { EntityType } from '$lib/server/db/schema.js';
+
+	interface Props {
+		armedId: string | null;
+		onArm: (id: string | null) => void;
+	}
+	let { armedId, onArm }: Props = $props();
+
+	const PLACEABLE_TYPES: EntityType[] = ['Character', 'Artifact', 'Item', 'Door'];
+
+	let busy = $state(false);
+	let createError = $state('');
+
+	let placeables = $derived(
+		$entities
+			.filter((e) => PLACEABLE_TYPES.includes(e.type))
+			.sort((a, b) => a.name.localeCompare(b.name))
+	);
+
+	function toggleArm(id: string) {
+		onArm(armedId === id ? null : id);
+	}
+
+	async function createNew(type: 'Artifact' | 'Item' | 'Door') {
+		if (busy) return;
+		busy = true;
+		createError = '';
+		try {
+			const created = await entities.createEntity(type, `New ${type}`);
+			onArm(created.id);
+		} catch (err) {
+			createError = err instanceof Error ? err.message : String(err);
+		} finally {
+			busy = false;
+		}
+	}
+</script>
+
+<div class="placeables-palette" data-testid="placeables-palette">
+	<div class="palette-header">
+		<span class="palette-title">Placeables</span>
+		<span class="palette-hint">
+			{#if armedId}
+				click on map to place
+			{:else}
+				click a chip, then click the map
+			{/if}
+		</span>
+	</div>
+
+	<div class="palette-body">
+		<div class="palette-chips">
+			{#each placeables as p (p.id)}
+				<button
+					class="chip"
+					class:armed={armedId === p.id}
+					style="--type-color: {getEntityTypeColor(p.type)}"
+					onclick={() => toggleArm(p.id)}
+					title={`${p.type} — click to arm placement`}
+					type="button"
+				>
+					<span class="chip-stripe" aria-hidden="true"></span>
+					<span class="chip-name">{p.name}</span>
+				</button>
+			{/each}
+			{#if placeables.length === 0}
+				<span class="empty">No Characters / Artifacts / Items / Doors yet.</span>
+			{/if}
+		</div>
+
+		<div class="palette-new">
+			<button type="button" disabled={busy} onclick={() => createNew('Artifact')}>+ Artifact</button>
+			<button type="button" disabled={busy} onclick={() => createNew('Item')}>+ Item</button>
+			<button type="button" disabled={busy} onclick={() => createNew('Door')}>+ Door</button>
+		</div>
+	</div>
+
+	{#if createError}
+		<div class="palette-error" role="alert">{createError}</div>
+	{/if}
+</div>
+
+<style>
+	.placeables-palette {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 8px 10px;
+		background: var(--color-panel, rgba(0, 0, 0, 0.6));
+		border-top: 1px solid var(--color-border, #333);
+		font-size: 12px;
+	}
+	.palette-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+	}
+	.palette-title {
+		font-weight: 600;
+		color: var(--color-text, #ddd);
+	}
+	.palette-hint {
+		color: var(--color-text-muted, #888);
+		font-style: italic;
+		font-size: 11px;
+	}
+	.palette-body {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		align-items: center;
+	}
+	.palette-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		flex: 1;
+		min-width: 0;
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 3px 8px;
+		border-radius: 12px;
+		border: 1px solid var(--color-border, #333);
+		background: var(--color-bg, #1a1a1a);
+		color: var(--color-text, #ddd);
+		font-size: 11px;
+		cursor: pointer;
+	}
+	.chip:hover { border-color: var(--type-color); }
+	.chip.armed {
+		border-color: var(--type-color);
+		background: color-mix(in srgb, var(--type-color) 25%, transparent);
+		box-shadow: 0 0 0 1px var(--type-color);
+	}
+	.chip-stripe {
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--type-color);
+	}
+	.palette-new {
+		display: flex;
+		gap: 4px;
+	}
+	.palette-new button {
+		font-size: 11px;
+		padding: 2px 6px;
+		border-radius: 4px;
+		border: 1px dashed var(--color-border, #444);
+		background: transparent;
+		color: var(--color-text-muted, #aaa);
+		cursor: pointer;
+	}
+	.palette-new button:hover:not(:disabled) {
+		color: var(--color-text, #ddd);
+		border-color: var(--color-accent, #e8a838);
+	}
+	.palette-new button:disabled { opacity: 0.5; cursor: wait; }
+	.empty {
+		color: var(--color-text-muted, #888);
+		font-style: italic;
+	}
+	.palette-error {
+		color: #ef4444;
+		font-size: 11px;
+	}
+</style>
