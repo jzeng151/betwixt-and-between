@@ -93,10 +93,12 @@
 	});
 
 	// View/edit mode (Block 5). Default 'view'; resets to initialMode on entityId change.
+	// svelte-ignore state_referenced_locally
 	let mode = $state<'view' | 'edit'>(initialMode);
 	// Only reset when entityId changes to a different value — not on every
 	// prop re-evaluation. Using a plain variable (not $state) so the effect
 	// doesn't track it and avoids an extra re-run cycle.
+	// svelte-ignore state_referenced_locally
 	let _prevEntityId = entityId;
 	$effect(() => {
 		if (entityId !== _prevEntityId) {

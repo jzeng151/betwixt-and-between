@@ -115,6 +115,7 @@
 	// Cancel-revert + transient-state-reset on edit → view transition.
 	// Tracking with a plain `let` (not $state) so the effect doesn't track
 	// it and avoids a redundant re-run cycle.
+	// svelte-ignore state_referenced_locally
 	let _prevReadOnly = readOnly;
 	$effect(() => {
 		const next = readOnly;
@@ -347,6 +348,7 @@
 		     avatar here since it's a Character-specific identity affordance. -->
 		<div class="header">
 			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 			<div class="avatar-stack">
 				<div
 					class="avatar-lg"

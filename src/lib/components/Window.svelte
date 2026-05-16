@@ -33,7 +33,9 @@
   let resizeStartH = 0;
   let resizeStartLeft = 0;
 
+  // svelte-ignore state_referenced_locally
   const MIN_W = compact ? 240 : 280;
+  // svelte-ignore state_referenced_locally
   const MIN_H = compact ? 88 : 200;
 
   function onTitlebarMousedown(e: MouseEvent) {

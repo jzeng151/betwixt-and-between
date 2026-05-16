@@ -37,7 +37,9 @@
   });
 
   // Apply on mount from saved prefs
+  // svelte-ignore state_referenced_locally
   applyTheme(appearance.theme);
+  // svelte-ignore state_referenced_locally
   applyAccentColor(appearance.accentColor);
 </script>
 
