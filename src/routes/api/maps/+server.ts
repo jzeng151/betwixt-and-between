@@ -37,11 +37,22 @@ export const POST: RequestHandler = async (event) => {
 		error(400, 'Name is required');
 	}
 	await assertLocationIdIsLocation(db, userId, locationId);
+
+	// Scene FKs without their parent Act FK are auto-cleared, mirroring PATCH's
+	// "clearing an act FK must also clear its scene FK" rule. Without this, a
+	// payload like {startSceneId, no startActId} would persist scene anchors on
+	// a default variant (start_position IS NULL) and could trip the
+	// world_maps_one_default_per_location unique index unexpectedly.
+	const normalizedStartActId = startActId ?? null;
+	const normalizedEndActId = endActId ?? null;
+	const normalizedStartSceneId = normalizedStartActId === null ? null : (startSceneId ?? null);
+	const normalizedEndSceneId = normalizedEndActId === null ? null : (endSceneId ?? null);
+
 	await assertWorldMapVariantBounds(db, userId, {
-		startActId,
-		startSceneId,
-		endActId,
-		endSceneId
+		startActId: normalizedStartActId,
+		startSceneId: normalizedStartSceneId,
+		endActId: normalizedEndActId,
+		endSceneId: normalizedEndSceneId
 	});
 
 	let startPosition: number | null = null;
@@ -49,7 +60,12 @@ export const POST: RequestHandler = async (event) => {
 	try {
 		const bounds = await resolveWorldMapVariantBounds(
 			db,
-			{ startActId, startSceneId, endActId, endSceneId },
+			{
+				startActId: normalizedStartActId,
+				startSceneId: normalizedStartSceneId,
+				endActId: normalizedEndActId,
+				endSceneId: normalizedEndSceneId
+			},
 			userId
 		);
 		startPosition = bounds.startPosition;
@@ -66,10 +82,10 @@ export const POST: RequestHandler = async (event) => {
 				userId,
 				name: name.trim(),
 				locationId: locationId ?? null,
-				startActId: startActId ?? null,
-				startSceneId: startSceneId ?? null,
-				endActId: endActId ?? null,
-				endSceneId: endSceneId ?? null,
+				startActId: normalizedStartActId,
+				startSceneId: normalizedStartSceneId,
+				endActId: normalizedEndActId,
+				endSceneId: normalizedEndSceneId,
 				startPosition,
 				endPosition
 			})
@@ -80,13 +96,22 @@ export const POST: RequestHandler = async (event) => {
 		const code = wrapped.code ?? wrapped.cause?.code ?? '';
 		const msg = `${wrapped.message ?? ''} ${(wrapped.cause as { message?: string } | undefined)?.message ?? ''}`;
 		if (code === '23P01' || msg.includes('world_maps_variant_no_overlap')) {
-			error(409, 'A variant for this Location already covers part of that range');
+			error(
+				409,
+				"Couldn't save the variant. Another variant for this Location already covers part of that range."
+			);
 		}
 		if (code === '23505' || msg.includes('world_maps_one_default_per_location')) {
-			error(409, 'A default variant for this Location already exists');
+			error(
+				409,
+				"Couldn't save the variant. A default variant for this Location already exists."
+			);
 		}
 		if (code === '23514' || msg.includes('world_maps_variant_position_order')) {
-			error(400, 'Variant start_position must be strictly less than end_position');
+			error(
+				400,
+				"Couldn't save the variant. The end must come after the start."
+			);
 		}
 		throw err;
 	}

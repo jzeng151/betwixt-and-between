@@ -8,7 +8,8 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
-import { entities } from '../../src/lib/server/db/schema.js';
+import { and, eq } from 'drizzle-orm';
+import { entities, relationships } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 let userId: string;
@@ -686,5 +687,333 @@ describe('/api/maps/[id]/upload-image', () => {
 		expect(body.baseImageUrl).toMatch(/^\/api\/maps\/file\//);
 		expect(body.width).toBe(1);
 		expect(body.height).toBe(1);
+	});
+});
+
+// Regression: linking a region to a Location must materialize a part_of edge
+// from that Location to the map's anchor Location, and removing/unlinking the
+// region must drop the edge once it's no longer implied by any polygon.
+describe('region → implied part_of edge', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	async function partOfRow(fromId: string, toId: string) {
+		const rows = await currentDb
+			.select()
+			.from(relationships)
+			.where(
+				and(
+					eq(relationships.userId, userId),
+					eq(relationships.fromId, fromId),
+					eq(relationships.toId, toId),
+					eq(relationships.type, 'part_of')
+				)
+			);
+		return rows[0] ?? null;
+	}
+
+	const polygon = [
+		[0, 0],
+		[100, 0],
+		[100, 100],
+		[0, 100]
+	];
+
+	it('POST region with locationId upserts part_of(L, P)', async () => {
+		const [parent] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Gondor' })
+			.returning();
+		const [child] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Minas Tirith' })
+			.returning();
+		const map = await readJson(
+			await CREATE_MAP(mkEvent({ body: { name: 'Gondor map', locationId: parent.id } }))
+		);
+
+		await CREATE_REGION(
+			mkEvent({
+				params: { id: map.id },
+				body: { polygon, locationId: child.id }
+			})
+		);
+
+		const edge = await partOfRow(child.id, parent.id);
+		expect(edge).not.toBeNull();
+	});
+
+	it('DELETE region drops part_of(L, P) when it was the last polygon for L', async () => {
+		const [parent] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Gondor' })
+			.returning();
+		const [child] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Minas Tirith' })
+			.returning();
+		const map = await readJson(
+			await CREATE_MAP(mkEvent({ body: { name: 'Gondor map', locationId: parent.id } }))
+		);
+		const region = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: map.id },
+					body: { polygon, locationId: child.id }
+				})
+			)
+		);
+		expect(await partOfRow(child.id, parent.id)).not.toBeNull();
+
+		await regionIdRoute.DELETE(
+			mkEvent({ params: { id: map.id, rid: region.id } })
+		);
+
+		expect(await partOfRow(child.id, parent.id)).toBeNull();
+	});
+
+	it('DELETE region keeps part_of(L, P) when another polygon still references L', async () => {
+		const [parent] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Gondor' })
+			.returning();
+		const [child] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Minas Tirith' })
+			.returning();
+		const map = await readJson(
+			await CREATE_MAP(mkEvent({ body: { name: 'Gondor map', locationId: parent.id } }))
+		);
+		const region1 = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: map.id },
+					body: { polygon, locationId: child.id }
+				})
+			)
+		);
+		await CREATE_REGION(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					polygon: [[200, 200], [300, 200], [300, 300], [200, 300]],
+					locationId: child.id
+				}
+			})
+		);
+
+		await regionIdRoute.DELETE(
+			mkEvent({ params: { id: map.id, rid: region1.id } })
+		);
+
+		expect(await partOfRow(child.id, parent.id)).not.toBeNull();
+	});
+
+	it('PATCH locationId change drops the old edge and adds the new one', async () => {
+		const [parent] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Gondor' })
+			.returning();
+		const [first] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Minas Tirith' })
+			.returning();
+		const [second] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Pelargir' })
+			.returning();
+		const map = await readJson(
+			await CREATE_MAP(mkEvent({ body: { name: 'Gondor map', locationId: parent.id } }))
+		);
+		const region = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: map.id },
+					body: { polygon, locationId: first.id }
+				})
+			)
+		);
+		expect(await partOfRow(first.id, parent.id)).not.toBeNull();
+
+		await regionIdRoute.PATCH(
+			mkEvent({
+				params: { id: map.id, rid: region.id },
+				body: { locationId: second.id }
+			})
+		);
+
+		expect(await partOfRow(first.id, parent.id)).toBeNull();
+		expect(await partOfRow(second.id, parent.id)).not.toBeNull();
+	});
+
+	it('PATCH locationId to null drops the implied edge', async () => {
+		const [parent] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Gondor' })
+			.returning();
+		const [child] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Minas Tirith' })
+			.returning();
+		const map = await readJson(
+			await CREATE_MAP(mkEvent({ body: { name: 'Gondor map', locationId: parent.id } }))
+		);
+		const region = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: map.id },
+					body: { polygon, locationId: child.id }
+				})
+			)
+		);
+		expect(await partOfRow(child.id, parent.id)).not.toBeNull();
+
+		await regionIdRoute.PATCH(
+			mkEvent({
+				params: { id: map.id, rid: region.id },
+				body: { locationId: null }
+			})
+		);
+
+		expect(await partOfRow(child.id, parent.id)).toBeNull();
+	});
+});
+
+describe('POST /api/maps — scene-FK normalization (Codex P2)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	it('drops scene FKs when their parent act FK is absent (default-variant payload)', async () => {
+		const { seedActs } = await import('../helpers/test-db.js');
+		const { act0 } = await seedActs(currentDb, userId);
+		const [scene] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Scene', parentId: act0, name: 'Scene A', position: 0 })
+			.returning();
+
+		const res = await CREATE_MAP(
+			mkEvent({ body: { name: 'Default-ish', startSceneId: scene.id, endSceneId: scene.id } })
+		);
+		expect(res.status).toBe(201);
+		const body = await readJson(res);
+		// Without parent act FKs, both scene FKs must be cleared so the row is a
+		// well-formed default variant (no half-anchored state).
+		expect(body.startActId).toBeNull();
+		expect(body.endActId).toBeNull();
+		expect(body.startSceneId).toBeNull();
+		expect(body.endSceneId).toBeNull();
+		expect(body.startPosition).toBeNull();
+		expect(body.endPosition).toBeNull();
+	});
+});
+
+describe('recomputeWorldMapVariantsAll — degenerate-variant normalization (Codex P1)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	it('unlinks degenerate variant when an existing default for the same Location would conflict', async () => {
+		const { seedActs } = await import('../helpers/test-db.js');
+		const { recomputeWorldMapVariantsAll } = await import(
+			'../../src/lib/server/world-maps.js'
+		);
+		const { worldMaps } = await import('../../src/lib/server/db/schema.js');
+		const { act0, act1 } = await seedActs(currentDb, userId);
+
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Mordor', position: 0 })
+			.returning();
+
+		// Default variant for the location (start_position IS NULL).
+		await CREATE_MAP(mkEvent({ body: { name: 'Mordor default', locationId: loc.id } }));
+		// Scoped variant anchored to act0→act1.
+		const scoped = await readJson(
+			await CREATE_MAP(
+				mkEvent({
+					body: {
+						name: 'Mordor act0-1',
+						locationId: loc.id,
+						startActId: act0,
+						endActId: act1
+					}
+				})
+			)
+		);
+
+		// Simulate ON DELETE SET NULL on endActId — leaves scoped row degenerate
+		// (one act FK surviving) with stale start_position.
+		await currentDb
+			.update(worldMaps)
+			.set({ endActId: null })
+			.where(eq(worldMaps.id, scoped.id));
+
+		// Recompute must not throw on the unique-index conflict.
+		await expect(recomputeWorldMapVariantsAll(currentDb, userId)).resolves.toBeGreaterThanOrEqual(1);
+
+		const [after] = await currentDb
+			.select()
+			.from(worldMaps)
+			.where(eq(worldMaps.id, scoped.id));
+		// Degenerate row got unlinked from the location to avoid the duplicate-default collision.
+		expect(after.locationId).toBeNull();
+		expect(after.startActId).toBeNull();
+		expect(after.endActId).toBeNull();
+		expect(after.startPosition).toBeNull();
+		expect(after.endPosition).toBeNull();
+	});
+
+	it('clears bounds in-place when degenerate variant has no conflicting default', async () => {
+		const { seedActs } = await import('../helpers/test-db.js');
+		const { recomputeWorldMapVariantsAll } = await import(
+			'../../src/lib/server/world-maps.js'
+		);
+		const { worldMaps } = await import('../../src/lib/server/db/schema.js');
+		const { act0, act1 } = await seedActs(currentDb, userId);
+
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Shire', position: 0 })
+			.returning();
+
+		// Only a scoped variant; no default exists.
+		const scoped = await readJson(
+			await CREATE_MAP(
+				mkEvent({
+					body: {
+						name: 'Shire act0-1',
+						locationId: loc.id,
+						startActId: act0,
+						endActId: act1
+					}
+				})
+			)
+		);
+
+		await currentDb
+			.update(worldMaps)
+			.set({ startActId: null })
+			.where(eq(worldMaps.id, scoped.id));
+
+		await expect(recomputeWorldMapVariantsAll(currentDb, userId)).resolves.toBeGreaterThanOrEqual(1);
+
+		const [after] = await currentDb
+			.select()
+			.from(worldMaps)
+			.where(eq(worldMaps.id, scoped.id));
+		// No conflict, so the row stays linked and just becomes the default.
+		expect(after.locationId).toBe(loc.id);
+		expect(after.startActId).toBeNull();
+		expect(after.endActId).toBeNull();
+		expect(after.startPosition).toBeNull();
+		expect(after.endPosition).toBeNull();
 	});
 });

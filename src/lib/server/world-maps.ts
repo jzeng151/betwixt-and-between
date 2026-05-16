@@ -155,6 +155,7 @@ export async function recomputeWorldMapVariantsAll(
 			)
 		)) as Array<{
 		id: string;
+		locationId: string | null;
 		startActId: string | null;
 		startSceneId: string | null;
 		endActId: string | null;
@@ -170,13 +171,15 @@ export async function recomputeWorldMapVariantsAll(
 		try {
 			// Degenerate after ON DELETE SET NULL: exactly one act FK survived, or
 			// both nulled while positions stayed. Treat as default variant and clear
-			// derived positions rather than throwing from resolveRelationshipBounds.
+			// derived positions + scene FKs rather than throwing from
+			// resolveRelationshipBounds.
 			const oneActOnly =
 				(row.startActId === null) !== (row.endActId === null);
 			const bothActsNull = row.startActId === null && row.endActId === null;
+			const degenerate = oneActOnly || bothActsNull;
 			let startPosition: number | null;
 			let endPosition: number | null;
-			if (oneActOnly || bothActsNull) {
+			if (degenerate) {
 				startPosition = null;
 				endPosition = null;
 			} else {
@@ -205,7 +208,41 @@ export async function recomputeWorldMapVariantsAll(
 			const startChanged = (startPosition === null) !== (row.startPosition === null) || startDrift;
 			const endChanged = (endPosition === null) !== (row.endPosition === null) || endDrift;
 
-			if (!startChanged && !endChanged) continue;
+			const updates: Record<string, unknown> = {};
+			if (startChanged) updates.startPosition = startPosition;
+			if (endChanged) updates.endPosition = endPosition;
+
+			// Degenerate rows: clear any surviving act/scene FK so the row is fully
+			// a default variant (consistent state) rather than carrying a half-anchor.
+			if (degenerate) {
+				if (row.startActId !== null) updates.startActId = null;
+				if (row.startSceneId !== null) updates.startSceneId = null;
+				if (row.endActId !== null) updates.endActId = null;
+				if (row.endSceneId !== null) updates.endSceneId = null;
+
+				// If this row would now collide with an existing default for the same
+				// location (world_maps_one_default_per_location), unlink it instead
+				// of letting the unique-index abort the surrounding cascade. The
+				// world_maps_stamp_location_inactive_at trigger stamps the audit ts.
+				if (row.locationId !== null) {
+					const conflicts = (await (db as unknown as SelectableDB)
+						.select({ id: worldMaps.id })
+						.from(worldMaps)
+						.where(
+							and(
+								eq(worldMaps.userId, userId),
+								eq(worldMaps.locationId, row.locationId),
+								sql`${worldMaps.startPosition} IS NULL`,
+								sql`${worldMaps.id} <> ${row.id}`
+							)
+						)) as Array<{ id: string }>;
+					if (conflicts.length > 0) {
+						updates.locationId = null;
+					}
+				}
+			}
+
+			if (Object.keys(updates).length === 0) continue;
 
 			await (db as unknown as {
 				update: (table: typeof worldMaps) => {
@@ -215,7 +252,7 @@ export async function recomputeWorldMapVariantsAll(
 				};
 			})
 				.update(worldMaps)
-				.set({ startPosition, endPosition })
+				.set(updates)
 				.where(and(eq(worldMaps.id, row.id), eq(worldMaps.userId, userId)));
 			updated++;
 		} catch (err) {
