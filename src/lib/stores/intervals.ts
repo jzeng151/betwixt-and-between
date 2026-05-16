@@ -3,7 +3,7 @@ import { writable } from 'svelte/store';
 /**
  * Client-side store for the intervals API.
  * Shape matches /api/intervals rows. Position values are REAL numbers on the
- * global story-time axis; see CONSIDERATIONS.md → "Premise 4" for the math.
+ * global story-time axis; see docs/adr/0003-premise-4-position-math.md for the math.
  */
 
 export type Interval = {

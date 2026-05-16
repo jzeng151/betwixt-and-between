@@ -6,12 +6,13 @@
  * Wrapping the helpers in transactions requires the sync refactor (TODO T1)
  * which is deferred to a follow-up PR.
  *
- * These tests are SKIPPED until T1 lands and the helpers go sync. The Db type
- * alias is in place (forward-compat) so when T1 lands these tests can be
- * un-skipped and should pass without further edits to the contract.
- *
- * See CONSIDERATIONS.md → "[2026-04-29] /plan-design-review +
- * /plan-eng-review resolutions" → D17 (revised) for the full reasoning.
+ * HISTORICAL skip: these tests were paused while the codebase was on
+ * better-sqlite3 (sync-callback-only db.transaction). The Postgres port
+ * retired that constraint — see docs/adr/0004-neon-postgres-better-auth.md
+ * and docs/adr/0005-editor-and-entity-detail.md → "Endpoints — extend,
+ * don't proliferate" (handler bodies now wrap in db.transaction(async tx
+ * => ...)). The Db type alias is in place; un-skipping should pass against
+ * the current contract.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';

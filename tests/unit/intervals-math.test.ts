@@ -165,7 +165,7 @@ describe('actIndexOf + sceneIndexOf + computeIntervalPositions', () => {
 	});
 
 	// =============================================================================
-	// All 6 worked examples from CONSIDERATIONS.md
+	// All 6 worked examples from docs/adr/0003-premise-4-position-math.md
 	// =============================================================================
 
 	it('worked example 1 — Ellie present for all of Act 1', async () => {

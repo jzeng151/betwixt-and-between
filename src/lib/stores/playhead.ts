@@ -110,7 +110,7 @@ export const playhead = createPlayheadStore();
 
 /**
  * Pure helper: does an interval [start, end) contain the position T?
- * Half-open per CONSIDERATIONS.md.
+ * Half-open per docs/adr/0003-premise-4-position-math.md → "Half-open convention".
  */
 export function intervalContainsT(start: number, end: number, t: number): boolean {
 	return start <= t && t < end;
