@@ -18,6 +18,18 @@
 
 	type LeafletNS = typeof import('leaflet');
 
+	// HTML-escape user-supplied strings before interpolating into the popup
+	// template strings owned by Leaflet (bindPopup HTML). Self-XSS is contained
+	// by the per-user auth gate, but escaping closes the surface uniformly.
+	function escapeHtml(s: string): string {
+		return s
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+	}
+
 	let { entityId = $bindable<string | undefined>(undefined) }: { entityId?: string } = $props();
 
 	let mapContainer: HTMLDivElement = $state(null!);
@@ -29,6 +41,12 @@
 	// non-null, the next click on the Leaflet canvas creates a placement at the
 	// clicked fractional coords for this entity.
 	let armedPlaceableId = $state<string | null>(null);
+	// Disarm if the palette goes away (active map loses its Location anchor or
+	// switches to one without an image). Prevents a stale arm from creating a
+	// placement with locationId=null after the palette unmounts.
+	$effect(() => {
+		if (!activeMap?.locationId || !hasImage) armedPlaceableId = null;
+	});
 	let placementError = $state('');
 	let drawnItems: any = null;
 	let drawControl: any = null;
@@ -251,6 +269,11 @@
 		leafletMap.on('click', (e: any) => {
 			if (!armedPlaceableId) return;
 			if (!activeMap?.width || !activeMap?.height) return;
+			// Skip clicks that landed on an existing interactive layer (region
+			// polygon, placement marker, popup): those have their own UX and
+			// shouldn't also drop a new placement underneath.
+			const target = e.originalEvent?.target as HTMLElement | undefined;
+			if (target?.closest?.('.leaflet-interactive, .leaflet-popup, .leaflet-marker-icon')) return;
 			const fx = e.latlng.lng / activeMap.width;
 			const fy = e.latlng.lat / activeMap.height;
 			if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
@@ -441,12 +464,14 @@
 				iconAnchor: [8, 8]
 			});
 			const marker = L.marker([lat, lng], { icon }).addTo(leafletMap);
-			marker.bindTooltip(`${placeable.name} (${placeable.type})`, { direction: 'top' });
+			const safeName = escapeHtml(placeable.name);
+			const safeType = escapeHtml(placeable.type);
+			marker.bindTooltip(`${safeName} (${safeType})`, { direction: 'top' });
 			const popupHtml = `
 				<div class="placement-popup">
-					<div class="placement-popup-name">${placeable.name}</div>
-					<div class="placement-popup-type">${placeable.type}</div>
-					<button data-action="open-entity" data-entity-id="${placeable.id}" type="button">Open ${placeable.type}</button>
+					<div class="placement-popup-name">${safeName}</div>
+					<div class="placement-popup-type">${safeType}</div>
+					<button data-action="open-entity" data-entity-id="${placeable.id}" type="button">Open ${safeType}</button>
 					<button data-action="delete-placement" data-placement-id="${placement.id}" type="button" class="danger">Delete placement</button>
 				</div>
 			`;
@@ -608,7 +633,7 @@
 
 	function buildRegionPopup(region: typeof $mapRegions[0], locName: string | null): string {
 		const locHtml = locName && region.locationId
-			? `<button class="region-popup-name" data-location-id="${region.locationId}">${locName}</button>`
+			? `<button class="region-popup-name" data-location-id="${region.locationId}">${escapeHtml(locName)}</button>`
 			: '<span class="region-popup-name">Unlinked region</span>';
 
 		// Drill-down: clicking the region's linked Location should descend into
@@ -622,7 +647,7 @@
 			if (loc) {
 				const locVariant = resolveActiveVariant($worldMaps, region.locationId, $playhead);
 				const verb = locVariant ? 'Zoom in to' : 'Create map for';
-				drillHtml = `<button class="region-popup-btn region-popup-btn-drill" data-action="drill" data-location-id="${region.locationId}">${verb} ${loc.name}</button>`;
+				drillHtml = `<button class="region-popup-btn region-popup-btn-drill" data-action="drill" data-location-id="${region.locationId}">${verb} ${escapeHtml(loc.name)}</button>`;
 			}
 		}
 
@@ -1054,7 +1079,7 @@
 			class:armed={armedPlaceableId !== null}
 			bind:this={mapContainer}
 		></div>
-		{#if hasImage}
+		{#if hasImage && activeMap?.locationId}
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
 				<div class="placement-error" role="alert">

@@ -239,6 +239,10 @@ export async function recomputePlacementBoundsAll(
 				(startPosition === null) !== (row.startPosition === null) || startDrift;
 			const endChanged = (endPosition === null) !== (row.endPosition === null) || endDrift;
 
+			// Invariant: start/end positions always move together — either both
+			// are nulled (normalizeToDefault), or both come from resolveRelationshipBounds
+			// in the same call. Updating only one side could violate the strict
+			// `map_placements_position_order` CHECK; do not split this branch.
 			const updates: Record<string, unknown> = {};
 			if (startChanged) updates.startPosition = startPosition;
 			if (endChanged) updates.endPosition = endPosition;

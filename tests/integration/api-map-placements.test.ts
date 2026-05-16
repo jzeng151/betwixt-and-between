@@ -239,7 +239,7 @@ describe('PATCH + DELETE /api/map-placements/[id]', () => {
 		expect(rows).toHaveLength(0);
 	});
 
-	it('PATCH bounds: clearing startActId auto-clears startSceneId', async () => {
+	it('PATCH bounds: clearing both act FKs clears their scene FKs too', async () => {
 		const acts = await seedActs(currentDb, userId);
 		const ch = await seedCharacter();
 		const [scene] = await currentDb
@@ -264,11 +264,41 @@ describe('PATCH + DELETE /api/map-placements/[id]', () => {
 
 		const patched = await readJson(
 			await placementIdRoute.PATCH(
-				mkEvent({ params: { id: created.id }, body: { startActId: null } })
+				mkEvent({
+					params: { id: created.id },
+					body: { startActId: null, endActId: null }
+				})
 			)
 		);
 		expect(patched.startActId).toBeNull();
+		expect(patched.endActId).toBeNull();
 		expect(patched.startSceneId).toBeNull();
+		expect(patched.endSceneId).toBeNull();
+		expect(patched.startPosition).toBeNull();
+		expect(patched.endPosition).toBeNull();
+	});
+
+	it('PATCH rejects asymmetric bounds (one act FK null, other set)', async () => {
+		const acts = await seedActs(currentDb, userId);
+		const ch = await seedCharacter();
+		const created = await readJson(
+			await CREATE_PLACEMENT(
+				mkEvent({
+					body: {
+						placeableId: ch.id,
+						x: 0.1,
+						y: 0.1,
+						startActId: acts.act0,
+						endActId: acts.act1
+					}
+				})
+			)
+		);
+		await expect(
+			placementIdRoute.PATCH(
+				mkEvent({ params: { id: created.id }, body: { startActId: null } })
+			)
+		).rejects.toMatchObject({ status: 400 });
 	});
 });
 

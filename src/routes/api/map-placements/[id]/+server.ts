@@ -81,17 +81,15 @@ export const PATCH: RequestHandler = async (event) => {
 				'endSceneId' in body;
 
 			if (variantTouched) {
-				let mergedStartActId =
+				const mergedStartActId =
 					'startActId' in body ? (body.startActId ?? null) : existing.startActId;
-				let mergedEndActId =
+				const mergedEndActId =
 					'endActId' in body ? (body.endActId ?? null) : existing.endActId;
-				// resolveRelationshipBounds requires both act FKs set or both null.
-				// If a PATCH leaves only one anchor set, normalize to "default
-				// placement" — drop both. Mirrors recomputeWorldMapVariantsAll's
-				// degenerate-row handling.
+				// Strict v2 contract (matches POST + DB CHECK): both act FKs set
+				// or both null. PATCHing only one side is a caller bug — surface
+				// it as 400 rather than silently nullifying the other side.
 				if ((mergedStartActId === null) !== (mergedEndActId === null)) {
-					mergedStartActId = null;
-					mergedEndActId = null;
+					error(400, 'startActId and endActId must both be set or both be null');
 				}
 				const mergedStartSceneId =
 					mergedStartActId === null
