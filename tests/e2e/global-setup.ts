@@ -11,6 +11,7 @@
  * port that only exists after this function runs.
  */
 import { PGlite } from '@electric-sql/pglite';
+import { btree_gist } from '@electric-sql/pglite/contrib/btree_gist';
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,7 +38,9 @@ function loadMigrationStatements(): string[] {
 }
 
 export default async function globalSetup() {
-	const db = new PGlite();
+	// Register btree_gist contrib so migration 0009 (variant overlap EXCLUDE
+	// constraint) can `CREATE EXTENSION` it. Same fix as scripts/dev-pglite.ts.
+	const db = new PGlite({ extensions: { btree_gist } });
 	await db.waitReady;
 	for (const stmt of loadMigrationStatements()) {
 		await db.exec(stmt);

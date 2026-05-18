@@ -32,6 +32,16 @@
   draft-preview Toast with Copy-to-clipboard.
 -->
 
+<script module lang="ts">
+	// IDs of entities freshly created via a "+ New" affordance elsewhere.
+	// Callers add the id BEFORE calling windowStore.open('entity-detail', id);
+	// the next EntityDetail mount that matches consumes the entry and lands
+	// in edit mode with the name input focused + selected. Mirrors
+	// `pendingEditMode` in CharacterEditor.svelte:4 — same pattern for the
+	// universal entity-detail surface.
+	export const pendingEditMode = new Set<string>();
+</script>
+
 <script lang="ts">
 	import { entities } from '$lib/stores/entities.js';
 	import type { Entity } from '$lib/stores/entities.js';
@@ -93,8 +103,16 @@
 	});
 
 	// View/edit mode (Block 5). Default 'view'; resets to initialMode on entityId change.
+	// Freshly-created entities flagged in `pendingEditMode` land in 'edit' so
+	// the user can rename the `Untitled <Type>` placeholder immediately.
+	// Initial values are intentional — the $effect below handles entityId
+	// transitions after mount.
 	// svelte-ignore state_referenced_locally
-	let mode = $state<'view' | 'edit'>(initialMode);
+	const _initialPending = entityId != null && pendingEditMode.has(entityId);
+	// svelte-ignore state_referenced_locally
+	if (_initialPending && entityId != null) pendingEditMode.delete(entityId);
+	// svelte-ignore state_referenced_locally
+	let mode = $state<'view' | 'edit'>(_initialPending ? 'edit' : initialMode);
 	// Only reset when entityId changes to a different value — not on every
 	// prop re-evaluation. Using a plain variable (not $state) so the effect
 	// doesn't track it and avoids an extra re-run cycle.
@@ -103,7 +121,12 @@
 	$effect(() => {
 		if (entityId !== _prevEntityId) {
 			_prevEntityId = entityId;
-			mode = initialMode;
+			if (entityId && pendingEditMode.has(entityId)) {
+				pendingEditMode.delete(entityId);
+				mode = 'edit';
+			} else {
+				mode = initialMode;
+			}
 		}
 	});
 

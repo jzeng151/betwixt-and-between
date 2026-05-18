@@ -14,6 +14,8 @@
 	 * Characters app — this palette only creates *placeable* artifact-likes.
 	 */
 	import { entities } from '$lib/stores/entities.js';
+	import { windowStore } from '$lib/stores/windows.js';
+	import { pendingEditMode } from '$lib/components/EntityDetail.svelte';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 	import type { EntityType } from '$lib/server/db/schema.js';
 
@@ -43,7 +45,15 @@
 		busy = true;
 		createError = '';
 		try {
-			const created = await entities.createEntity(type, `New ${type}`);
+			// `Untitled <Type>` placeholder reads as in-progress rather than broken
+			// when the new row briefly appears in other lists (Wiki, Story Graph)
+			// before the user types a real name. Editor opens with name field
+			// focused + text selected so first keystroke replaces the placeholder.
+			const created = await entities.createEntity(type, `Untitled ${type}`);
+			// Flag for edit-mode-on-mount, then open. EntityDetail consumes the
+			// id on mount and lands in edit mode with the name input selected.
+			pendingEditMode.add(created.id);
+			windowStore.open('entity-detail', created.id);
 			onArm(created.id);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : String(err);

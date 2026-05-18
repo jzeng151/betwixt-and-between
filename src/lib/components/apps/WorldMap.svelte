@@ -709,6 +709,9 @@
 		regionFormSceneIds = new Set();
 		editingRegionId = null;
 		editingOriginalLocationId = null;
+		creatingRegionLocation = false;
+		regionNewLocationName = '';
+		regionNewLocationError = '';
 		drawnItems.clearLayers();
 	}
 
@@ -723,6 +726,89 @@
 		if (!activeMapId) return;
 		const next = value === '' ? null : value;
 		await worldMapStore.updateMap(activeMapId, { locationId: next });
+	}
+
+	// Inline "+ New Location" for the toolbar picker (T2). Closes the chicken-
+	// and-egg gap: a brand-new user can mint a Location at the moment they
+	// need one — right after importing a map image — without leaving WorldMap.
+	let creatingToolbarLocation = $state(false);
+	let toolbarNewLocationName = $state('');
+	let toolbarNewLocationError = $state('');
+	let toolbarNewLocationBusy = $state(false);
+
+	function startCreateToolbarLocation() {
+		if (!activeMapId) return;
+		creatingToolbarLocation = true;
+		toolbarNewLocationName = '';
+		toolbarNewLocationError = '';
+	}
+
+	function cancelCreateToolbarLocation() {
+		creatingToolbarLocation = false;
+		toolbarNewLocationName = '';
+		toolbarNewLocationError = '';
+	}
+
+	// Inline "+ New Location" for the region form (T3). Authoring a polygon
+	// for a child sublocation that doesn't yet exist would otherwise dead-end
+	// at the dropdown.
+	let creatingRegionLocation = $state(false);
+	let regionNewLocationName = $state('');
+	let regionNewLocationError = $state('');
+	let regionNewLocationBusy = $state(false);
+
+	function startCreateRegionLocation() {
+		creatingRegionLocation = true;
+		regionNewLocationName = '';
+		regionNewLocationError = '';
+	}
+
+	function cancelCreateRegionLocation() {
+		creatingRegionLocation = false;
+		regionNewLocationName = '';
+		regionNewLocationError = '';
+	}
+
+	async function commitCreateRegionLocation() {
+		const name = regionNewLocationName.trim();
+		if (!name) {
+			cancelCreateRegionLocation();
+			return;
+		}
+		if (regionNewLocationBusy) return;
+		regionNewLocationBusy = true;
+		regionNewLocationError = '';
+		try {
+			const created = await entities.createEntity('Location', name);
+			regionFormLocationId = created.id;
+			creatingRegionLocation = false;
+			regionNewLocationName = '';
+		} catch (err) {
+			regionNewLocationError = err instanceof Error ? err.message : String(err);
+		} finally {
+			regionNewLocationBusy = false;
+		}
+	}
+
+	async function commitCreateToolbarLocation() {
+		const name = toolbarNewLocationName.trim();
+		if (!name) {
+			cancelCreateToolbarLocation();
+			return;
+		}
+		if (!activeMapId || toolbarNewLocationBusy) return;
+		toolbarNewLocationBusy = true;
+		toolbarNewLocationError = '';
+		try {
+			const created = await entities.createEntity('Location', name);
+			await worldMapStore.updateMap(activeMapId, { locationId: created.id });
+			creatingToolbarLocation = false;
+			toolbarNewLocationName = '';
+		} catch (err) {
+			toolbarNewLocationError = err instanceof Error ? err.message : String(err);
+		} finally {
+			toolbarNewLocationBusy = false;
+		}
 	}
 
 	async function handleCreateMap() {
@@ -1044,18 +1130,42 @@
 				</label>
 			{/if}
 			{#if activeMap}
-				<select
-					class="map-location-picker"
-					title="Linked location — what this map depicts"
-					aria-label="Linked location"
-					value={activeMap.locationId ?? ''}
-					onchange={(e) => changeLinkedLocation((e.target as HTMLSelectElement).value)}
-				>
-					<option value="">(no linked location)</option>
-					{#each locations as loc}
-						<option value={loc.id}>{loc.name}</option>
-					{/each}
-				</select>
+				{#if creatingToolbarLocation}
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						class="map-location-new-input"
+						type="text"
+						placeholder="Name of new location…"
+						aria-label="Name of new location"
+						bind:value={toolbarNewLocationName}
+						autofocus
+						disabled={toolbarNewLocationBusy}
+						onblur={commitCreateToolbarLocation}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+							if (e.key === 'Escape') cancelCreateToolbarLocation();
+						}}
+					/>
+				{:else}
+					<select
+						class="map-location-picker"
+						title="Linked location — what this map depicts"
+						aria-label="Linked location"
+						value={activeMap.locationId ?? ''}
+						onchange={(e) => changeLinkedLocation((e.target as HTMLSelectElement).value)}
+					>
+						<option value="">(no linked location)</option>
+						{#each locations as loc}
+							<option value={loc.id}>{loc.name}</option>
+						{/each}
+					</select>
+					<button
+						class="btn-icon"
+						onclick={startCreateToolbarLocation}
+						title="Create a new Location and link it to this map"
+						aria-label="New location"
+					>+</button>
+				{/if}
 				{#if activeMap.locationId}
 					<button
 						class="map-variant-chip"
@@ -1077,6 +1187,12 @@
 				</button>
 			{/if}
 		</div>
+		{#if toolbarNewLocationError}
+			<div class="placement-error" role="alert">
+				Couldn't create location: {toolbarNewLocationError}
+				<button type="button" onclick={() => (toolbarNewLocationError = '')}>✕</button>
+			</div>
+		{/if}
 		<div
 			class="map-canvas"
 			class:armed={armedPlaceableId !== null}
@@ -1115,12 +1231,45 @@
 
 			<label>
 				Linked Location
-				<select bind:value={regionFormLocationId}>
-					<option value={null}>None (unlinked)</option>
-					{#each regionFormLocations as loc}
-						<option value={loc.id}>{loc.name}</option>
-					{/each}
-				</select>
+				{#if creatingRegionLocation}
+					<div class="region-new-loc-row">
+						<!-- svelte-ignore a11y_autofocus -->
+						<input
+							class="region-new-loc-input"
+							type="text"
+							placeholder="Name of new location…"
+							aria-label="Name of new location"
+							bind:value={regionNewLocationName}
+							autofocus
+							disabled={regionNewLocationBusy}
+							onkeydown={(e) => {
+								if (e.key === 'Enter') commitCreateRegionLocation();
+								if (e.key === 'Escape') cancelCreateRegionLocation();
+							}}
+						/>
+						<button type="button" onclick={commitCreateRegionLocation} disabled={regionNewLocationBusy}>Add</button>
+						<button type="button" onclick={cancelCreateRegionLocation} disabled={regionNewLocationBusy}>Cancel</button>
+					</div>
+					{#if regionNewLocationError}
+						<span class="region-new-loc-error">{regionNewLocationError}</span>
+					{/if}
+				{:else}
+					<div class="region-loc-row">
+						<select bind:value={regionFormLocationId}>
+							<option value={null}>None (unlinked)</option>
+							{#each regionFormLocations as loc}
+								<option value={loc.id}>{loc.name}</option>
+							{/each}
+						</select>
+						<button
+							type="button"
+							class="btn-icon"
+							onclick={startCreateRegionLocation}
+							title="Create a new Location and link this region to it"
+							aria-label="New location"
+						>+</button>
+					</div>
+				{/if}
 			</label>
 
 			<label>
@@ -1330,6 +1479,19 @@
 	.map-location-picker {
 		margin-left: auto;
 		max-width: 180px;
+	}
+
+	.map-location-new-input {
+		margin-left: auto;
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-accent);
+		border-radius: 4px;
+		padding: 2px 6px;
+		font-size: 13px;
+		font-family: inherit;
+		outline: none;
+		max-width: 200px;
 	}
 
 	.map-breadcrumb {
@@ -1597,6 +1759,49 @@
 		border-radius: 4px;
 		padding: 6px 8px;
 		font-size: 14px;
+	}
+
+	.region-loc-row,
+	.region-new-loc-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.region-loc-row select {
+		flex: 1;
+	}
+	.region-new-loc-input {
+		flex: 1;
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-accent);
+		border-radius: 4px;
+		padding: 5px 7px;
+		font-size: 14px;
+		font-family: inherit;
+		outline: none;
+	}
+	.region-new-loc-row button {
+		background: transparent;
+		border: 1px solid var(--color-border);
+		color: var(--color-text);
+		border-radius: 4px;
+		padding: 4px 10px;
+		font-size: 12px;
+		font-family: inherit;
+		cursor: pointer;
+	}
+	.region-new-loc-row button:hover:not(:disabled) {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+	.region-new-loc-row button:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.region-new-loc-error {
+		font-size: 11px;
+		color: var(--color-rel-rival, #ef4444);
 	}
 
 	.color-palette {
