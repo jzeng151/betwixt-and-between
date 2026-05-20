@@ -1702,7 +1702,7 @@
 
 	.hint-overlay {
 		position: absolute;
-		bottom: 12px;
+		top: 12px;
 		left: 50%;
 		transform: translateX(-50%);
 		z-index: 1000;
