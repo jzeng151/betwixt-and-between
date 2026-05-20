@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
+    "dev:pglite": "tsx scripts/dev-pglite.ts",
     "build": "vite build",
     "preview": "vite preview",
     "cf:preview": "npm run build && wrangler dev",
