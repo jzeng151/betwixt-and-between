@@ -59,6 +59,11 @@ function createPlacementsStore() {
 	}
 
 	async function create(payload: CreatePlacementPayload): Promise<MapPlacement> {
+		// Capture the context token at request start. If a load() or reset()
+		// fires before the POST resolves (user switched map/location), drop
+		// the new row instead of merging it into a list it doesn't belong to —
+		// the next load() of the original context will pick it up server-side.
+		const token = loadToken;
 		const res = await fetch('/api/map-placements', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -66,7 +71,9 @@ function createPlacementsStore() {
 		});
 		if (!res.ok) throw new Error(await errorMessage(res));
 		const created: MapPlacement = await res.json();
-		placements.update((all) => [created, ...all]);
+		if (token === loadToken) {
+			placements.update((all) => [created, ...all]);
+		}
 		return created;
 	}
 

@@ -277,7 +277,11 @@
 			const fx = e.latlng.lng / activeMap.width;
 			const fy = e.latlng.lat / activeMap.height;
 			if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
-			void createPlacementAt(armedPlaceableId, fx, fy);
+			// Disarm synchronously before the await so a quick second click can't
+			// fire createPlacementAt twice while the POST is in flight.
+			const placeableId = armedPlaceableId;
+			armedPlaceableId = null;
+			void createPlacementAt(placeableId, fx, fy);
 		});
 
 		// Set initial view
@@ -294,7 +298,6 @@
 				x,
 				y
 			});
-			armedPlaceableId = null;
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
 		}
