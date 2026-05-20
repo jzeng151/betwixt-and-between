@@ -450,9 +450,13 @@
 
 		if (!map?.width || !map?.height) return;
 
-		// Null playhead = pre-scrub state. Show the all-default placements only.
-		const t = playheadValue ?? 0;
-		const active = placementsAtPlayhead(all, t);
+		// Null playhead = pre-scrub state. Show only default (both-null-bounds)
+		// placements; t=0 would otherwise leak any time-scoped placement whose
+		// range happens to cover position 0.
+		const active =
+			playheadValue === null
+				? all.filter((p) => p.startPosition === null && p.endPosition === null)
+				: placementsAtPlayhead(all, playheadValue);
 		for (const placement of active) {
 			const placeable = $entities.find((e) => e.id === placement.placeableId);
 			if (!placeable) continue;

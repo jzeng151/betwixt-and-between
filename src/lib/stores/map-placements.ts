@@ -33,12 +33,19 @@ async function errorMessage(res: Response): Promise<string> {
 
 function createPlacementsStore() {
 	const placements = writable<MapPlacement[]>([]);
+	// Monotonic load token. WorldMap re-issues load() on every locationId
+	// change without cancelling in-flight requests, so a slower earlier
+	// response could overwrite a newer one. Drop results whose token no
+	// longer matches the latest load(), and treat reset() as a load too so
+	// a quick locId → null → locId swap can't be resurrected by a stale fetch.
+	let loadToken = 0;
 
 	async function load(filters?: {
 		locationId?: string;
 		placeableId?: string;
 		mapId?: string;
 	}): Promise<void> {
+		const token = ++loadToken;
 		const params = new URLSearchParams();
 		if (filters?.locationId) params.set('locationId', filters.locationId);
 		if (filters?.placeableId) params.set('placeableId', filters.placeableId);
@@ -47,6 +54,7 @@ function createPlacementsStore() {
 		const res = await fetch(`/api/map-placements${qs ? `?${qs}` : ''}`);
 		if (!res.ok) throw new Error('Failed to load placements');
 		const data: MapPlacement[] = await res.json();
+		if (token !== loadToken) return;
 		placements.set(data);
 	}
 
@@ -81,6 +89,7 @@ function createPlacementsStore() {
 	}
 
 	function reset(): void {
+		loadToken++;
 		placements.set([]);
 	}
 

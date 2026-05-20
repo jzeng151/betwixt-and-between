@@ -22,6 +22,7 @@ import {
 	assertPlacementVariantBounds,
 	resolvePlacementBounds
 } from '$lib/server/map-placements.js';
+import { isUuid } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -30,14 +31,25 @@ export const GET: RequestHandler = async (event) => {
 	const url = event.url;
 	const filters = [eq(mapPlacements.userId, userId)];
 
+	// Validate UUID filters before pushing into the query — Postgres raises an
+	// invalid-cast error on malformed uuid text and we'd surface it as a 500.
 	const locationId = url.searchParams.get('locationId');
-	if (locationId) filters.push(eq(mapPlacements.locationId, locationId));
+	if (locationId !== null) {
+		if (!isUuid(locationId)) error(400, 'locationId must be a UUID');
+		filters.push(eq(mapPlacements.locationId, locationId));
+	}
 
 	const placeableId = url.searchParams.get('placeableId');
-	if (placeableId) filters.push(eq(mapPlacements.placeableId, placeableId));
+	if (placeableId !== null) {
+		if (!isUuid(placeableId)) error(400, 'placeableId must be a UUID');
+		filters.push(eq(mapPlacements.placeableId, placeableId));
+	}
 
 	const mapId = url.searchParams.get('mapId');
-	if (mapId) filters.push(eq(mapPlacements.mapId, mapId));
+	if (mapId !== null) {
+		if (!isUuid(mapId)) error(400, 'mapId must be a UUID');
+		filters.push(eq(mapPlacements.mapId, mapId));
+	}
 
 	const rows = await db
 		.select()
