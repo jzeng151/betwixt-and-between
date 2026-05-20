@@ -36,6 +36,9 @@
   --color-type-act:       #8b5cf6;  /* deep violet — structural */
   --color-type-scene:     #38bdf8;  /* sky blue — moment */
   --color-type-note:      #a8a29e;  /* warm grey — annotation */
+  --color-type-artifact:  #ea580c;  /* burnt orange — fictional object */
+  --color-type-item:      #ca8a04;  /* gold — inventory item */
+  --color-type-door:      #6d4c2a;  /* leather brown — portal/threshold */
 
   /* Typography */
   --font-ui:      'Inter', 'Segoe UI', sans-serif;

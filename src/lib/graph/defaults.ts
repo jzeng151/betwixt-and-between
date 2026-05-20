@@ -27,7 +27,13 @@ const TYPE_RANK: Record<EntityType, number> = {
 	Character: 2,
 	Location: 3,
 	Act: 4,
-	Note: 5
+	Note: 5,
+	// Step-4 placeable entity types. Ranked just above Notes so they layer
+	// over story-structure types but below Characters/Locations/Events in
+	// type-ordered renders. Tweak as use patterns emerge.
+	Artifact: 6,
+	Item: 7,
+	Door: 8
 };
 
 /**

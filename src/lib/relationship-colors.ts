@@ -47,7 +47,10 @@ export const NODE_COLOR: Record<EntityType, string> = {
 	Event: 'var(--color-type-event)',
 	Act: 'var(--color-type-act)',
 	Scene: 'var(--color-type-scene)',
-	Note: 'var(--color-type-note)'
+	Note: 'var(--color-type-note)',
+	Artifact: 'var(--color-type-artifact)',
+	Item: 'var(--color-type-item)',
+	Door: 'var(--color-type-door)'
 };
 
 /**

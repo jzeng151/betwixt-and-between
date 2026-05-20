@@ -19,8 +19,21 @@
 
   let editing = $state(false);
   let draft = $state('');
+  let inputEl = $state<HTMLInputElement | null>(null);
+  let selectedOnce = false;
 
   $effect(() => { draft = value; });
+
+  // Select-all when the input first mounts in `forceEditing` mode (a
+  // freshly-created entity whose placeholder name should be replaced by
+  // the first keystroke). Plain pencil-click edits leave selection alone
+  // so the user can add to the existing name.
+  $effect(() => {
+    if (forceEditing && inputEl && !selectedOnce) {
+      selectedOnce = true;
+      inputEl.select();
+    }
+  });
 
   // Render the input whenever the host pins us to editing OR the user
   // clicked the pencil to start a one-off rename.
@@ -50,6 +63,7 @@
 {#if showInput}
   <!-- svelte-ignore a11y_autofocus -->
   <input
+    bind:this={inputEl}
     class="inline-edit-input {cls}"
     bind:value={draft}
     onblur={commit}

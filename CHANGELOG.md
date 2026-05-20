@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1.0] - 2026-05-20
+
+### Added
+- **World Map v2 — Step 4 (map placements).** Drop `Character`/`Artifact`/`Item`/`Door` entities onto a map at fractional coordinates. New `map_placements` table, `/api/map-placements` + `/api/map-placements/[id]` routes, `map-placements` store, and a `PlaceablesPalette` chip rail on the WorldMap. Click a chip to arm, then click the map to place. Markers render with entity-type color + tooltip showing name/type.
+- **Three new placeable entity types: `Artifact`, `Item`, `Door`.** Added to the entity schema with their own colors and wired into the wiki, graph defaults, and relationship-color tables.
+- **Inline Location creation from the WorldMap toolbar.** "+ New Location" input creates a Location and links it to the active map without leaving the canvas.
+- **Inline placeable creation from PlaceablesPalette.** "+ Artifact" / "+ Item" / "+ Door" buttons mint a new entity with an `Untitled <Type>` placeholder and open the EntityDetail editor in edit mode with the name field selected.
+- **Edit-mode-on-open signaling via `pendingEditMode` set.** Timeline's `+ Act` / `+ Event` and PlaceablesPalette's `+ <Type>` paths now open the new entity's editor directly in edit mode instead of read mode.
+- **`scripts/dev-pglite.ts` local dev server.** Boots PGlite over a TCP socket, applies migrations, seeds the E2E user, then execs `vite dev` against it — mirrors the Playwright global-setup environment for parity. Run via `npm run dev:pglite`.
+
+### Fixed
+- **Draw-tool hint no longer covers PlaceablesPalette.** The "Use the draw tool to create regions…" hint moved from `bottom: 12px` to `top: 12px` on the map canvas so it stops sitting on top of the placeable chip rail.
+
+### Tests
+- 4 E2E specs for Timeline `+ Act` / `+ Event` edit-on-open and inline Location creation.
+- Integration tests for the `map_placements` REST surface (auth, validation, cross-user isolation, polygon-FK invariants).
+
 ## [0.7.0.0] - 2026-05-14
 
 ### Added

@@ -71,6 +71,13 @@
       "when": 1778792400000,
       "tag": "0009_world_map_v2_variants_and_part_of",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778938800000,
+      "tag": "0010_world_map_v2_step_4_placements",
+      "breakpoints": true
     }
   ]
 }

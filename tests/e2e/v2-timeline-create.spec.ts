@@ -43,12 +43,13 @@ test.describe('Timeline — create acts and events from the timeline UI', () => 
 			expect(acts[0].name).toBe('Act 1');
 		}).toPass({ timeout: 3000 });
 
-		// UI: header renders, empty state gone, side panel opens in edit mode
+		// UI: header renders, empty state gone, entity-detail window opens in edit mode.
+		// Post-Wiki-rework: EntityDetail lives in its own window, not inside Timeline.
 		await expect(win.locator('.act-col-header .act-name')).toHaveText('Act 1');
 		await expect(win.locator('.acts-empty')).toHaveCount(0);
-		// Edit mode → mode-toggle reads 'Done', InlineEdit's input is rendered.
-		await expect(win.locator('.entity-detail-host .mode-toggle')).toHaveText('Done');
-		await expect(win.locator('.entity-detail-title input')).toBeVisible();
+		const detail = page.locator('.window[aria-label="Act 1"]');
+		await expect(detail.locator('.entity-detail-host .mode-toggle')).toHaveText('Done');
+		await expect(detail.locator('.entity-detail-title input')).toBeVisible();
 	});
 
 	test('+ Act sets the new act position to the end of the existing list', async ({
@@ -93,13 +94,14 @@ test.describe('Timeline — create acts and events from the timeline UI', () => 
 			expect(evs[0].name).toBe('Event 1');
 		}).toPass({ timeout: 3000 });
 
-		// Palette renders the chip and the side panel opens in edit mode
+		// Palette renders the chip and the entity-detail window opens in edit mode
 		const chip = win
 			.locator('.palette-section', { hasText: 'Events' })
 			.locator('.palette-item', { hasText: 'Event 1' });
 		await expect(chip).toBeVisible();
 		await expect(chip).toHaveAttribute('draggable', 'true');
-		await expect(win.locator('.entity-detail-host .mode-toggle')).toHaveText('Done');
+		const detail = page.locator('.window[aria-label="Event 1"]');
+		await expect(detail.locator('.entity-detail-host .mode-toggle')).toHaveText('Done');
 	});
 
 	test('event chip created in the palette can be dragged onto the timeline', async ({
@@ -116,8 +118,8 @@ test.describe('Timeline — create acts and events from the timeline UI', () => 
 			.locator('.palette-add-btn')
 			.click();
 
-		// Close the side panel that just opened so it doesn't cover .rows
-		await win.locator('.entity-detail-close').click();
+		// Close the entity-detail window that just opened so it doesn't cover .rows.
+		await page.locator('.window[aria-label="Event 1"] button[aria-label="Close"]').click();
 
 		const chip = win
 			.locator('.palette-section', { hasText: 'Events' })

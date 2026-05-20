@@ -22,6 +22,7 @@
 	import PlayheadOverlay from '$lib/components/PlayheadOverlay.svelte';
 	import { playhead, isPlaying, secondsPerScene } from '$lib/stores/playhead.js';
 	import { windowStore } from '$lib/stores/windows.js';
+	import { pendingEditMode } from '$lib/components/EntityDetail.svelte';
 	import { timelineFilter } from '$lib/stores/timelineFilter.js';
 	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
 	import {
@@ -293,6 +294,9 @@
 			const created = await entities.createEntity('Act', `Act ${acts.length + 1}`, {
 				position: acts.length
 			});
+			// Land in edit mode so the user can rename the default `Act N` name
+			// without an extra Edit click. EntityDetail consumes on mount.
+			pendingEditMode.add(created.id);
 			selectFromTimeline(created.id);
 		} catch (err) {
 			showError((err as Error).message);
@@ -427,6 +431,7 @@
 					'Event',
 					`Event ${events.length + 1}`
 				);
+				pendingEditMode.add(created.id);
 				selectFromTimeline(created.id);
 			}}
 			onSelect={(id) => {

@@ -29,14 +29,26 @@
 	// Note entities are deliberately excluded from the sidebar (design
 	// specs Lock 2 — Notes are sections of their parent entity, not
 	// navigable list items). Type order matches the design ASCII.
-	const SIDEBAR_TYPES: EntityType[] = ['Character', 'Location', 'Event', 'Scene', 'Act'];
+	const SIDEBAR_TYPES: EntityType[] = [
+		'Character',
+		'Location',
+		'Event',
+		'Scene',
+		'Act',
+		'Artifact',
+		'Item',
+		'Door'
+	];
 	const TYPE_LABEL: Record<EntityType, string> = {
 		Character: 'Characters',
 		Location: 'Locations',
 		Event: 'Events',
 		Scene: 'Scenes',
 		Act: 'Acts',
-		Note: 'Notes'
+		Note: 'Notes',
+		Artifact: 'Artifacts',
+		Item: 'Items',
+		Door: 'Doors'
 	};
 
 	let selectedId = $state<string | null>(null);
