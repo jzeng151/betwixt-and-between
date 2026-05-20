@@ -11,9 +11,11 @@
  *   - Without atomicity, a crash between writes would leave a permanently
  *     shortened interval with no right half — silent data corruption.
  *
- * Iron rule (CONSIDERATIONS.md → "REGRESSION RULE"): the test is part of
- * T8a, not deferred, because the workaround it replaces was protecting
- * against this exact failure mode.
+ * Iron rule (docs/adr/0005-editor-and-entity-detail.md → "Regression-test
+ * discipline"): a test that replaces a deferred workaround ships in the
+ * same commit as the workaround removal. The raw BEGIN/COMMIT in splitInterval
+ * was protecting against this exact failure mode; the test had to land
+ * alongside its removal, not later.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';

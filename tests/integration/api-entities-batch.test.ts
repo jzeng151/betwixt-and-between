@@ -103,11 +103,13 @@ describe('POST /api/entities/batch — atomic multi-entity creation (D21)', () =
 		expect(afterCount).toBe(beforeCount);
 	});
 
-	// SKIPPED until T1 (sync refactor): full atomic rollback requires
-	// db.transaction wrapping, which better-sqlite3 only allows for sync
-	// callbacks. Currently the batch handler inserts sequentially without
-	// a transaction; if insert N+1 fails, inserts 0..N persist. Documented
-	// as a known limitation in CONSIDERATIONS.md → D17 (revised). T1 closes.
+	// SKIP rationale (HISTORICAL — likely reactivatable):
+	// This test was originally skipped while the codebase was on better-sqlite3,
+	// whose `db.transaction()` only accepts sync callbacks (the async helper
+	// chain could not be wrapped). The Postgres port (docs/adr/0004-neon-postgres-better-auth.md)
+	// retired that constraint — pg's native async transactions now allow the
+	// batch handler to wrap in db.transaction(async tx => ...). Verify the
+	// route still wraps in a transaction before unskipping.
 	it.skip('atomic on FK violation: zero rows persist when any insert fails', async () => {
 		const beforeCount = (await currentDb.select().from(entities)).length;
 

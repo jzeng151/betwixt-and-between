@@ -20,9 +20,10 @@
  *      current Act ordering surface here.
  *
  * The test populates a small but realistic graph (3 Acts, scenes in Act 1,
- * 3 characters, 1 event, intervals across all the cases from
- * CONSIDERATIONS.md). It also exercises the failure path: deliberately
- * planted bad rows MUST be detected by the invariants.
+ * 3 characters, 1 event, intervals across the worked examples from
+ * docs/adr/0003-premise-4-position-math.md → "Worked examples"). It also
+ * exercises the failure path: deliberately planted bad rows MUST be detected
+ * by the invariants.
  *
  * In production, this same test runs against the real DB on every CI cycle
  * (configurable via DATABASE_URL).

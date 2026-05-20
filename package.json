@@ -20,7 +20,11 @@
     "test:unit": "vitest",
     "test": "npm run test:unit -- --run",
     "test:e2e": "playwright test",
-    "seed": "tsx scripts/seed/cli.ts"
+    "seed": "tsx scripts/seed/cli.ts",
+    "docs:schema": "tsx scripts/docs/generate-schema-md.ts",
+    "docs:api": "tsx scripts/docs/generate-api-md.ts",
+    "docs:edges": "tsx scripts/docs/generate-edges-md.ts",
+    "docs:all": "npm run docs:schema && npm run docs:api && npm run docs:edges"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.5",
