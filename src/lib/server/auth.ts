@@ -24,23 +24,25 @@ export interface AuthEnv {
  * not at the auth-instance layer — per-request rebuild does not invalidate it
  * as long as the secret is stable.
  *
- * Throws on missing secrets in non-test mode (loud-fail beats silent dev-secret
- * fallback in prod).
+ * BETTER_AUTH_SECRET and BETTER_AUTH_URL are required unconditionally. A
+ * previous version supplied a hardcoded fallback secret when BETWIXT_E2E_PGLITE
+ * was set; that fallback was publicly visible in the repo, so a misapplied
+ * prod `wrangler secret put BETWIXT_E2E_PGLITE 1` would have made the
+ * fallback the production session-signing secret — a session-forgery
+ * primitive. Callers in test mode (Playwright, dev-pglite, unit tests) must
+ * provide their own secret explicitly.
  */
 export function buildAuth(db: RuntimeDb, env: AuthEnv) {
-	const isTest = env.BETWIXT_E2E_PGLITE === '1';
-
-	if (!isTest) {
-		if (!env.BETTER_AUTH_SECRET) {
-			throw new Error('BETTER_AUTH_SECRET is not set');
-		}
-		if (!env.BETTER_AUTH_URL) {
-			throw new Error('BETTER_AUTH_URL is not set');
-		}
+	if (!env.BETTER_AUTH_SECRET) {
+		throw new Error('BETTER_AUTH_SECRET is not set');
+	}
+	if (!env.BETTER_AUTH_URL) {
+		throw new Error('BETTER_AUTH_URL is not set');
 	}
 
-	const baseURL = env.BETTER_AUTH_URL ?? 'http://localhost:5173';
-	const secret = env.BETTER_AUTH_SECRET ?? 'test-secret-pglite-only';
+	const isTest = env.BETWIXT_E2E_PGLITE === '1';
+	const baseURL = env.BETTER_AUTH_URL;
+	const secret = env.BETTER_AUTH_SECRET;
 	const trustedOrigins = isTest
 		? [baseURL, 'http://localhost:5173', 'http://localhost:4173']
 		: [baseURL];
