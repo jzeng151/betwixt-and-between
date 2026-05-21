@@ -169,6 +169,19 @@ function createWindowStore() {
 	}
 
 	/**
+	 * Shallow-merge `patch` into the window matching `id`. Centralizes the
+	 * find-and-spread pattern used by every state mutator that doesn't also
+	 * advance zCounter or read the current window value.
+	 *
+	 * Toggle mutators (togglePin, maximize) and ones that bump zCounter
+	 * (focus, maximize) stay inline — they need access to the current
+	 * window state or to shared counters.
+	 */
+	function patchWindow(id: string, patch: Partial<WindowState>) {
+		update((all) => all.map((w) => (w.id === id ? { ...w, ...patch } : w)));
+	}
+
+	/**
 	 * Open a fresh FocusedGraph window seeded with a focal set. Returns the
 	 * new window id so callers can pass it to <FocusedGraph windowId={...} />.
 	 * Each call creates an independent window; multiple FocusedGraph
@@ -179,9 +192,7 @@ function createWindowStore() {
 		viewMode: FocusedGraphMode = 'their_worlds'
 	): string {
 		const windowId = open('focused-graph', null);
-		update((all) =>
-			all.map((w) => (w.id === windowId ? { ...w, focalSet: [...focalSet], viewMode } : w))
-		);
+		patchWindow(windowId, { focalSet: [...focalSet], viewMode });
 		return windowId;
 	}
 
@@ -190,19 +201,15 @@ function createWindowStore() {
 	 * so Svelte 5 $derived dependencies invalidate correctly.
 	 */
 	function setFocalSet(windowId: string, focalSet: string[]) {
-		update((all) =>
-			all.map((w) => (w.id === windowId ? { ...w, focalSet: [...focalSet] } : w))
-		);
+		patchWindow(windowId, { focalSet: [...focalSet] });
 	}
 
 	function setViewMode(windowId: string, viewMode: FocusedGraphMode) {
-		update((all) => all.map((w) => (w.id === windowId ? { ...w, viewMode } : w)));
+		patchWindow(windowId, { viewMode });
 	}
 
 	function setTypeOrder(windowId: string, typeOrder: EntityType[]) {
-		update((all) =>
-			all.map((w) => (w.id === windowId ? { ...w, typeOrder: [...typeOrder] } : w))
-		);
+		patchWindow(windowId, { typeOrder: [...typeOrder] });
 	}
 
 	function openForEntity(entityId: string, entityType: EntityType): string {
@@ -241,15 +248,15 @@ function createWindowStore() {
 	}
 
 	function minimize(id: string) {
-		update((all) => all.map((w) => (w.id === id ? { ...w, minimized: true } : w)));
+		patchWindow(id, { minimized: true });
 	}
 
 	function move(id: string, x: number, y: number) {
-		update((all) => all.map((w) => (w.id === id ? { ...w, x, y } : w)));
+		patchWindow(id, { x, y });
 	}
 
 	function resize(id: string, width: number, height: number) {
-		update((all) => all.map((w) => (w.id === id ? { ...w, width, height } : w)));
+		patchWindow(id, { width, height });
 	}
 
 	function maximize(id: string) {
@@ -267,7 +274,7 @@ function createWindowStore() {
 	}
 
 	function setEntityId(id: string, entityId: string) {
-		update((all) => all.map((w) => (w.id === id ? { ...w, entityId } : w)));
+		patchWindow(id, { entityId });
 	}
 
 	function focusedWindow(): WindowState | undefined {
