@@ -8,6 +8,7 @@
 // is where it already lives as a pure helper; the import is type-and-pure-only.
 
 import { intervalContainsT } from '$lib/features/timeline/playhead-store.js';
+import { sceneRange } from '$lib/features/timeline/timeline-helpers.js';
 
 export interface Interval {
 	entityId: string;
@@ -77,6 +78,13 @@ export function buildEntityIntervalMap(
 }
 
 // 1-indexed DB sort position → 0-based rank so playhead-axis math uses [0,1), [1,2), …
+//
+// NOTE: intentionally different from `getActs` in `src/lib/story-structure.ts`.
+// This helper filters to `position != null` and sorts by position only — Acts
+// without a position don't participate in graph-scope checks. story-structure's
+// getActs INCLUDES null-position Acts (with MAX_SAFE_INTEGER fallback) because
+// Timeline / PlayerDock need every Act in the array. Do not merge without
+// understanding both call sites.
 export function buildActIndexById(entities: Iterable<ScopeEntity>): Map<string, number> {
 	return new Map(
 		[...entities]
@@ -113,7 +121,7 @@ export function buildSceneRanges(
 		});
 		const n = sorted.length;
 		for (let i = 0; i < n; i++) {
-			ranges.set(sorted[i].id, { start: actIdx + i / n, end: actIdx + (i + 1) / n });
+			ranges.set(sorted[i].id, sceneRange(i, n, actIdx));
 		}
 	}
 	return ranges;

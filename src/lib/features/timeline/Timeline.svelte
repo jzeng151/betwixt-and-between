@@ -16,6 +16,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { entities, type Entity } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore, type Interval } from '$lib/features/timeline/intervals-store.js';
+	import { refreshTimelineStores } from '$lib/features/timeline/loaders.js';
 	import Palette from '$lib/components/Palette.svelte';
 	import ActsHeader from '$lib/features/timeline/ActsHeader.svelte';
 	import IntervalRow from '$lib/features/timeline/IntervalRow.svelte';
@@ -39,7 +40,7 @@
 	let loaded = $state(false);
 	onMount(async () => {
 		try {
-			await Promise.all([entities.load(), intervalsStore.load()]);
+			await refreshTimelineStores();
 		} catch (err) {
 			console.error('[TimelineV2] failed to load:', err);
 		} finally {

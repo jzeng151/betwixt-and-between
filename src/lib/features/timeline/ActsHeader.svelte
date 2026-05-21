@@ -10,6 +10,7 @@
 <script lang="ts">
 	import { entities } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
+	import { refreshTimelineStores } from '$lib/features/timeline/loaders.js';
 	import type { Entity } from '$lib/stores/entities.js';
 
 	interface Props {
@@ -155,7 +156,7 @@
 			const res = await fetch(url, { method: 'DELETE' });
 			if (!res.ok) throw new Error(await res.text());
 			// Reload both stores; interval CASCADE happens server-side.
-			await Promise.all([entities.load(), intervalsStore.load()]);
+			await refreshTimelineStores();
 			deletingActId = null;
 			deletingAct = null;
 		} catch (err) {
@@ -196,7 +197,7 @@
 				body: JSON.stringify({ type: 'Act', name, position: insertingAtIdx })
 			});
 			if (!res.ok) throw new Error(await res.text());
-			await Promise.all([entities.load(), intervalsStore.load()]);
+			await refreshTimelineStores();
 			insertingAtIdx = null;
 			insertName = '';
 		} catch (err) {
@@ -259,7 +260,7 @@
 				body: JSON.stringify({ position: targetPos })
 			});
 			if (!res.ok) throw new Error(await res.text());
-			await Promise.all([entities.load(), intervalsStore.load()]);
+			await refreshTimelineStores();
 		} catch (err) {
 			reorderError = (err as Error).message;
 			setTimeout(() => (reorderError = null), 4000);
@@ -320,7 +321,7 @@
 				body: JSON.stringify({ parentId: target.actId, position: targetPos })
 			});
 			if (!res.ok) throw new Error(await res.text());
-			await Promise.all([entities.load(), intervalsStore.load()]);
+			await refreshTimelineStores();
 		} catch (err) {
 			reorderError = (err as Error).message;
 			setTimeout(() => (reorderError = null), 4000);
