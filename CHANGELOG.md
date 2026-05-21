@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.2.0] - 2026-05-21
+
+### Changed
+- **Graph feature carved into `src/lib/features/graph/`.** Step 2 of the pre-Slice-1 restructure burst (per `docs/plans/codebase-restructure-2026-05-20.md`). StoryGraph, FocusedGraph, GraphCanvas, Legend, plus seven graph helper modules now live under one feature folder. Renames preserved git history.
+- **Timeline feature carved into `src/lib/features/timeline/`.** Step 3 of the burst. Timeline, ActsHeader, IntervalRow, IntervalBar, PlayheadOverlay, plus `timeline-helpers.ts` and the three timeline-axis stores (`intervals-store.ts`, `playhead-store.ts`, `filter-store.ts`) all colocated.
+- **Pure helpers extracted from the graph monoliths.** New `scope.ts` (8 helpers: time/scope/ghost-mode projection) and `view-builders.ts` (4 helpers: node/edge view-model construction). ~200 LOC of byte-identical duplication between StoryGraph and FocusedGraph collapsed into shared helpers with 36 new pinning tests.
+- **Pure helpers extracted from the timeline feature.** New `loaders.ts` (`refreshTimelineStores()`) and `auto-dismiss.ts` (`createAutoDismiss()`). Five sites in Timeline + ActsHeader now share the dual-store reload contract; both components share the auto-dismiss toast pattern.
+
+### Fixed
+- **Ghost trails no longer render on partial-bounds relationships.** Previously, a relationship with only `startPosition` OR only `endPosition` (but not both) would render with the misleading "past" ghost style when an endpoint was offstage — even when the relationship was still temporally active. Now skips ghost mode entirely for partial-bounds rels; fully-bounded and timeless rels are unchanged.
+- **Scene creation now refreshes the intervals store.** Adding scenes to an act triggers a server-side `recomputeIntervalsForAct` cascade (because scene count `m` changes interval positions), but the client previously only reloaded entities. Interval bars showed stale positions until the next user action.
+- **Auto-dismiss error toast no longer leaks setTimeout refs on component unmount.** Both Timeline and ActsHeader now cancel pending dismiss timers in `onDestroy`.
+- **`reorderError` timer is cleared when a new error fires within the 4s dismiss window.** Previously, a stale timer from an older error could blank a newer message early.
+
+### Removed
+- **Dead helper `internalActBoundaryFractions`** from `timeline-helpers.ts` (the real boundary-fraction logic lives inline in `IntervalRow.svelte` because it needs scene boundaries + non-uniform `posToFrac` mapping). Four corresponding unit tests removed.
+
+### Tests
+- 30 new pinning tests (graph scope projection + view builders + auto-dismiss + refreshTimelineStores + computeOutOfScope orphan-Act + 2 classifyGhostMode boundary cases). Net: 886 passing (was 836 at baseline pre-burst, +50 across the burst).
+
+### Documentation
+- New TODOS entries under "Restructure follow-ups" capturing two latent risks the burst surfaced but didn't introduce: a server→features import boundary lint rule, and Act position-tie ordering divergence between server (`position, createdAt`) and client implementations.
+- Doc comments on `getActs` (story-structure.ts) and `buildActIndexById` (scope.ts) explain why their Act-ordering logic intentionally diverges (null-position handling + tiebreak).
+
 ## [0.7.1.0] - 2026-05-20
 
 ### Added
