@@ -231,13 +231,21 @@ describe('classifyGhostMode', () => {
 		expect(classifyGhostMode(r, baseScope, ghostingEdge)).toBe('past');
 	});
 
-	// Codex-flagged behavior — locked, NOT changed by this refactor.
-	// When startPosition is null and only endPosition matches the proximity
-	// test, the inline logic returns 'past'. That may or may not be intended.
-	// Pinning the current behavior here so any future change is intentional.
-	it('returns "past" when startPosition is null but endPosition is in near future (locked behavior)', () => {
+	// Partial-bounds rels do NOT ghost (2026-05-20 fix). The pre-fix logic
+	// returned 'past' when startPosition was null + endPosition matched, which
+	// was visually misleading: 'past' style suggested the rel had ended, while
+	// in fact it was still active (endPosition > t). The fix skips ghost on
+	// any partial-bounds rel so the user only sees ghost trails when:
+	//   - both bounds are set (rel-bound branch decides past/future), or
+	//   - neither bound is set (entity-interval fallback decides past/future).
+	it('returns null when startPosition is null and only endPosition is in near future', () => {
 		const r = { fromId: CHAR_A, toId: CHAR_B, startPosition: null, endPosition: 1.5 };
-		expect(classifyGhostMode(r, baseScope, ghostingEdge)).toBe('past');
+		expect(classifyGhostMode(r, baseScope, ghostingEdge)).toBeNull();
+	});
+
+	it('returns null when endPosition is null and only startPosition is set', () => {
+		const r = { fromId: CHAR_A, toId: CHAR_B, startPosition: 0.5, endPosition: null };
+		expect(classifyGhostMode(r, baseScope, ghostingEdge)).toBeNull();
 	});
 
 	// Proximity is "≤ 2 scene boundaries crossed", NOT absolute distance.

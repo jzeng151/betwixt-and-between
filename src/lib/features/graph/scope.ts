@@ -170,12 +170,18 @@ export function computeOutOfScope(
 // Classify whether an edge should render as a 'past' or 'future' ghost trail,
 // or null when it shouldn't ghost.
 //
-// Behavior note pinned by tests: when `startPosition` is set, past/future is
-// decided by `startPosition > t` regardless of which endpoint (start or end)
-// matched the proximity check. When `startPosition` is null and only
-// `endPosition` matched, the function falls through to 'past'. This mirrors
-// the pre-extraction inline logic; if intent is "future when only endPosition
-// is in the future", treat that as a separate behavioral change.
+// Branches by relationship-bound shape:
+//   - both start + end set → rel-bound branch. past/future decided by
+//     `startPosition > t` (the relationship's own beginning is the
+//     authoritative signal once we have full bounds).
+//   - exactly one of start/end set → NO ghost. The rel-bound branch can't
+//     pick past/future without both bounds, and falling through to entity
+//     intervals would be inconsistent with what the user expects when they
+//     authored a partially-bounded relationship. See commit message for the
+//     2026-05-20 codex-flagged null-startPosition case this fixes.
+//   - neither bound set (timeless rel) → entity-interval fallback. Use the
+//     endpoint's own interval proximity to decide past/future. This is the
+//     original feat(spotlight) ghost-trail behavior.
 export function classifyGhostMode(
 	r: TemporalRelationship,
 	scope: ScopeContext,
@@ -189,25 +195,28 @@ export function classifyGhostMode(
 	const near = (lo: number, hi: number) =>
 		nearEnoughForGhostTrail(lo, hi, sortedSceneStarts);
 
-	if (r.startPosition != null || r.endPosition != null) {
-		const nearStart =
-			r.startPosition != null &&
-			near(Math.min(r.startPosition, t), Math.max(r.startPosition, t));
-		const nearEnd =
-			r.endPosition != null &&
-			near(Math.min(r.endPosition, t), Math.max(r.endPosition, t));
-		if (nearStart || nearEnd) {
-			return r.startPosition != null && r.startPosition > t ? 'future' : 'past';
-		}
+	const hasBothBounds = r.startPosition != null && r.endPosition != null;
+	const hasNoBounds = r.startPosition == null && r.endPosition == null;
+
+	if (hasBothBounds) {
+		const start = r.startPosition as number;
+		const end = r.endPosition as number;
+		const nearStart = near(Math.min(start, t), Math.max(start, t));
+		const nearEnd = near(Math.min(end, t), Math.max(end, t));
+		if (nearStart || nearEnd) return start > t ? 'future' : 'past';
 		return null;
 	}
 
-	for (const endpointId of [r.fromId, r.toId]) {
-		for (const iv of entityIntervalMap.get(endpointId) ?? []) {
-			if (iv.endPosition <= t && near(iv.endPosition, t)) return 'past';
-			if (iv.startPosition > t && near(t, iv.startPosition)) return 'future';
+	if (hasNoBounds) {
+		for (const endpointId of [r.fromId, r.toId]) {
+			for (const iv of entityIntervalMap.get(endpointId) ?? []) {
+				if (iv.endPosition <= t && near(iv.endPosition, t)) return 'past';
+				if (iv.startPosition > t && near(t, iv.startPosition)) return 'future';
+			}
 		}
 	}
+
+	// Partial-bounds rels (exactly one of start/end set) don't ghost.
 	return null;
 }
 
