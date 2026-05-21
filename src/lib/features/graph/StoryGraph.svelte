@@ -9,19 +9,19 @@
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
-  import { pickDefaultRelType } from '$lib/graph/rel-type-picker.js';
-  import { DEFAULT_TYPE_ORDER } from '$lib/graph/defaults.js';
+  import { pickDefaultRelType } from '$lib/features/graph/rel-type-picker.js';
+  import { DEFAULT_TYPE_ORDER } from '$lib/features/graph/defaults.js';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
   import GraphCanvas, {
     type GraphNode,
     type GraphEdge
-  } from '$lib/components/GraphCanvas.svelte';
-  import type { NodePosition } from '$lib/graph/radial-layout.js';
+  } from '$lib/features/graph/GraphCanvas.svelte';
+  import type { NodePosition } from '$lib/features/graph/radial-layout.js';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import { entityAliases } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
-  import Legend from '$lib/components/Legend.svelte';
+  import Legend from '$lib/features/graph/Legend.svelte';
   import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 
   onMount(() => { intervalsStore.load(); entityAliases.load(); worldMapStore.loadMaps(); });
@@ -405,7 +405,7 @@
     layoutQueueDepth++;
     layoutLock = layoutLock.then(async () => {
       try {
-        const { layoutByType: runLayout } = await import('$lib/graph/dagre-layout.js');
+        const { layoutByType: runLayout } = await import('$lib/features/graph/dagre-layout.js');
         // Over-estimate per-node rendered width: name @ ~9px/char +
         // 100px constant covers padding, gap, and the type-tag suffix
         // (e.g. "Character" alone is ~50px at the smaller font).

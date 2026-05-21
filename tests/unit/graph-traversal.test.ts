@@ -4,7 +4,7 @@ import {
 	sharedNeighbors,
 	reachable,
 	type Edge
-} from '../../src/lib/graph/traversal.js';
+} from '../../src/lib/features/graph/traversal.js';
 
 const directed = (fromId: string, toId: string): Edge => ({
 	fromId,

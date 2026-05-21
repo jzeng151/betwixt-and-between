@@ -9,19 +9,19 @@
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
-  import { DEFAULT_TYPE_ORDER } from '$lib/graph/defaults.js';
-  import type { Edge as TraversalEdge } from '$lib/graph/traversal.js';
-  import { computeVisibleSet } from '$lib/graph/visible-set.js';
-  import { radialLayout } from '$lib/graph/radial-layout.js';
+  import { DEFAULT_TYPE_ORDER } from '$lib/features/graph/defaults.js';
+  import type { Edge as TraversalEdge } from '$lib/features/graph/traversal.js';
+  import { computeVisibleSet } from '$lib/features/graph/visible-set.js';
+  import { radialLayout } from '$lib/features/graph/radial-layout.js';
   import GraphCanvas, {
     type GraphNode,
     type GraphEdge
-  } from '$lib/components/GraphCanvas.svelte';
-  import type { NodePosition } from '$lib/graph/radial-layout.js';
+  } from '$lib/features/graph/GraphCanvas.svelte';
+  import type { NodePosition } from '$lib/features/graph/radial-layout.js';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
-  import Legend from '$lib/components/Legend.svelte';
+  import Legend from '$lib/features/graph/Legend.svelte';
   import { entityAliases } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
 
@@ -532,7 +532,7 @@
       let optimisticApplied = false;
 
       try {
-        const { layoutByType: runLayout } = await import('$lib/graph/dagre-layout.js');
+        const { layoutByType: runLayout } = await import('$lib/features/graph/dagre-layout.js');
         const typeOrder = win?.typeOrder ?? DEFAULT_TYPE_ORDER;
 
         // Build inputs from the current visible set. Notes excluded as in

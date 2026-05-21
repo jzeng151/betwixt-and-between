@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DIRECTION } from '../../src/lib/graph/edge-policy.js';
+import { DIRECTION } from '../../src/lib/features/graph/edge-policy.js';
 import { RelationshipType } from '../../src/lib/server/db/schema.js';
 
 describe('DIRECTION policy', () => {

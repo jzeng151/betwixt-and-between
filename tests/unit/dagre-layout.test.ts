@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { layoutByType } from '../../src/lib/graph/dagre-layout.js';
+import { layoutByType } from '../../src/lib/features/graph/dagre-layout.js';
 
 describe('layoutByType (Phase 1B C5)', () => {
 	it('returns empty array when every node is pinned', async () => {
