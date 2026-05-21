@@ -50,6 +50,24 @@ type WindowState = {
 export const PIN_Z_BASE = 10000;
 
 /**
+ * Per-app default open size. The Record<AppId, ...> type makes the compiler
+ * catch any new AppId that forgets to declare a size — previously this lived
+ * as parallel nested ternaries that silently fell through to a default.
+ */
+export const WINDOW_DEFAULTS: Record<AppId, { width: number; height: number }> = {
+	'character-editor': { width: 380, height: 480 },
+	'world-map':        { width: 1024, height: 720 },
+	'timeline':         { width: 960, height: 480 },
+	'entity-detail':    { width: 480, height: 480 },
+	'wiki':             { width: 980, height: 700 },
+	'story-graph':      { width: 640, height: 500 },
+	'focused-graph':    { width: 640, height: 500 },
+	'notes':            { width: 320, height: 450 },
+	'settings':         { width: 520, height: 400 },
+	'story-player':     { width: 280, height: 100 }
+};
+
+/**
  * Routes an entity type to its default app. Locked 2026-04-29 in
  * /plan-design-review (D10-extension/Issue 19A) for Acts/Events/Scenes;
  * Notes joined in Wiki rework slice 1; Character + Location joined in
@@ -112,23 +130,20 @@ function createWindowStore() {
 
 		let x = lastOpenX;
 		let y = lastOpenY;
+		const defaults = WINDOW_DEFAULTS[appId];
 		if (appId === 'story-player' && typeof window !== 'undefined') {
 			// Anchor the Story Player just above the taskbar so it acts like
 			// a transport bar by default. Taskbar height lives in --taskbar-height
 			// (src/app.css); read at runtime so the JS math tracks any CSS change.
-			const winW = 280;
-			const winH = 100;
 			const taskbarH = readTaskbarHeight();
 			const gap = 12;
-			x = Math.max(8, Math.floor((window.innerWidth - winW) / 2));
-			y = Math.max(8, window.innerHeight - taskbarH - winH - gap);
+			x = Math.max(8, Math.floor((window.innerWidth - defaults.width) / 2));
+			y = Math.max(8, window.innerHeight - taskbarH - defaults.height - gap);
 		} else {
 			lastOpenX = lastOpenX + 28 > 520 ? 80 : lastOpenX + 28;
 			lastOpenY = lastOpenY + 28 > 400 ? 80 : lastOpenY + 28;
 		}
 		zCounter++;
-
-		const isGraph = appId === 'story-graph' || appId === 'focused-graph';
 
 		update((all) => [
 			...all,
@@ -138,38 +153,8 @@ function createWindowStore() {
 				entityId,
 				x,
 				y,
-				width:
-					isGraph
-						? 640
-						: appId === 'timeline'
-							? 960
-							: appId === 'world-map'
-								? 1024
-								: appId === 'wiki'
-									? 980
-									: appId === 'settings'
-									? 520
-									: appId === 'entity-detail'
-										? 480
-										: appId === 'character-editor'
-											? 380
-											: appId === 'story-player'
-												? 280
-												: 320,
-				height:
-					isGraph
-						? 500
-						: appId === 'world-map'
-							? 720
-							: appId === 'wiki'
-								? 700
-								: appId === 'settings'
-								? 400
-								: appId === 'notes'
-									? 450
-									: appId === 'story-player'
-										? 100
-										: 480,
+				width: defaults.width,
+				height: defaults.height,
 				minimized: false,
 				maximized: false,
 				zIndex: zCounter,
