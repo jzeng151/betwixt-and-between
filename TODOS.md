@@ -82,19 +82,27 @@ For full per-version detail see `CHANGELOG.md`. For design specs see
 
 ### World Map v3 — Living Stage for Game Design (SUPERSEDES World Map v2 Steps 4-7)
 
-**Status: design APPROVED 2026-05-20. Pre-Slice 0 spike + whole-app /office-hours audit before Slice 1 begins.**
+**Status: design APPROVED 2026-05-20. Pre-Slice 0 spike in flight on `spike/pixi-svelte5`. Whole-app /office-hours audit COMPLETE 2026-05-20. Pre-Slice 1 burst (5 carves) added before Slice 1 begins.**
 
 Design doc: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-main-design-20260520-172713.md`
 Test plan: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-main-eng-review-test-plan-20260520-194500.md`
+Audit doc: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-spike-pixi-svelte5-design-20260520-195422.md`
 Plan-eng-review decisions captured inline in the design doc (D3 doublePrecision, D4 strangler-fig, D5 lazy GC, D6 anchor state shape, D7 Svelte 5 reactivity, D10 state-based parity, D11 4 migration tests).
 
-Foundation rewrite: replace Leaflet+bitmap+polygon with Pixi.js + Paper.js + event-sourced projection engine. New tables `map_anchors`, `map_events`, `factions`. WorldMap.svelte (1555 LOC) decomposed into `src/lib/features/map/` per the deferred restructure plan.
+Foundation rewrite: replace Leaflet+bitmap+polygon with Pixi.js + Paper.js + event-sourced projection engine. New tables `map_anchors`, `map_events`, `factions`. WorldMap.svelte (now **1990 LOC**, up from 1555 when initial restructure plan was written) decomposed into `src/lib/features/map/` as part of the WM3 Slice 1 carve.
 
-8-slice build order (each shippable; Slices 6-8 are explicitly polish and slippable):
+8-slice build order (each shippable; Slices 6-8 are explicitly polish and slippable), now preceded by a pre-Slice 1 restructure burst:
 
-- [ ] **Pre-Slice 0 — Pixi v8 + Svelte 5 integration spike** (1-2 days). Mount, lifecycle, memory profile across 100 mount/unmount cycles. Decides adapter strategy.
-- [ ] **Whole-app /office-hours audit** (separate skill session). Refines `docs/plans/codebase-restructure-2026-05-20.md` (currently an initial plan).
-- [ ] **Slice 1 — Foundation** (4-5 weeks). Strangler-fig Pixi renderer behind feature flag, both Leaflet + Pixi alive. Decomposed `src/lib/features/map/`. New schema (`map_anchors`, `map_events`, `factions`) + migration backfill. `transfer_region` event. Sunday-night-GIF demo: region recolors as you scrub. Includes restructure plan's Step 1 carve (merged).
+- [x] **Pre-Slice 0 — Pixi v8 + Svelte 5 integration spike** (in flight on `spike/pixi-svelte5`). Spike code written; 4-criteria validation + findings doc TBD. Findings doc target: `docs/plans/world-map-v3-pre-slice-0-spike-findings.md`.
+- [x] **Whole-app /office-hours audit** — DONE 2026-05-20. Produced audit design doc + refined `docs/plans/codebase-restructure-2026-05-20.md` in place + this TODOS update. Key conclusion: pre-Slice 1 burst (5 carves) lands before WM3 Slice 1; `server/intervals.ts` split promoted from deferred to Step 4.5; hard freeze on Open/Pending until WM3 Slice 5 ships.
+- [ ] **Pre-Slice 1 burst — restructure carves** (6-10 weeks). Land Steps 2 + 3 + 4 + 4.5 + 5 of the restructure plan BEFORE WM3 Slice 1 starts, so the colocation pattern is proven across 4 other subsystems first. Substrate-agnostic — proceeds in parallel with spike outcome.
+  - Step 2 — `src/lib/features/graph/` carve (StoryGraph + FocusedGraph + GraphCanvas, 3322 LOC).
+  - Step 3 — `src/lib/features/timeline/` carve (Timeline + ActsHeader + IntervalRow + IntervalBar + PlayheadOverlay).
+  - Step 4 — `src/lib/os/` carve (Desktop + WindowManager + Window + Taskbar + Palette + ContextMenu + TooSmall + cross-cutting stores).
+  - Step 4.5 — `src/lib/server/intervals/` split (NEW, audit-promoted) — CRUD vs recompute vs invariants vs polymorphic-FK; preserves writeInterval chokepoint pattern. Sequence LAST in burst.
+  - Step 5 — `src/lib/features/character/` carve (CharacterEditor + CharacterEditorBody, including 493-LOC `<style>` block split).
+  - **No stop criterion at user direction** — burst proceeds until 5 carves verifiably complete; discovery additions permitted. See audit doc § Reviewer Concerns #1.
+- [ ] **Slice 1 — Foundation** (4-5 weeks human, likely compresses to 3-4 as 5th carve). Strangler-fig Pixi renderer behind feature flag, both Leaflet + Pixi alive. Decomposed `src/lib/features/map/` carve (Step 1 of restructure plan, merged with Slice 1). New schema (`map_anchors`, `map_events`, `factions`) + migration backfill. `transfer_region` event. Sunday-night-GIF demo: region recolors as you scrub. Extends `recomputeAllIntervals` (now in `src/lib/server/intervals/recompute.ts` post Step 4.5) for `map_anchors` + `map_events` `t_position` rewrites.
 - [ ] **Slice 2 — Projection engine completion** (3-4 weeks). Multi-event-kind support, anchor snapshots, authoring undo. Faction tide demo end-to-end. Leaflet retired at end of slice (anti-goal: dual paths must NOT persist past Slice 2).
 - [ ] **Slice 3 — Inkarnate-style authoring** (3-4 weeks). Brush tools for terrain, asset library sidebar, layered canvas, type-default + per-instance styles (in `entities.data.style` jsonb, no separate tables).
 - [ ] **Slice 4 — Markers / Artifacts / Movement** (2-3 weeks). Drag-and-drop placement, per-type hover, movement via `move_entity` continuous events. **Replaces v2 Steps 4 + 5.**
@@ -117,6 +125,8 @@ Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qo
 ---
 
 ## Open / pending
+
+> **HARD FREEZE 2026-05-20 → WM3 Slice 5 ships.** Per whole-app /office-hours audit Premise #4: no items below are eligible for pull during the WM3 + restructure window (~7-10 months). No quick-wins window. No opportunistic pulls. Items discovered during this window get appended here but not acted on. The freeze ends when the faction-tide demo is shippable (end of WM3 Slice 5). Audit doc: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-spike-pixi-svelte5-design-20260520-195422.md`.
 
 ### Wiki / Editor polish (unblocked — wiki-rework shipped v0.2.0)
 

@@ -1,0 +1,48 @@
+{
+  "base": "http://localhost:4173",
+  "navCycles": 10,
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "pageErrors": [],
+  "criteria": {
+    "1-mount": {
+      "status": "PASS",
+      "hasCanvas": true,
+      "initialCount": "Items: 3",
+      "spikeConsoleErrors": [],
+      "ignoredErrors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)"
+      ],
+      "pageErrors": []
+    },
+    "3-reactivity": {
+      "status": "PASS",
+      "countAfterAdd": "Items: 6",
+      "countAfterRemove": "Items: 4",
+      "countAfterRecolor": "Items: 4",
+      "canvasChangedOnAdd": true,
+      "canvasChangedOnRemove": true,
+      "canvasChangedOnRecolor": true
+    },
+    "2-lifecycle": {
+      "status": "AUTO-PASS-APPROX",
+      "heapBeforeBytes": 4757102,
+      "heapAfterBytes": 4760634,
+      "heapDeltaMb": 0,
+      "note": "APPROX only. Real validation = manual Chrome DevTools heap snapshot diff per spike doc.",
+      "probedRetained": -1
+    },
+    "4-hmr": {
+      "status": "MANUAL-PENDING",
+      "note": "Requires human edit-save-observe loop. See findings doc § Manual runbook."
+    }
+  },
+  "failedRequests": [],
+  "summary": {
+    "1-mount": "PASS",
+    "3-reactivity": "PASS",
+    "2-lifecycle": "AUTO-PASS-APPROX",
+    "4-hmr": "MANUAL-PENDING"
+  }
+}

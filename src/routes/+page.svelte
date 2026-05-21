@@ -60,6 +60,9 @@
 
 <a href="#intro" class="skip-link">Skip to content</a>
 
+<!-- Pre-Slice 0 spike — DELETE WITH SPIKE ROUTE. -->
+<a href="/spike-pixi" class="spike-link" data-testid="spike-link">Pixi spike →</a>
+
 <main class="landing">
   <!-- Hero -->
   <section id="intro" class="hero">
@@ -114,6 +117,25 @@
 
   .skip-link:focus {
     top: 0;
+  }
+
+  /* Pre-Slice 0 spike link — fixed bottom-right corner. Delete with spike. */
+  .spike-link {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    z-index: 50;
+    background: rgba(0, 0, 0, 0.7);
+    color: var(--color-accent, #4dd0e1);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    padding: 6px 12px;
+    border: 1px dashed var(--color-accent, #4dd0e1);
+    border-radius: 4px;
+    text-decoration: none;
+  }
+  .spike-link:hover {
+    background: rgba(0, 0, 0, 0.85);
   }
 
   .landing {

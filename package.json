@@ -57,6 +57,8 @@
     "leaflet": "^1.9.4",
     "leaflet-draw": "^1.0.4",
     "lucide-svelte": "^1.0.1",
-    "postgres": "^3.4.9"
+    "pixi.js": "^8.18.1",
+    "postgres": "^3.4.9",
+    "svelte-pixi": "^8.0.1"
   }
 }
