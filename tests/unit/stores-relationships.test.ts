@@ -37,6 +37,19 @@ describe('relationships.load', () => {
 		expect(fetchMock).toHaveBeenCalledWith('/api/relationships');
 		expect(get(relationships)).toHaveLength(2);
 	});
+
+	it('throws on non-OK response and leaves the store untouched', async () => {
+		// Seed the store with known content via a successful load.
+		const seeded = [rel({ id: 'seed' })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await relationships.load();
+		const before = get(relationships);
+
+		// Now simulate a 5xx and assert load() rejects + store unchanged.
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse('upstream boom', false, 503)) as unknown as typeof fetch;
+		await expect(relationships.load()).rejects.toThrow(/503.*upstream boom/);
+		expect(get(relationships)).toEqual(before);
+	});
 });
 
 describe('relationships.createRelationship', () => {

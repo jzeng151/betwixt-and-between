@@ -19,6 +19,16 @@ jobs:
     permissions:
       contents: read
       deployments: write
+    # Job-level: every step (npm test, npm run build, anything else) sees
+    # BETWIXT_E2E_PGLITE as the empty string, defeating any value the runner
+    # env might have inherited. The build-time Vite `define` then evaluates
+    # __E2E_BYPASS__ to false and Rollup tree-shakes the x-test-user-id
+    # bypass branch out of the production worker bundle. See
+    # docs/findings/x-test-user-id-prod-guard.md § Resolution (note: that
+    # finding doc is gitignored locally; check the in-repo DEPLOY.md
+    # security section instead).
+    env:
+      BETWIXT_E2E_PGLITE: ''
     steps:
       - uses: actions/checkout@v4
 
@@ -35,13 +45,7 @@ jobs:
       - run: npm run check
       - run: npm test
 
-      # Build under explicitly-unset BETWIXT_E2E_PGLITE so the Vite `define`
-      # in vite.config.ts evaluates __E2E_BYPASS__ to false and Rollup
-      # tree-shakes the x-test-user-id bypass branch out of the prod bundle.
-      # See docs/findings/x-test-user-id-prod-guard.md § Resolution.
       - run: npm run build
-        env:
-          BETWIXT_E2E_PGLITE: ''
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
