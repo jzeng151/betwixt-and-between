@@ -1,9 +1,9 @@
 <!--
-  IntervalBar — atomic visual unit for the V2 Timeline.
+  IntervalBar — atomic visual unit for the Timeline.
   Renders ONE bar as an <svg> so multi-act spans render as a single
   continuous element with vector hairlines at internal act boundaries.
 
-  Public Props API is stable — TimelineV2 / IntervalRow / Palette callers
+  Public Props API is stable — Timeline / IntervalRow / Palette callers
   are unaffected. The parent positions the bar via inline style left/width.
 
   See src/lib/features/timeline/timeline-helpers.ts for the pure helpers used

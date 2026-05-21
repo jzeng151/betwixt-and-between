@@ -1,5 +1,5 @@
 <!--
-  ActsHeader — acts header row + scenes row for TimelineV2.
+  ActsHeader — acts header row + scenes row for the Timeline.
 
   Renders act names, scene counts, and scene cells.
   Per-act affordances:
@@ -8,9 +8,11 @@
 -->
 
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { entities } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { refreshTimelineStores } from '$lib/features/timeline/loaders.js';
+	import { createAutoDismiss } from '$lib/features/timeline/auto-dismiss.js';
 	import type { Entity } from '$lib/stores/entities.js';
 
 	interface Props {
@@ -92,7 +94,11 @@
 					if (!res.ok) throw new Error(await res.text());
 				});
 			}
-			await entities.load();
+			// Scene insert changes scene count m → server's recomputeIntervalsForAct
+			// rewrites every interval anchored to scenes in this act, so the intervals
+			// store needs to refresh too. The other 4 mutation sites in this file use
+			// refreshTimelineStores() for the same reason.
+			await refreshTimelineStores();
 			expandingActId = null;
 			sceneNamesInput = '';
 		} catch (err) {
@@ -218,17 +224,10 @@
 	let dragActId: string | null = $state(null);
 	let actDropTarget: { idx: number; side: 'left' | 'right' } | null = $state(null);
 	let reorderError: string | null = $state(null);
-	// Auto-dismiss timer — cleared on each new error so a stale dismiss can't
-	// blank the latest message early. Mirrors Timeline.svelte's showError().
-	let reorderErrorTimer: ReturnType<typeof setTimeout> | null = null;
-	function showReorderError(msg: string) {
+	const reorderErrorToast = createAutoDismiss((msg) => {
 		reorderError = msg;
-		if (reorderErrorTimer != null) clearTimeout(reorderErrorTimer);
-		reorderErrorTimer = setTimeout(() => {
-			reorderError = null;
-			reorderErrorTimer = null;
-		}, 4000);
-	}
+	});
+	onDestroy(() => reorderErrorToast.cancel());
 
 	function actDragStart(e: DragEvent, actId: string) {
 		if (!e.dataTransfer) return;
@@ -273,7 +272,7 @@
 			if (!res.ok) throw new Error(await res.text());
 			await refreshTimelineStores();
 		} catch (err) {
-			showReorderError((err as Error).message);
+			reorderErrorToast.show((err as Error).message);
 		}
 	}
 
@@ -333,7 +332,7 @@
 			if (!res.ok) throw new Error(await res.text());
 			await refreshTimelineStores();
 		} catch (err) {
-			showReorderError((err as Error).message);
+			reorderErrorToast.show((err as Error).message);
 		}
 	}
 

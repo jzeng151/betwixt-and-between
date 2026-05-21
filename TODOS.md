@@ -168,6 +168,19 @@ Hex-grid-overlay was the original Phase 4 World Map upgrade and is now **superse
   - **Notes** — existing Lucide pin/bookmark/document fits.
   - **Refactor first:** extract `.icon-picker` markup + CSS from `CharacterEditor.svelte` to `src/lib/components/IconPicker.svelte` before the second entity type adopts it.
 
+### Restructure follow-ups (surfaced by /review on the pre-Slice-1 burst)
+
+Latent risks the restructure brought into view but didn't introduce. Both flagged by codex + red team adversarial passes; both pre-date this branch.
+
+- [ ] **Server → features/ import boundary lint rule.** `src/lib/server/intervals.ts` now imports from `src/lib/features/timeline/timeline-helpers.ts`. The helper is pure-data today, but `features/timeline/` also contains `playhead-store.ts` (Svelte store) and 5 `.svelte` components. Nothing prevents a future contributor from adding a Svelte import to `timeline-helpers.ts`, which would break the server bundle on Cloudflare Workers. **Fix options:** (a) eslint-plugin-boundaries or dependency-cruiser rule blocking `src/lib/server/**` → `src/lib/features/*` imports unless the target is a pure-data file; (b) move `timeline-helpers.ts` to a `src/lib/shared/` or `src/lib/math/` sibling that both server and features import from. Option (b) is cleaner long-term but expands the diff.
+
+- [ ] **Act position-tie ordering divergence.** Three places sort Acts on the playhead axis and they don't agree:
+  - `src/lib/server/intervals.ts:actIndexOf` sorts by `(position, createdAt)` (server source of truth for interval position math).
+  - `src/lib/story-structure.ts:getActs` sorts by `(position, createdAt)` (matches server — used by Timeline + PlayerDock).
+  - `src/lib/features/graph/scope.ts:buildActIndexById` sorts by `position` only, filtering `position == null` (graph scope).
+  - `src/lib/features/graph/StoryGraph.svelte:~73` and `FocusedGraph.svelte:~57` sort by `(position ?? 0)` (treats null-position Acts as position 0; no `createdAt` tiebreak).
+  When two Acts share a `position` value (rare — concurrent creation race, import, or `entities.position` index is non-unique by design), client and server pick different orderings. Graph scope can then assign different act indices than the server uses for intervals, leading to silent off-by-one rendering. **Pre-existing**; the divergence-note comments on `getActs` and `buildActIndexById` only cover the documented 2-way split, not the 4-way reality. **Fix options:** (a) add a unique index on `entities.position` per `(user_id, parentId)` to make the tie impossible; (b) align all client sorts to `(position, createdAt)` matching the server. (a) is the durable fix.
+
 ---
 
 ## Future feature: temporal identity & relationships

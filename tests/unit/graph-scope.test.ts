@@ -189,6 +189,16 @@ describe('computeOutOfScope', () => {
 		expect(set.has(SCENE_1A)).toBe(true); // [0, 0.5)
 		expect(set.has(SCENE_1B)).toBe(false); // [0.5, 1)
 	});
+
+	// Pins the actIdx-missing guard. A null-position Act (filtered out by
+	// buildActIndexById) that still appears in displayEntities must NOT be
+	// added to outOfScope — the helper has no axis index for it, so it
+	// shouldn't pretend it's off-axis.
+	it('does not flag an Act whose id is absent from actIndexById', () => {
+		const orphan: ScopeEntity = { id: 'act-null', type: 'Act' };
+		const set = computeOutOfScope(0.5, new Map(), acts, sceneRanges, [orphan]);
+		expect(set.has('act-null')).toBe(false);
+	});
 });
 
 describe('classifyGhostMode', () => {
@@ -258,6 +268,29 @@ describe('classifyGhostMode', () => {
 		const scope: ScopeContext = { ...baseScope, sortedSceneStarts: [] };
 		const r = { fromId: CHAR_A, toId: CHAR_B, startPosition: 5, endPosition: 6 };
 		expect(classifyGhostMode(r, scope, ghostingEdge)).toBeNull();
+	});
+
+	// Pin the (inWindow=true && endpointOutOfScope=true) branch. The early-return
+	// guard at the top of classifyGhostMode is `if (inWindow && !endpointOutOfScope)`
+	// — so when an endpoint is offstage the function must continue past it and
+	// classify ghost mode normally. A regression that simplified the guard to
+	// `if (inWindow) return null` would silently kill ghost trails for these
+	// edges.
+	it('classifies ghost when inWindow=true but an endpoint is out of scope', () => {
+		const scope: ScopeContext = { ...baseScope, outOfScope: new Set([CHAR_B]) };
+		const edge: EdgeContext = { ...ghostingEdge, inWindow: true };
+		const r = { fromId: CHAR_A, toId: CHAR_B, startPosition: 0.5, endPosition: 0.7 };
+		expect(classifyGhostMode(r, scope, edge)).toBe('past');
+	});
+
+	// Pin the strict `start > t` semantics. When the relationship begins
+	// exactly at the playhead (startPosition === t), the rel-bound branch
+	// returns 'past' because start > t is false. A future change to
+	// `start >= t` would flip this case to 'future' silently.
+	it('treats startPosition === t as past (strict greater-than)', () => {
+		// baseScope.t = 1.0; the rel begins exactly at t.
+		const r = { fromId: CHAR_A, toId: CHAR_B, startPosition: 1.0, endPosition: 1.5 };
+		expect(classifyGhostMode(r, baseScope, ghostingEdge)).toBe('past');
 	});
 
 	it('falls back to endpoint intervals when relationship has no temporal positions', () => {
@@ -412,4 +445,3 @@ describe('computeRenderedEntityIds', () => {
 		expect(result.has(CHAR_A)).toBe(false);
 	});
 });
-

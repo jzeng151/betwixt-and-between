@@ -1,5 +1,5 @@
 /**
- * Pure helpers for V2 timeline rendering. Extracted to a non-Svelte file
+ * Pure helpers for Timeline rendering. Extracted to a non-Svelte file
  * so they can be unit-tested without component-test infrastructure.
  *
  * The width-breakpoint contract for narrow timeline-bar label rendering
@@ -159,7 +159,7 @@ export function presenceLabel(
 	return `${startStr} → ${endStr}`;
 }
 
-// ─── Color + label helpers (consumed by TimelineV2.svelte) ───────────────
+// ─── Color + label helpers (consumed by Timeline.svelte) ───────────────
 
 /**
  * The 8-color cycle used to color character bars by row index when a
@@ -357,5 +357,3 @@ export function positionToEndFKs(
 	}
 	return { endActId: acts[actIdx].id, endSceneId: null, endPosition: position };
 }
-
-

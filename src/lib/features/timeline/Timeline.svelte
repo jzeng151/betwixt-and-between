@@ -17,6 +17,7 @@
 	import { entities, type Entity } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore, type Interval } from '$lib/features/timeline/intervals-store.js';
 	import { refreshTimelineStores } from '$lib/features/timeline/loaders.js';
+	import { createAutoDismiss } from '$lib/features/timeline/auto-dismiss.js';
 	import Palette from '$lib/components/Palette.svelte';
 	import ActsHeader from '$lib/features/timeline/ActsHeader.svelte';
 	import IntervalRow from '$lib/features/timeline/IntervalRow.svelte';
@@ -42,7 +43,7 @@
 		try {
 			await refreshTimelineStores();
 		} catch (err) {
-			console.error('[TimelineV2] failed to load:', err);
+			console.error('[Timeline] failed to load:', err);
 		} finally {
 			loaded = true;
 		}
@@ -57,16 +58,11 @@
 
 	// ── Error toast ───────────────────────────────────────────────────────────
 	let errorMsg: string | null = $state(null);
-	let errorTimer: ReturnType<typeof setTimeout> | null = null;
-
-	function showError(msg: string) {
+	const errorToast = createAutoDismiss((msg) => {
 		errorMsg = msg;
-		if (errorTimer != null) clearTimeout(errorTimer);
-		errorTimer = setTimeout(() => {
-			errorMsg = null;
-			errorTimer = null;
-		}, 4000);
-	}
+	});
+	onDestroy(() => errorToast.cancel());
+	const showError = (msg: string) => errorToast.show(msg);
 
 	// ── Derived data ─────────────────────────────────────────────────────────
 

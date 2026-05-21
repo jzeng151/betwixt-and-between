@@ -4,8 +4,12 @@
 // No Svelte runes, no stores — callers wrap these in `$derived` and pass plain
 // arrays / maps / sets in.
 //
-// `intervalContainsT` is imported from the playhead store module because that
-// is where it already lives as a pure helper; the import is type-and-pure-only.
+// `intervalContainsT` is a pure helper but lives in the playhead store module,
+// which has module-init side effects (writable store creation, timer setup
+// inside createPlayheadStore). Importing it pulls in that module init at
+// load time — acceptable today because every graph entrypoint already
+// imports `playhead` directly, but worth noting before any future caller
+// pulls scope.ts in isolation.
 
 import { intervalContainsT } from '$lib/features/timeline/playhead-store.js';
 import { sceneRange } from '$lib/features/timeline/timeline-helpers.js';
