@@ -13,14 +13,19 @@
    * the deliverable, not this code.
    */
   import { Application, Graphics, Sprite } from 'svelte-pixi';
-  import { Texture, type Graphics as PixiGraphics, type Sprite as PixiSprite } from 'pixi.js';
+  import {
+    Texture,
+    type Application as PixiApplication,
+    type Graphics as PixiGraphics,
+    type Sprite as PixiSprite,
+  } from 'pixi.js';
 
   type Circle = { id: number; x: number; y: number; color: number; radius: number };
 
   // Polygon vertices for the static Graphics shape (a triangle is fine per spike doc).
   const triangle: [number, number][] = [
     [100, 50],
-    [180, 200],
+    [180, 300],
     [20, 200],
   ];
 
@@ -71,6 +76,34 @@
   $effect(() => {
     if (spriteInstance) spriteInstance.tint = 0xa6e22e;
   });
+
+  // HMR (criterion 4): svelte-pixi 8.0.1's <Application> has two upstream defects
+  // that make true in-place HMR unsafe:
+  //
+  //   1. node_modules/svelte-pixi/dist/svelte-5/Application.svelte has
+  //      `onMount(() => () => { instance = undefined; })` as its ONLY cleanup —
+  //      it never calls app.destroy(). Each HMR replacement leaks the WebGL
+  //      context, triggering the browser's "Too many active WebGL contexts.
+  //      Oldest context will be lost." warning after ~15 saves.
+  //
+  //   2. Hooking import.meta.hot.dispose to destroy the Application aggressively
+  //      (children + texture + textureSource + context) creates a double-destroy
+  //      race: Svelte's natural component teardown then runs svelte-pixi's
+  //      Ticker.svelte teardown effect, which crashes with
+  //      "Cannot read properties of null (reading 'next')" at Ticker.destroy.
+  //
+  // Workaround per spike doc § Risk register:
+  //   "If HMR is a no-go, document and accept full reload during dev — small cost."
+  // import.meta.hot.invalidate() tells Vite to do a full page reload on every
+  // change to this module. Slower dev loop, but clean state every time and no
+  // WebGL context accumulation. Slice 1 can revisit if/when svelte-pixi fixes
+  // its destroy lifecycle upstream.
+  let pixiApp: PixiApplication | undefined = $state();
+  if (import.meta.hot) {
+    import.meta.hot.accept(() => {
+      import.meta.hot!.invalidate();
+    });
+  }
 </script>
 
 <svelte:head>
@@ -94,7 +127,7 @@
   </div>
 
   <div class="stage-wrap" data-testid="stage-wrap">
-    <Application width={640} height={420} background={0x101820} antialias>
+    <Application bind:instance={pixiApp} width={640} height={420} background={0x101820} antialias>
       <!-- Static sprite: a tinted 1x1 WHITE texture as the spike's "image". Tint set via instance. -->
       <Sprite bind:instance={spriteInstance} texture={Texture.WHITE} x={20} y={20} width={60} height={20} />
 
