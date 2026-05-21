@@ -42,8 +42,34 @@
  *   Half-open convention: end is exclusive. CHECK (start_position < end_position).
  */
 
-export * from './intervals/types.js';
-export * from './intervals/polymorphic-fk.js';
-export * from './intervals/invariants.js';
-export * from './intervals/recompute.js';
-export * from './intervals/crud.js';
+// Named re-exports only. `export *` from polymorphic-fk + invariants would
+// pull `validateFKTypes` and `assertNoOverlap` into the public surface —
+// they're internal helpers consumed by crud.ts across the new sub-module
+// boundary, not part of the historical API the 20+ external callers see.
+// Keep this list in lockstep with the original intervals.ts exports
+// (pre-split commit b5ae7fe-era).
+export type {
+	Db,
+	WriteIntervalInput,
+	UpdateIntervalResult,
+	ComputeIntervalPositionsInput,
+	ComputeIntervalPositionsResult,
+	RecomputeCache,
+	RelationshipBoundsInput,
+	RelationshipBoundsResult
+} from './intervals/types.js';
+export { POSITION_EPSILON } from './intervals/types.js';
+export {
+	writeInterval,
+	updateInterval,
+	splitInterval,
+	moveSceneToAct
+} from './intervals/crud.js';
+export {
+	actIndexOf,
+	sceneIndexOf,
+	computeIntervalPositions,
+	recomputeIntervalsForAct,
+	recomputeAllIntervals,
+	resolveRelationshipBounds
+} from './intervals/recompute.js';
