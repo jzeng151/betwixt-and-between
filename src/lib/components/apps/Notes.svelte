@@ -1,7 +1,7 @@
 <script lang="ts">
   import { notesStore, noteFolders, noteEntries, type NoteEntry } from '$lib/stores/notes.js';
   import { onMount } from 'svelte';
-  import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import ContextMenu from '$lib/os/ContextMenu.svelte';
 
   let selectedFolderId = $state<string | null>(null);
   let selectedEntryId = $state<string | null>(null);

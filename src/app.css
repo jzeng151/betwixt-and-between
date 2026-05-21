@@ -48,6 +48,9 @@
   --window-radius:   8px;
   --window-shadow:   0 20px 60px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(255,255,255,0.04);
   --titlebar-height: 36px;
+  /* Shell taskbar (dock). Read from JS via getComputedStyle for layout math
+     (see TASKBAR_HEIGHT in src/lib/os/windows-store.ts). */
+  --taskbar-height:  52px;
 }
 
 [data-theme="light"] {

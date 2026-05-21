@@ -18,12 +18,12 @@
 	import { intervals as intervalsStore, type Interval } from '$lib/features/timeline/intervals-store.js';
 	import { refreshTimelineStores } from '$lib/features/timeline/loaders.js';
 	import { createAutoDismiss } from '$lib/features/timeline/auto-dismiss.js';
-	import Palette from '$lib/components/Palette.svelte';
+	import Palette from '$lib/os/Palette.svelte';
 	import ActsHeader from '$lib/features/timeline/ActsHeader.svelte';
 	import IntervalRow from '$lib/features/timeline/IntervalRow.svelte';
 	import PlayheadOverlay from '$lib/features/timeline/PlayheadOverlay.svelte';
 	import { playhead, isPlaying, secondsPerScene } from '$lib/features/timeline/playhead-store.js';
-	import { windowStore } from '$lib/stores/windows.js';
+	import { windowStore } from '$lib/os/windows-store.js';
 	import { pendingEditMode } from '$lib/components/EntityDetail.svelte';
 	import { timelineFilter } from '$lib/features/timeline/filter-store.js';
 	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/features/timeline/timeline-helpers.js';

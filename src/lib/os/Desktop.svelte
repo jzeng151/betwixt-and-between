@@ -54,7 +54,7 @@
   .desktop {
     position: fixed;
     inset: 0;
-    bottom: 52px;
+    bottom: var(--taskbar-height);
     background: var(--color-desktop);
     display: flex;
     align-items: center;
@@ -73,7 +73,7 @@
   .tutorial-overlay {
     position: fixed;
     inset: 0;
-    bottom: 52px;
+    bottom: var(--taskbar-height);
     background: rgba(0,0,0,0.6);
     display: flex;
     align-items: center;

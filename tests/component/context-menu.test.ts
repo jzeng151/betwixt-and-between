@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import ContextMenu from '$lib/components/ContextMenu.svelte';
+import ContextMenu from '$lib/os/ContextMenu.svelte';
 
 beforeEach(() => {
 	cleanup();

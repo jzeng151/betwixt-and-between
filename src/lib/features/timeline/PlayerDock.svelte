@@ -9,7 +9,7 @@
 	import { get } from 'svelte/store';
 	import { entities } from '$lib/stores/entities.js';
 	import { playhead, isPlaying, secondsPerScene } from '$lib/features/timeline/playhead-store.js';
-	import { windowStore } from '$lib/stores/windows.js';
+	import { windowStore } from '$lib/os/windows-store.js';
 	import {
 		getActs,
 		getScenesByActId,

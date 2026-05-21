@@ -36,7 +36,7 @@
 		type EditableFieldHandle
 	} from '$lib/util/pending-commit.js';
 	import { parseWikiLinks } from '$lib/wiki-links.js';
-	import { preferences } from '$lib/stores/preferences.js';
+	import { preferences } from '$lib/os/preferences-store.js';
 
 	type Kind =
 		| 'single-line'

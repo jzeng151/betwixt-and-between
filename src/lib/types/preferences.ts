@@ -34,7 +34,7 @@ export interface Preferences {
 
 /**
  * The current code's max-known version. Bump in lockstep with adding a
- * migration to MIGRATIONS in stores/preferences.ts.
+ * migration to MIGRATIONS in os/preferences-store.ts.
  */
 export const PREFERENCES_CODE_MAX_VERSION: number = 3;
 

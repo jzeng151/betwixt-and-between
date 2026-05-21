@@ -50,6 +50,24 @@ type WindowState = {
 export const PIN_Z_BASE = 10000;
 
 /**
+ * Per-app default open size. The Record<AppId, ...> type makes the compiler
+ * catch any new AppId that forgets to declare a size — previously this lived
+ * as parallel nested ternaries that silently fell through to a default.
+ */
+export const WINDOW_DEFAULTS: Record<AppId, { width: number; height: number }> = {
+	'character-editor': { width: 380, height: 480 },
+	'world-map':        { width: 1024, height: 720 },
+	'timeline':         { width: 960, height: 480 },
+	'entity-detail':    { width: 480, height: 480 },
+	'wiki':             { width: 980, height: 700 },
+	'story-graph':      { width: 640, height: 500 },
+	'focused-graph':    { width: 640, height: 500 },
+	'notes':            { width: 320, height: 450 },
+	'settings':         { width: 520, height: 400 },
+	'story-player':     { width: 280, height: 100 }
+};
+
+/**
  * Routes an entity type to its default app. Locked 2026-04-29 in
  * /plan-design-review (D10-extension/Issue 19A) for Acts/Events/Scenes;
  * Notes joined in Wiki rework slice 1; Character + Location joined in
@@ -78,6 +96,20 @@ let lastOpenX = 80;
 let lastOpenY = 80;
 let zCounter = 100;
 
+/**
+ * Read --taskbar-height from :root. Falls back to 52 in SSR / before the
+ * stylesheet attaches. Kept inline (not exported) because this is shell
+ * layout math, not a public API.
+ */
+function readTaskbarHeight(): number {
+	if (typeof window === 'undefined') return 52;
+	const raw = getComputedStyle(document.documentElement)
+		.getPropertyValue('--taskbar-height')
+		.trim();
+	const parsed = parseInt(raw, 10);
+	return Number.isFinite(parsed) ? parsed : 52;
+}
+
 function createWindowStore() {
 	const { subscribe, update, set } = writable<WindowState[]>([]);
 
@@ -98,22 +130,20 @@ function createWindowStore() {
 
 		let x = lastOpenX;
 		let y = lastOpenY;
+		const defaults = WINDOW_DEFAULTS[appId];
 		if (appId === 'story-player' && typeof window !== 'undefined') {
-			// Anchor the Story Player just above the taskbar (52px) so it acts
-			// like a transport bar by default.
-			const winW = 320;
-			const winH = 100;
-			const taskbarH = 52;
+			// Anchor the Story Player just above the taskbar so it acts like
+			// a transport bar by default. Taskbar height lives in --taskbar-height
+			// (src/app.css); read at runtime so the JS math tracks any CSS change.
+			const taskbarH = readTaskbarHeight();
 			const gap = 12;
-			x = Math.max(8, Math.floor((window.innerWidth - winW) / 2));
-			y = Math.max(8, window.innerHeight - taskbarH - winH - gap);
+			x = Math.max(8, Math.floor((window.innerWidth - defaults.width) / 2));
+			y = Math.max(8, window.innerHeight - taskbarH - defaults.height - gap);
 		} else {
 			lastOpenX = lastOpenX + 28 > 520 ? 80 : lastOpenX + 28;
 			lastOpenY = lastOpenY + 28 > 400 ? 80 : lastOpenY + 28;
 		}
 		zCounter++;
-
-		const isGraph = appId === 'story-graph' || appId === 'focused-graph';
 
 		update((all) => [
 			...all,
@@ -123,38 +153,8 @@ function createWindowStore() {
 				entityId,
 				x,
 				y,
-				width:
-					isGraph
-						? 640
-						: appId === 'timeline'
-							? 960
-							: appId === 'world-map'
-								? 1024
-								: appId === 'wiki'
-									? 980
-									: appId === 'settings'
-									? 520
-									: appId === 'entity-detail'
-										? 480
-										: appId === 'character-editor'
-											? 380
-											: appId === 'story-player'
-												? 280
-												: 320,
-				height:
-					isGraph
-						? 500
-						: appId === 'world-map'
-							? 720
-							: appId === 'wiki'
-								? 700
-								: appId === 'settings'
-								? 400
-								: appId === 'notes'
-									? 450
-									: appId === 'story-player'
-										? 100
-										: 480,
+				width: defaults.width,
+				height: defaults.height,
 				minimized: false,
 				maximized: false,
 				zIndex: zCounter,
@@ -169,6 +169,19 @@ function createWindowStore() {
 	}
 
 	/**
+	 * Shallow-merge `patch` into the window matching `id`. Centralizes the
+	 * find-and-spread pattern used by every state mutator that doesn't also
+	 * advance zCounter or read the current window value.
+	 *
+	 * Toggle mutators (togglePin, maximize) and ones that bump zCounter
+	 * (focus, maximize) stay inline — they need access to the current
+	 * window state or to shared counters.
+	 */
+	function patchWindow(id: string, patch: Partial<WindowState>) {
+		update((all) => all.map((w) => (w.id === id ? { ...w, ...patch } : w)));
+	}
+
+	/**
 	 * Open a fresh FocusedGraph window seeded with a focal set. Returns the
 	 * new window id so callers can pass it to <FocusedGraph windowId={...} />.
 	 * Each call creates an independent window; multiple FocusedGraph
@@ -179,9 +192,7 @@ function createWindowStore() {
 		viewMode: FocusedGraphMode = 'their_worlds'
 	): string {
 		const windowId = open('focused-graph', null);
-		update((all) =>
-			all.map((w) => (w.id === windowId ? { ...w, focalSet: [...focalSet], viewMode } : w))
-		);
+		patchWindow(windowId, { focalSet: [...focalSet], viewMode });
 		return windowId;
 	}
 
@@ -190,19 +201,15 @@ function createWindowStore() {
 	 * so Svelte 5 $derived dependencies invalidate correctly.
 	 */
 	function setFocalSet(windowId: string, focalSet: string[]) {
-		update((all) =>
-			all.map((w) => (w.id === windowId ? { ...w, focalSet: [...focalSet] } : w))
-		);
+		patchWindow(windowId, { focalSet: [...focalSet] });
 	}
 
 	function setViewMode(windowId: string, viewMode: FocusedGraphMode) {
-		update((all) => all.map((w) => (w.id === windowId ? { ...w, viewMode } : w)));
+		patchWindow(windowId, { viewMode });
 	}
 
 	function setTypeOrder(windowId: string, typeOrder: EntityType[]) {
-		update((all) =>
-			all.map((w) => (w.id === windowId ? { ...w, typeOrder: [...typeOrder] } : w))
-		);
+		patchWindow(windowId, { typeOrder: [...typeOrder] });
 	}
 
 	function openForEntity(entityId: string, entityType: EntityType): string {
@@ -241,15 +248,15 @@ function createWindowStore() {
 	}
 
 	function minimize(id: string) {
-		update((all) => all.map((w) => (w.id === id ? { ...w, minimized: true } : w)));
+		patchWindow(id, { minimized: true });
 	}
 
 	function move(id: string, x: number, y: number) {
-		update((all) => all.map((w) => (w.id === id ? { ...w, x, y } : w)));
+		patchWindow(id, { x, y });
 	}
 
 	function resize(id: string, width: number, height: number) {
-		update((all) => all.map((w) => (w.id === id ? { ...w, width, height } : w)));
+		patchWindow(id, { width, height });
 	}
 
 	function maximize(id: string) {
@@ -267,7 +274,7 @@ function createWindowStore() {
 	}
 
 	function setEntityId(id: string, entityId: string) {
-		update((all) => all.map((w) => (w.id === id ? { ...w, entityId } : w)));
+		patchWindow(id, { entityId });
 	}
 
 	function focusedWindow(): WindowState | undefined {

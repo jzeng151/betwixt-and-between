@@ -244,4 +244,38 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 			moveSceneToAct(db, 'no-such-scene', acts.act2, 0, userId)
 		).rejects.toThrow();
 	});
+
+	// Characterization test for docs/findings/duplicate-act-on-cross-act-scene-move.md.
+	// The QA-surfaced bug claims a phantom Act appears after a cross-act Scene move
+	// via PATCH. moveSceneToAct only UPDATEs entities (never INSERTs), so if the bug
+	// lives in this function we'd see act count grow here. If this stays green, the
+	// bug must originate upstream (PATCH handler) or in something this calls into
+	// (recomputeIntervalsForAct, map-placement updates).
+	it('preserves the act count across a cross-act Scene move (finding repro)', async () => {
+		// Mirror the finding's seed exactly: 3 Acts at positions 0/1/2.
+		// The shared seedActs already gives us act0/act1/act2 at those positions.
+		const [scene3] = await db
+			.insert(entities)
+			.values({ userId, type: 'Scene', name: 'Scene 3', parentId: acts.act1, position: 0 })
+			.returning();
+		await db.insert(entities).values({ userId, type: 'Scene', name: 'Scene 4', parentId: acts.act1, position: 1 });
+		await db.insert(entities).values({ userId, type: 'Scene', name: 'Scene 5', parentId: acts.act2, position: 0 });
+		await db.insert(entities).values({ userId, type: 'Scene', name: 'Scene 6', parentId: acts.act2, position: 1 });
+
+		const actsBefore = await db
+			.select()
+			.from(entities)
+			.where(and(eq(entities.userId, userId), eq(entities.type, 'Act')));
+		expect(actsBefore).toHaveLength(3);
+
+		// PATCH /api/entities/{Scene3.id} body {"parentId": Act III.id, "position": 2}
+		// — equivalent direct call into moveSceneToAct.
+		await moveSceneToAct(db, scene3.id, acts.act2, 2, userId);
+
+		const actsAfter = await db
+			.select()
+			.from(entities)
+			.where(and(eq(entities.userId, userId), eq(entities.type, 'Act')));
+		expect(actsAfter).toHaveLength(3);
+	});
 });

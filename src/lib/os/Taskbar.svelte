@@ -1,24 +1,18 @@
 <script lang="ts">
-  import { windowStore, type AppId } from '$lib/stores/windows.js';
+  import { windowStore, type AppId } from '$lib/os/windows-store.js';
+  import { APP_CATALOG, DOCK_ORDER } from '$lib/os/app-catalog.js';
   import { entities } from '$lib/stores/entities.js';
   import { nodeColorFor } from '$lib/relationship-colors.js';
 
-  interface DockApp {
-    id: AppId;
-    label: string;
-    icon: string;
-    entityId?: string | null;
-  }
-
-  const DOCK_APPS: DockApp[] = [
-    { id: 'character-editor', label: 'Characters', icon: '👤' },
-    { id: 'story-graph',      label: 'Story Graph', icon: '🕸' },
-    { id: 'timeline',         label: 'Timeline', icon: '📅' },
-    { id: 'world-map',        label: 'World Map', icon: '🗺' },
-    { id: 'wiki',             label: 'Wiki', icon: '📝' },
-    { id: 'notes',            label: 'Notes', icon: '📒' },
-    { id: 'settings',         label: 'Settings', icon: '⚙' },
-  ];
+  // Dock items derived from the shared catalog. Order comes from DOCK_ORDER;
+  // when dock customization lands it will resolve from preferences instead.
+  const DOCK_APPS = DOCK_ORDER.map((id) => ({
+    id,
+    label: APP_CATALOG[id].title,
+    // DOCK_ORDER entries are required to declare an icon in app-catalog.ts;
+    // the non-null assertion documents that contract for the type-checker.
+    icon: APP_CATALOG[id].icon!
+  }));
 
   type GroupedWindow = {
     appId: AppId;
@@ -74,16 +68,13 @@
     return m;
   });
 
-  const APP_PARENT: Partial<Record<AppId, AppId>> = {
-    'focused-graph': 'story-graph',
-    'story-player': 'timeline'
-  };
-
-  // FocusedGraph windows get a different icon (🎯) to distinguish them in the shared group.
-  const PICKER_ICON: Partial<Record<AppId, string>> = {
-    'focused-graph': '🎯',
-    'story-player': '▶'
-  };
+  // Shared O(1) entity lookup for the picker's per-row label/subtitle/swatch
+  // helpers — without it each row did up to 3 linear $entities.find() scans.
+  const entityById = $derived.by(() => {
+    const m = new Map<string, (typeof $entities)[number]>();
+    for (const e of $entities) m.set(e.id, e);
+    return m;
+  });
 
   function pickerLabel(win: (typeof $windowStore)[number], fallback: string): string {
     if (win.appId === 'story-player') return 'Story Player';
@@ -93,7 +84,7 @@
       const focals = win.focalSet ?? [];
       if (focals.length === 0) return 'Focused Graph (no focal)';
       const names = focals.slice(0, 2).map((id) => {
-        const e = $entities.find((x) => x.id === id);
+        const e = entityById.get(id);
         return e?.name ?? id.slice(0, 6);
       });
       if (focals.length === 1) return names[0];
@@ -101,7 +92,7 @@
       return `${names[0]} + ${focals.length - 1} others`;
     }
     if (!win.entityId) return fallback;
-    const entity = $entities.find((e) => e.id === win.entityId);
+    const entity = entityById.get(win.entityId);
     return entity?.name ?? fallback;
   }
 
@@ -109,19 +100,19 @@
     if (win.appId === 'story-player') return 'Player';
     if (win.appId === 'focused-graph') return 'Focused Graph';
     if (!win.entityId) return null;
-    const entity = $entities.find((e) => e.id === win.entityId);
+    const entity = entityById.get(win.entityId);
     return entity?.type ?? null;
   }
 
   function pickerSwatch(win: (typeof $windowStore)[number]): string | null {
     if (!win.entityId) return null;
-    const entity = $entities.find((e) => e.id === win.entityId);
+    const entity = entityById.get(win.entityId);
     if (!entity) return null;
     return nodeColorFor(entity, characterIndexById.get(entity.id));
   }
 
   function pickerIcon(win: (typeof $windowStore)[number], fallback: string): string {
-    return PICKER_ICON[win.appId as AppId] ?? fallback;
+    return APP_CATALOG[win.appId].pickerIcon ?? fallback;
   }
 
   const grouped = $derived(() => {
@@ -131,7 +122,7 @@
     }
     for (const win of $windowStore) {
       // Child appIds (e.g. focused-graph) are hoisted to their parent dock group.
-      const targetAppId = (APP_PARENT[win.appId as AppId] ?? win.appId) as AppId;
+      const targetAppId = APP_CATALOG[win.appId].parent ?? win.appId;
       const group = map.get(targetAppId);
       if (group) group.windows.push(win);
     }
@@ -233,7 +224,7 @@
     bottom: 0;
     left: 0;
     right: 0;
-    height: 52px;
+    height: var(--taskbar-height);
     background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
     border-top: 1px solid var(--color-border);
     backdrop-filter: blur(12px);

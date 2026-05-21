@@ -4,7 +4,7 @@
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
-  import { windowStore } from '$lib/stores/windows.js';
+  import { windowStore } from '$lib/os/windows-store.js';
   import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
@@ -17,7 +17,7 @@
     type GraphEdge
   } from '$lib/features/graph/GraphCanvas.svelte';
   import type { NodePosition } from '$lib/features/graph/radial-layout.js';
-  import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import ContextMenu from '$lib/os/ContextMenu.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import { entityAliases } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';

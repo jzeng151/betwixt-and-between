@@ -1,36 +1,25 @@
 <script lang="ts">
-  import { windowStore } from '$lib/stores/windows.js';
+  import { windowStore, type AppId } from '$lib/os/windows-store.js';
+  import { APP_CATALOG, isBare } from '$lib/os/app-catalog.js';
   import { entities } from '$lib/stores/entities.js';
   import Window from './Window.svelte';
-  import CharacterEditor from './apps/CharacterEditor.svelte';
-  import Wiki from './apps/Wiki.svelte';
+  import CharacterEditor from '$lib/components/apps/CharacterEditor.svelte';
+  import Wiki from '$lib/components/apps/Wiki.svelte';
   import Timeline from '$lib/features/timeline/Timeline.svelte';
-  import WorldMap from './apps/WorldMap.svelte';
+  import WorldMap from '$lib/components/apps/WorldMap.svelte';
   import StoryGraph from '$lib/features/graph/StoryGraph.svelte';
   import FocusedGraph from '$lib/features/graph/FocusedGraph.svelte';
-  import Settings from './apps/Settings.svelte';
-  import Notes from './apps/Notes.svelte';
-  import PlayerDock from './PlayerDock.svelte';
-  import EntityDetail from './EntityDetail.svelte';
+  import Settings from '$lib/components/apps/Settings.svelte';
+  import Notes from '$lib/components/apps/Notes.svelte';
+  import PlayerDock from '$lib/features/timeline/PlayerDock.svelte';
+  import EntityDetail from '$lib/components/EntityDetail.svelte';
 
-  const APP_TITLES: Record<string, string> = {
-    'character-editor': 'Characters',
-    'world-map': 'World Map',
-    'timeline': 'Timeline',
-    'entity-detail': 'Entity',
-    'wiki': 'Wiki',
-    'story-graph': 'Story Graph',
-    'focused-graph': 'Focused Graph',
-    'settings': 'Settings',
-    'notes': 'Notes',
-    'story-player': 'Story Player',
-  };
-
-  function windowTitle(appId: string, entityId: string | null): string {
+  function windowTitle(appId: AppId, entityId: string | null): string {
+    const fallback = APP_CATALOG[appId].title;
     if (entityId && (appId === 'character-editor' || appId === 'entity-detail')) {
-      return $entities.find((e) => e.id === entityId)?.name ?? APP_TITLES[appId] ?? appId;
+      return $entities.find((e) => e.id === entityId)?.name ?? fallback;
     }
-    return APP_TITLES[appId] ?? appId;
+    return fallback;
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -63,7 +52,7 @@
     zIndex={win.zIndex}
     minimized={win.minimized}
     maximized={win.maximized}
-    bare={win.appId === 'story-graph' || win.appId === 'focused-graph' || win.appId === 'world-map' || win.appId === 'story-player'}
+    bare={isBare(win.appId)}
     compact={win.appId === 'story-player'}
     alwaysOnTop={win.alwaysOnTop ?? false}
   >

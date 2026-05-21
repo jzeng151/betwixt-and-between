@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { windowStore, PIN_Z_BASE } from '$lib/stores/windows.js';
+  import { windowStore, PIN_Z_BASE } from '$lib/os/windows-store.js';
 
   interface Props {
     id: string;
@@ -207,7 +207,7 @@
   .window.maximized {
     position: fixed;
     inset: 0;
-    bottom: 52px;
+    bottom: var(--taskbar-height);
     width: auto !important;
     height: auto !important;
     border-radius: 0;

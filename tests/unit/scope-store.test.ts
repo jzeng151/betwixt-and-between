@@ -2,17 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { writable, derived, get } from 'svelte/store';
 import type { Interval } from '../../src/lib/features/timeline/intervals-store.js';
 import type { Entity } from '../../src/lib/stores/entities.js';
+import { deriveScope } from '../../src/lib/os/scope-store.js';
 
 /**
- * Unit tests for the scope-store derivation logic.
- *
- * Rather than importing the singleton `currentScope` (which depends on
- * singleton stores that require fetch mocking), we recreate the same
- * derivation function against local writables. This tests the pure logic
- * without I/O.
+ * Unit tests for the scope-store derivation. Imports the same `deriveScope`
+ * function the production `currentScope` store wraps — keeps test and
+ * production in lockstep instead of duplicating the logic.
  */
-
-type ScopedEntity = { id: string; type: string; name: string };
 
 function mkEntity(overrides: Partial<Entity> & { id: string }): Entity {
 	return {
@@ -41,26 +37,6 @@ function mkInterval(overrides: Partial<Interval> = {}): Interval {
 		updatedAt: 0,
 		...overrides
 	};
-}
-
-/** The same derivation function used by src/lib/stores/scope.ts */
-function deriveScope(
-	$playhead: number | null,
-	$intervals: Interval[],
-	$entities: Entity[]
-): ScopedEntity[] {
-	if ($playhead === null) {
-		return $entities.map((e) => ({ id: e.id, type: e.type, name: e.name }));
-	}
-	const inScopeIds = new Set<string>();
-	for (const iv of $intervals) {
-		if (iv.startPosition <= $playhead && $playhead < iv.endPosition) {
-			inScopeIds.add(iv.entityId);
-		}
-	}
-	return $entities
-		.filter((e) => inScopeIds.has(e.id))
-		.map((e) => ({ id: e.id, type: e.type, name: e.name }));
 }
 
 describe('scope store derivation', () => {

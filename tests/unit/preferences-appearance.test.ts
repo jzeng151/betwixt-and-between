@@ -11,7 +11,7 @@ import {
 	setPreference,
 	getPreference,
 	preferences
-} from '$lib/stores/preferences.js';
+} from '$lib/os/preferences-store.js';
 import type { Appearance } from '$lib/types/preferences.js';
 
 describe('Preferences appearance', () => {
