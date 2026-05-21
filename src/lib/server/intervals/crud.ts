@@ -58,14 +58,18 @@ import {
  *   - If caller supplied positions AND FKs, validates they match (within epsilon)
  *   - Performs the INSERT
  *
- * **Atomicity:** the validate / compute / insert sequence runs inside
- * `db.transaction(async (tx) => {...})`. The polymorphic Db type accepts
- * both top-level db and a transaction context — if the caller is already
- * inside a tx (e.g., from a /api/entities handler), the existing tx is
- * reused without nesting; if not, a fresh one is opened. Locked 2026-04-29
- * in /plan-eng-review (Issue 11A/17A).
+ * **Atomicity:** callers should wrap in `db.transaction(async (tx) => { await
+ * writeInterval(tx, ...) })` when they need the validate / compute / insert
+ * sequence to be atomic. The polymorphic Db type accepts both top-level db
+ * and a tx context, so passing `tx` is enough — this function does NOT open
+ * its own transaction. When called outside a tx the validation reads and
+ * the insert are not atomic; a concurrent write between assertNoOverlap and
+ * the insert could slip an overlap through. By design only the route
+ * handlers that already open a tx (or tests that want explicit rollback)
+ * compose this inside one. Locked 2026-04-29 in /plan-eng-review
+ * (Issue 11A/17A).
  *
- * Throws on any validation failure (rolls back the surrounding transaction).
+ * Throws on any validation failure (rolls back the surrounding tx if one).
  */
 export async function writeInterval(
 	db: Db,
