@@ -1,0 +1,51 @@
+name: deploy
+
+# Deploy to Cloudflare Workers on every push to main, after CI gates pass.
+# See DEPLOY.md for one-time setup (Cloudflare secrets, GitHub secrets, first deploy).
+
+on:
+  push:
+    branches: [main]
+
+# Cancel in-flight runs when a newer commit lands; only the latest commit deploys.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - run: npm ci
+
+      # CI gates — same as .github/workflows/test.yml. Mirrored here (not
+      # delegated via workflow_run) so the deploy job is self-contained and
+      # an accidental change to test.yml can't silently bypass deploy gating.
+      - run: npm run check
+      - run: npm test
+
+      # Build under explicitly-unset BETWIXT_E2E_PGLITE so the Vite `define`
+      # in vite.config.ts evaluates __E2E_BYPASS__ to false and Rollup
+      # tree-shakes the x-test-user-id bypass branch out of the prod bundle.
+      # See docs/findings/x-test-user-id-prod-guard.md § Resolution.
+      - run: npm run build
+        env:
+          BETWIXT_E2E_PGLITE: ''
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
