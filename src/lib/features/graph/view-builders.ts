@@ -11,10 +11,24 @@
 // their `graphNodes` $derived; sharing them now would be a weak abstraction.
 
 import type { RelationshipType } from '$lib/server/db/schema.js';
+import type { SceneRange } from '$lib/features/graph/scope.js';
 
 export interface IndexableEntity {
 	id: string;
 	type: string;
+}
+
+export interface NamedSceneEntity {
+	id: string;
+	name: string;
+	parentId?: string | null;
+}
+
+export interface SceneRevealEntry {
+	id: string;
+	name: string;
+	actId: string;
+	position: number;
 }
 
 export interface TypedRelationship {
@@ -84,4 +98,25 @@ export function filterVisibleRelationships<R extends { fromId: string; toId: str
 		}
 	}
 	return out;
+}
+
+// Project sceneRanges into the shape the "Revealed at" dropdowns consume:
+// {id, name, actId, position}. Sorted ascending by start position.
+// Iterates entities once (O(n)) to look up names by id, avoiding the O(n²)
+// inline `entities.find(...)` pattern the two components were using.
+export function buildScenesForReveal(
+	sceneRanges: Map<string, SceneRange>,
+	entities: Iterable<NamedSceneEntity>
+): SceneRevealEntry[] {
+	const byId = new Map<string, NamedSceneEntity>();
+	for (const e of entities) byId.set(e.id, e);
+
+	const out: SceneRevealEntry[] = [];
+	for (const [id, range] of sceneRanges) {
+		const e = byId.get(id);
+		if (e?.parentId) {
+			out.push({ id, name: e.name, actId: e.parentId, position: range.start });
+		}
+	}
+	return out.sort((a, b) => a.position - b.position);
 }

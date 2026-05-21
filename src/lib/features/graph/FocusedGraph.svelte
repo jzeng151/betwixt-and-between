@@ -29,15 +29,16 @@
     buildActIndexById,
     buildSceneRanges,
     extractSortedSceneStarts,
-    nearEnoughForGhostTrail,
     computeOutOfScope,
-    classifyGhostMode
+    classifyGhostMode,
+    computeRenderedEntityIds
   } from '$lib/features/graph/scope.js';
   import {
     buildCharacterIndexById,
     buildPresentRelTypes,
     buildAliasEntityIdSet,
-    filterVisibleRelationships
+    filterVisibleRelationships,
+    buildScenesForReveal
   } from '$lib/features/graph/view-builders.js';
 
   interface Props {
@@ -102,48 +103,28 @@
   const sceneRanges = $derived(buildSceneRanges($entities, actIndexById));
   const sortedSceneStarts = $derived(extractSortedSceneStarts(sceneRanges));
 
-  const scenesForReveal = $derived.by(() => {
-    const result: { id: string; name: string; actId: string; position: number }[] = [];
-    for (const [id, range] of sceneRanges) {
-      const e = $entities.find((en) => en.id === id);
-      if (e?.parentId) result.push({ id, name: e.name, actId: e.parentId, position: range.start });
-    }
-    return result.sort((a, b) => a.position - b.position);
-  });
+  const scenesForReveal = $derived(buildScenesForReveal(sceneRanges, $entities));
 
   const outOfScope = $derived(
     computeOutOfScope($playhead, entityIntervalMap, actIndexById, sceneRanges, displayEntities)
   );
 
-  // When hideOutOfScope is on, strip out-of-scope ids from the rendered set so
-  // those nodes (and their edges) disappear entirely instead of just dimming.
-  // When showGhostTrails is also on, keep nearby-ghost entities rendered so
-  // their edges can show as ghost trails (they'll be dimmed via dimmedNodes).
-  const renderedEntityIds = $derived.by(() => {
-    if (!$hideOutOfScope) return displayEntityIds;
-    const inScope = new Set([...displayEntityIds].filter((id) => !outOfScope.has(id)));
-    const t = $playhead;
-    if (t !== null) {
-      for (const alias of $entityAliases) {
-        if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
-        if (!inScope.has(alias.aliasEntityId)) continue;
-        if (displayEntityIds.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
-      }
-    }
-    if (!showGhostTrails || t === null) return inScope;
-    const near = (lo: number, hi: number) => nearEnoughForGhostTrail(lo, hi, sortedSceneStarts);
-    for (const [entityId, ivs] of entityIntervalMap) {
-      if (!outOfScope.has(entityId)) continue;
-      for (const iv of ivs) {
-        if ((iv.endPosition <= t && near(iv.endPosition, t)) ||
-            (iv.startPosition > t && near(t, iv.startPosition))) {
-          inScope.add(entityId);
-          break;
-        }
-      }
-    }
-    return inScope;
-  });
+  // Apply hideOutOfScope filter + alias-swap + ghost-trail re-inclusion.
+  // hideOutOfScope on → strip out-of-scope ids; showGhostTrails also on →
+  // keep nearby-ghost entities rendered so their edges can render as ghost
+  // trails (they'll be dimmed via dimmedNodes downstream).
+  const renderedEntityIds = $derived(
+    computeRenderedEntityIds({
+      hideOutOfScope: $hideOutOfScope,
+      showGhostTrails,
+      t: $playhead,
+      displayEntityIds,
+      outOfScope,
+      entityIntervalMap,
+      sortedSceneStarts,
+      entityAliases: $entityAliases
+    })
+  );
 
   // ── Legend state (C4) ──────────────────────────────────────────────────────
   // Hard filter: toggling a type off hides those edges entirely (vs. scrubber

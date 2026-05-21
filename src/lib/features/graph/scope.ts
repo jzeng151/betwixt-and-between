@@ -47,6 +47,23 @@ export interface EdgeContext {
 	showGhostTrails: boolean;
 }
 
+export interface RenderAlias {
+	primaryEntityId: string;
+	aliasEntityId: string;
+	revealedAtPosition: number | null;
+}
+
+export interface RenderInputs {
+	hideOutOfScope: boolean;
+	showGhostTrails: boolean;
+	t: number | null;
+	displayEntityIds: Set<string>;
+	outOfScope: Set<string>;
+	entityIntervalMap: Map<string, Array<{ startPosition: number; endPosition: number }>>;
+	sortedSceneStarts: number[];
+	entityAliases: Iterable<RenderAlias>;
+}
+
 export function buildEntityIntervalMap(
 	intervals: Iterable<Interval>
 ): Map<string, Array<{ startPosition: number; endPosition: number }>> {
@@ -192,4 +209,58 @@ export function classifyGhostMode(
 		}
 	}
 	return null;
+}
+
+// Compute the final set of entity ids that should render as nodes, after
+// applying the hideOutOfScope filter, alias-swap inclusion (primary follows
+// alias into scope once revealed), and ghost-trail re-inclusion (out-of-scope
+// entities with an interval near the playhead are kept so their edges can
+// render as ghost trails).
+//
+// Returns the input `displayEntityIds` Set directly when `hideOutOfScope` is
+// off — callers can identity-compare to detect the short-circuit.
+export function computeRenderedEntityIds(inputs: RenderInputs): Set<string> {
+	const {
+		hideOutOfScope,
+		showGhostTrails,
+		t,
+		displayEntityIds,
+		outOfScope,
+		entityIntervalMap,
+		sortedSceneStarts,
+		entityAliases
+	} = inputs;
+
+	if (!hideOutOfScope) return displayEntityIds;
+
+	const inScope = new Set([...displayEntityIds].filter((id) => !outOfScope.has(id)));
+
+	// Alias swap: when an alias entity is rendered post-reveal and its primary
+	// is currently out of scope, force-include the primary so SPOTLIGHT can
+	// snap-move it to the alias's old position on the same tick (avoids
+	// stacking the two at the same coordinates).
+	if (t !== null) {
+		for (const alias of entityAliases) {
+			if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
+			if (!inScope.has(alias.aliasEntityId)) continue;
+			if (displayEntityIds.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
+		}
+	}
+
+	if (!showGhostTrails || t === null) return inScope;
+
+	const near = (lo: number, hi: number) => nearEnoughForGhostTrail(lo, hi, sortedSceneStarts);
+	for (const [entityId, ivs] of entityIntervalMap) {
+		if (!outOfScope.has(entityId)) continue;
+		for (const iv of ivs) {
+			if (
+				(iv.endPosition <= t && near(iv.endPosition, t)) ||
+				(iv.startPosition > t && near(t, iv.startPosition))
+			) {
+				inScope.add(entityId);
+				break;
+			}
+		}
+	}
+	return inScope;
 }

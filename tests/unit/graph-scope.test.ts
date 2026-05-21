@@ -14,10 +14,12 @@ import {
 	nearEnoughForGhostTrail,
 	computeOutOfScope,
 	classifyGhostMode,
+	computeRenderedEntityIds,
 	type ScopeContext,
 	type EdgeContext,
 	type ScopeEntity,
-	type Interval
+	type Interval,
+	type RenderInputs
 } from '../../src/lib/features/graph/scope.js';
 
 const ACT_1 = 'act-1';
@@ -270,3 +272,136 @@ describe('classifyGhostMode', () => {
 		expect(classifyGhostMode(r, scope, ghostingEdge)).toBe('future');
 	});
 });
+
+describe('computeRenderedEntityIds', () => {
+	const PRIMARY = 'primary';
+	const ALIAS = 'alias';
+	const display = new Set([CHAR_A, CHAR_B, PRIMARY, ALIAS]);
+	const baseInputs: RenderInputs = {
+		hideOutOfScope: true,
+		showGhostTrails: false,
+		t: 1.0,
+		displayEntityIds: display,
+		outOfScope: new Set(),
+		entityIntervalMap: new Map(),
+		sortedSceneStarts: [],
+		entityAliases: []
+	};
+
+	it('returns displayEntityIds unchanged when hideOutOfScope is off', () => {
+		const result = computeRenderedEntityIds({ ...baseInputs, hideOutOfScope: false });
+		expect(result).toBe(display);
+	});
+
+	it('filters out entities present in outOfScope', () => {
+		const result = computeRenderedEntityIds({
+			...baseInputs,
+			outOfScope: new Set([CHAR_B])
+		});
+		expect(result.has(CHAR_A)).toBe(true);
+		expect(result.has(CHAR_B)).toBe(false);
+	});
+
+	it('force-includes the primary when an active alias is rendered (alias swap)', () => {
+		const result = computeRenderedEntityIds({
+			...baseInputs,
+			outOfScope: new Set([PRIMARY]),
+			entityAliases: [
+				{ primaryEntityId: PRIMARY, aliasEntityId: ALIAS, revealedAtPosition: null }
+			]
+		});
+		expect(result.has(PRIMARY)).toBe(true);
+		expect(result.has(ALIAS)).toBe(true);
+	});
+
+	it('skips alias inclusion when revealedAtPosition is in the future', () => {
+		const result = computeRenderedEntityIds({
+			...baseInputs,
+			t: 0.5,
+			outOfScope: new Set([PRIMARY]),
+			entityAliases: [
+				{ primaryEntityId: PRIMARY, aliasEntityId: ALIAS, revealedAtPosition: 1.0 }
+			]
+		});
+		expect(result.has(PRIMARY)).toBe(false);
+	});
+
+	it('skips alias inclusion when aliasEntity is itself out of scope', () => {
+		const result = computeRenderedEntityIds({
+			...baseInputs,
+			outOfScope: new Set([PRIMARY, ALIAS]),
+			entityAliases: [
+				{ primaryEntityId: PRIMARY, aliasEntityId: ALIAS, revealedAtPosition: null }
+			]
+		});
+		expect(result.has(PRIMARY)).toBe(false);
+	});
+
+	it('does NOT add primary when primary is not in displayEntityIds', () => {
+		const result = computeRenderedEntityIds({
+			...baseInputs,
+			displayEntityIds: new Set([ALIAS]),
+			outOfScope: new Set(),
+			entityAliases: [
+				{ primaryEntityId: PRIMARY, aliasEntityId: ALIAS, revealedAtPosition: null }
+			]
+		});
+		expect(result.has(PRIMARY)).toBe(false);
+	});
+
+	it('skips alias logic entirely when t is null (idle scrubber)', () => {
+		const result = computeRenderedEntityIds({
+			...baseInputs,
+			t: null,
+			outOfScope: new Set([PRIMARY]),
+			entityAliases: [
+				{ primaryEntityId: PRIMARY, aliasEntityId: ALIAS, revealedAtPosition: null }
+			]
+		});
+		expect(result.has(PRIMARY)).toBe(false);
+	});
+
+	it('with showGhostTrails on, re-includes an out-of-scope entity whose interval is near t', () => {
+		const result = computeRenderedEntityIds({
+			...baseInputs,
+			showGhostTrails: true,
+			outOfScope: new Set([CHAR_A]),
+			entityIntervalMap: new Map([[CHAR_A, [{ startPosition: 0, endPosition: 0.5 }]]]),
+			sortedSceneStarts: []
+		});
+		expect(result.has(CHAR_A)).toBe(true);
+	});
+
+	it('with showGhostTrails on, does NOT re-include when no interval is near t', () => {
+		const result = computeRenderedEntityIds({
+			...baseInputs,
+			showGhostTrails: true,
+			outOfScope: new Set([CHAR_A]),
+			entityIntervalMap: new Map([[CHAR_A, [{ startPosition: 5, endPosition: 6 }]]]),
+			sortedSceneStarts: []
+		});
+		expect(result.has(CHAR_A)).toBe(false);
+	});
+
+	it('with showGhostTrails off, never re-includes ghost-near entities', () => {
+		const result = computeRenderedEntityIds({
+			...baseInputs,
+			showGhostTrails: false,
+			outOfScope: new Set([CHAR_A]),
+			entityIntervalMap: new Map([[CHAR_A, [{ startPosition: 0, endPosition: 0.5 }]]])
+		});
+		expect(result.has(CHAR_A)).toBe(false);
+	});
+
+	it('with showGhostTrails on but t=null, never re-includes ghost-near entities', () => {
+		const result = computeRenderedEntityIds({
+			...baseInputs,
+			showGhostTrails: true,
+			t: null,
+			outOfScope: new Set([CHAR_A]),
+			entityIntervalMap: new Map([[CHAR_A, [{ startPosition: 0, endPosition: 0.5 }]]])
+		});
+		expect(result.has(CHAR_A)).toBe(false);
+	});
+});
+

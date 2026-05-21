@@ -28,15 +28,16 @@
     buildActIndexById,
     buildSceneRanges,
     extractSortedSceneStarts,
-    nearEnoughForGhostTrail,
     computeOutOfScope,
-    classifyGhostMode
+    classifyGhostMode,
+    computeRenderedEntityIds
   } from '$lib/features/graph/scope.js';
   import {
     buildCharacterIndexById,
     buildPresentRelTypes,
     buildAliasEntityIdSet,
-    filterVisibleRelationships
+    filterVisibleRelationships,
+    buildScenesForReveal
   } from '$lib/features/graph/view-builders.js';
 
   onMount(() => { intervalsStore.load(); entityAliases.load(); worldMapStore.loadMaps(); });
@@ -109,48 +110,28 @@
   const sortedSceneStarts = $derived(extractSortedSceneStarts(sceneRanges));
 
   // Scenes with their story-time start positions, for the "Revealed at" dropdowns.
-  const scenesForReveal = $derived.by(() => {
-    const result: { id: string; name: string; actId: string; position: number }[] = [];
-    for (const [id, range] of sceneRanges) {
-      const e = $entities.find((en) => en.id === id);
-      if (e?.parentId) result.push({ id, name: e.name, actId: e.parentId, position: range.start });
-    }
-    return result.sort((a, b) => a.position - b.position);
-  });
+  const scenesForReveal = $derived(buildScenesForReveal(sceneRanges, $entities));
 
   const outOfScope = $derived(
     computeOutOfScope($playhead, entityIntervalMap, actIndexById, sceneRanges, displayEntities)
   );
 
-  const renderedEntityIds = $derived.by(() => {
-    if (!$hideOutOfScope) return displayEntityIdSet;
-    const inScope = new Set([...displayEntityIdSet].filter((id) => !outOfScope.has(id)));
-    const t = $playhead;
-    // When the alias's interval is active, force-include the primary so it renders
-    // as a ghost trail (dimmed via outOfScope) at the swapped position.
-    // The SNAP effect moves primary to the alias's old position on the same tick,
-    // so primary is visible but displaced — no stacking at the same coordinates.
-    if (t !== null) {
-      for (const alias of $entityAliases) {
-        if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
-        if (!inScope.has(alias.aliasEntityId)) continue;
-        if (displayEntityIdSet.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
-      }
-    }
-    if (!showGhostTrails || t === null) return inScope;
-    const near = (lo: number, hi: number) => nearEnoughForGhostTrail(lo, hi, sortedSceneStarts);
-    for (const [entityId, ivs] of entityIntervalMap) {
-      if (!outOfScope.has(entityId)) continue;
-      for (const iv of ivs) {
-        if ((iv.endPosition <= t && near(iv.endPosition, t)) ||
-            (iv.startPosition > t && near(t, iv.startPosition))) {
-          inScope.add(entityId);
-          break;
-        }
-      }
-    }
-    return inScope;
-  });
+  // Apply hideOutOfScope filter + alias-swap + ghost-trail re-inclusion.
+  // When SPOTLIGHT reveals an alias, force-include the primary so it can
+  // snap-move to the alias's old position on the same tick (avoids stacking
+  // both at the same coordinates).
+  const renderedEntityIds = $derived(
+    computeRenderedEntityIds({
+      hideOutOfScope: $hideOutOfScope,
+      showGhostTrails,
+      t: $playhead,
+      displayEntityIds: displayEntityIdSet,
+      outOfScope,
+      entityIntervalMap,
+      sortedSceneStarts,
+      entityAliases: $entityAliases
+    })
+  );
 
   // ── Legend state (rel-type hard filter) ───────────────────────────────────
   // Toggle off a type → those edges disappear from the graph entirely.
