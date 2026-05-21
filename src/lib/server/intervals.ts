@@ -1,7 +1,7 @@
 /**
  * intervals — public API surface (Phase 1A PR 1)
  *
- * Thin re-export shim. The implementation is split across four sub-modules
+ * Thin re-export shim. The implementation is split across five sub-modules
  * under `./intervals/`:
  *
  *   - `intervals/types.ts`         — Db union, POSITION_EPSILON, input/output
