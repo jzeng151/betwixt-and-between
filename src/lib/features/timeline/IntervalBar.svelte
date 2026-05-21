@@ -7,7 +7,10 @@
   are unaffected. The parent positions the bar via inline style left/width.
 
   See src/lib/features/timeline/timeline-helpers.ts for the pure helpers used
-  here (widthClassForBar, internalActBoundaryFractions).
+  here (widthClassForBar). Internal boundary fractions are computed by the
+  parent (IntervalRow) and passed in via the internalBoundaries prop —
+  they account for non-uniform bar widths AND scene boundaries, which a
+  helper taking only (start, end) can't express.
 -->
 
 <script lang="ts" module>

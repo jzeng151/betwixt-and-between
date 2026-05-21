@@ -218,6 +218,17 @@
 	let dragActId: string | null = $state(null);
 	let actDropTarget: { idx: number; side: 'left' | 'right' } | null = $state(null);
 	let reorderError: string | null = $state(null);
+	// Auto-dismiss timer — cleared on each new error so a stale dismiss can't
+	// blank the latest message early. Mirrors Timeline.svelte's showError().
+	let reorderErrorTimer: ReturnType<typeof setTimeout> | null = null;
+	function showReorderError(msg: string) {
+		reorderError = msg;
+		if (reorderErrorTimer != null) clearTimeout(reorderErrorTimer);
+		reorderErrorTimer = setTimeout(() => {
+			reorderError = null;
+			reorderErrorTimer = null;
+		}, 4000);
+	}
 
 	function actDragStart(e: DragEvent, actId: string) {
 		if (!e.dataTransfer) return;
@@ -262,8 +273,7 @@
 			if (!res.ok) throw new Error(await res.text());
 			await refreshTimelineStores();
 		} catch (err) {
-			reorderError = (err as Error).message;
-			setTimeout(() => (reorderError = null), 4000);
+			showReorderError((err as Error).message);
 		}
 	}
 
@@ -323,8 +333,7 @@
 			if (!res.ok) throw new Error(await res.text());
 			await refreshTimelineStores();
 		} catch (err) {
-			reorderError = (err as Error).message;
-			setTimeout(() => (reorderError = null), 4000);
+			showReorderError((err as Error).message);
 		}
 	}
 

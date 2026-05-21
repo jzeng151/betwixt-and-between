@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
 	widthClassForBar,
 	presenceLabel,
-	internalActBoundaryFractions,
 	colorFor,
 	dataNoteSnippet,
 	positionToStartFKs,
@@ -75,41 +74,6 @@ describe('presenceLabel', () => {
 
 	it('mid Act 1 → mid Act 2 → "50% into Act 1 → 75% into Act 2"', () => {
 		expect(presenceLabel(1.5, 2.75)).toBe('50% into Act 1 → 75% into Act 2');
-	});
-});
-
-describe('internalActBoundaryFractions', () => {
-	it('single-act bar has no internal boundaries', () => {
-		expect(internalActBoundaryFractions(1.0, 2.0)).toEqual([]);
-		expect(internalActBoundaryFractions(1.2, 1.8)).toEqual([]);
-		expect(internalActBoundaryFractions(0.25, 0.75)).toEqual([]);
-	});
-
-	it('two-act span produces one boundary at the right fraction', () => {
-		// span [0.5, 2.0): boundary at 1.0 → fraction = (1.0 - 0.5) / 1.5 = 0.333...
-		const fractions = internalActBoundaryFractions(0.5, 2.0);
-		expect(fractions).toHaveLength(1);
-		expect(fractions[0]).toBeCloseTo(1 / 3, 9);
-	});
-
-	it('three-act span produces two boundaries', () => {
-		// span [0.0, 3.0): boundaries at 1.0 and 2.0
-		const fractions = internalActBoundaryFractions(0.0, 3.0);
-		expect(fractions).toHaveLength(2);
-		expect(fractions[0]).toBeCloseTo(1 / 3, 9);
-		expect(fractions[1]).toBeCloseTo(2 / 3, 9);
-	});
-
-	it('off-boundary span: 0.5 → 2.5 produces one boundary at 1.0 and one at 2.0', () => {
-		const fractions = internalActBoundaryFractions(0.5, 2.5);
-		expect(fractions).toHaveLength(2);
-		expect(fractions[0]).toBeCloseTo(0.25, 9); // (1.0 - 0.5) / 2.0
-		expect(fractions[1]).toBeCloseTo(0.75, 9); // (2.0 - 0.5) / 2.0
-	});
-
-	it('end exactly on whole-act boundary is NOT itself a boundary marker', () => {
-		// span [1.0, 2.0): endActIdx = floor(2.0 - epsilon) = 1, so no internal boundaries.
-		expect(internalActBoundaryFractions(1.0, 2.0)).toEqual([]);
 	});
 });
 

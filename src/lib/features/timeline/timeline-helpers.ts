@@ -358,32 +358,4 @@ export function positionToEndFKs(
 	return { endActId: acts[actIdx].id, endSceneId: null, endPosition: position };
 }
 
-// ─── Act-boundary hairlines ───────────────────────────────────────────────────
-
-/**
- * Compute the act-boundary fractions (within the bar, range (0, 1)) where
- * hairline markers should render for a multi-act interval.
- *
- *   span(start, end) covers acts floor(start) .. floor(end - epsilon).
- *   Act boundaries inside the span are at the integer act indexes between
- *   start and end. Their fractional position within the bar is
- *   (boundary - start) / (end - start).
- *
- * For a single-act bar, returns []. For a span covering N acts, returns N-1
- * fractions.
- */
-export function internalActBoundaryFractions(
-	startPosition: number,
-	endPosition: number
-): number[] {
-	const startActIdx = Math.floor(startPosition);
-	const endActIdx = Math.floor(endPosition - 1e-12);
-	if (startActIdx === endActIdx) return [];
-	const fractions: number[] = [];
-	const span = endPosition - startPosition;
-	for (let i = startActIdx + 1; i <= endActIdx; i++) {
-		fractions.push((i - startPosition) / span);
-	}
-	return fractions;
-}
 
