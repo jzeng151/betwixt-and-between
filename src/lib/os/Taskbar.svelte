@@ -1,24 +1,18 @@
 <script lang="ts">
   import { windowStore, type AppId } from '$lib/os/windows-store.js';
+  import { APP_CATALOG, DOCK_ORDER } from '$lib/os/app-catalog.js';
   import { entities } from '$lib/stores/entities.js';
   import { nodeColorFor } from '$lib/relationship-colors.js';
 
-  interface DockApp {
-    id: AppId;
-    label: string;
-    icon: string;
-    entityId?: string | null;
-  }
-
-  const DOCK_APPS: DockApp[] = [
-    { id: 'character-editor', label: 'Characters', icon: '👤' },
-    { id: 'story-graph',      label: 'Story Graph', icon: '🕸' },
-    { id: 'timeline',         label: 'Timeline', icon: '📅' },
-    { id: 'world-map',        label: 'World Map', icon: '🗺' },
-    { id: 'wiki',             label: 'Wiki', icon: '📝' },
-    { id: 'notes',            label: 'Notes', icon: '📒' },
-    { id: 'settings',         label: 'Settings', icon: '⚙' },
-  ];
+  // Dock items derived from the shared catalog. Order comes from DOCK_ORDER;
+  // when dock customization lands it will resolve from preferences instead.
+  const DOCK_APPS = DOCK_ORDER.map((id) => ({
+    id,
+    label: APP_CATALOG[id].title,
+    // DOCK_ORDER entries are required to declare an icon in app-catalog.ts;
+    // the non-null assertion documents that contract for the type-checker.
+    icon: APP_CATALOG[id].icon!
+  }));
 
   type GroupedWindow = {
     appId: AppId;
@@ -82,17 +76,6 @@
     return m;
   });
 
-  const APP_PARENT: Partial<Record<AppId, AppId>> = {
-    'focused-graph': 'story-graph',
-    'story-player': 'timeline'
-  };
-
-  // FocusedGraph windows get a different icon (🎯) to distinguish them in the shared group.
-  const PICKER_ICON: Partial<Record<AppId, string>> = {
-    'focused-graph': '🎯',
-    'story-player': '▶'
-  };
-
   function pickerLabel(win: (typeof $windowStore)[number], fallback: string): string {
     if (win.appId === 'story-player') return 'Story Player';
     // FocusedGraph: synthesize a name from the focal set since FG
@@ -129,7 +112,7 @@
   }
 
   function pickerIcon(win: (typeof $windowStore)[number], fallback: string): string {
-    return PICKER_ICON[win.appId as AppId] ?? fallback;
+    return APP_CATALOG[win.appId].pickerIcon ?? fallback;
   }
 
   const grouped = $derived(() => {
@@ -139,7 +122,7 @@
     }
     for (const win of $windowStore) {
       // Child appIds (e.g. focused-graph) are hoisted to their parent dock group.
-      const targetAppId = (APP_PARENT[win.appId as AppId] ?? win.appId) as AppId;
+      const targetAppId = APP_CATALOG[win.appId].parent ?? win.appId;
       const group = map.get(targetAppId);
       if (group) group.windows.push(win);
     }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { windowStore, type AppId } from '$lib/os/windows-store.js';
+  import { APP_CATALOG, isBare } from '$lib/os/app-catalog.js';
   import { entities } from '$lib/stores/entities.js';
   import Window from './Window.svelte';
   import CharacterEditor from '$lib/components/apps/CharacterEditor.svelte';
@@ -13,27 +14,12 @@
   import PlayerDock from '$lib/features/timeline/PlayerDock.svelte';
   import EntityDetail from '$lib/components/EntityDetail.svelte';
 
-  // Apps that render edge-to-edge inside their window (no padded content area).
-  const BARE_APPS = new Set<AppId>(['story-graph', 'focused-graph', 'world-map', 'story-player']);
-
-  const APP_TITLES: Record<string, string> = {
-    'character-editor': 'Characters',
-    'world-map': 'World Map',
-    'timeline': 'Timeline',
-    'entity-detail': 'Entity',
-    'wiki': 'Wiki',
-    'story-graph': 'Story Graph',
-    'focused-graph': 'Focused Graph',
-    'settings': 'Settings',
-    'notes': 'Notes',
-    'story-player': 'Story Player',
-  };
-
-  function windowTitle(appId: string, entityId: string | null): string {
+  function windowTitle(appId: AppId, entityId: string | null): string {
+    const fallback = APP_CATALOG[appId].title;
     if (entityId && (appId === 'character-editor' || appId === 'entity-detail')) {
-      return $entities.find((e) => e.id === entityId)?.name ?? APP_TITLES[appId] ?? appId;
+      return $entities.find((e) => e.id === entityId)?.name ?? fallback;
     }
-    return APP_TITLES[appId] ?? appId;
+    return fallback;
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -66,7 +52,7 @@
     zIndex={win.zIndex}
     minimized={win.minimized}
     maximized={win.maximized}
-    bare={BARE_APPS.has(win.appId)}
+    bare={isBare(win.appId)}
     compact={win.appId === 'story-player'}
     alwaysOnTop={win.alwaysOnTop ?? false}
   >
