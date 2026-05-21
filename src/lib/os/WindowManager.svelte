@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { windowStore } from '$lib/os/windows-store.js';
+  import { windowStore, type AppId } from '$lib/os/windows-store.js';
   import { entities } from '$lib/stores/entities.js';
   import Window from './Window.svelte';
   import CharacterEditor from '$lib/components/apps/CharacterEditor.svelte';
@@ -12,6 +12,9 @@
   import Notes from '$lib/components/apps/Notes.svelte';
   import PlayerDock from '$lib/features/timeline/PlayerDock.svelte';
   import EntityDetail from '$lib/components/EntityDetail.svelte';
+
+  // Apps that render edge-to-edge inside their window (no padded content area).
+  const BARE_APPS = new Set<AppId>(['story-graph', 'focused-graph', 'world-map', 'story-player']);
 
   const APP_TITLES: Record<string, string> = {
     'character-editor': 'Characters',
@@ -63,7 +66,7 @@
     zIndex={win.zIndex}
     minimized={win.minimized}
     maximized={win.maximized}
-    bare={win.appId === 'story-graph' || win.appId === 'focused-graph' || win.appId === 'world-map' || win.appId === 'story-player'}
+    bare={BARE_APPS.has(win.appId)}
     compact={win.appId === 'story-player'}
     alwaysOnTop={win.alwaysOnTop ?? false}
   >
