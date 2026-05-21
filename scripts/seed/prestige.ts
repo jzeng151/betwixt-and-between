@@ -433,10 +433,12 @@ export const PRESTIGE: SeedStory = {
     // Core rivalry
     { from: 'Robert Angier', to: 'Alfred Borden', type: 'rivals' },
 
-    // Mentors
-    { from: 'Cutter', to: 'Robert Angier', type: 'mentor_of' },
-    { from: 'Cutter', to: 'Alfred Borden', type: 'mentor_of' },
-    { from: 'Nikola Tesla', to: 'Robert Angier', type: 'mentor_of' },
+    // Mentors — mentor_of was cut by drizzle/0011_data_model_cleanup.sql
+    // (Step 5.5, 2026-05-21); seed expresses the same intent via the
+    // labeled 'other' escape hatch.
+    { from: 'Cutter', to: 'Robert Angier', type: 'other', label: 'mentor of' },
+    { from: 'Cutter', to: 'Alfred Borden', type: 'other', label: 'mentor of' },
+    { from: 'Nikola Tesla', to: 'Robert Angier', type: 'other', label: 'mentor of' },
 
     // Angier's alliances
     { from: 'Robert Angier', to: 'Cutter', type: 'allied_with' },
@@ -555,30 +557,11 @@ export const PRESTIGE: SeedStory = {
       label: 'Olivia replaced Sarah as Borden\'s support'
     },
 
-    // POV — scenes narrated through a specific character's eyes
-    { from: 'Assistants at the water tank', to: 'Cutter', type: 'pov_of' },
-    { from: 'The knot', to: 'Robert Angier', type: 'pov_of' },
-    { from: 'Blame and dismissal', to: 'Robert Angier', type: 'pov_of' },
-    { from: 'The Great Danton is born', to: 'Robert Angier', type: 'pov_of' },
-    { from: 'The Professor takes the stage', to: 'Alfred Borden', type: 'pov_of' },
-    { from: 'The Transported Man', to: 'Robert Angier', type: 'pov_of' },
-    { from: 'The bullet catch', to: 'Alfred Borden', type: 'pov_of' },
-    { from: "Sarah's question", to: 'Sarah', type: 'pov_of' },
-    { from: 'Gerald Root fails the trick', to: 'Robert Angier', type: 'pov_of' },
-    { from: 'Olivia goes undercover', to: 'Olivia Wenscombe', type: 'pov_of' },
-    { from: 'Olivia chooses Borden', to: 'Olivia Wenscombe', type: 'pov_of' },
-    { from: "Sarah's last morning", to: 'Alfred Borden', type: 'pov_of' },
-    { from: 'The journey to Colorado', to: 'Robert Angier', type: 'pov_of' },
-    { from: 'Angier meets Tesla', to: 'Robert Angier', type: 'pov_of' },
-    { from: 'The machine is completed', to: 'Robert Angier', type: 'pov_of' },
-    { from: "Edison's men destroy the lab", to: 'Nikola Tesla', type: 'pov_of' },
-    { from: 'The Real Transported Man', to: 'Alfred Borden', type: 'pov_of' },
-    { from: 'Below the stage', to: 'Alfred Borden', type: 'pov_of' },
-    { from: 'The trial', to: 'Alfred Borden', type: 'pov_of' },
-    { from: 'Lord Caldlow visits the cell', to: 'Alfred Borden', type: 'pov_of' },
-    { from: 'Cutter takes Jess', to: 'Cutter', type: 'pov_of' },
-    { from: 'The hanging', to: 'Cutter', type: 'pov_of' },
-    { from: 'The vault', to: 'Frederick Borden', type: 'pov_of' }
+    // POV — pov_of was cut by drizzle/0011_data_model_cleanup.sql
+    // (Step 5.5, 2026-05-21): per-POV simulation is a v4-scale concern
+    // (knowledge events + projection filter + propagation rules) and the
+    // breadcrumb edges did no read-side work. The seed deliberately
+    // omits POV until that feature exists.
   ],
 
   intervals: [

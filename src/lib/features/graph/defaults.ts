@@ -32,8 +32,7 @@ const TYPE_RANK: Record<EntityType, number> = {
 	// over story-structure types but below Characters/Locations/Events in
 	// type-ordered renders. Tweak as use patterns emerge.
 	Artifact: 6,
-	Item: 7,
-	Door: 8
+	Item: 7
 };
 
 /**

@@ -1,17 +1,19 @@
 <script lang="ts">
 	/**
 	 * PlaceablesPalette — chip rail of placeable entities (Character / Artifact /
-	 * Item / Door) used by the WorldMap to drop placements onto the active map.
+	 * Item) used by the WorldMap to drop placements onto the active map.
 	 *
 	 * Interaction model: click a chip → component arms it (highlighted) and
 	 * dispatches `arm` with the chip's entity id. Parent (WorldMap) listens for
 	 * the next map click and POSTs a placement at the clicked fractional coords.
 	 * Click the armed chip again → dispatches `arm` with null → cancel.
 	 *
-	 * The palette also exposes "+ New" affordances for the three new entity
-	 * types (Artifact / Item / Door) so authors can mint a placeable inline
-	 * without leaving the map. New Characters are still authored in the
-	 * Characters app — this palette only creates *placeable* artifact-likes.
+	 * The palette also exposes "+ New" affordances for the placeable
+	 * artifact-likes (Artifact / Item) so authors can mint one inline without
+	 * leaving the map. New Characters are still authored in the Characters app.
+	 *
+	 * `Door` was cut by the 2026-05-20 audit (Step 5.5,
+	 * drizzle/0011_data_model_cleanup.sql) — see schema.ts comment.
 	 */
 	import { entities } from '$lib/stores/entities.js';
 	import { windowStore } from '$lib/os/windows-store.js';
@@ -25,7 +27,7 @@
 	}
 	let { armedId, onArm }: Props = $props();
 
-	const PLACEABLE_TYPES: EntityType[] = ['Character', 'Artifact', 'Item', 'Door'];
+	const PLACEABLE_TYPES: EntityType[] = ['Character', 'Artifact', 'Item'];
 
 	let busy = $state(false);
 	let createError = $state('');
@@ -40,7 +42,7 @@
 		onArm(armedId === id ? null : id);
 	}
 
-	async function createNew(type: 'Artifact' | 'Item' | 'Door') {
+	async function createNew(type: 'Artifact' | 'Item') {
 		if (busy) return;
 		busy = true;
 		createError = '';
@@ -81,6 +83,7 @@
 				<button
 					class="chip"
 					class:armed={armedId === p.id}
+					aria-pressed={armedId === p.id}
 					style="--type-color: {getEntityTypeColor(p.type)}"
 					onclick={() => toggleArm(p.id)}
 					title={`${p.type} — click to arm placement`}
@@ -91,14 +94,13 @@
 				</button>
 			{/each}
 			{#if placeables.length === 0}
-				<span class="empty">No Characters / Artifacts / Items / Doors yet.</span>
+				<span class="empty">No Characters / Artifacts / Items yet.</span>
 			{/if}
 		</div>
 
 		<div class="palette-new">
 			<button type="button" disabled={busy} onclick={() => createNew('Artifact')}>+ Artifact</button>
 			<button type="button" disabled={busy} onclick={() => createNew('Item')}>+ Item</button>
-			<button type="button" disabled={busy} onclick={() => createNew('Door')}>+ Door</button>
 		</div>
 	</div>
 

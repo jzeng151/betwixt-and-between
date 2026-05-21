@@ -16,12 +16,11 @@ describe('DIRECTION policy', () => {
 	});
 
 	it('marks all other types as directed', () => {
-		expect(DIRECTION.appears_in).toBe('directed');
 		expect(DIRECTION.takes_place_at).toBe('directed');
 		expect(DIRECTION.caused_by).toBe('directed');
-		expect(DIRECTION.mentor_of).toBe('directed');
 		expect(DIRECTION.located_at).toBe('directed');
-		expect(DIRECTION.pov_of).toBe('directed');
+		expect(DIRECTION.note_of).toBe('directed');
+		expect(DIRECTION.part_of).toBe('directed');
 	});
 
 	it('covers exactly the schema RelationshipType keys', () => {

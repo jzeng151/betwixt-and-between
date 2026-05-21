@@ -36,8 +36,7 @@
 		'Scene',
 		'Act',
 		'Artifact',
-		'Item',
-		'Door'
+		'Item'
 	];
 	const TYPE_LABEL: Record<EntityType, string> = {
 		Character: 'Characters',
@@ -47,8 +46,7 @@
 		Act: 'Acts',
 		Note: 'Notes',
 		Artifact: 'Artifacts',
-		Item: 'Items',
-		Door: 'Doors'
+		Item: 'Items'
 	};
 
 	let selectedId = $state<string | null>(null);

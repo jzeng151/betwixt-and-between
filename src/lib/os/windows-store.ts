@@ -88,8 +88,7 @@ const ENTITY_APP: Record<EntityType, AppId> = {
 	Scene: 'entity-detail',
 	Note: 'entity-detail',
 	Artifact: 'entity-detail',
-	Item: 'entity-detail',
-	Door: 'entity-detail'
+	Item: 'entity-detail'
 };
 
 let lastOpenX = 80;

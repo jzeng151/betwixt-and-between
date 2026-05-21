@@ -15,13 +15,19 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
-// 'Artifact', 'Item', 'Door' added in WorldMap v2 Step 4 (2026-05-16) as
-// placeable entity types for map_placements.placeable_id (alongside the
-// pre-existing 'Character'). They are full entities (Wiki-pageable, can
-// participate in relationships) but ship in Step 4 with minimal
-// surface-specific UI: they reuse EntityDetail's default-section editor and
-// appear as Palette chips. Richer per-type editors are deferred until use
-// patterns emerge.
+// 'Artifact', 'Item' added in WorldMap v2 Step 4 (2026-05-16) as placeable
+// entity types for map_placements.placeable_id (alongside the pre-existing
+// 'Character'). They are full entities (Wiki-pageable, can participate in
+// relationships) but ship with minimal surface-specific UI: they reuse
+// EntityDetail's default-section editor and appear as Palette chips.
+// Richer per-type editors are deferred until use patterns emerge.
+//
+// 'Door' was cut by the 2026-05-20 whole-app audit (Step 5.5,
+// drizzle/0011_data_model_cleanup.sql): no special validators, no special
+// data fields, no special rendering — "Artifact with a different label."
+// Existing Door rows were converted to Artifact + data.legacySubtype='door'.
+// Door mechanics (locked, key_artifact_id, connects_to, portal projection)
+// revisit if/when hex-grid + fog-of-war moves from deferred to active.
 export const EntityType = [
 	'Character',
 	'Location',
@@ -30,15 +36,14 @@ export const EntityType = [
 	'Scene',
 	'Note',
 	'Artifact',
-	'Item',
-	'Door'
+	'Item'
 ] as const;
 export type EntityType = (typeof EntityType)[number];
 
 // Subset of EntityType allowed in map_placements.placeable_id. Enforced in
 // the API layer (assertPlaceableId) and via Vitest invariant tests; same
 // pattern as intervals.start_act_id polymorphic FK guards.
-export const PlaceableEntityType = ['Character', 'Artifact', 'Item', 'Door'] as const;
+export const PlaceableEntityType = ['Character', 'Artifact', 'Item'] as const;
 export type PlaceableEntityType = (typeof PlaceableEntityType)[number];
 
 // ── Auth tables (Better-Auth) ──────────────────────────────────────────────
@@ -93,17 +98,13 @@ export const verification = pgTable('verification', {
 
 /**
  * Relationship types and their directional convention (`from [type] to`):
- *   appears_in     — DEPRECATED for new writes (see V1 retirement, 2026-04-28).
- *                    Kept in the enum for legacy reads.
  *   takes_place_at — Event takes_place_at Location
- *   caused_by      — Event/Scene caused_by Event/Scene (effect → cause)
+ *   caused_by      — Event/Scene caused_by Event/Scene (effect → cause).
+ *                    Conditionally cut at WM3 Slice 5 close once link_chain
+ *                    events render as graph edges (audit deliverable #3).
  *   allied_with    — Character allied_with Character (symmetric semantically)
  *   rivals         — Character rivals Character (symmetric semantically)
- *   mentor_of      — Character (mentor) mentor_of Character (mentee)
  *   located_at     — Character located_at Location
- *   pov_of         — Event/Scene pov_of Character (from is from-the-POV-of to).
- *                    Multi-allowed: an event may have multiple POV characters.
- *                    Uniqueness enforced at (from_id, to_id, type) level.
  *   note_of        — Note note_of <any> (Wiki-rework Notes-as-sections model,
  *                    2026-05-05). Attaches a Note entity to a parent entity so
  *                    EntityDetail can render it under the parent's NOTES
@@ -115,16 +116,25 @@ export const verification = pgTable('verification', {
  *                    one outgoing `part_of` edge; cycles rejected at write time.
  *                    Both endpoints must be type='Location' (validated in
  *                    assertPartOfEndpoints).
+ *   other          — Escape-hatch typed edge. The `label` text column
+ *                    carries a free-text name for the relationship.
+ *
+ * Cut by the 2026-05-20 whole-app audit (Step 5.5,
+ * drizzle/0011_data_model_cleanup.sql):
+ *   appears_in     — Already write-blocked 2026-04-28 (ADR 0002). Remaining
+ *                    legacy rows deleted; the never-shipped backfill is
+ *                    closed out.
+ *   mentor_of      — Novelist's character-arc shorthand; no read-side
+ *                    consumer. Rewritten to other + label='mentor of'.
+ *   pov_of         — No read-side consumer today; per-POV simulation is a
+ *                    v4-scale slice. Deleted.
  */
 export const RelationshipType = [
-	'appears_in',
 	'takes_place_at',
 	'caused_by',
 	'allied_with',
 	'rivals',
-	'mentor_of',
 	'located_at',
-	'pov_of',
 	'note_of',
 	'part_of',
 	'other'
@@ -418,8 +428,8 @@ export const worldMaps = pgTable('world_maps', {
 // =============================================================================
 //
 // First-class placement instances. A placement binds a *placeable entity*
-// (Character / Artifact / Item / Door — see PlaceableEntityType) to a
-// Location and a fractional point on the map at (x, y) ∈ [0, 1]². Each
+// (Character / Artifact / Item — see PlaceableEntityType) to a Location
+// and a fractional point on the map at (x, y) ∈ [0, 1]². Each
 // placement also carries its own active window in story-time via the same
 // 4-FK + 2-derived-position shape as relationships and world_maps variants.
 //

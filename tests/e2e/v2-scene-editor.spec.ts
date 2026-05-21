@@ -34,10 +34,11 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 		await win.locator('.scene-cell').first().click();
 		await win.locator('.entity-detail-host .mode-toggle').click();
 
+		// POV field removed by Step 5.5 (drizzle/0011_data_model_cleanup.sql)
+		// alongside the pov_of relationship cut.
 		const panel = win.locator('.entity-detail');
 		await expect(panel).toBeVisible();
 		await expect(panel.locator('[data-field="description"]')).toBeVisible();
-		await expect(panel.locator('[data-field="pov"]')).toBeVisible();
 		await expect(panel.locator('[data-field="goal"]')).toBeVisible();
 		await expect(panel.locator('[data-field="outcome"]')).toBeVisible();
 		await expect(panel.locator('[data-field="sensoryAnchor"]')).toBeVisible();
@@ -112,34 +113,4 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 		}).toPass({ timeout: 3000 });
 	});
 
-	test('POV multi-picker on Scene writes pov_of relationships', async ({ page, request }) => {
-		const a0 = await (
-			await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } })
-		).json();
-		const sc = await (
-			await request.post('/api/entities', {
-				data: { type: 'Scene', name: 'Opening', parentId: a0.id, position: 0 }
-			})
-		).json();
-		const c1 = await (
-			await request.post('/api/entities', { data: { type: 'Character', name: 'Ellie' } })
-		).json();
-
-		const win = await openTimeline(page);
-		await win.locator('.scene-cell').first().click();
-		await win.locator('.entity-detail-host .mode-toggle').click();
-
-		await win
-			.locator('.entity-detail [data-field="pov"]')
-			.locator(`[data-pick-id="${c1.id}"]`)
-			.click();
-
-		await expect(async () => {
-			const rels = await (await request.get('/api/relationships')).json();
-			const povRels = rels.filter(
-				(r: any) => r.fromId === sc.id && r.toId === c1.id && r.type === 'pov_of'
-			);
-			expect(povRels).toHaveLength(1);
-		}).toPass({ timeout: 3000 });
-	});
 });

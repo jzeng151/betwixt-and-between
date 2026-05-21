@@ -13,11 +13,9 @@ function rel(fromId: string, toId: string, type: string): RelationshipLike {
 }
 
 describe('pickDefaultRelType', () => {
-  it('returns the first non-appears_in type when nothing exists', () => {
+  it('returns the first REL_TYPES entry when nothing exists', () => {
     const picked = pickDefaultRelType([], A, B);
-    // First non-appears_in type in REL_TYPES.
-    const expected = REL_TYPES.find((t) => t !== 'appears_in')!;
-    expect(picked).toBe(expected);
+    expect(picked).toBe(REL_TYPES[0]);
   });
 
   it('skips a type already used in the same direction (A→B)', () => {
@@ -40,27 +38,23 @@ describe('pickDefaultRelType', () => {
       [
         rel(A, B, 'allied_with'),
         rel(B, A, 'rivals'),
-        rel(A, B, 'mentor_of')
+        rel(A, B, 'takes_place_at')
       ],
       A,
       B
     );
     expect(picked).not.toBe('allied_with');
     expect(picked).not.toBe('rivals');
-    expect(picked).not.toBe('mentor_of');
+    expect(picked).not.toBe('takes_place_at');
   });
 
-  it('never suggests appears_in (deprecated at the picker)', () => {
-    // Saturate every non-appears_in type in BOTH directions; the
-    // function still must not return appears_in. Falls back to the
-    // form's classic default instead.
-    const all: RelationshipLike[] = [];
-    for (const t of REL_TYPES) {
-      if (t === 'appears_in') continue;
-      all.push(rel(A, B, t));
-    }
+  it('falls back to the form default when every type is used in either direction', () => {
+    // Saturate every type in either direction; the function falls back
+    // to the form's classic default (the first entry in REL_TYPES) so
+    // the user sees something selected and the save attempt surfaces
+    // the UNIQUE constraint error.
+    const all: RelationshipLike[] = REL_TYPES.map((t) => rel(A, B, t));
     const picked = pickDefaultRelType(all, A, B);
-    expect(picked).not.toBe('appears_in');
     expect(picked).toBe('allied_with');
   });
 

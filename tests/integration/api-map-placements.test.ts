@@ -116,8 +116,8 @@ describe('POST /api/map-placements', () => {
 		).rejects.toMatchObject({ status: 400 });
 	});
 
-	it('accepts Artifact / Item / Door as placeable types', async () => {
-		for (const type of ['Artifact', 'Item', 'Door'] as const) {
+	it('accepts Artifact / Item as placeable types', async () => {
+		for (const type of ['Artifact', 'Item'] as const) {
 			const [e] = await currentDb
 				.insert(entities)
 				.values({ userId, type, name: `New ${type}` })

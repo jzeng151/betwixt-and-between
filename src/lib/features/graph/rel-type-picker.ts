@@ -34,9 +34,6 @@ export function pickDefaultRelType(
       .map((r) => r.type)
   );
   for (const t of REL_TYPES) {
-    // appears_in is deprecated at the API and is owned by intervals,
-    // not direct picker creation.
-    if (t === 'appears_in') continue;
     if (!existing.has(t)) return t;
   }
   // Saturated — fall back to the form's classic default. The save

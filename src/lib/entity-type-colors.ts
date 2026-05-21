@@ -27,8 +27,7 @@ export const ENTITY_TYPE_COLOR_VAR: Record<EntityType, string> = {
 	Act: 'var(--color-type-act)',
 	Note: 'var(--color-type-note)',
 	Artifact: 'var(--color-type-artifact)',
-	Item: 'var(--color-type-item)',
-	Door: 'var(--color-type-door)'
+	Item: 'var(--color-type-item)'
 };
 
 export function getEntityTypeColor(type: EntityType): string {

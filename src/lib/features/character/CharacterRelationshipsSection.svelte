@@ -23,7 +23,6 @@
 	const REL_GROUPS: { label: string; type: RelationshipType }[] = [
 		{ label: 'Allies',      type: 'allied_with' },
 		{ label: 'Rivals',      type: 'rivals' },
-		{ label: 'Mentors',     type: 'mentor_of' },
 		{ label: 'Others',      type: 'other' },
 		{ label: 'Locations',   type: 'located_at' },
 		{ label: 'Key Events',  type: 'takes_place_at' }
@@ -32,7 +31,6 @@
 	const PICKER_TYPES: Partial<Record<RelationshipType, EntityType[]>> = {
 		allied_with:    ['Character'],
 		rivals:         ['Character'],
-		mentor_of:      ['Character'],
 		other:          ['Character'],
 		located_at:     ['Location'],
 		takes_place_at: ['Event', 'Scene'],
