@@ -69,8 +69,8 @@ const authHandle: Handle = async ({ event, resolve }) => {
 				const { eq } = await import('drizzle-orm');
 				const [u] = await db.select().from(user).where(eq(user.id, testUserId));
 				if (u) {
-					// Build auth lazily so the bypass path doesn't trigger missing-secret
-					// guards in non-test contexts that mistakenly send the header.
+					// Build the same auth instance the normal path would attach,
+					// so downstream handlers see a consistent locals.auth shape.
 					const auth = buildAuth(db, platformEnv);
 					event.locals.db = db;
 					event.locals.auth = auth;

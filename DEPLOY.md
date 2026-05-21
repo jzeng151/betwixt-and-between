@@ -34,9 +34,9 @@ Set via `wrangler secret put <NAME>` or the dashboard (Workers & Pages → Setti
 | `RESEND_API_KEY` | Resend dashboard | required for prod magic-links |
 | `RESEND_FROM_EMAIL` | Resend-verified sender | required for prod magic-links |
 
-`buildAuth` throws if `BETTER_AUTH_SECRET` or `BETTER_AUTH_URL` is missing in non-test mode — the Worker returns 500 on every request until both are set. Intentional: silent fallback to a dev secret would make sessions trivially forgeable.
+`buildAuth` throws if `BETTER_AUTH_SECRET` or `BETTER_AUTH_URL` is missing — the Worker returns 500 on every request until both are set. The check is unconditional; even E2E paths must supply their own secret. A previous version silently fell back to a hardcoded dev secret in test mode, which turned out to be a session-forgery primitive on any prod with a misapplied `BETWIXT_E2E_PGLITE=1` runtime secret. See [docs/findings/x-test-user-id-prod-guard.md](docs/findings/x-test-user-id-prod-guard.md) § Resolution.
 
-**Never set `BETWIXT_E2E_PGLITE` in production.** It enables the `x-test-user-id` session-bypass header. See [docs/findings/x-test-user-id-prod-guard.md](docs/findings/x-test-user-id-prod-guard.md).
+**Never set `BETWIXT_E2E_PGLITE` in production.** It enables the `x-test-user-id` session-bypass header. The bypass branch is also tree-shaken from production bundles at build time via Vite `define` (`__E2E_BYPASS__`), but this protection requires that `BETWIXT_E2E_PGLITE` is *not* set in the Pages **build** environment (separate from runtime secrets; dashboard → Pages → Settings → Builds & deployments → Environment variables). Audit both surfaces.
 
 ### 3. Connect the GitHub repo to Cloudflare
 

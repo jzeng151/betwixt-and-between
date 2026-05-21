@@ -19,6 +19,7 @@ function createRelationshipStore() {
 
 	async function load() {
 		const res = await fetch('/api/relationships');
+		if (!res.ok) throw new Error(`relationships.load failed: ${res.status} ${await res.text()}`);
 		const data: Relationship[] = await res.json();
 		set(data);
 	}

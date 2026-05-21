@@ -48,6 +48,19 @@ describe('entities.load', () => {
 		expect(get(entities)).toHaveLength(2);
 		expect(get(entities)[0].id).toBe('a');
 	});
+
+	it('throws on non-OK response and leaves the store untouched', async () => {
+		// Seed the store with known content via a successful load.
+		const seeded = [entity({ id: 'seed', name: 'Seed' })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await entities.load();
+		const before = get(entities);
+
+		// Now simulate a 5xx and assert load() rejects + store unchanged.
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse('upstream boom', false, 503)) as unknown as typeof fetch;
+		await expect(entities.load()).rejects.toThrow(/503.*upstream boom/);
+		expect(get(entities)).toEqual(before);
+	});
 });
 
 // =============================================================================

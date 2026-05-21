@@ -43,6 +43,21 @@ describe('intervals store', () => {
 		expect(get(intervals)).toEqual(fixture);
 	});
 
+	it('load() throws and preserves store on non-OK response', async () => {
+		// Seed the store via a successful load.
+		const seeded = [mkInterval({ id: 'seed' })];
+		globalThis.fetch = vi.fn(() => mkResponse(seeded)) as unknown as typeof fetch;
+		await intervals.load();
+		const before = get(intervals);
+
+		// 5xx → load() must reject and not mutate the store.
+		globalThis.fetch = vi.fn(() =>
+			Promise.resolve(new Response('upstream boom', { status: 502 }) as Response)
+		) as unknown as typeof fetch;
+		await expect(intervals.load()).rejects.toThrow(/502/);
+		expect(get(intervals)).toEqual(before);
+	});
+
 	it('createInterval() POSTs and appends optimistically', async () => {
 		const fetchSpy = vi.fn(() => mkResponse(mkInterval({ id: 'new' }), true, 201));
 		globalThis.fetch = fetchSpy as unknown as typeof fetch;
