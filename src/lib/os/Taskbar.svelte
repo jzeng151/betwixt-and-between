@@ -74,6 +74,14 @@
     return m;
   });
 
+  // Shared O(1) entity lookup for the picker's per-row label/subtitle/swatch
+  // helpers — without it each row did up to 3 linear $entities.find() scans.
+  const entityById = $derived.by(() => {
+    const m = new Map<string, (typeof $entities)[number]>();
+    for (const e of $entities) m.set(e.id, e);
+    return m;
+  });
+
   const APP_PARENT: Partial<Record<AppId, AppId>> = {
     'focused-graph': 'story-graph',
     'story-player': 'timeline'
@@ -93,7 +101,7 @@
       const focals = win.focalSet ?? [];
       if (focals.length === 0) return 'Focused Graph (no focal)';
       const names = focals.slice(0, 2).map((id) => {
-        const e = $entities.find((x) => x.id === id);
+        const e = entityById.get(id);
         return e?.name ?? id.slice(0, 6);
       });
       if (focals.length === 1) return names[0];
@@ -101,7 +109,7 @@
       return `${names[0]} + ${focals.length - 1} others`;
     }
     if (!win.entityId) return fallback;
-    const entity = $entities.find((e) => e.id === win.entityId);
+    const entity = entityById.get(win.entityId);
     return entity?.name ?? fallback;
   }
 
@@ -109,13 +117,13 @@
     if (win.appId === 'story-player') return 'Player';
     if (win.appId === 'focused-graph') return 'Focused Graph';
     if (!win.entityId) return null;
-    const entity = $entities.find((e) => e.id === win.entityId);
+    const entity = entityById.get(win.entityId);
     return entity?.type ?? null;
   }
 
   function pickerSwatch(win: (typeof $windowStore)[number]): string | null {
     if (!win.entityId) return null;
-    const entity = $entities.find((e) => e.id === win.entityId);
+    const entity = entityById.get(win.entityId);
     if (!entity) return null;
     return nodeColorFor(entity, characterIndexById.get(entity.id));
   }
