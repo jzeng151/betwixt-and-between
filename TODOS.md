@@ -82,23 +82,26 @@ For full per-version detail see `CHANGELOG.md`. For design specs see
 
 ### World Map v3 — Living Stage for Game Design (SUPERSEDES World Map v2 Steps 4-7)
 
-**Status: design APPROVED 2026-05-20. Pre-Slice 0 spike + whole-app /office-hours audit before Slice 1 begins.**
+**Status: design APPROVED 2026-05-20. Pre-Slice 0 spike PASSED 2026-05-20. Whole-app /office-hours audit COMPLETE 2026-05-20. Pre-Slice 1 burst in progress; Slice 1 starts at burst close.**
 
 Design doc: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-main-design-20260520-172713.md`
 Test plan: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-main-eng-review-test-plan-20260520-194500.md`
+Spike findings: `docs/plans/world-map-v3-pre-slice-0-spike-findings.md`
+Whole-app audit: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-restructure-pre-slice-1-burst-design-20260520-234854.md`
 Plan-eng-review decisions captured inline in the design doc (D3 doublePrecision, D4 strangler-fig, D5 lazy GC, D6 anchor state shape, D7 Svelte 5 reactivity, D10 state-based parity, D11 4 migration tests).
 
 Foundation rewrite: replace Leaflet+bitmap+polygon with Pixi.js + Paper.js + event-sourced projection engine. New tables `map_anchors`, `map_events`, `factions`. WorldMap.svelte (1555 LOC) decomposed into `src/lib/features/map/` per the deferred restructure plan.
 
 8-slice build order (each shippable; Slices 6-8 are explicitly polish and slippable):
 
-- [ ] **Pre-Slice 0 — Pixi v8 + Svelte 5 integration spike** (1-2 days). Mount, lifecycle, memory profile across 100 mount/unmount cycles. Decides adapter strategy.
-- [ ] **Whole-app /office-hours audit** (separate skill session). Refines `docs/plans/codebase-restructure-2026-05-20.md` (currently an initial plan).
+- [x] **Pre-Slice 0 — Pixi v8 + Svelte 5 integration spike** (completed 2026-05-20). Verdict PASSES; adopt `svelte-pixi@8.0.1`; Slice 1 budget unchanged at 4-5 weeks. See `docs/plans/world-map-v3-pre-slice-0-spike-findings.md`.
+- [x] **Whole-app /office-hours audit** (completed 2026-05-20). 6 hard cuts + 1 conditional cut + 2 keeps challenged + 2 direction commitments + 5 default cuts. Adds data-model cleanup step to pre-Slice 1 burst; extends Slice 5 budget by ~1 week. See audit deliverable in references above.
+- [ ] **Pre-Slice 1 burst — data model cleanup migration** (audit deliverable §Migrations Consolidated). Single Drizzle migration (`drizzle/0010_data_model_cleanup.sql` or next free integer at land time) executes the 4 hard cuts that don't depend on WM3 Slice 5: `pov_of` delete, `mentor_of` → `other`-labeled, `appears_in` → intervals (ADR 0002 logic), `Door` → `Artifact` with `data.legacySubtype='door'`. Removes from `RelationshipType` + `EntityType` + `PlaceableEntityType` enums; removes all 6 call sites for `appears_in` + `pov_of` + `mentor_of` + `Door`. Vitest invariants assert 0 rows of each cut type post-migration. Sequenced after the file carves (burst Steps 2-5 + 4.5) complete. ~1-2 days human / ~4-6h CC.
 - [ ] **Slice 1 — Foundation** (4-5 weeks). Strangler-fig Pixi renderer behind feature flag, both Leaflet + Pixi alive. Decomposed `src/lib/features/map/`. New schema (`map_anchors`, `map_events`, `factions`) + migration backfill. `transfer_region` event. Sunday-night-GIF demo: region recolors as you scrub. Includes restructure plan's Step 1 carve (merged).
 - [ ] **Slice 2 — Projection engine completion** (3-4 weeks). Multi-event-kind support, anchor snapshots, authoring undo. Faction tide demo end-to-end. Leaflet retired at end of slice (anti-goal: dual paths must NOT persist past Slice 2).
 - [ ] **Slice 3 — Inkarnate-style authoring** (3-4 weeks). Brush tools for terrain, asset library sidebar, layered canvas, type-default + per-instance styles (in `entities.data.style` jsonb, no separate tables).
 - [ ] **Slice 4 — Markers / Artifacts / Movement** (2-3 weeks). Drag-and-drop placement, per-type hover, movement via `move_entity` continuous events. **Replaces v2 Steps 4 + 5.**
-- [ ] **Slice 5 — EventChain visualization** (2-3 weeks). Chain step model, Bezier polyline edges, scope rules from Slice 2, click-to-jump-playhead, Causal Cartography (click changed thing → see why). **Replaces v2 Step 6.**
+- [ ] **Slice 5 — EventChain visualization** (3-4 weeks; extended +1 wk per 2026-05-20 audit). Chain step model, Bezier polyline edges, scope rules from Slice 2, click-to-jump-playhead, Causal Cartography (click changed thing → see why). **+ EventChain steps render as edges in StoryGraph + FocusedGraph with click-to-jump-playhead** (audit Premise #3, makes EventChain the canonical causal model). **+ Migration of `caused_by` rows to `link_chain` events** ships in this slice (`drizzle/0014_caused_by_to_link_chain.sql` or equivalent; audit #3 conditional cut). **Replaces v2 Step 6.**
 - [ ] **Slice 6 — Ambient liveness** (2-3 weeks, polish — slippable).
 - [ ] **Slice 7 — Audio + sidebar focus** (1-2 weeks, polish — slippable).
 - [ ] **Slice 8 — Spotlight cycling rebased + perf pass** (2 weeks). **Replaces v2 Step 7.**
@@ -128,9 +131,7 @@ Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qo
 
 - [ ] **T2 — Window snapping in `Window.svelte`.** Drag-to-edge zones (halves, quarters). Pure UX additive on `windowStore.move`/`resize`. No data-model change.
 
-- [ ] **T4 — Status field for Acts/Events/Scenes.** `Drafted` / `In progress` / `Done` / `Needs revision`. Top-of-panel pill in editors; optional timeline filter. Stored in `entity.data` (no schema migration).
-
-- [ ] **T7 — Bulk paste / import UI.** Multi-entity import from external story-craft tools (Plottr CSV, Aeon export). Uses `/api/entities/batch`. Drag-drop file or paste structured text → preview → commit.
+(T4 status-field and T7 bulk-import — CUT by 2026-05-20 audit. See "Footnotes from 2026-05-20 audit" section below.)
 
 ### Preferences
 
@@ -142,18 +143,17 @@ Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qo
 
 ### Multi-user / deploy follow-ups
 
-- [ ] **T12-encrypt — pgcrypto column-level encryption for sensitive entity bodies.** `pgp_sym_encrypt` on `entities.data` body fields (`body_md` for Note). User-derived key from password+salt. Search-by-name stays plaintext (Wiki sidebar still works). End-to-end browser encryption rejected (breaks Cmd-K and future collab). Why deferred: ship α first; add only if user feedback shows it matters.
+(T12-encrypt pgcrypto column-level encryption — CUT by 2026-05-20 audit under choice B / no real adversary today.)
 
 - [ ] **T14 — Endpoint registry route-tree generator.** Auto-generate `/api/**` registry from SvelteKit `+server.ts` files at test-collection time. Replaces hand-maintained list which rots when new endpoints don't get added. Used by user_id isolation parametric sweep. ~50 LOC test-time codegen.
 
 - [ ] **T15 — `app_locked` maintenance-mode flag.** If a future T8b-like backfill needs to re-run after launch (schema migration touching userId), gate the migration window. Login flow shows "Maintenance, back in a few." Why deferred: T8b's first run was pre-launch; only needed once scaling.
 
-### World Map fog-of-war (post-v2)
-The current World Map v2 work (Steps 1–7 above) doesn't touch hex grid / fog-of-war.
-The items below are queued behind that future feature and only become actionable
-after a hex-fog branch starts.
+### World Map fog-of-war (post-WM3)
 
-- [ ] **Hex grid overlay + fog-of-war** — original Phase 4 World Map upgrade. Scope a separate design pass before scheduling.
+Hex-grid-overlay was the original Phase 4 World Map upgrade and is now **superseded by WM3 Slice 1's grid system** (hex/square per-map, per the WM3 design doc Constraints — locked 2026-05-20). The items below remain queued behind a *separate* fog-of-war feature and only become actionable after a fog branch starts.
+
+- [ ] **Fog-of-war** — scope a separate design pass before scheduling. The hex-grid foundation it depended on lands inside WM3 Slice 1, so this is unblocked-on-foundation after Slice 1 ships, but still needs its own design pass for the reveal/visibility model.
 
 - [ ] **T10-hexlock — Postgres BEFORE UPDATE trigger for `world_maps.hex_size` immutability.** Belt-and-suspenders for the hex-fog feature. App-layer (`PATCH /api/maps/[id]`) is primary; trigger backs direct SQL writes. Raises if `hex_size` changes when reveal rows exist.
 
@@ -180,6 +180,32 @@ Surfaced 2026-05-01 while seeding *The Prestige* (`scripts/seed/prestige.ts`). T
 - **Identity aliases** — covered by shipped T12-alias (separate table, locked over an `aka` relationship type).
 
 Big feature. Re-visit when the seeded *Prestige* dataset surfaces concrete UX pain that the static graph can't represent.
+
+---
+
+## Future feature: Shape 1 — user-editable flavor relationship types
+
+Direction commitment from the 2026-05-20 audit (sidebar surfaced mid-#2). Inverts ADR 0001's "discriminated union of typed edges" partway: keep system-defined **core types** (`part_of`, `note_of`, `takes_place_at`, `located_at`) with their invariants; let the rest of the relationship vocabulary become user-editable.
+
+- **Schema sketch:** `relationship_types(id, user_id, name, color, allowed_from_types[], allowed_to_types[], temporal_eligible)`. `relationships.type` becomes a user-string for non-core types; only core types stay enum-validated.
+- **Seed rows on user creation:** existing flavor types (`allied_with`, `rivals`, `caused_by` if still alive post-Slice-5) become seed `relationship_types` rows; user can rename / delete / recolor / add.
+- **Effort:** 2-3 weeks.
+- **Sequencing:** post-WM3-Slice-5 (because `caused_by`'s fate is decided in Slice 5; Shape 1's seed set depends on which flavor types survive). Whether interleaved with Slices 6-8 polish or queued after Slice 8 is TBD when the post-WM3 queue gets shaped.
+- **Sibling direction (NOT scheduled):** `EntityType` partial user-definition. Same shape but for entity types — `Artifact` / `Item` / etc. become user-organizing categories rather than mechanically-distinct types. Revisit after Shape 1 ships if flavor-type editing feels right.
+
+See audit deliverable §Direction commitments.
+
+---
+
+## Footnotes from 2026-05-20 audit
+
+These are decisions captured by the whole-app /office-hours audit that aren't queue items — they're context for future decisions. Cross-reference: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-restructure-pre-slice-1-burst-design-20260520-234854.md`.
+
+- **Status tracking for entities** (T4 replacement) — use `note_of` Notes attached to entities for in-progress markers. Zero schema change. Revisit only if status-filtering becomes a real workflow.
+- **Bulk import from external tools** (T7 replacement) — revisit only if a specific export file exists on disk and the migration is < 1 day of work. The "support Plottr / Aeon" framing is not a workflow you have.
+- **Door mechanics** (#5 forward-pointer) — `data.locked`, `data.key_artifact_id`, `data.connects_to`, projection-engine portal behavior on Character-passes-through-Door-at-T. Door entity-type was cut as breadcrumb (audit #5); when this becomes a real feature, design the data shape at that point with fresh eyes. Trigger: hex-grid + fog-of-war work moves from deferred to active.
+- **Per-POV simulation** (#1 forward-pointer) — render the world at T from a player-character's *knowledge frame*, not the omniscient frame. Needs: knowledge-event type, projection filter `projectStateForPOV(t, pov_character_id, ...)`, propagation rules (X tells Y at T → does Y know?), POV-switcher UI. Estimated 6-10 weeks; v4-scale aspiration. Trigger: post-faction-tide (revisit once the moat demos exist).
+- **Landing page refresh flag** — Scroll Theatre at `/` reflects v0.7.0.0 marketing, not the game-design framing. Re-shoot copy/visuals post-faction-tide once the GIF exists. Not blocking; the page works today.
 
 ---
 
