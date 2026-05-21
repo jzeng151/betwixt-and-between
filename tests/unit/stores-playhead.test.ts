@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
-import { playhead, intervalContainsT } from '../../src/lib/stores/playhead.js';
+import { playhead, intervalContainsT } from '../../src/lib/features/timeline/playhead-store.js';
 
 beforeEach(async () => {
 	playhead.dismiss();

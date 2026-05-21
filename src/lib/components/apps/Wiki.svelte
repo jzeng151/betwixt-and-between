@@ -10,11 +10,11 @@
 <script lang="ts">
 	import { setContext } from 'svelte';
 	import { entities } from '$lib/stores/entities.js';
-	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
-	import { playhead, intervalContainsT } from '$lib/stores/playhead.js';
+	import { playhead, intervalContainsT } from '$lib/features/timeline/playhead-store.js';
 	import { windowStore } from '$lib/stores/windows.js';
-	import { timelineFilter } from '$lib/stores/timelineFilter.js';
+	import { timelineFilter } from '$lib/features/timeline/filter-store.js';
 	import { WIKI_NAV, type WikiNavContext } from '$lib/contexts/wiki-nav.js';
 	import type { EntityType } from '$lib/server/db/schema.js';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';

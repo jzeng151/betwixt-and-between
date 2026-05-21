@@ -9,7 +9,7 @@
 
 <script lang="ts">
 	import { entities } from '$lib/stores/entities.js';
-	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import type { Entity } from '$lib/stores/entities.js';
 
 	interface Props {

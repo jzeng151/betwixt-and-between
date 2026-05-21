@@ -7,7 +7,7 @@
 // `intervalContainsT` is imported from the playhead store module because that
 // is where it already lives as a pure helper; the import is type-and-pure-only.
 
-import { intervalContainsT } from '$lib/stores/playhead.js';
+import { intervalContainsT } from '$lib/features/timeline/playhead-store.js';
 
 export interface Interval {
 	entityId: string;

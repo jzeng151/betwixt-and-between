@@ -3,7 +3,7 @@
 // in the same color in both Timeline and Graph surfaces.
 import { describe, it, expect } from 'vitest';
 import { nodeColorFor, NODE_COLOR } from '../../src/lib/relationship-colors.js';
-import { CHARACTER_COLORS } from '../../src/lib/timeline-v2-helpers.js';
+import { CHARACTER_COLORS } from '../../src/lib/features/timeline/timeline-helpers.js';
 import type { EntityType } from '../../src/lib/server/db/schema.js';
 
 const entity = (type: EntityType, data: Record<string, unknown> = {}) =>

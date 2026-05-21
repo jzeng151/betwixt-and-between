@@ -4,7 +4,7 @@
 
 import { get } from 'svelte/store';
 import type { Entity } from '$lib/stores/entities.js';
-import { playhead } from '$lib/stores/playhead.js';
+import { playhead } from '$lib/features/timeline/playhead-store.js';
 
 const sortByPositionThenCreated = (a: Entity, b: Entity): number => {
 	const ap = a.position ?? Number.MAX_SAFE_INTEGER;

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { intervals, type Interval } from '../../src/lib/stores/intervals.js';
+import { intervals, type Interval } from '../../src/lib/features/timeline/intervals-store.js';
 
 function mkInterval(overrides: Partial<Interval> = {}): Interval {
 	return {

@@ -51,9 +51,9 @@ import type { ExtractTablesWithRelations } from 'drizzle-orm';
 import * as schema from './db/schema.js';
 import { entities, intervals, relationships } from './db/schema.js';
 // Pure math (actRange, sceneRange, smartSnap) lives in
-// $lib/timeline-v2-helpers so non-server code (drag-preview snap) can import it
+// $lib/features/timeline/timeline-helpers so non-server code (drag-preview snap) can import it
 // without violating SvelteKit's $lib/server/* boundary.
-import { actRange, sceneRange } from '$lib/timeline-v2-helpers.js';
+import { actRange, sceneRange } from '$lib/features/timeline/timeline-helpers.js';
 
 /**
  * Polymorphic DB handle: accepts the top-level db or a transaction context.
@@ -868,7 +868,7 @@ export async function splitInterval(
 	// Lazy-imported pure helpers — no $lib/server boundary issue since these
 	// are pure math.
 	const { positionToStartFKs, positionToEndFKs } = await import(
-		'$lib/timeline-v2-helpers.js'
+		'$lib/features/timeline/timeline-helpers.js'
 	);
 	const leftEndFKs = positionToEndFKs(atPosition, actRows, scenesByActId);
 	const rightStartFKs = positionToStartFKs(atPosition, actRows, scenesByActId);

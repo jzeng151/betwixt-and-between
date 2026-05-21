@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isEdgeVisibleAtT } from '../../src/lib/stores/playhead.js';
+import { isEdgeVisibleAtT } from '../../src/lib/features/timeline/playhead-store.js';
 
 describe('isEdgeVisibleAtT', () => {
 	// Scrubber idle

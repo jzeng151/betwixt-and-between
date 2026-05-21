@@ -4,9 +4,9 @@
 	import { worldMapStore, worldMaps, mapRegions } from '$lib/stores/world-map.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/stores/scope.js';
-	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
-	import { playhead } from '$lib/stores/playhead.js';
+	import { playhead } from '$lib/features/timeline/playhead-store.js';
 	import { windowStore } from '$lib/stores/windows.js';
 	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
 	import { resolveActiveVariant } from '$lib/world-map-variants.js';

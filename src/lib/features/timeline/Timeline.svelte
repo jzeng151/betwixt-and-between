@@ -15,16 +15,16 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { entities, type Entity } from '$lib/stores/entities.js';
-	import { intervals as intervalsStore, type Interval } from '$lib/stores/intervals.js';
+	import { intervals as intervalsStore, type Interval } from '$lib/features/timeline/intervals-store.js';
 	import Palette from '$lib/components/Palette.svelte';
-	import ActsHeader from '$lib/components/ActsHeader.svelte';
-	import IntervalRow from '$lib/components/IntervalRow.svelte';
-	import PlayheadOverlay from '$lib/components/PlayheadOverlay.svelte';
-	import { playhead, isPlaying, secondsPerScene } from '$lib/stores/playhead.js';
+	import ActsHeader from '$lib/features/timeline/ActsHeader.svelte';
+	import IntervalRow from '$lib/features/timeline/IntervalRow.svelte';
+	import PlayheadOverlay from '$lib/features/timeline/PlayheadOverlay.svelte';
+	import { playhead, isPlaying, secondsPerScene } from '$lib/features/timeline/playhead-store.js';
 	import { windowStore } from '$lib/stores/windows.js';
 	import { pendingEditMode } from '$lib/components/EntityDetail.svelte';
-	import { timelineFilter } from '$lib/stores/timelineFilter.js';
-	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/timeline-v2-helpers.js';
+	import { timelineFilter } from '$lib/features/timeline/filter-store.js';
+	import { presenceLabel, colorFor, dataNoteSnippet } from '$lib/features/timeline/timeline-helpers.js';
 	import {
 		getActs,
 		getScenesByActId,

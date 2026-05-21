@@ -6,8 +6,8 @@
   Public Props API is stable — TimelineV2 / IntervalRow / Palette callers
   are unaffected. The parent positions the bar via inline style left/width.
 
-  See src/lib/timeline-v2-helpers.ts for the pure helpers used here
-  (widthClassForBar, internalActBoundaryFractions).
+  See src/lib/features/timeline/timeline-helpers.ts for the pure helpers used
+  here (widthClassForBar, internalActBoundaryFractions).
 -->
 
 <script lang="ts" module>
@@ -22,7 +22,7 @@
 </script>
 
 <script lang="ts">
-  import { widthClassForBar, type WidthClass } from '$lib/timeline-v2-helpers.js';
+  import { widthClassForBar, type WidthClass } from '$lib/features/timeline/timeline-helpers.js';
 
   interface Props {
     /** Entity name shown on line 1 (Fraunces 13px). */

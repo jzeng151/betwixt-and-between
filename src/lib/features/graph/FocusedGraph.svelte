@@ -2,8 +2,8 @@
   import { onMount } from 'svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
-  import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-  import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/stores/playhead.js';
+  import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
+  import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
   import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
   import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
   import { openEntity } from '$lib/navigation.js';

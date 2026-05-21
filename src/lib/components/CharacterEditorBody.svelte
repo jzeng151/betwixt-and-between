@@ -26,7 +26,7 @@
 	import EntityLink from './EntityLink.svelte';
 	import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
 	import type { Entity } from '$lib/stores/entities.js';
-	import { CHARACTER_COLORS, HEX_COLOR_RE, type TimelineLabelMode } from '$lib/timeline-v2-helpers.js';
+	import { CHARACTER_COLORS, HEX_COLOR_RE, type TimelineLabelMode } from '$lib/features/timeline/timeline-helpers.js';
 	import {
 		getCharacterIcon,
 		listCharacterIcons,

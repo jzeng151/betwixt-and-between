@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
-import { timelineFilter } from '$lib/stores/timelineFilter.js';
+import { timelineFilter } from '$lib/features/timeline/filter-store.js';
 
 describe('timelineFilter', () => {
 	beforeEach(() => {

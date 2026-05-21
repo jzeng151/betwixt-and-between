@@ -9,7 +9,7 @@ import {
 	positionToEndFKs,
 	CHARACTER_COLORS,
 	EVENT_COLOR
-} from '../../src/lib/timeline-v2-helpers.js';
+} from '../../src/lib/features/timeline/timeline-helpers.js';
 
 describe('widthClassForBar', () => {
 	it('returns "tiny" for widths below 40px', () => {

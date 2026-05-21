@@ -6,7 +6,7 @@
  *   - Splits a multi-act bar at an internal act boundary into two adjacent
  *     intervals: original shrinks to [start, P), new row created [P, end).
  *   - FK resolution via existing positionToStart/EndFKs from
- *     $lib/timeline-v2-helpers.
+ *     $lib/features/timeline/timeline-helpers.
  *   - Rejects splits outside the range or at the exact endpoints.
  *   - Both writes happen inside db.transaction.
  *   - Same entity_id on both halves.
