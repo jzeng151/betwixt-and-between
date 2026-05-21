@@ -13,6 +13,15 @@ import { sveltekit } from '@sveltejs/kit/vite';
  */
 export default defineConfig({
 	plugins: [sveltekit()],
+	// Build-time gate for the x-test-user-id bypass in src/hooks.server.ts.
+	// True only when BETWIXT_E2E_PGLITE=1 is set in the build process env
+	// (npm run dev:pglite, the Playwright preview subprocess). False for
+	// `wrangler deploy`, so Rollup tree-shakes the bypass branch out of the
+	// production worker bundle entirely — a runtime `wrangler secret put
+	// BETWIXT_E2E_PGLITE 1` cannot resurrect deleted code.
+	define: {
+		__E2E_BYPASS__: JSON.stringify(process.env.BETWIXT_E2E_PGLITE === '1')
+	},
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

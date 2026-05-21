@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.3.0] - 2026-05-21
+
+### Security
+- **Hardcoded auth fallback secret deleted.** `buildAuth` in `src/lib/server/auth.ts` no longer ships a fallback string when `BETTER_AUTH_SECRET` is missing in test mode. The previous fallback was publicly visible in the repo and was a session-forgery primitive on any prod where `BETWIXT_E2E_PGLITE=1` got misapplied as a runtime secret. `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are now required unconditionally; the E2E paths (Playwright, `dev:pglite`, unit tests) supply their own secrets.
+- **`x-test-user-id` E2E bypass tree-shaken from production bundles.** Wrapped in `if (__E2E_BYPASS__) { ... }` where `__E2E_BYPASS__` is a Vite `define` evaluated at build time from `process.env.BETWIXT_E2E_PGLITE`. Rollup eliminates the branch from the production worker bundle entirely. A misapplied runtime secret cannot resurrect deleted code.
+- **Session id/token randomized.** The bypass path now uses `crypto.randomUUID()` instead of fixed `'test-session'` / `'test-token'` strings — eliminates cross-user collision on downstream code that uses `session.token` as a cache key or audit log value.
+
+### Changed
+- **Deploy target documented as Cloudflare Workers (Static Assets).** DEPLOY.md rewritten to describe the Workers deploy path explicitly (Cloudflare Pages framing removed). New `.github/workflows/deploy.yml` runs `wrangler deploy` on push to `main` after CI gates pass; `BETWIXT_E2E_PGLITE: ''` is scoped at the job level for defense-in-depth.
+- **Store `load()` functions fail loud on non-OK fetch.** `entities`, `intervals`, and `relationships` stores now throw with the response status + body when the API returns a non-OK status instead of silently parsing the error page as JSON. Three new Vitest regression tests cover the failure path.
+- **Playwright upgraded** from 1.59.1 to 1.60.0 — fixes a hang in `npx playwright install` on Linux.
+
 ## [0.7.2.0] - 2026-05-21
 
 ### Changed

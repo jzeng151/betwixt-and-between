@@ -26,10 +26,11 @@ export default defineConfig({
 		env: {
 			DATABASE_URL: PGLITE_URL,
 			BETWIXT_E2E_PGLITE: '1',
-			// Even though BETWIXT_E2E_PGLITE bypasses the missing-secret guard
-			// in buildAuth, Better-Auth still expects a secret to sign cookies.
-			// Set a fixed test secret so signed cookies are stable across the
-			// preview process and Playwright workers.
+			// buildAuth requires BETTER_AUTH_SECRET + BETTER_AUTH_URL
+			// unconditionally (a previous test-mode skip-the-secret-guard was
+			// removed because it shipped a publicly-visible fallback secret).
+			// A fixed value here makes signed cookies stable across the preview
+			// process and Playwright workers.
 			BETTER_AUTH_SECRET: 'test-secret-deterministic-for-e2e-only',
 			BETTER_AUTH_URL: 'http://localhost:4173'
 		}

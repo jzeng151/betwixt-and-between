@@ -4,6 +4,12 @@ import type { RuntimeDb } from '$lib/server/db/index.js';
 import type { Auth } from '$lib/server/auth.js';
 
 declare global {
+	// Vite `define` injects this at build time. True only when
+	// BETWIXT_E2E_PGLITE=1 was set in the build-process env (dev:pglite,
+	// Playwright preview); false otherwise. Used by src/hooks.server.ts to
+	// tree-shake the x-test-user-id bypass branch out of the prod bundle.
+	const __E2E_BYPASS__: boolean;
+
 	namespace App {
 		interface Locals {
 			user: {

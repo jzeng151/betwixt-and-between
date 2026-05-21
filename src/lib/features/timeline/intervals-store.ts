@@ -57,6 +57,7 @@ function createIntervalStore() {
 
 	async function load() {
 		const res = await fetch('/api/intervals');
+		if (!res.ok) throw new Error(`intervals.load failed: ${res.status} ${await errorMessage(res)}`);
 		const data: Interval[] = await res.json();
 		set(data);
 	}

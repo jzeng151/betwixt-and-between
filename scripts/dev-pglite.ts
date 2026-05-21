@@ -107,7 +107,15 @@ async function main() {
 		env: {
 			...process.env,
 			DATABASE_URL: PGLITE_URL,
-			BETWIXT_E2E_PGLITE: '1'
+			BETWIXT_E2E_PGLITE: '1',
+			// buildAuth requires these unconditionally (previously a
+			// hardcoded fallback fired when BETWIXT_E2E_PGLITE=1 + no
+			// secret; deleted because the fallback was publicly visible
+			// and a session-forgery primitive if misapplied to prod).
+			// Matches playwright.config.ts for consistency.
+			BETTER_AUTH_SECRET:
+				process.env.BETTER_AUTH_SECRET ?? 'test-secret-deterministic-for-e2e-only',
+			BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? 'http://localhost:5173'
 		}
 	});
 

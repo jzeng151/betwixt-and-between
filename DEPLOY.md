@@ -2,11 +2,13 @@
 
 Architecture, bindings, and deployment shape are in [docs/architecture.md → Deployment shape](docs/architecture.md#deployment-shape). This file is the step-by-step runbook for operators.
 
+The deploy target is **Cloudflare Workers** with Static Assets (the unified 2024+ replacement for Cloudflare Pages). The repo's `wrangler.jsonc` is the source of truth for the Worker's name, compatibility settings, the `_worker.js` entrypoint, the `ASSETS` binding, observability, and bindings to external resources (R2, etc.).
+
 ## Deploy pipeline
 
-Cloudflare's GitHub integration auto-builds and deploys every push to `main`. CI (`.github/workflows/test.yml`) runs typecheck + Vitest on PRs; Cloudflare deploys only after merge. **Migrations are not run by CI** — see [§ Migrations](#migrations).
+`.github/workflows/deploy.yml` runs `wrangler deploy` on every push to `main`, after `npm run check` + `npm test` pass in the same job. The Worker is deployed to whichever Cloudflare account the `CLOUDFLARE_API_TOKEN` GitHub secret authenticates.
 
-`npm run deploy` (= `wrangler deploy`) is a manual escape hatch only. Use it when the GitHub integration is down or for hotfix urgency. Do not normalize manual deploys.
+`npm run deploy` (= `wrangler deploy`) is the same command, run from a developer's machine. Use it for the very first deploy (before the GitHub Action's secrets are set), for one-off hotfixes, and to reproduce a CI failure locally.
 
 ## One-time setup
 
@@ -20,27 +22,90 @@ postgres://<user>:<password>@<host>.<region>.aws.neon.tech/<dbname>?sslmode=requ
 
 Create a dev branch off prod for local development. Never run migrations or destructive scripts against prod directly.
 
-### 2. Cloudflare Worker secrets
+### 2. Cloudflare account + wrangler CLI
 
-Set via `wrangler secret put <NAME>` or the dashboard (Workers & Pages → Settings → Variables and Secrets):
+```sh
+npm i -g wrangler   # if not already
+wrangler login      # browser-based OAuth; one-time per machine
+```
+
+Note your account ID from `wrangler whoami` or the dashboard URL. You will need it for the GitHub Action.
+
+### 3. Cloudflare Worker secrets
+
+Set via `wrangler secret put <NAME>` (interactive) or the dashboard (Workers & Pages → your Worker → Settings → Variables and Secrets):
 
 | Secret | Source | Required |
 |---|---|---|
 | `DATABASE_URL` | Neon production connection string | yes |
 | `BETTER_AUTH_SECRET` | `openssl rand -base64 32` | yes |
-| `BETTER_AUTH_URL` | Worker's public URL (e.g. `https://betwixt.example.workers.dev`) | yes |
+| `BETTER_AUTH_URL` | The Worker's public URL once deployed (e.g. `https://betwixt-and-between.<account-subdomain>.workers.dev` or a custom domain you've attached) | yes |
 | `GOOGLE_CLIENT_ID` | Google Cloud Console OAuth | optional (Google sign-in) |
 | `GOOGLE_CLIENT_SECRET` | Google Cloud Console OAuth | optional |
 | `RESEND_API_KEY` | Resend dashboard | required for prod magic-links |
 | `RESEND_FROM_EMAIL` | Resend-verified sender | required for prod magic-links |
 
-`buildAuth` throws if `BETTER_AUTH_SECRET` or `BETTER_AUTH_URL` is missing in non-test mode — the Worker returns 500 on every request until both are set. Intentional: silent fallback to a dev secret would make sessions trivially forgeable.
+`buildAuth` throws if `BETTER_AUTH_SECRET` or `BETTER_AUTH_URL` is missing — the Worker returns 500 on every request until both are set. The check is unconditional; even E2E paths must supply their own secret. A previous version silently fell back to a hardcoded dev secret in test mode, which turned out to be a session-forgery primitive on any prod with a misapplied `BETWIXT_E2E_PGLITE=1` runtime secret. See [docs/findings/x-test-user-id-prod-guard.md](docs/findings/x-test-user-id-prod-guard.md) § Resolution.
 
-**Never set `BETWIXT_E2E_PGLITE` in production.** It enables the `x-test-user-id` session-bypass header. See [docs/findings/x-test-user-id-prod-guard.md](docs/findings/x-test-user-id-prod-guard.md).
+**Never set `BETWIXT_E2E_PGLITE` in production**, in either:
+- the Worker's runtime secrets/variables (the `wrangler secret list` surface), **OR**
+- the Worker's plaintext environment variables in the dashboard (which apply at both build and runtime).
 
-### 3. Connect the GitHub repo to Cloudflare
+The bypass branch is tree-shaken from production bundles at build time via Vite `define` (`__E2E_BYPASS__`), but the safety property requires `BETWIXT_E2E_PGLITE` to be unset in the build process env when CI / wrangler runs `npm run build`. If it leaks into either surface, the bypass branch ships.
 
-Dashboard → Workers & Pages → Create → Pages → Connect to Git. Pick `main`. Cloudflare runs `npm run build` and deploys `.svelte-kit/cloudflare/`.
+### 4. R2 bucket for map uploads
+
+```sh
+wrangler r2 bucket create betwixt-map-uploads
+```
+
+The `MAP_UPLOADS` binding is declared in `wrangler.jsonc:r2_buckets`; the next `wrangler deploy` wires it up. No dashboard step.
+
+### 5. First deploy (from your machine)
+
+Before the GitHub Action can run, the Worker must exist and have its secrets set. Bootstrap from your machine:
+
+```sh
+npm install
+DATABASE_URL='postgres://...prod-branch...' npm run db:migrate   # see § Migrations
+npm run build
+npm run deploy   # = wrangler deploy
+```
+
+The first `wrangler deploy` creates the Worker. Note the URL it prints (e.g. `https://betwixt-and-between.<account-subdomain>.workers.dev`). Update `BETTER_AUTH_URL` to match if you didn't already:
+
+```sh
+wrangler secret put BETTER_AUTH_URL   # paste the URL from above
+```
+
+Then `wrangler deploy` once more so the new secret takes effect.
+
+### 6. GitHub Action secrets (enables auto-deploy on push to main)
+
+In the GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**. Add:
+
+| GitHub secret | Value |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens → Create Token → "Edit Cloudflare Workers" template. Restrict to your account. |
+| `CLOUDFLARE_ACCOUNT_ID` | `wrangler whoami` or the dashboard URL. |
+
+Once both are set, `.github/workflows/deploy.yml` will deploy automatically on the next push to `main`.
+
+### 7. (Optional) Custom domain
+
+Dashboard → Workers & Pages → your Worker → Settings → Domains & Routes → Add Custom Domain. Then update `BETTER_AUTH_URL` to the custom domain and `wrangler deploy` once more.
+
+## Migrating from a prior Cloudflare Pages deploy (one-time, only if applicable)
+
+If this project was previously deployed via Cloudflare Pages (URL like `*.pages.dev`), follow these steps to cut over to Workers Static Assets without downtime:
+
+1. **Complete steps 1–6 above.** The new Worker is now live at `*.workers.dev` (or your custom domain), running the same build. Test it end-to-end (landing, login, app, map upload).
+2. **If the Pages project had a custom domain attached**, move the custom domain from Pages to the new Worker:
+   - On the Pages project: Settings → Custom domains → Remove the domain.
+   - On the Worker: Settings → Domains & Routes → Add Custom Domain → same domain.
+   - DNS records are managed automatically if the zone is on Cloudflare.
+3. **Delete the Pages project**: Dashboard → Workers & Pages → the Pages project → Manage → Delete project. This removes the `*.pages.dev` URL and stops any auto-builds. Do this *after* the Worker is verified working at the public URL — otherwise users hit a deleted endpoint.
+4. **Audit step**: confirm `BETWIXT_E2E_PGLITE` was never set on the old Pages project (runtime *or* build environment variables). If it was, regenerate `BETTER_AUTH_SECRET` and rotate it on the Worker — sessions signed by the previous fallback secret are forgeable.
 
 ## Migrations
 
@@ -66,17 +131,19 @@ For fresh deploys with no pre-existing data, skip the backfill — every new row
 
 ## Deploying
 
-After one-time setup, deploy is `git push origin main`. Watch the Cloudflare dashboard for build status. First request after deploy may take ~1s as the Worker cold-starts the Neon pool.
+After one-time setup, deploy is `git push origin main`. The GitHub Action runs `npm run check`, `npm test`, then `wrangler deploy`. First request after deploy may take ~1s as the Worker cold-starts the Neon pool.
 
-If a deploy ships a migration: **run `npm run db:migrate` first**, then `git push`.
+If a deploy ships a migration: **run `npm run db:migrate` first** (against the prod Neon branch from your machine), then `git push`.
+
+For an emergency manual deploy: `npm run deploy` from a checkout of the commit you want to ship.
 
 ## Verifying a deploy
 
-1. Hit `https://<your-worker>.workers.dev/` — should serve the landing page.
+1. Hit `https://<your-worker-or-custom-domain>/` — should serve the landing page.
 2. Visit `/auth/login`, enter your email, submit. Check inbox for the magic-link (Resend must be wired). Click → land on `/app` authenticated.
 3. Open `/app` → timeline + map + entity list visible.
 
-If any step fails: `wrangler tail` for live logs, or Cloudflare dashboard's Workers Logs view.
+If any step fails: `wrangler tail` for live logs, or Cloudflare dashboard → your Worker → Logs.
 
 ## Magic-link email (production gate)
 
@@ -103,7 +170,7 @@ Weekly Sunday 06:00 UTC: `.github/workflows/backup.yml` runs `pg_dump | gpg | rc
 
 ## Rollback
 
-Cloudflare retains previous Worker versions. To revert: dashboard → Deployments → click an older successful deploy → "Rollback to this deployment."
+Cloudflare retains previous Worker versions. To revert: dashboard → your Worker → Deployments → click an older successful deploy → "Rollback to this deployment." Or from CLI: `wrangler rollback <deployment-id>`.
 
 **Database changes are not rolled back automatically.** If a migration is involved:
 
@@ -118,7 +185,8 @@ Cloudflare retains previous Worker versions. To revert: dashboard → Deployment
 | All requests 500 immediately after deploy | `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL` / `DATABASE_URL` set on the Worker? `wrangler secret list`. |
 | Login succeeds but `/app` 500s | `DATABASE_URL` points at the right Neon branch? Migration applied to that branch? |
 | Magic-link form 200s but no email arrives | `RESEND_API_KEY` / `RESEND_FROM_EMAIL` set? Resend domain verified? `wrangler tail` for the `console.log` fallback. |
-| Map image upload returns 500 | `MAP_UPLOADS` R2 binding present in `wrangler.jsonc` and bucket exists? |
+| Map image upload returns 500 | `MAP_UPLOADS` R2 binding present in `wrangler.jsonc` AND bucket exists (`wrangler r2 bucket list`)? Last `wrangler deploy` ran after the binding was added? |
+| GitHub Action fails at `wrangler deploy` step | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` GitHub secrets set? Token has `Workers Scripts: Edit` permission? |
 | Slow first request | Expected: Neon pool cold-start (~1s) and Worker cold-start. Watch over 1–2 minutes; if persistent, check Neon dashboard for compute scaling state. |
 
 ## References
@@ -126,5 +194,7 @@ Cloudflare retains previous Worker versions. To revert: dashboard → Deployment
 - [docs/architecture.md](docs/architecture.md) — deployment shape, env vars, trust boundaries.
 - [docs/adr/0004-neon-postgres-better-auth.md](docs/adr/0004-neon-postgres-better-auth.md) — why Postgres + Better-Auth + Workers.
 - [docs/findings/x-test-user-id-prod-guard.md](docs/findings/x-test-user-id-prod-guard.md) — security follow-up on the E2E bypass.
-- `.github/workflows/backup.yml` — backup automation.
-- `.github/workflows/test.yml` — CI test gate.
+- `.github/workflows/test.yml` — CI test gate (runs on PRs).
+- `.github/workflows/deploy.yml` — auto-deploy on push to main.
+- `.github/workflows/backup.yml` — weekly Neon backup to Backblaze B2.
+- [Cloudflare: SvelteKit on Workers](https://developers.cloudflare.com/workers/framework-guides/web-apps/sveltekit/) — canonical wrangler.jsonc shape used by this repo.
