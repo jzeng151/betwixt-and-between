@@ -22,6 +22,7 @@ function createEntityStore() {
 
 	async function load() {
 		const res = await fetch('/api/entities');
+		if (!res.ok) throw new Error(`entities.load failed: ${res.status} ${await res.text()}`);
 		const data: Entity[] = await res.json();
 		set(data);
 	}
