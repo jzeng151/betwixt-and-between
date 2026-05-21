@@ -80,22 +80,39 @@ For full per-version detail see `CHANGELOG.md`. For design specs see
 
 ## In flight
 
-### World Map v2 — Story-Time Engine on Spatial Surfaces
+### World Map v3 — Living Stage for Game Design (SUPERSEDES World Map v2 Steps 4-7)
 
-Branch `feat/world-map-v2-step-2-3`. Design doc:
-`~/.gstack/projects/betwixt-and-between/steve-feat-app-qol-design-20260513-175833.md`
-(includes Plan-Eng-Review Addendum v2.1 with locks M1–M11). Plan for
-this branch: `docs/plans/world-map-v2-step-2-3.md`.
+**Status: design APPROVED 2026-05-20. Pre-Slice 0 spike + whole-app /office-hours audit before Slice 1 begins.**
 
-7-step build order, each shippable on its own:
+Design doc: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-main-design-20260520-172713.md`
+Test plan: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-main-eng-review-test-plan-20260520-194500.md`
+Plan-eng-review decisions captured inline in the design doc (D3 doublePrecision, D4 strangler-fig, D5 lazy GC, D6 anchor state shape, D7 Svelte 5 reactivity, D10 state-based parity, D11 4 migration tests).
 
-- [x] **Step 1 — Map-Location linking UI** (v0.6.0.0). Picker in WorldMap settings + "Open this Location's map" entry points.
-- [x] **Step 2 — Drill-down navigation** (v0.7.0.0). Region-popup drill action; breadcrumb bar; "Create a map for X?" offer.
-- [x] **Step 3 — Map variants** (v0.7.0.0). Scene-range editor; resolveActiveVariant projection; EXCLUDE / partial-unique / CHECK at DB level; duplicate-map endpoint; M11 reorder cascade hook.
-- [ ] **Step 4 — `Artifact` entity-type.** Palette chip, drag-onto-map placement (M1 `map_placements` first-class table), intervals binding via scene-range picker, `targetEntityId` picker, Leaflet marker with target's icon (overridable per Artifact).
-- [ ] **Step 5 — Movement playback.** Two adjacent Artifacts with same `targetEntityId` + same `mapId` + abutting intervals → tween marker position between them as playhead crosses boundary. Optional trail polyline.
-- [ ] **Step 6 — `EventChain` entity-type.** Ordered artifact picker, payload composer, scope selector (`active-scene` / `persistent` / `within-N-seconds`). Playback runtime tracks per-chain progress; persistent scope saves to `event_chain_progress` (M7); CAS update for safety.
-- [ ] **Step 7 — Spotlight map cycling.** As playhead advances, find most-specific active Location with a map and animate WorldMap to it (fade between images; pan/zoom to fit new variant's bounds).
+Foundation rewrite: replace Leaflet+bitmap+polygon with Pixi.js + Paper.js + event-sourced projection engine. New tables `map_anchors`, `map_events`, `factions`. WorldMap.svelte (1555 LOC) decomposed into `src/lib/features/map/` per the deferred restructure plan.
+
+8-slice build order (each shippable; Slices 6-8 are explicitly polish and slippable):
+
+- [ ] **Pre-Slice 0 — Pixi v8 + Svelte 5 integration spike** (1-2 days). Mount, lifecycle, memory profile across 100 mount/unmount cycles. Decides adapter strategy.
+- [ ] **Whole-app /office-hours audit** (separate skill session). Refines `docs/plans/codebase-restructure-2026-05-20.md` (currently an initial plan).
+- [ ] **Slice 1 — Foundation** (4-5 weeks). Strangler-fig Pixi renderer behind feature flag, both Leaflet + Pixi alive. Decomposed `src/lib/features/map/`. New schema (`map_anchors`, `map_events`, `factions`) + migration backfill. `transfer_region` event. Sunday-night-GIF demo: region recolors as you scrub. Includes restructure plan's Step 1 carve (merged).
+- [ ] **Slice 2 — Projection engine completion** (3-4 weeks). Multi-event-kind support, anchor snapshots, authoring undo. Faction tide demo end-to-end. Leaflet retired at end of slice (anti-goal: dual paths must NOT persist past Slice 2).
+- [ ] **Slice 3 — Inkarnate-style authoring** (3-4 weeks). Brush tools for terrain, asset library sidebar, layered canvas, type-default + per-instance styles (in `entities.data.style` jsonb, no separate tables).
+- [ ] **Slice 4 — Markers / Artifacts / Movement** (2-3 weeks). Drag-and-drop placement, per-type hover, movement via `move_entity` continuous events. **Replaces v2 Steps 4 + 5.**
+- [ ] **Slice 5 — EventChain visualization** (2-3 weeks). Chain step model, Bezier polyline edges, scope rules from Slice 2, click-to-jump-playhead, Causal Cartography (click changed thing → see why). **Replaces v2 Step 6.**
+- [ ] **Slice 6 — Ambient liveness** (2-3 weeks, polish — slippable).
+- [ ] **Slice 7 — Audio + sidebar focus** (1-2 weeks, polish — slippable).
+- [ ] **Slice 8 — Spotlight cycling rebased + perf pass** (2 weeks). **Replaces v2 Step 7.**
+- [ ] **Deferred — Vectorize/parser for imported maps.** Contingent on demonstrated need (catalog of existing bitmap maps via The Assignment).
+
+Outside voice (Codex/subagent plan review) scheduled for post-spike, post-audit per plan-eng-review D12.
+
+**Original v2 Steps 4-7 (preserved here for history; they are rebased onto WM3, not abandoned):**
+- ~~Step 4 — `Artifact` entity-type~~ → rebased as part of Slice 4 (Markers / Artifacts / Movement) in WM3.
+- ~~Step 5 — Movement playback~~ → rebased as `move_entity` continuous events in WM3 Slice 2 (engine) + Slice 4 (UI).
+- ~~Step 6 — `EventChain` entity-type~~ → rebased as `link_chain` windowed events in WM3 Slice 2 (engine) + Slice 5 (UI).
+- ~~Step 7 — Spotlight map cycling~~ → rebased as WM3 Slice 8.
+
+Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qol-design-20260513-175833.md` (its Premise #2 "Leaflet is sufficient for v2-v3" was tested in production and found wrong; that's what triggered v3).
 
 ---
 
