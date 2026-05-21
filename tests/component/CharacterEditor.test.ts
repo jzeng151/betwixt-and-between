@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import CharacterEditor from '$lib/components/apps/CharacterEditor.svelte';
+import CharacterEditor from '$lib/features/character/CharacterEditor.svelte';
 import { entities, type Entity } from '$lib/stores/entities.js';
 import { relationships } from '$lib/stores/relationships.js';
 import { windowStore } from '$lib/os/windows-store.js';

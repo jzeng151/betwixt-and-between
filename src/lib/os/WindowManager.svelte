@@ -3,7 +3,7 @@
   import { APP_CATALOG, isBare } from '$lib/os/app-catalog.js';
   import { entities } from '$lib/stores/entities.js';
   import Window from './Window.svelte';
-  import CharacterEditor from '$lib/components/apps/CharacterEditor.svelte';
+  import CharacterEditor from '$lib/features/character/CharacterEditor.svelte';
   import Wiki from '$lib/components/apps/Wiki.svelte';
   import Timeline from '$lib/features/timeline/Timeline.svelte';
   import WorldMap from '$lib/components/apps/WorldMap.svelte';

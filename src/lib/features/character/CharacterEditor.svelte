@@ -8,7 +8,7 @@
   import { entities } from '$lib/stores/entities.js';
   import { windowStore } from '$lib/os/windows-store.js';
   import InlineEdit from '$lib/components/InlineEdit.svelte';
-  import CharacterEditorBody from '$lib/components/CharacterEditorBody.svelte';
+  import CharacterEditorBody from '$lib/features/character/CharacterEditorBody.svelte';
   import { openEntity } from '$lib/navigation.js';
   import { getCharacterIcon } from '$lib/icons/registry.js';
 
