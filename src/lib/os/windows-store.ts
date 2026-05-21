@@ -101,7 +101,7 @@ function createWindowStore() {
 		if (appId === 'story-player' && typeof window !== 'undefined') {
 			// Anchor the Story Player just above the taskbar (52px) so it acts
 			// like a transport bar by default.
-			const winW = 320;
+			const winW = 280;
 			const winH = 100;
 			const taskbarH = 52;
 			const gap = 12;
