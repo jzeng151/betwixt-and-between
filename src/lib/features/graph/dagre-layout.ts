@@ -18,7 +18,7 @@
  * module on first call so the cost is paid once on demand, not on every
  * page load. Caller pattern:
  *
- *   const { layoutByType } = await import('$lib/graph/dagre-layout.js');
+ *   const { layoutByType } = await import('$lib/features/graph/dagre-layout.js');
  *   const positions = await layoutByType({ ... });
  */
 

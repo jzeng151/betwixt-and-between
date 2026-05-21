@@ -22,7 +22,7 @@
 	import { relationships } from '$lib/stores/relationships.js';
 	import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
 	import { windowStore } from '$lib/stores/windows.js';
-	import { CHARACTER_COLORS } from '$lib/timeline-v2-helpers.js';
+	import { CHARACTER_COLORS } from '$lib/features/timeline/timeline-helpers.js';
 	import {
 		buildHierarchyIndex,
 		getChildren,

@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
-import { intervals as intervalsStore } from './intervals.js';
+import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 
 export type Entity = {
 	id: string;

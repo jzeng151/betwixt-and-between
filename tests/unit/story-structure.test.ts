@@ -9,7 +9,7 @@ import {
 	stepForwardScene,
 	stepBackScene
 } from '../../src/lib/story-structure.js';
-import { playhead } from '../../src/lib/stores/playhead.js';
+import { playhead } from '../../src/lib/features/timeline/playhead-store.js';
 
 function mkEntity(overrides: Partial<Entity> & { id: string; type: Entity['type']; name: string }): Entity {
 	return {

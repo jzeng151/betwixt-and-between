@@ -15,7 +15,7 @@
 
 <script lang="ts">
 	import EditableField from './EditableField.svelte';
-	import { CHARACTER_COLORS } from '$lib/timeline-v2-helpers.js';
+	import { CHARACTER_COLORS } from '$lib/features/timeline/timeline-helpers.js';
 
 	interface Props {
 		entityId: string;

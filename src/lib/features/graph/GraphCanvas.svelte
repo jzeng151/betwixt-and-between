@@ -69,7 +69,7 @@
 <script lang="ts">
 	import { onMount, untrack, type Snippet } from 'svelte';
 	import { NODE_COLOR } from '$lib/relationship-colors.js';
-	import type { NodePosition } from '$lib/graph/radial-layout.js';
+	import type { NodePosition } from '$lib/features/graph/radial-layout.js';
 
 	interface Props {
 		nodes: GraphNode[];

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   pickDefaultRelType,
   type RelationshipLike
-} from '../../src/lib/graph/rel-type-picker.js';
+} from '../../src/lib/features/graph/rel-type-picker.js';
 import { REL_TYPES } from '../../src/lib/relationship-colors.js';
 
 const A = 'entity-a';

@@ -4,7 +4,7 @@
 // by GraphCanvas's grid auto-place fallback when no per-window seed
 // exists.
 import { describe, it, expect } from 'vitest';
-import { radialLayout } from '../../src/lib/graph/radial-layout.js';
+import { radialLayout } from '../../src/lib/features/graph/radial-layout.js';
 
 const FOCAL = 'focal';
 const A = 'a';

@@ -8,8 +8,8 @@
 //                   set; identical to their_worlds with one focal
 //   - reachable:    undirected 2-hop union (NOT transitive closure)
 import { describe, it, expect } from 'vitest';
-import { computeVisibleSet } from '../../src/lib/graph/visible-set.js';
-import type { Edge } from '../../src/lib/graph/traversal.js';
+import { computeVisibleSet } from '../../src/lib/features/graph/visible-set.js';
+import type { Edge } from '../../src/lib/features/graph/traversal.js';
 
 const BORDEN = 'borden';
 const ANGIER = 'angier';

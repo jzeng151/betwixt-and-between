@@ -1,5 +1,5 @@
 <!--
-  ActsHeader — acts header row + scenes row for TimelineV2.
+  ActsHeader — acts header row + scenes row for the Timeline.
 
   Renders act names, scene counts, and scene cells.
   Per-act affordances:
@@ -8,8 +8,11 @@
 -->
 
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { entities } from '$lib/stores/entities.js';
-	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
+	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
+	import { refreshTimelineStores } from '$lib/features/timeline/loaders.js';
+	import { createAutoDismiss } from '$lib/features/timeline/auto-dismiss.js';
 	import type { Entity } from '$lib/stores/entities.js';
 
 	interface Props {
@@ -91,7 +94,11 @@
 					if (!res.ok) throw new Error(await res.text());
 				});
 			}
-			await entities.load();
+			// Scene insert changes scene count m → server's recomputeIntervalsForAct
+			// rewrites every interval anchored to scenes in this act, so the intervals
+			// store needs to refresh too. The other 4 mutation sites in this file use
+			// refreshTimelineStores() for the same reason.
+			await refreshTimelineStores();
 			expandingActId = null;
 			sceneNamesInput = '';
 		} catch (err) {
@@ -155,7 +162,7 @@
 			const res = await fetch(url, { method: 'DELETE' });
 			if (!res.ok) throw new Error(await res.text());
 			// Reload both stores; interval CASCADE happens server-side.
-			await Promise.all([entities.load(), intervalsStore.load()]);
+			await refreshTimelineStores();
 			deletingActId = null;
 			deletingAct = null;
 		} catch (err) {
@@ -196,7 +203,7 @@
 				body: JSON.stringify({ type: 'Act', name, position: insertingAtIdx })
 			});
 			if (!res.ok) throw new Error(await res.text());
-			await Promise.all([entities.load(), intervalsStore.load()]);
+			await refreshTimelineStores();
 			insertingAtIdx = null;
 			insertName = '';
 		} catch (err) {
@@ -217,6 +224,10 @@
 	let dragActId: string | null = $state(null);
 	let actDropTarget: { idx: number; side: 'left' | 'right' } | null = $state(null);
 	let reorderError: string | null = $state(null);
+	const reorderErrorToast = createAutoDismiss((msg) => {
+		reorderError = msg;
+	});
+	onDestroy(() => reorderErrorToast.cancel());
 
 	function actDragStart(e: DragEvent, actId: string) {
 		if (!e.dataTransfer) return;
@@ -259,10 +270,9 @@
 				body: JSON.stringify({ position: targetPos })
 			});
 			if (!res.ok) throw new Error(await res.text());
-			await Promise.all([entities.load(), intervalsStore.load()]);
+			await refreshTimelineStores();
 		} catch (err) {
-			reorderError = (err as Error).message;
-			setTimeout(() => (reorderError = null), 4000);
+			reorderErrorToast.show((err as Error).message);
 		}
 	}
 
@@ -320,10 +330,9 @@
 				body: JSON.stringify({ parentId: target.actId, position: targetPos })
 			});
 			if (!res.ok) throw new Error(await res.text());
-			await Promise.all([entities.load(), intervalsStore.load()]);
+			await refreshTimelineStores();
 		} catch (err) {
-			reorderError = (err as Error).message;
-			setTimeout(() => (reorderError = null), 4000);
+			reorderErrorToast.show((err as Error).message);
 		}
 	}
 

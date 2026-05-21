@@ -2,28 +2,44 @@
   import { onMount } from 'svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
-  import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-  import { playhead, intervalContainsT, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/stores/playhead.js';
+  import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
+  import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
   import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
   import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
-  import { DEFAULT_TYPE_ORDER } from '$lib/graph/defaults.js';
-  import type { Edge as TraversalEdge } from '$lib/graph/traversal.js';
-  import { computeVisibleSet } from '$lib/graph/visible-set.js';
-  import { radialLayout } from '$lib/graph/radial-layout.js';
+  import { DEFAULT_TYPE_ORDER } from '$lib/features/graph/defaults.js';
+  import type { Edge as TraversalEdge } from '$lib/features/graph/traversal.js';
+  import { computeVisibleSet } from '$lib/features/graph/visible-set.js';
+  import { radialLayout } from '$lib/features/graph/radial-layout.js';
   import GraphCanvas, {
     type GraphNode,
     type GraphEdge
-  } from '$lib/components/GraphCanvas.svelte';
-  import type { NodePosition } from '$lib/graph/radial-layout.js';
+  } from '$lib/features/graph/GraphCanvas.svelte';
+  import type { NodePosition } from '$lib/features/graph/radial-layout.js';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
-  import Legend from '$lib/components/Legend.svelte';
+  import Legend from '$lib/features/graph/Legend.svelte';
   import { entityAliases } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
+  import {
+    buildEntityIntervalMap,
+    buildActIndexById,
+    buildSceneRanges,
+    extractSortedSceneStarts,
+    computeOutOfScope,
+    classifyGhostMode,
+    computeRenderedEntityIds
+  } from '$lib/features/graph/scope.js';
+  import {
+    buildCharacterIndexById,
+    buildPresentRelTypes,
+    buildAliasEntityIdSet,
+    filterVisibleRelationships,
+    buildScenesForReveal
+  } from '$lib/features/graph/view-builders.js';
 
   interface Props {
     windowId: string;
@@ -74,130 +90,41 @@
   // derivations consistent (Greptile P2 follow-up from PR #12).
   const displayEntityIds = $derived(new Set(displayEntities.map((e) => e.id)));
 
-  const aliasEntityIds = $derived(
-    new Set([...$entityAliases.map((a) => a.primaryEntityId), ...$entityAliases.map((a) => a.aliasEntityId)])
-  );
+  const aliasEntityIds = $derived(buildAliasEntityIdSet($entityAliases));
 
   // ── View options (declared before derived scope logic that references them) ──
   let hardFilter = $state(true);
   let showGhostTrails = $state(false);
 
-  // ── Out-of-scope at playhead (same shape as StoryGraph) ───────────────────
-  // Stable interval map — only rebuilds when intervals change, not on scrubs.
-  const entityIntervalMap = $derived.by(() => {
-    const m = new Map<string, Array<{ startPosition: number; endPosition: number }>>();
-    for (const iv of $intervalsStore) {
-      const list = m.get(iv.entityId) ?? [];
-      list.push(iv);
-      m.set(iv.entityId, list);
-    }
-    return m;
-  });
+  // ── Out-of-scope at playhead ───────────────────────────────────────────────
+  // Pure projections of stores → derived view; see src/lib/features/graph/scope.ts.
+  const entityIntervalMap = $derived(buildEntityIntervalMap($intervalsStore));
+  const actIndexById = $derived(buildActIndexById($entities));
+  const sceneRanges = $derived(buildSceneRanges($entities, actIndexById));
+  const sortedSceneStarts = $derived(extractSortedSceneStarts(sceneRanges));
 
-  const actIndexById = $derived(
-    new Map(
-      [...$entities]
-        .filter((e) => e.type === 'Act' && e.position != null)
-        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-        .map((e, i): [string, number] => [e.id, i])
-    )
+  const scenesForReveal = $derived(buildScenesForReveal(sceneRanges, $entities));
+
+  const outOfScope = $derived(
+    computeOutOfScope($playhead, entityIntervalMap, actIndexById, sceneRanges, displayEntities)
   );
 
-  const sceneRanges = $derived.by(() => {
-    const ranges = new Map<string, { start: number; end: number }>();
-    const scenesByAct = new Map<string, Array<{ id: string; position: number | null }>>();
-    for (const e of $entities) {
-      if (e.type === 'Scene' && e.parentId != null) {
-        const list = scenesByAct.get(e.parentId) ?? [];
-        list.push({ id: e.id, position: e.position ?? null });
-        scenesByAct.set(e.parentId, list);
-      }
-    }
-    for (const [actId, scenes] of scenesByAct) {
-      const actIdx = actIndexById.get(actId);
-      if (actIdx == null) continue;
-      const sorted = [...scenes].sort((a, b) => {
-        if (a.position != null && b.position != null) return a.position - b.position;
-        if (a.position != null) return -1;
-        if (b.position != null) return 1;
-        return 0;
-      });
-      const n = sorted.length;
-      for (let i = 0; i < n; i++) {
-        ranges.set(sorted[i].id, { start: actIdx + i / n, end: actIdx + (i + 1) / n });
-      }
-    }
-    return ranges;
-  });
-
-  const sortedSceneStarts = $derived(
-    [...sceneRanges.values()].map((r) => r.start).sort((a, b) => a - b)
+  // Apply hideOutOfScope filter + alias-swap + ghost-trail re-inclusion.
+  // hideOutOfScope on → strip out-of-scope ids; showGhostTrails also on →
+  // keep nearby-ghost entities rendered so their edges can render as ghost
+  // trails (they'll be dimmed via dimmedNodes downstream).
+  const renderedEntityIds = $derived(
+    computeRenderedEntityIds({
+      hideOutOfScope: $hideOutOfScope,
+      showGhostTrails,
+      t: $playhead,
+      displayEntityIds,
+      outOfScope,
+      entityIntervalMap,
+      sortedSceneStarts,
+      entityAliases: $entityAliases
+    })
   );
-
-  const scenesForReveal = $derived.by(() => {
-    const result: { id: string; name: string; actId: string; position: number }[] = [];
-    for (const [id, range] of sceneRanges) {
-      const e = $entities.find((en) => en.id === id);
-      if (e?.parentId) result.push({ id, name: e.name, actId: e.parentId, position: range.start });
-    }
-    return result.sort((a, b) => a.position - b.position);
-  });
-
-  const outOfScope = $derived.by(() => {
-    const set = new Set<string>();
-    if ($playhead == null) return set;
-    const t = $playhead;
-
-    for (const [entityId, ivs] of entityIntervalMap) {
-      const active = ivs.some((iv) => intervalContainsT(iv.startPosition, iv.endPosition, t));
-      if (!active) set.add(entityId);
-    }
-
-    for (const e of displayEntities) {
-      if (e.type === 'Act') {
-        const actIdx = actIndexById.get(e.id);
-        if (actIdx != null && !intervalContainsT(actIdx, actIdx + 1, t)) set.add(e.id);
-      } else if (e.type === 'Scene') {
-        const range = sceneRanges.get(e.id);
-        if (range != null && !intervalContainsT(range.start, range.end, t)) set.add(e.id);
-      }
-    }
-
-    return set;
-  });
-
-  // When hideOutOfScope is on, strip out-of-scope ids from the rendered set so
-  // those nodes (and their edges) disappear entirely instead of just dimming.
-  // When showGhostTrails is also on, keep nearby-ghost entities rendered so
-  // their edges can show as ghost trails (they'll be dimmed via dimmedNodes).
-  const renderedEntityIds = $derived.by(() => {
-    if (!$hideOutOfScope) return displayEntityIds;
-    const inScope = new Set([...displayEntityIds].filter((id) => !outOfScope.has(id)));
-    const t = $playhead;
-    if (t !== null) {
-      for (const alias of $entityAliases) {
-        if (alias.revealedAtPosition != null && t < alias.revealedAtPosition) continue;
-        if (!inScope.has(alias.aliasEntityId)) continue;
-        if (displayEntityIds.has(alias.primaryEntityId)) inScope.add(alias.primaryEntityId);
-      }
-    }
-    if (!showGhostTrails || t === null) return inScope;
-    const nearEnoughScene = (lo: number, hi: number) =>
-      sortedSceneStarts.length > 0
-        ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2
-        : hi - lo <= 1;
-    for (const [entityId, ivs] of entityIntervalMap) {
-      if (!outOfScope.has(entityId)) continue;
-      for (const iv of ivs) {
-        if ((iv.endPosition <= t && nearEnoughScene(iv.endPosition, t)) ||
-            (iv.startPosition > t && nearEnoughScene(t, iv.startPosition))) {
-          inScope.add(entityId);
-          break;
-        }
-      }
-    }
-    return inScope;
-  });
 
   // ── Legend state (C4) ──────────────────────────────────────────────────────
   // Hard filter: toggling a type off hides those edges entirely (vs. scrubber
@@ -213,30 +140,14 @@
   }
 
   // Set of rel types that have at least one edge between two displayed
-  // entities, BEFORE the Legend filter. Drives Legend's per-row dim
-  // for absent types so the user sees which connections actually exist
-  // on this view (e.g. opening FG on 2 Characters connected only by
-  // `rivals` dims every other row in the legend).
-  const presentRelTypes = $derived.by(() => {
-    const s = new Set<RelationshipType>();
-    for (const r of $relationships) {
-      if (displayEntityIds.has(r.fromId) && displayEntityIds.has(r.toId)) {
-        s.add(r.type);
-      }
-    }
-    return s;
-  });
+  // entities, BEFORE the Legend filter. Drives Legend's per-row dim for
+  // absent types so the user sees which connections actually exist on
+  // this view (e.g. opening FG on 2 Characters connected only by `rivals`
+  // dims every other row in the legend).
+  const presentRelTypes = $derived(buildPresentRelTypes($relationships, displayEntityIds));
 
   // ── GraphCanvas inputs ────────────────────────────────────────────────────
-
-  // Character cycle index — same ordering the Timeline uses (filter
-  // to Characters, position within that list). Lets graph node colors
-  // match the Timeline bars for Characters without a custom data.color.
-  const characterIndexById = $derived.by(() => {
-    const m = new Map<string, number>();
-    $entities.filter((e) => e.type === 'Character').forEach((e, i) => m.set(e.id, i));
-    return m;
-  });
+  const characterIndexById = $derived(buildCharacterIndexById($entities));
 
   const nodeColorById = $derived.by(() => {
     const m = new Map<string, string>();
@@ -260,16 +171,9 @@
   );
 
   // Single source of truth for "edges currently in the graph": both endpoints
-  // displayed (post-Note exclusion) AND the rel type is toggled on in the
-  // Legend. graphEdges + layoutByType's edge list both project from this so
+  // rendered. graphEdges + layoutByType's edge list both project from this so
   // the filter predicate stays in lockstep.
-  const visibleRelationships = $derived(
-    $relationships.filter(
-      (r) =>
-        renderedEntityIds.has(r.fromId) &&
-        renderedEntityIds.has(r.toId)
-    )
-  );
+  const visibleRelationships = $derived(filterVisibleRelationships($relationships, renderedEntityIds));
 
   const graphEdges = $derived.by(() => {
     const t = $playhead;
@@ -280,32 +184,14 @@
       const mystery = isMysteryEdgeAtT(r, t);
 
       // Ghost mode: show edges near the playhead that aren't currently active.
-      // Proximity is scene-granular: ≤2 scene boundaries between the interval
-      // edge and T. Falls back to ≤1 act when no scenes exist.
-      let ghostMode: 'past' | 'future' | null = null;
-      if (showGhostTrails && t !== null && !mystery) {
-        const endpointOutOfScope = outOfScope.has(r.fromId) || outOfScope.has(r.toId);
-        if (!inWindow || endpointOutOfScope) {
-          const nearEnough = (lo: number, hi: number) =>
-            sortedSceneStarts.length > 0
-              ? sortedSceneStarts.filter((s) => s > lo + 1e-9 && s <= hi + 1e-9).length <= 2
-              : hi - lo <= 1;
-          if (r.startPosition != null || r.endPosition != null) {
-            const nearStart = r.startPosition != null && nearEnough(Math.min(r.startPosition, t), Math.max(r.startPosition, t));
-            const nearEnd = r.endPosition != null && nearEnough(Math.min(r.endPosition, t), Math.max(r.endPosition, t));
-            if (nearStart || nearEnd) {
-              ghostMode = r.startPosition != null && r.startPosition > t ? 'future' : 'past';
-            }
-          } else {
-            outer: for (const endpointId of [r.fromId, r.toId]) {
-              for (const iv of entityIntervalMap.get(endpointId) ?? []) {
-                if (iv.endPosition <= t && nearEnough(iv.endPosition, t)) { ghostMode = 'past'; break outer; }
-                if (iv.startPosition > t && nearEnough(t, iv.startPosition)) { ghostMode = 'future'; break outer; }
-              }
-            }
-          }
-        }
-      }
+      // Proximity is scene-granular (≤2 scene boundaries crossed, fallback ≤1 act).
+      const ghostMode = t === null
+        ? null
+        : classifyGhostMode(
+            r,
+            { t, sortedSceneStarts, entityIntervalMap, outOfScope },
+            { inWindow, mystery, showGhostTrails }
+          );
 
       // Legend hard filter: skip disabled types unless they're showing as a ghost trail
       if (!enabledRelTypes.has(r.type) && ghostMode === null) continue;
@@ -532,7 +418,7 @@
       let optimisticApplied = false;
 
       try {
-        const { layoutByType: runLayout } = await import('$lib/graph/dagre-layout.js');
+        const { layoutByType: runLayout } = await import('$lib/features/graph/dagre-layout.js');
         const typeOrder = win?.typeOrder ?? DEFAULT_TYPE_ORDER;
 
         // Build inputs from the current visible set. Notes excluded as in

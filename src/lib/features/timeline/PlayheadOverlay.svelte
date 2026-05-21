@@ -3,7 +3,7 @@
   Parent must supply an absolute-positioned container (.rows in Timeline.svelte).
 -->
 <script lang="ts">
-	import { playhead } from '$lib/stores/playhead.js';
+	import { playhead } from '$lib/features/timeline/playhead-store.js';
 
 	interface Props {
 		trackWidthPx: number;

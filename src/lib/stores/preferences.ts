@@ -88,9 +88,8 @@ export class PreferencesVersionError extends Error {
 
 /** Returns the ambient localStorage if present, else null (SSR / private browsing). */
 function detectBrowserStorage(): StorageLike | null {
-	if (typeof globalThis === 'undefined') return null;
-	const g = globalThis as { localStorage?: StorageLike };
-	return g.localStorage ?? null;
+	if (typeof window === 'undefined') return null;
+	return window.localStorage ?? null;
 }
 
 let _storage: StorageLike | null = detectBrowserStorage();

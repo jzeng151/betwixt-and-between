@@ -1,13 +1,16 @@
 <!--
-  IntervalBar — atomic visual unit for the V2 Timeline.
+  IntervalBar — atomic visual unit for the Timeline.
   Renders ONE bar as an <svg> so multi-act spans render as a single
   continuous element with vector hairlines at internal act boundaries.
 
-  Public Props API is stable — TimelineV2 / IntervalRow / Palette callers
+  Public Props API is stable — Timeline / IntervalRow / Palette callers
   are unaffected. The parent positions the bar via inline style left/width.
 
-  See src/lib/timeline-v2-helpers.ts for the pure helpers used here
-  (widthClassForBar, internalActBoundaryFractions).
+  See src/lib/features/timeline/timeline-helpers.ts for the pure helpers used
+  here (widthClassForBar). Internal boundary fractions are computed by the
+  parent (IntervalRow) and passed in via the internalBoundaries prop —
+  they account for non-uniform bar widths AND scene boundaries, which a
+  helper taking only (start, end) can't express.
 -->
 
 <script lang="ts" module>
@@ -22,7 +25,7 @@
 </script>
 
 <script lang="ts">
-  import { widthClassForBar, type WidthClass } from '$lib/timeline-v2-helpers.js';
+  import { widthClassForBar, type WidthClass } from '$lib/features/timeline/timeline-helpers.js';
 
   interface Props {
     /** Entity name shown on line 1 (Fraunces 13px). */

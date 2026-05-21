@@ -4,10 +4,10 @@
   import Window from './Window.svelte';
   import CharacterEditor from './apps/CharacterEditor.svelte';
   import Wiki from './apps/Wiki.svelte';
-  import Timeline from './apps/Timeline.svelte';
+  import Timeline from '$lib/features/timeline/Timeline.svelte';
   import WorldMap from './apps/WorldMap.svelte';
-  import StoryGraph from './apps/StoryGraph.svelte';
-  import FocusedGraph from './apps/FocusedGraph.svelte';
+  import StoryGraph from '$lib/features/graph/StoryGraph.svelte';
+  import FocusedGraph from '$lib/features/graph/FocusedGraph.svelte';
   import Settings from './apps/Settings.svelte';
   import Notes from './apps/Notes.svelte';
   import PlayerDock from './PlayerDock.svelte';

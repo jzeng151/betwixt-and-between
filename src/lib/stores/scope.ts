@@ -1,6 +1,6 @@
 import { derived } from 'svelte/store';
-import { playhead } from './playhead.js';
-import { intervals } from './intervals.js';
+import { playhead } from '$lib/features/timeline/playhead-store.js';
+import { intervals } from '$lib/features/timeline/intervals-store.js';
 import { entities } from './entities.js';
 
 /**

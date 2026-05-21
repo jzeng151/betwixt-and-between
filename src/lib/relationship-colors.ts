@@ -12,7 +12,7 @@
  */
 
 import type { EntityType, RelationshipType } from '$lib/server/db/schema.js';
-import { CHARACTER_COLORS, HEX_COLOR_RE } from '$lib/timeline-v2-helpers.js';
+import { CHARACTER_COLORS, HEX_COLOR_RE } from '$lib/features/timeline/timeline-helpers.js';
 
 /**
  * Edge color per relationship type. Maps to --color-rel-* CSS tokens.

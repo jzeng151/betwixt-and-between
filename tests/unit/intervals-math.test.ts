@@ -4,7 +4,7 @@ import {
 	actRange,
 	sceneRange,
 	smartSnap
-} from '../../src/lib/timeline-v2-helpers.js';
+} from '../../src/lib/features/timeline/timeline-helpers.js';
 import {
 	actIndexOf,
 	sceneIndexOf,

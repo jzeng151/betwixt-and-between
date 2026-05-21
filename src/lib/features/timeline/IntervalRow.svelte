@@ -8,17 +8,17 @@
 -->
 
 <script lang="ts">
-	import IntervalBar from '$lib/components/IntervalBar.svelte';
+	import IntervalBar from '$lib/features/timeline/IntervalBar.svelte';
 	import { tooltip } from '$lib/actions/tooltip.js';
 	import {
 		smartSnap,
 		positionToStartFKs,
 		positionToEndFKs
-	} from '$lib/timeline-v2-helpers.js';
-	import { intervals as intervalsStore } from '$lib/stores/intervals.js';
-	import { playhead } from '$lib/stores/playhead.js';
+	} from '$lib/features/timeline/timeline-helpers.js';
+	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
+	import { playhead } from '$lib/features/timeline/playhead-store.js';
 	import type { Entity } from '$lib/stores/entities.js';
-	import type { Interval } from '$lib/stores/intervals.js';
+	import type { Interval } from '$lib/features/timeline/intervals-store.js';
 
 	interface Props {
 		entity: Entity;

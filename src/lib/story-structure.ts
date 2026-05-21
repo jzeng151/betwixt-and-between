@@ -4,7 +4,7 @@
 
 import { get } from 'svelte/store';
 import type { Entity } from '$lib/stores/entities.js';
-import { playhead } from '$lib/stores/playhead.js';
+import { playhead } from '$lib/features/timeline/playhead-store.js';
 
 const sortByPositionThenCreated = (a: Entity, b: Entity): number => {
 	const ap = a.position ?? Number.MAX_SAFE_INTEGER;
@@ -13,7 +13,19 @@ const sortByPositionThenCreated = (a: Entity, b: Entity): number => {
 	return Number(a.createdAt) - Number(b.createdAt);
 };
 
-/** Root-level Acts ordered by (position, createdAt) — matches server actIndexOf. */
+/**
+ * Root-level Acts ordered by (position, createdAt) — matches server actIndexOf.
+ *
+ * NOTE: this is intentionally different from `buildActIndexById` in
+ * `src/lib/features/graph/scope.ts`. Both order Acts on the playhead axis, but:
+ *   - This helper includes null-position Acts (using MAX_SAFE_INTEGER fallback)
+ *     and tie-breaks by createdAt — the Timeline / PlayerDock surfaces need
+ *     EVERY Act in the array so positional indexing works for the full set.
+ *   - `buildActIndexById` filters to `position != null` and sorts by position
+ *     only — the graph's scope projection only needs Acts that have a defined
+ *     position on the axis; nulls don't participate in scope checks.
+ * Do not merge these without understanding both call sites.
+ */
 export function getActs(entities: Entity[]): Entity[] {
 	return entities
 		.filter((e) => e.type === 'Act' && e.parentId == null)

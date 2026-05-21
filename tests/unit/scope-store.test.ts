@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { writable, derived, get } from 'svelte/store';
-import type { Interval } from '../../src/lib/stores/intervals.js';
+import type { Interval } from '../../src/lib/features/timeline/intervals-store.js';
 import type { Entity } from '../../src/lib/stores/entities.js';
 
 /**
