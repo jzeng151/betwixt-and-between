@@ -207,7 +207,7 @@
   .window.maximized {
     position: fixed;
     inset: 0;
-    bottom: 52px;
+    bottom: var(--taskbar-height);
     width: auto !important;
     height: auto !important;
     border-radius: 0;

@@ -78,6 +78,20 @@ let lastOpenX = 80;
 let lastOpenY = 80;
 let zCounter = 100;
 
+/**
+ * Read --taskbar-height from :root. Falls back to 52 in SSR / before the
+ * stylesheet attaches. Kept inline (not exported) because this is shell
+ * layout math, not a public API.
+ */
+function readTaskbarHeight(): number {
+	if (typeof window === 'undefined') return 52;
+	const raw = getComputedStyle(document.documentElement)
+		.getPropertyValue('--taskbar-height')
+		.trim();
+	const parsed = parseInt(raw, 10);
+	return Number.isFinite(parsed) ? parsed : 52;
+}
+
 function createWindowStore() {
 	const { subscribe, update, set } = writable<WindowState[]>([]);
 
@@ -99,11 +113,12 @@ function createWindowStore() {
 		let x = lastOpenX;
 		let y = lastOpenY;
 		if (appId === 'story-player' && typeof window !== 'undefined') {
-			// Anchor the Story Player just above the taskbar (52px) so it acts
-			// like a transport bar by default.
+			// Anchor the Story Player just above the taskbar so it acts like
+			// a transport bar by default. Taskbar height lives in --taskbar-height
+			// (src/app.css); read at runtime so the JS math tracks any CSS change.
 			const winW = 280;
 			const winH = 100;
-			const taskbarH = 52;
+			const taskbarH = readTaskbarHeight();
 			const gap = 12;
 			x = Math.max(8, Math.floor((window.innerWidth - winW) / 2));
 			y = Math.max(8, window.innerHeight - taskbarH - winH - gap);

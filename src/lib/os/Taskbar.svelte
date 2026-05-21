@@ -233,7 +233,7 @@
     bottom: 0;
     left: 0;
     right: 0;
-    height: 52px;
+    height: var(--taskbar-height);
     background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
     border-top: 1px solid var(--color-border);
     backdrop-filter: blur(12px);
