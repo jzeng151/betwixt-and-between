@@ -1,7 +1,7 @@
 import { derived } from 'svelte/store';
 import { playhead } from '$lib/features/timeline/playhead-store.js';
 import { intervals } from '$lib/features/timeline/intervals-store.js';
-import { entities } from './entities.js';
+import { entities } from '$lib/stores/entities.js';
 
 /**
  * Derived store: the set of entities whose intervals contain the current

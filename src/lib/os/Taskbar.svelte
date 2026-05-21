@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { windowStore, type AppId } from '$lib/stores/windows.js';
+  import { windowStore, type AppId } from '$lib/os/windows-store.js';
   import { entities } from '$lib/stores/entities.js';
   import { nodeColorFor } from '$lib/relationship-colors.js';
 

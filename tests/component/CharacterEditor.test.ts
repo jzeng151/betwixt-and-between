@@ -4,7 +4,7 @@ import { tick } from 'svelte';
 import CharacterEditor from '$lib/components/apps/CharacterEditor.svelte';
 import { entities, type Entity } from '$lib/stores/entities.js';
 import { relationships } from '$lib/stores/relationships.js';
-import { windowStore } from '$lib/stores/windows.js';
+import { windowStore } from '$lib/os/windows-store.js';
 import { openEntity } from '$lib/navigation.js';
 
 vi.mock('$lib/navigation.js', () => ({

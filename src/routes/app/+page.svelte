@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import Desktop from '$lib/components/Desktop.svelte';
-  import WindowManager from '$lib/components/WindowManager.svelte';
-  import Taskbar from '$lib/components/Taskbar.svelte';
-  import TooSmall from '$lib/components/TooSmall.svelte';
+  import Desktop from '$lib/os/Desktop.svelte';
+  import WindowManager from '$lib/os/WindowManager.svelte';
+  import Taskbar from '$lib/os/Taskbar.svelte';
+  import TooSmall from '$lib/os/TooSmall.svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { entityAliases } from '$lib/stores/entity-aliases.js';

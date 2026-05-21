@@ -16,7 +16,7 @@
 //                   prior transitive-closure semantic that produced
 //                   hairballs.
 import { sharedNeighbors, oneHopUnion, type Edge } from './traversal.js';
-import type { FocusedGraphMode } from '$lib/stores/windows.js';
+import type { FocusedGraphMode } from '$lib/os/windows-store.js';
 
 export function computeVisibleSet(
   mode: FocusedGraphMode,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clampToViewport } from '../../src/lib/components/context-menu-clamp.js';
+import { clampToViewport } from '../../src/lib/os/context-menu-clamp.js';
 
 describe('clampToViewport', () => {
 	it('returns the input position when the menu fits', () => {

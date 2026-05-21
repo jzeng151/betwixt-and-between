@@ -14,7 +14,7 @@
 	 * Characters app — this palette only creates *placeable* artifact-likes.
 	 */
 	import { entities } from '$lib/stores/entities.js';
-	import { windowStore } from '$lib/stores/windows.js';
+	import { windowStore } from '$lib/os/windows-store.js';
 	import { pendingEditMode } from '$lib/components/EntityDetail.svelte';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 	import type { EntityType } from '$lib/server/db/schema.js';

@@ -43,7 +43,7 @@ function mkInterval(overrides: Partial<Interval> = {}): Interval {
 	};
 }
 
-/** The same derivation function used by src/lib/stores/scope.ts */
+/** The same derivation function used by src/lib/os/scope-store.ts */
 function deriveScope(
 	$playhead: number | null,
 	$intervals: Interval[],

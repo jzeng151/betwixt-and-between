@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { preferences, setPreference, getPreference } from '$lib/stores/preferences.js';
+  import { preferences, setPreference, getPreference } from '$lib/os/preferences-store.js';
   import type { Appearance, Editor } from '$lib/types/preferences.js';
 
   let activeSection = $state<string>('appearance');

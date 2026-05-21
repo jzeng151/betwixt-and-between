@@ -13,13 +13,13 @@
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
 	import { playhead, intervalContainsT } from '$lib/features/timeline/playhead-store.js';
-	import { windowStore } from '$lib/stores/windows.js';
+	import { windowStore } from '$lib/os/windows-store.js';
 	import { timelineFilter } from '$lib/features/timeline/filter-store.js';
 	import { WIKI_NAV, type WikiNavContext } from '$lib/contexts/wiki-nav.js';
 	import type { EntityType } from '$lib/server/db/schema.js';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 	import EntityDetail from '$lib/components/EntityDetail.svelte';
-	import ContextMenu from '$lib/components/ContextMenu.svelte';
+	import ContextMenu from '$lib/os/ContextMenu.svelte';
 
 	interface Props {
 		entityId: string | null;

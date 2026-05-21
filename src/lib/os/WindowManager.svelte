@@ -1,17 +1,17 @@
 <script lang="ts">
-  import { windowStore } from '$lib/stores/windows.js';
+  import { windowStore } from '$lib/os/windows-store.js';
   import { entities } from '$lib/stores/entities.js';
   import Window from './Window.svelte';
-  import CharacterEditor from './apps/CharacterEditor.svelte';
-  import Wiki from './apps/Wiki.svelte';
+  import CharacterEditor from '$lib/components/apps/CharacterEditor.svelte';
+  import Wiki from '$lib/components/apps/Wiki.svelte';
   import Timeline from '$lib/features/timeline/Timeline.svelte';
-  import WorldMap from './apps/WorldMap.svelte';
+  import WorldMap from '$lib/components/apps/WorldMap.svelte';
   import StoryGraph from '$lib/features/graph/StoryGraph.svelte';
   import FocusedGraph from '$lib/features/graph/FocusedGraph.svelte';
-  import Settings from './apps/Settings.svelte';
-  import Notes from './apps/Notes.svelte';
-  import PlayerDock from './PlayerDock.svelte';
-  import EntityDetail from './EntityDetail.svelte';
+  import Settings from '$lib/components/apps/Settings.svelte';
+  import Notes from '$lib/components/apps/Notes.svelte';
+  import PlayerDock from '$lib/features/timeline/PlayerDock.svelte';
+  import EntityDetail from '$lib/components/EntityDetail.svelte';
 
   const APP_TITLES: Record<string, string> = {
     'character-editor': 'Characters',

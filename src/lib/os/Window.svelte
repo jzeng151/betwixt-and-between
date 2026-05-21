@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { windowStore, PIN_Z_BASE } from '$lib/stores/windows.js';
+  import { windowStore, PIN_Z_BASE } from '$lib/os/windows-store.js';
 
   interface Props {
     id: string;
