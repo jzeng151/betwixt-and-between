@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.3.0] - 2026-05-21
+## [0.7.3.0] - 2026-05-22
 
 ### Security
 - **Hardcoded auth fallback secret deleted.** `buildAuth` in `src/lib/server/auth.ts` no longer ships a fallback string when `BETTER_AUTH_SECRET` is missing in test mode. The previous fallback was publicly visible in the repo and was a session-forgery primitive on any prod where `BETWIXT_E2E_PGLITE=1` got misapplied as a runtime secret. `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are now required unconditionally; the E2E paths (Playwright, `dev:pglite`, unit tests) supply their own secrets.
@@ -13,6 +13,24 @@ All notable changes to this project will be documented in this file.
 - **Deploy target documented as Cloudflare Workers (Static Assets).** DEPLOY.md rewritten to describe the Workers deploy path explicitly (Cloudflare Pages framing removed). New `.github/workflows/deploy.yml` runs `wrangler deploy` on push to `main` after CI gates pass; `BETWIXT_E2E_PGLITE: ''` is scoped at the job level for defense-in-depth.
 - **Store `load()` functions fail loud on non-OK fetch.** `entities`, `intervals`, and `relationships` stores now throw with the response status + body when the API returns a non-OK status instead of silently parsing the error page as JSON. Three new Vitest regression tests cover the failure path.
 - **Playwright upgraded** from 1.59.1 to 1.60.0 — fixes a hang in `npx playwright install` on Linux.
+
+### Restructure (pre-Slice 1 burst)
+- **Character feature carved into `src/lib/features/character/`.** Detail-pane Character editor surface (CharacterEditor, CharacterEditorBody, supporting modules) now lives under one feature folder. Renames preserve git history.
+- **OS shell carved into `src/lib/os/`.** Window-manager surface (Taskbar, Dock, Palette, window-state stores, app catalog) consolidated under one folder. Companion refactors: `APP_CATALOG` table replaces dock metadata duplication, `patchWindow()` helper replaces 6 pure-patch mutators, `WINDOW_DEFAULTS` table replaces per-app size ternaries, taskbar height single-sourced, bare-app disjunction collapsed to a `Set` lookup, Palette filtered-list derivation consolidated, `deriveScope` exported for direct test use, shared `entityById` map in Taskbar picker.
+- **Server intervals split into responsibility-keyed modules.** `src/lib/server/intervals.ts` carved into 5 sub-modules (writes, reads, recompute, validation, scene helpers); `validateFKTypes` + `assertNoOverlap` kept module-internal to enforce the polymorphic-FK invariants from the application layer.
+- **Shared `errorMessage(res: Response)` helper extracted.** `src/lib/util/api-error-message.ts` now provides the SvelteKit `{ message: string }` JSON-or-text fallback used by three client stores (`intervals-store`, `map-placements`, `world-map`). Removes ~50 LOC of duplication; behavior unchanged.
+
+### Data model
+- **2026-05-20 audit cleanup migration (`drizzle/0011_data_model_cleanup.sql`).** Trims unused enum values from the `RelationshipType` and `EntityType` unions and pins them at the DB layer with `CHECK` constraints so a rolling-deploy stale Worker carrying old TS enum values cannot silently re-introduce them. Constraints use `DROP IF EXISTS` + `ADD CONSTRAINT` for idempotent re-runs. New invariant test suite covers the trimmed enum + CHECK constraint behavior.
+
+### Fixed
+- **Story Player anchor width drift corrected.** Anchor element width no longer accumulates layout drift when the window resizes during playback.
+- **Intervals integration test no longer swallows real recompute failures.** The `recomputeAllIntervals` rollback-cascade test (`tests/integration/intervals-relationship-recompute.test.ts:108`) now asserts on the `forced rollback` message specifically via `await expect(...).rejects.toThrow('forced rollback')`. A bare `catch {}` previously could mask a real `recomputeAllIntervals` failure and let the post-rollback assertions green for the wrong reason.
+
+### Tests
+- **Phantom-Act bug guard** added at the PATCH-handler shape level — covers the bug class where a moved Scene resolves to a stale Act FK.
+- **Cross-act Scene move** test asserts act-count remains correct after the move.
+- **Defense-in-depth CHECK constraints** verified by the new data-model-cleanup invariant suite.
 
 ## [0.7.2.0] - 2026-05-21
 
