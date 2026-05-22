@@ -212,7 +212,11 @@ function createWindowStore() {
 	}
 
 	function openForEntity(entityId: string, entityType: EntityType): string {
-		const appId = ENTITY_APP[entityType];
+		// Fallback covers a legacy pre-migration entity type (e.g. 'Door' before
+		// drizzle/0011 rewrites it to Artifact) flowing in via /api/entities on
+		// an environment where the migration hasn't run yet. Every current type
+		// routes to 'entity-detail' anyway, so this is the right default.
+		const appId = ENTITY_APP[entityType] ?? 'entity-detail';
 		const windowId = `${appId}-${entityId}`;
 		const existing = get({ subscribe }).find((w) => w.id === windowId);
 		if (existing) {

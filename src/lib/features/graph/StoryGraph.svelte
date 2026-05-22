@@ -161,7 +161,10 @@
     const edges: GraphEdge[] = [];
     for (const r of visibleRelationships) {
       const inWindow = isEdgeVisibleAtT(r, t);
-      const style = REL_EDGE_STYLE[r.type];
+      // Fallback to 'other' for any legacy pre-migration type that survives a
+      // deploy-before-migration window (drizzle/0011). REL_COLOR has the same
+      // defensive shape on the color line below.
+      const style = REL_EDGE_STYLE[r.type] ?? REL_EDGE_STYLE.other;
       const mystery = isMysteryEdgeAtT(r, t);
 
       // Ghost mode: show edges near the playhead that aren't currently active.
