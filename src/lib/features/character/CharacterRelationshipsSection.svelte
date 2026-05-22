@@ -33,8 +33,7 @@
 		rivals:         ['Character'],
 		other:          ['Character'],
 		located_at:     ['Location'],
-		takes_place_at: ['Event', 'Scene'],
-		caused_by:      ['Event', 'Scene']
+		takes_place_at: ['Event', 'Scene']
 	};
 
 	let pickerGroup: RelationshipType | null = $state(null);

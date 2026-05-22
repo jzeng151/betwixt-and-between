@@ -114,6 +114,13 @@ export function nodeColorFor(
  * Ordered list of relationship types for the StoryGraph create-relationship
  * form. Symmetric and directed flavor types first (most-common authoring
  * choices), then spatial/structural, then the `other` escape hatch last.
+ *
+ * Intentionally excludes:
+ *   - note_of: owned by NotesSection (Note → parent direction is
+ *     structural — not authored via the generic picker). No endpoint-
+ *     type validator in the API layer means a Character→Character
+ *     note_of row would insert successfully but NotesSection would
+ *     silently drop it. Re-add only after the validator lands.
  */
 export const REL_TYPES: RelationshipType[] = [
 	'allied_with',
@@ -122,6 +129,5 @@ export const REL_TYPES: RelationshipType[] = [
 	'caused_by',
 	'located_at',
 	'part_of',
-	'note_of',
 	'other'
 ];

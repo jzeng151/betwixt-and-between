@@ -34,6 +34,22 @@ type Db = Awaited<ReturnType<typeof createTestDb>>;
 
 const MIGRATION_STATEMENTS = [
 	`DELETE FROM relationships WHERE type = 'pov_of'`,
+	// Pre-collision DELETE: drops mentor_of rows that would violate the
+	// partial-unique dedup indexes (relationships_timeless_dedup /
+	// relationships_temporal_dedup, see 0002_spotlight_temporal.sql)
+	// once rewritten to type='other'. Must run BEFORE the UPDATE.
+	`DELETE FROM relationships m
+     WHERE m.type = 'mentor_of'
+       AND EXISTS (
+         SELECT 1 FROM relationships o
+         WHERE o.type = 'other'
+           AND o.from_id = m.from_id
+           AND o.to_id = m.to_id
+           AND (
+             (o.start_position IS NULL AND m.start_position IS NULL)
+             OR o.start_position = m.start_position
+           )
+       )`,
 	`UPDATE relationships
      SET type = 'other', label = COALESCE(label, 'mentor of')
      WHERE type = 'mentor_of'`,
@@ -165,6 +181,72 @@ describe('drizzle/0011_data_model_cleanup.sql', () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0].type).toBe('Artifact');
 		expect((rows[0].data as Record<string, unknown>)?.legacySubtype).toBe('door');
+	});
+
+	it('Door rewrite merges into existing data without dropping pre-existing keys', async () => {
+		// jsonb_set is supposed to merge a new key into an existing
+		// object; this test pins that behavior on a Door with rich
+		// pre-existing data so a future rewrite (e.g. switch to ||
+		// concatenation, or accidentally overwriting `data`) breaks the
+		// invariant rather than silently dropping author content.
+		const [door] = await db
+			.execute(
+				sql`
+					INSERT INTO entities (user_id, type, name, data)
+					VALUES (${userId}, 'Door', 'Vault Door', '{"locked":true,"keyId":"abc-123","color":"#8b4513"}'::jsonb)
+					RETURNING id
+				`
+			)
+			.then((r) => r.rows as Array<{ id: string }>);
+		await runMigration(db);
+		const rows = await db.select().from(entities).where(sql`id = ${door.id}`);
+		const data = rows[0].data as Record<string, unknown>;
+		expect(rows[0].type).toBe('Artifact');
+		expect(data.legacySubtype).toBe('door');
+		expect(data.locked).toBe(true);
+		expect(data.keyId).toBe('abc-123');
+		expect(data.color).toBe('#8b4513');
+	});
+
+	it('mentor_of/other collision: pre-existing other wins; colliding mentor_of dropped', async () => {
+		// Per comment 2(b) in 0011_data_model_cleanup.sql. If the same
+		// (from, to) pair carries both a mentor_of row AND an other row
+		// with the same temporal key, the UPDATE→other would violate
+		// relationships_timeless_dedup. The pre-UPDATE DELETE drops the
+		// colliding mentor_of; the pre-existing other survives unchanged.
+		await db.execute(sql`
+			INSERT INTO relationships (user_id, from_id, to_id, type, label)
+			VALUES
+				(${userId}, ${alice}, ${bob}, 'other', 'colleague'),
+				(${userId}, ${alice}, ${bob}, 'mentor_of', NULL)
+		`);
+		await runMigration(db);
+		const rows = await db
+			.select()
+			.from(relationships)
+			.where(sql`from_id = ${alice} AND to_id = ${bob}`);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].type).toBe('other');
+		expect(rows[0].label).toBe('colleague');
+	});
+
+	it('mentor_of survives the rewrite when no colliding other row exists', async () => {
+		// Negative-space companion to the collision test: with no pre-
+		// existing other row for the pair, the mentor_of is rewritten
+		// to other with label='mentor of' rather than dropped. Guards
+		// against the pre-collision DELETE being too aggressive.
+		await db.execute(sql`
+			INSERT INTO relationships (user_id, from_id, to_id, type)
+			VALUES (${userId}, ${alice}, ${bob}, 'mentor_of')
+		`);
+		await runMigration(db);
+		const rows = await db
+			.select()
+			.from(relationships)
+			.where(sql`from_id = ${alice} AND to_id = ${bob}`);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].type).toBe('other');
+		expect(rows[0].label).toBe('mentor of');
 	});
 
 	it('migration is idempotent: re-running on a clean DB is a no-op', async () => {

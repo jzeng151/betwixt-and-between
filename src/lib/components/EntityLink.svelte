@@ -32,16 +32,20 @@
 
   let { id, name, relationshipType = 'other', onRemove }: Props = $props();
 
-  const COLOR_MAP: Record<string, string> = {
-    appears_in:    'var(--color-rel-arc)',
+  // Record<RelationshipType | 'arc', string> forces an exhaustiveness
+  // check at compile time so the next enum trim breaks this file until
+  // the contributor updates it (rather than silently leaving orphan
+  // keys behind, the way appears_in + mentor_of did pre-Step-5.5).
+  const COLOR_MAP: Record<RelationshipType | 'arc', string> = {
     takes_place_at:'var(--color-rel-loc)',
     caused_by:     'var(--color-rel-event)',
     allied_with:   'var(--color-rel-ally)',
     rivals:        'var(--color-rel-rival)',
-    mentor_of:     'var(--color-rel-mentor)',
     located_at:    'var(--color-rel-loc)',
-    arc:           'var(--color-rel-arc)',
+    note_of:       'var(--color-type-note)',
+    part_of:       'var(--color-rel-loc)',
     other:         'var(--color-rel-other)',
+    arc:           'var(--color-rel-arc)',
   };
 
   const chipColor = $derived(COLOR_MAP[relationshipType] ?? 'var(--color-rel-other)');

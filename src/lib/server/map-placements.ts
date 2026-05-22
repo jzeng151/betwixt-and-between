@@ -5,7 +5,7 @@
  * resolution + an M11 recompute cascade hooked into recomputeAllIntervals.
  *
  *   - assertPlaceableId: placeable_id must reference a Character / Artifact /
- *     Item / Door entity owned by user.
+ *     Item entity owned by user.
  *   - assertPlacementLocationId: location_id (when set) must reference a
  *     Location owned by user.
  *   - assertPlacementMapId: map_id (when set) must reference a world_maps
@@ -53,7 +53,7 @@ export async function assertPlaceableId(
 	if (!PLACEABLE_TYPE_SET.has(rows[0].type)) {
 		error(
 			400,
-			`placeable_id must reference a Character/Artifact/Item/Door entity (got type='${rows[0].type}')`
+			`placeable_id must reference a Character/Artifact/Item entity (got type='${rows[0].type}')`
 		);
 	}
 }

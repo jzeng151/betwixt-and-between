@@ -16,6 +16,27 @@
 --                 name carrying zero semantics. The 'other'-with-label
 --                 escape hatch covers any authoring need.
 --
+--                 Two intentional semantic shifts ship with this rewrite:
+--                 (a) Directionality: mentor_of was directed (mentor →
+--                     mentee) in edge-policy.ts; 'other' is symmetric.
+--                     Surviving rows now traverse bidirectionally in
+--                     FocusedGraph and render without an arrowhead.
+--                     Accepted — the mentor/mentee distinction was a
+--                     novelist's-shorthand concept and the audit's call
+--                     was that the typed edge carried zero semantics.
+--                 (b) Collision handling: if a pair (from, to) already
+--                     has an 'other' row with the same temporal key
+--                     (NULL start_position OR equal start_position),
+--                     the rewrite would violate the partial-unique
+--                     indexes relationships_timeless_dedup +
+--                     relationships_temporal_dedup (see migration
+--                     0002_spotlight_temporal.sql). The pre-UPDATE
+--                     DELETE below drops the colliding mentor_of row.
+--                     The pre-existing 'other' row wins; any mentor-
+--                     specific label on the mentor_of row is lost.
+--                     Same reasoning as (a) — typed mentor semantics
+--                     are not load-bearing.
+--
 --                 (The audit deliverable referenced `data.label`; that
 --                 was a slip — `relationships` has a `label` text column,
 --                 not a `data` jsonb. The escape hatch was always the
@@ -47,6 +68,23 @@
 -- here. Vitest invariants in the same commit assert post-migration counts.
 
 DELETE FROM relationships WHERE type = 'pov_of';
+--> statement-breakpoint
+-- Pre-collision DELETE — see comment 2(b) above. Drops mentor_of rows
+-- that would violate the partial-unique dedup indexes once rewritten
+-- to type='other'. Must run BEFORE the UPDATE; otherwise the UPDATE
+-- aborts the whole migration on any colliding pair.
+DELETE FROM relationships m
+WHERE m.type = 'mentor_of'
+  AND EXISTS (
+    SELECT 1 FROM relationships o
+    WHERE o.type = 'other'
+      AND o.from_id = m.from_id
+      AND o.to_id = m.to_id
+      AND (
+        (o.start_position IS NULL AND m.start_position IS NULL)
+        OR o.start_position = m.start_position
+      )
+  );
 --> statement-breakpoint
 UPDATE relationships
 SET type = 'other', label = COALESCE(label, 'mentor of')
