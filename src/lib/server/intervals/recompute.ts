@@ -24,7 +24,7 @@
  */
 
 import { sql, eq, and, isNull } from 'drizzle-orm';
-import { entities, intervals, relationships } from '../db/schema.js';
+import { entities, intervals, relationships, mapAnchors, mapEvents, worldMaps } from '../db/schema.js';
 // Pure math (actRange, sceneRange, smartSnap) lives in
 // $lib/features/timeline/timeline-helpers so non-server code (drag-preview snap) can import it
 // without violating SvelteKit's $lib/server/* boundary.
@@ -313,7 +313,36 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
  * act_index of one or more Acts changes. Acts are typically <= ~30 in any
  * story; touching every interval is fine at that scale.
  */
-export async function recomputeAllIntervals(db: Db, userId: string): Promise<number> {
+/**
+ * Snapshot of the Act ordering BEFORE a reorder cascade fires. Maps the old
+ * act-index (the integer part of a stored t_position) back to its actId.
+ *
+ * Captured at the API-handler boundary BEFORE the entities.position UPDATE
+ * runs, then passed through `recomputeAllIntervals` into the map-anchor /
+ * map-event recompute. Required because `map_anchors` and `map_events` have
+ * no `start_act_id` FK column — `Math.floor(t_position)` is the only handle
+ * we have on "which Act was this anchored to," and that handle goes stale
+ * the moment entities.position changes. See CMT-7 in the WM3 design doc;
+ * U12 in TODOS revisits whether to add an FK column at Slice 2.
+ */
+export type ActOrderingSnapshot = Map<number, string>;
+
+export async function snapshotActOrdering(db: Db, userId: string): Promise<ActOrderingSnapshot> {
+	const acts = await db
+		.select({ id: entities.id })
+		.from(entities)
+		.where(and(eq(entities.userId, userId), eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.orderBy(entities.position, entities.createdAt);
+	const snap: ActOrderingSnapshot = new Map();
+	acts.forEach((a, i) => snap.set(i, a.id));
+	return snap;
+}
+
+export async function recomputeAllIntervals(
+	db: Db,
+	userId: string,
+	preSnapshot?: ActOrderingSnapshot
+): Promise<number> {
 	const all = await db.select().from(intervals).where(eq(intervals.userId, userId));
 	// Build one-shot FK cache (D20/16A).
 	const cache = await buildRecomputeCache(db, userId);
@@ -393,6 +422,15 @@ export async function recomputeAllIntervals(db: Db, userId: string): Promise<num
 	// Same lazy-import dance to break the map-placements.ts → intervals.ts cycle.
 	const { recomputePlacementBoundsAll } = await import('../map-placements.js');
 	await recomputePlacementBoundsAll(db, userId);
+
+	// World Map v3 — anchor + event t_position recompute. Only fires when the
+	// caller supplied a pre-cascade Act-ordering snapshot (i.e., Act reorders
+	// and Act deletes). Scene reorders within an Act don't shift any Act
+	// index, so they never need this. See snapshotActOrdering docstring.
+	if (preSnapshot) {
+		await recomputeMapAnchors(db, userId, preSnapshot, cache);
+		await recomputeMapEvents(db, userId, preSnapshot, cache);
+	}
 
 	return updated;
 }
@@ -503,6 +541,105 @@ async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<n
 				`recomputeRelationshipBoundsAll failed on relationship ${row.id}: ${(err as Error).message}`
 			);
 		}
+	}
+	return updated;
+}
+
+// =============================================================================
+// World Map v3 — anchor + event t_position recompute (Slice 1a, 2026-05-22)
+// =============================================================================
+//
+// `map_anchors` and `map_events` carry a raw `t_position` (doublePrecision) with
+// no FK to start_act_id / start_scene_id. When Acts are reordered or deleted,
+// `floor(t_position)` is the only handle on "which Act was this anchored to,"
+// and it goes stale the moment entities.position changes. The pre-cascade
+// `ActOrderingSnapshot` is the bridge.
+//
+// Slice 1a semantic (CMT-7 option A — "t_position-only recompute"):
+//   oldIdx = floor(t_position) → snapshot[oldIdx] → actId
+//   newIdx = cache.actIndex.get(actId)
+//   new t_position = newIdx + (t_position - oldIdx)
+//
+// This preserves the fractional offset within the Act — mirroring how the
+// intervals recompute treats fraction-positioned rows (lines 345-356 above).
+// Sub-act position drifts within the Act when scene composition changes;
+// that drift is the "semantic drift" CMT-7 explicitly defers to Slice 2.
+// U12 in TODOS captures the revisit (option B: add a scene_id FK).
+//
+// Edge cases:
+//   - `-Infinity` (initial-anchor sentinel): left unchanged. Always sorts
+//     before any user-authored t_position regardless of Act ordering.
+//   - `+Infinity`: shouldn't occur in writes, but if present is left unchanged
+//     for the same reason.
+//   - Deleted Act (oldIdx not in preSnapshot, OR snapshot's actId no longer
+//     in cache): leave t_position unchanged. The row points at a no-longer-
+//     existing Act slot; semantic drift accepted. Slice 2 may layer cascade-
+//     delete or snap-to-neighbor policy on top.
+//   - Cross-user scoping: queries JOIN through world_maps.user_id per the
+//     CLAUDE.md invariant. `map_anchors` and `map_events` carry no user_id.
+// =============================================================================
+
+async function reprojectTPosition(
+	t: number,
+	preSnapshot: ActOrderingSnapshot,
+	cache: RecomputeCache
+): Promise<number | null> {
+	if (!Number.isFinite(t)) return null;
+	const oldIdx = Math.floor(t);
+	const actId = preSnapshot.get(oldIdx);
+	if (!actId) return null;
+	const newIdx = cache.actIndex.get(actId);
+	if (newIdx === undefined) return null;
+	const frac = t - oldIdx;
+	return newIdx + frac;
+}
+
+async function recomputeMapAnchors(
+	db: Db,
+	userId: string,
+	preSnapshot: ActOrderingSnapshot,
+	cache: RecomputeCache
+): Promise<number> {
+	const rows = await db
+		.select({ id: mapAnchors.id, tPosition: mapAnchors.tPosition })
+		.from(mapAnchors)
+		.innerJoin(worldMaps, eq(mapAnchors.worldMapId, worldMaps.id))
+		.where(eq(worldMaps.userId, userId));
+	let updated = 0;
+	for (const row of rows) {
+		const next = await reprojectTPosition(row.tPosition, preSnapshot, cache);
+		if (next === null) continue;
+		if (Math.abs(next - row.tPosition) <= POSITION_EPSILON) continue;
+		await db
+			.update(mapAnchors)
+			.set({ tPosition: next })
+			.where(eq(mapAnchors.id, row.id));
+		updated++;
+	}
+	return updated;
+}
+
+async function recomputeMapEvents(
+	db: Db,
+	userId: string,
+	preSnapshot: ActOrderingSnapshot,
+	cache: RecomputeCache
+): Promise<number> {
+	const rows = await db
+		.select({ id: mapEvents.id, tPosition: mapEvents.tPosition })
+		.from(mapEvents)
+		.innerJoin(worldMaps, eq(mapEvents.worldMapId, worldMaps.id))
+		.where(eq(worldMaps.userId, userId));
+	let updated = 0;
+	for (const row of rows) {
+		const next = await reprojectTPosition(row.tPosition, preSnapshot, cache);
+		if (next === null) continue;
+		if (Math.abs(next - row.tPosition) <= POSITION_EPSILON) continue;
+		await db
+			.update(mapEvents)
+			.set({ tPosition: next })
+			.where(eq(mapEvents.id, row.id));
+		updated++;
 	}
 	return updated;
 }

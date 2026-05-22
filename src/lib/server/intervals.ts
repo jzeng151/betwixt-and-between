@@ -71,5 +71,8 @@ export {
 	computeIntervalPositions,
 	recomputeIntervalsForAct,
 	recomputeAllIntervals,
-	resolveRelationshipBounds
+	resolveRelationshipBounds,
+	snapshotActOrdering,
+	type ActOrderingSnapshot
 } from './intervals/recompute.js';
+export { assertSourceEventIdIsEvent } from './intervals/polymorphic-fk.js';

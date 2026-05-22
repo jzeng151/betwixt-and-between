@@ -66,3 +66,23 @@ export async function validateFKTypes(
 	if (input.startSceneId) await assertEntityType(db, input.startSceneId, 'Scene', userId);
 	if (input.endSceneId) await assertEntityType(db, input.endSceneId, 'Scene', userId);
 }
+
+/**
+ * Assert that `id` is an entity of type='Event' owned by `userId`. Used to
+ * enforce the polymorphic FK invariant on `map_events.source_event_id`
+ * (World Map v3, Slice 1a) at the application layer — Postgres cannot
+ * CHECK a column's referent type cleanly. Same pattern as the start_act_id /
+ * end_act_id guards above. Per CLAUDE.md → "Polymorphic FK invariants":
+ * adding a new polymorphic FK requires (1) this assertion + (2) a Vitest
+ * invariant test (the latter ships with U8).
+ *
+ * Callers: `writeMapEvent` (Slice 1b) and any other path that writes
+ * `map_events.source_event_id` to a non-null value.
+ */
+export async function assertSourceEventIdIsEvent(
+	db: Db,
+	id: string,
+	userId: string
+): Promise<void> {
+	await assertEntityType(db, id, 'Event', userId);
+}
