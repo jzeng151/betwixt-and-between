@@ -15,7 +15,7 @@ function rel(partial: Partial<Relationship> & { id: string }): Relationship {
 	return {
 		fromId: 'a',
 		toId: 'b',
-		type: 'appears_in',
+		type: 'other',
 		label: null,
 		...partial
 	} as Relationship;
@@ -37,22 +37,35 @@ describe('relationships.load', () => {
 		expect(fetchMock).toHaveBeenCalledWith('/api/relationships');
 		expect(get(relationships)).toHaveLength(2);
 	});
+
+	it('throws on non-OK response and leaves the store untouched', async () => {
+		// Seed the store with known content via a successful load.
+		const seeded = [rel({ id: 'seed' })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await relationships.load();
+		const before = get(relationships);
+
+		// Now simulate a 5xx and assert load() rejects + store unchanged.
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse('upstream boom', false, 503)) as unknown as typeof fetch;
+		await expect(relationships.load()).rejects.toThrow(/503.*upstream boom/);
+		expect(get(relationships)).toEqual(before);
+	});
 });
 
 describe('relationships.createRelationship', () => {
 	it('POSTs and appends the created relationship', async () => {
-		const created = rel({ id: 'new', fromId: 'x', toId: 'y', type: 'appears_in', label: 'in' });
+		const created = rel({ id: 'new', fromId: 'x', toId: 'y', type: 'other', label: 'in' });
 		const fetchMock = vi.fn().mockResolvedValue(makeResponse(created));
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-		const result = await relationships.createRelationship('x', 'y', 'appears_in', 'in');
+		const result = await relationships.createRelationship('x', 'y', 'other', 'in');
 
 		expect(result.id).toBe('new');
 		const call = fetchMock.mock.calls[0];
 		expect(call[0]).toBe('/api/relationships');
 		expect(call[1].method).toBe('POST');
 		const body = JSON.parse(call[1].body as string);
-		expect(body).toEqual({ fromId: 'x', toId: 'y', type: 'appears_in', label: 'in' });
+		expect(body).toEqual({ fromId: 'x', toId: 'y', type: 'other', label: 'in' });
 		expect(get(relationships)).toHaveLength(1);
 	});
 
@@ -60,7 +73,7 @@ describe('relationships.createRelationship', () => {
 		const fetchMock = vi.fn().mockResolvedValue(makeResponse(rel({ id: 'n' })));
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-		await relationships.createRelationship('a', 'b', 'appears_in');
+		await relationships.createRelationship('a', 'b', 'other');
 
 		const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
 		expect(body.label).toBeNull();
@@ -71,7 +84,7 @@ describe('relationships.createRelationship', () => {
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 		await expect(
-			relationships.createRelationship('a', 'b', 'appears_in')
+			relationships.createRelationship('a', 'b', 'other')
 		).rejects.toThrow(/bad/);
 		expect(get(relationships)).toHaveLength(0);
 	});

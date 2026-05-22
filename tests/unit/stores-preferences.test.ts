@@ -13,7 +13,7 @@ import {
 	__reloadFromStorageForTesting,
 	__testing__,
 	type StorageLike
-} from '../../src/lib/stores/preferences.js';
+} from '../../src/lib/os/preferences-store.js';
 import { PREFERENCES_CODE_MAX_VERSION, PREFERENCES_DEFAULTS } from '../../src/lib/types/preferences.js';
 
 /**

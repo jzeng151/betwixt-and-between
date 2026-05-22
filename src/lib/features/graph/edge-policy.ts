@@ -11,12 +11,9 @@ import type { RelationshipType } from '$lib/server/db/schema.js';
  *   - rivals      — rivalry is mutual
  *
  * Directed relationships:
- *   - appears_in     (DEPRECATED for new writes, kept for legacy reads)
  *   - takes_place_at — Event AT Location
  *   - caused_by      — effect ← cause
- *   - mentor_of      — mentor → mentee
  *   - located_at     — Character AT Location
- *   - pov_of         — Event/Scene FROM-THE-POV-OF Character
  *   - note_of        — Note ATTACHED-TO any entity
  *   - part_of        — Location PART-OF Location (child → parent)
  *
@@ -28,12 +25,9 @@ export const DIRECTION: Record<RelationshipType, 'directed' | 'symmetric'> = {
 	allied_with: 'symmetric',
 	rivals: 'symmetric',
 	other: 'symmetric',
-	appears_in: 'directed',
 	takes_place_at: 'directed',
 	caused_by: 'directed',
-	mentor_of: 'directed',
 	located_at: 'directed',
-	pov_of: 'directed',
 	note_of: 'directed',
 	part_of: 'directed'
 };

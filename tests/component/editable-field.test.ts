@@ -299,7 +299,7 @@ describe('EditableField — kind=multi-entity-picker', () => {
 				field: 'pov',
 				label: 'POV',
 				kind: 'multi-entity-picker',
-				relationshipType: 'pov_of',
+				relationshipType: 'other',
 				targetEntityType: 'Character'
 			}
 		});
@@ -314,7 +314,7 @@ describe('EditableField — kind=multi-entity-picker', () => {
 		const args = addRelationshipMock.mock.calls[0];
 		expect(args[0]).toBe('ev-1'); // fromId
 		expect(args[1]).toBe('char-1'); // toId
-		expect(args[2]).toBe('pov_of'); // type
+		expect(args[2]).toBe('other'); // type
 		expect(updateEntityMock).not.toHaveBeenCalled();
 	});
 
@@ -338,7 +338,7 @@ describe('EditableField — kind=multi-entity-picker', () => {
 		// currentIds prop is a render-only override for the chip list.
 		const { relationships } = await import('../../src/lib/stores/relationships.js');
 		(relationships as unknown as { update: (fn: (rs: unknown[]) => unknown[]) => void }).update(
-			() => [{ id: 'rel-1', fromId: 'ev-1', toId: 'char-1', type: 'pov_of' }]
+			() => [{ id: 'rel-1', fromId: 'ev-1', toId: 'char-1', type: 'other' }]
 		);
 
 		const { container } = render(EditableField, {
@@ -347,7 +347,7 @@ describe('EditableField — kind=multi-entity-picker', () => {
 				field: 'pov',
 				label: 'POV',
 				kind: 'multi-entity-picker',
-				relationshipType: 'pov_of',
+				relationshipType: 'other',
 				targetEntityType: 'Character',
 				currentIds: ['char-1']
 			}

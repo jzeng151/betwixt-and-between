@@ -37,17 +37,15 @@
   let searchQuery = $state('');
   const q = $derived(searchQuery.toLowerCase().trim());
 
-  const filteredCharacters = $derived(
-    q === ''
-      ? characters.map((c, i) => ({ entity: c, idx: i }))
-      : characters.map((c, i) => ({ entity: c, idx: i })).filter(({ entity }) => entity.name.toLowerCase().includes(q))
-  );
+  function filterByQuery(list: Entity[], query: string): { entity: Entity; idx: number }[] {
+    const indexed = list.map((entity, idx) => ({ entity, idx }));
+    return query === ''
+      ? indexed
+      : indexed.filter(({ entity }) => entity.name.toLowerCase().includes(query));
+  }
 
-  const filteredEvents = $derived(
-    q === ''
-      ? events.map((e, i) => ({ entity: e, idx: i }))
-      : events.map((e, i) => ({ entity: e, idx: i })).filter(({ entity }) => entity.name.toLowerCase().includes(q))
-  );
+  const filteredCharacters = $derived(filterByQuery(characters, q));
+  const filteredEvents = $derived(filterByQuery(events, q));
 
   let charactersCollapsed = $state(false);
 

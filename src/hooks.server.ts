@@ -53,33 +53,45 @@ const authHandle: Handle = async ({ event, resolve }) => {
 		// specs use this to skip the magic-link round trip; new auth-flow
 		// specs (auth-magic-link.spec.ts etc.) use the real Better-Auth
 		// endpoints to verify the login flow itself.
-		const isTest = platformEnv.BETWIXT_E2E_PGLITE === '1';
-		const testUserId = isTest ? event.request.headers.get('x-test-user-id') : null;
+		//
+		// The `if (__E2E_BYPASS__)` wrapper is a Vite `define` (see
+		// vite.config.ts). False at `wrangler deploy` build time → Rollup
+		// dead-code-eliminates this entire block from the prod worker
+		// bundle. A runtime `wrangler secret put BETWIXT_E2E_PGLITE 1`
+		// against prod cannot resurrect deleted code; the runtime
+		// `platformEnv.BETWIXT_E2E_PGLITE` check is now defense-in-depth.
+		if (__E2E_BYPASS__) {
+			const isTest = platformEnv.BETWIXT_E2E_PGLITE === '1';
+			const testUserId = isTest ? event.request.headers.get('x-test-user-id') : null;
 
-		if (testUserId) {
-			const { user } = await import('$lib/server/db/schema.js');
-			const { eq } = await import('drizzle-orm');
-			const [u] = await db.select().from(user).where(eq(user.id, testUserId));
-			if (u) {
-				// Build auth lazily so the bypass path doesn't trigger missing-secret
-				// guards in non-test contexts that mistakenly send the header.
-				const auth = buildAuth(db, platformEnv);
-				event.locals.db = db;
-				event.locals.auth = auth;
-				event.locals.user = {
-					id: u.id,
-					name: u.name,
-					email: u.email,
-					emailVerified: u.emailVerified,
-					image: u.image,
-				};
-				event.locals.session = {
-					id: 'test-session',
-					userId: u.id,
-					expiresAt: new Date(Date.now() + 86400000),
-					token: 'test-token',
-				};
-				return await resolve(event);
+			if (testUserId) {
+				const { user } = await import('$lib/server/db/schema.js');
+				const { eq } = await import('drizzle-orm');
+				const [u] = await db.select().from(user).where(eq(user.id, testUserId));
+				if (u) {
+					// Build the same auth instance the normal path would attach,
+					// so downstream handlers see a consistent locals.auth shape.
+					const auth = buildAuth(db, platformEnv);
+					event.locals.db = db;
+					event.locals.auth = auth;
+					event.locals.user = {
+						id: u.id,
+						name: u.name,
+						email: u.email,
+						emailVerified: u.emailVerified,
+						image: u.image,
+					};
+					// Per-request random session id/token so downstream code using
+					// session.token as a cache key or audit-log value doesn't
+					// collide across parallel E2E test users.
+					event.locals.session = {
+						id: crypto.randomUUID(),
+						userId: u.id,
+						expiresAt: new Date(Date.now() + 86400000),
+						token: crypto.randomUUID(),
+					};
+					return await resolve(event);
+				}
 			}
 		}
 

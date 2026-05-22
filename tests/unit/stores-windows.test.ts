@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
-import { windowStore } from '../../src/lib/stores/windows.js';
+import { windowStore } from '../../src/lib/os/windows-store.js';
 
 // The window store is a module-level singleton, so reset state between tests
 // by closing every window via the public API.

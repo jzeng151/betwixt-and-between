@@ -11,7 +11,7 @@ vi.mock('../../src/lib/stores/entities.js', () => {
 });
 
 import { entities } from '../../src/lib/stores/entities.js';
-import { windowStore } from '../../src/lib/stores/windows.js';
+import { windowStore } from '../../src/lib/os/windows-store.js';
 import { openEntity } from '../../src/lib/navigation.js';
 
 // The mocked `entities` is a plain writable store; cast for `.set`.

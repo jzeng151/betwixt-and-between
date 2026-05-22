@@ -50,7 +50,7 @@
 	import EventEditor from './EventEditor.svelte';
 	import SceneEditor from './SceneEditor.svelte';
 	import LocationEditor from './LocationEditor.svelte';
-	import CharacterWikiEditor from './CharacterWikiEditor.svelte';
+	import CharacterWikiEditor from '$lib/features/character/CharacterWikiEditor.svelte';
 	import EditableField from './EditableField.svelte';
 	import NotesSection from './NotesSection.svelte';
 

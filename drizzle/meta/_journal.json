@@ -78,6 +78,13 @@
       "when": 1778938800000,
       "tag": "0010_world_map_v2_step_4_placements",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1779404920943,
+      "tag": "0011_data_model_cleanup",
+      "breakpoints": true
     }
   ]
 }

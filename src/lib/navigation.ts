@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import { entities } from './stores/entities.js';
-import { windowStore } from './stores/windows.js';
+import { windowStore } from './os/windows-store.js';
 
 /**
  * Open an entity in its type-routed app per `ENTITY_APP`. Post D10-extension

@@ -11,7 +11,7 @@ export interface TraversalOptions {
 	/**
 	 * If true, structural entity types (Act / Scene) are walkable just
 	 * like any other node. If false (default), edges TO/FROM a structural
-	 * node are skipped during traversal — prevents huge appears_in /
+	 * node are skipped during traversal — prevents huge takes_place_at /
 	 * caused_by fan-outs from dominating the result set.
 	 *
 	 * The caller passes a Set<string> of "structural ids" since the
@@ -24,12 +24,12 @@ export interface TraversalOptions {
 	 * If true, every edge is walked in both directions regardless of its
 	 * type's `DIRECTION` policy. Useful for "everything connected to me
 	 * somehow" views (e.g. FocusedGraph's `reachable` mode), where a
-	 * focal Character should reach a Scene that is `pov_of` THEM — not
-	 * just nodes the Character points AT.
+	 * focal Character should reach a Scene that points AT them via any
+	 * directed edge, not just nodes the Character points AT.
 	 *
 	 * Default false: directed edges walk only in their declared
 	 * direction, which is the correct semantic for causal views like
-	 * "downstream of cause X" or "transitive mentees of Y."
+	 * "downstream of cause X."
 	 */
 	undirected?: boolean;
 }

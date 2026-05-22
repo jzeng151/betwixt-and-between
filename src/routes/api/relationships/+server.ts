@@ -48,12 +48,6 @@ export const POST: RequestHandler = async (event) => {
 		.where(and(eq(entities.id, toId), eq(entities.userId, userId)));
 	if (!to) error(400, 'toId entity not found');
 
-	// appears_in is no longer writable here — character/act presence is owned by
-	// the timeline's intervals model. Use POST /api/intervals instead.
-	if (type === 'appears_in') {
-		error(400, 'appears_in is no longer a writable relationship type — use /api/intervals');
-	}
-
 	if (type === 'part_of') {
 		await assertPartOfInvariants(db, userId, fromId, toId);
 	}

@@ -63,7 +63,7 @@
 		{/if}
 	</div>
 	<!-- Shared marker definition for legend swatches that need an
-	     arrowhead (mentor_of, caused_by). Color-inheriting via
+	     arrowhead (caused_by, part_of). Color-inheriting via
 	     context-stroke so one marker covers every type. -->
 	<svg class="legend-defs" aria-hidden="true">
 		<defs>

@@ -1,14 +1,17 @@
 <!--
   EventEditor — declarative shell for editing an Event entity.
 
-  Locked 2026-04-29 in /plan-design-review (D5 + D4-extension/18B for the
-  multi-POV picker). Field set:
+  Locked 2026-04-29 in /plan-design-review (D5). Field set:
     Title — inline-edit on the panel header (rendered by EntityDetail wrapper)
     Description — textarea
-    POV — multi-entity-picker for Characters via 'pov_of' relationship
     Outcome — picklist (Dwight Swain 5-value: yes / yes-but / no / no-and / mixed)
     Mood — single-line, freeform
     Color — swatch row
+
+  Note: the POV characters multi-entity-picker (pov_of relationship) was
+  removed by the 2026-05-20 audit (Step 5.5) — pov_of had no read-side
+  consumer and was deleted in drizzle/0011_data_model_cleanup.sql.
+  Per-POV simulation is a v4-scale slice; revisit then.
 -->
 
 <script lang="ts">
@@ -45,15 +48,6 @@
 		kind="textarea"
 		rows={5}
 		placeholder="A few sentences describing what happens in this event…"
-	/>
-	<EditableField
-		{readOnly}
-		{entityId}
-		field="pov"
-		label="POV characters"
-		kind="multi-entity-picker"
-		relationshipType="pov_of"
-		targetEntityType="Character"
 	/>
 	<EditableField
 		{readOnly}

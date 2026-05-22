@@ -177,14 +177,14 @@ test.describe('Relationships API', () => {
 		expect((await res.json()).label).toBe('home base');
 	});
 
-	test('POST accepts all valid relationship types except appears_in', async ({ request }) => {
-		// appears_in is owned by /api/intervals after V1 retirement (2026-04-28).
+	test('POST accepts all valid relationship types', async ({ request }) => {
+		// appears_in / mentor_of / pov_of were cut by
+		// drizzle/0011_data_model_cleanup.sql (Step 5.5, 2026-05-21).
 		const types = [
 			'takes_place_at',
 			'caused_by',
 			'allied_with',
 			'rivals',
-			'mentor_of',
 			'located_at'
 		] as const;
 		for (const type of types) {
@@ -195,11 +195,13 @@ test.describe('Relationships API', () => {
 		}
 	});
 
-	test('POST rejects appears_in (now owned by intervals API)', async ({ request }) => {
-		const res = await request.post('/api/relationships', {
-			data: { fromId: charId, toId: locId, type: 'appears_in' }
-		});
-		expect(res.status()).toBe(400);
+	test('POST rejects legacy cut types (appears_in / mentor_of / pov_of)', async ({ request }) => {
+		for (const type of ['appears_in', 'mentor_of', 'pov_of'] as const) {
+			const res = await request.post('/api/relationships', {
+				data: { fromId: charId, toId: locId, type }
+			});
+			expect(res.status()).toBe(400);
+		}
 	});
 
 	test('POST rejects invalid relationship type', async ({ request }) => {

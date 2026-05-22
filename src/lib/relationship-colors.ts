@@ -16,20 +16,13 @@ import { CHARACTER_COLORS, HEX_COLOR_RE } from '$lib/features/timeline/timeline-
 
 /**
  * Edge color per relationship type. Maps to --color-rel-* CSS tokens.
- *
- * `appears_in` is deprecated for new writes (V1 retirement, 2026-04-28)
- * but kept for legacy reads — its color stays so old data still renders
- * meaningfully.
  */
 export const REL_COLOR: Record<RelationshipType, string> = {
 	allied_with: 'var(--color-rel-ally)',
 	rivals: 'var(--color-rel-rival)',
-	appears_in: 'var(--color-rel-arc)',
 	takes_place_at: 'var(--color-rel-event)',
 	caused_by: 'var(--color-rel-other)',
 	located_at: 'var(--color-rel-loc)',
-	mentor_of: 'var(--color-rel-mentor)',
-	pov_of: 'var(--color-rel-pov)',
 	note_of: 'var(--color-type-note)',
 	part_of: 'var(--color-rel-loc)',
 	other: 'var(--color-rel-misc)'
@@ -49,8 +42,7 @@ export const NODE_COLOR: Record<EntityType, string> = {
 	Scene: 'var(--color-type-scene)',
 	Note: 'var(--color-type-note)',
 	Artifact: 'var(--color-type-artifact)',
-	Item: 'var(--color-type-item)',
-	Door: 'var(--color-type-door)'
+	Item: 'var(--color-type-item)'
 };
 
 /**
@@ -59,14 +51,13 @@ export const NODE_COLOR: Record<EntityType, string> = {
  * for color-blind users and on dense graphs where colors crowd). Three
  * pattern families:
  *
- *   - **solid** = present-tense bond (alliance, mentorship, spatial fact)
- *   - **dashed** = tension or temporal chain (rivalry, causality, legacy)
- *   - **dotted** = soft / observational (POV, location attachment)
+ *   - **solid** = present-tense bond (alliance, spatial fact)
+ *   - **dashed** = tension or temporal chain (rivalry, causality)
+ *   - **dotted** = soft / observational (location attachment, note attachment)
  *
- * Arrowheads only on the two directed types where direction carries
- * the strongest semantic weight (mentor_of, caused_by). Other directed
- * types skip the arrow so dense multi-rel pairs don't get visually
- * overloaded.
+ * Arrowhead only on `caused_by` + `part_of` where direction carries the
+ * strongest semantic weight. Other directed types skip the arrow so dense
+ * multi-rel pairs don't get visually overloaded.
  */
 export interface EdgeStyle {
 	/** SVG `stroke-dasharray` value, e.g. `'4 3'` for dashed, `'2 3'`
@@ -83,23 +74,14 @@ export interface EdgeStyle {
 export const REL_EDGE_STYLE: Record<RelationshipType, EdgeStyle> = {
 	allied_with:    { dasharray: null,  width: 1.5, arrow: false },
 	rivals:         { dasharray: '4 3', width: 1.5, arrow: false },
-	mentor_of:      { dasharray: null,  width: 1.5, arrow: true  },
-	pov_of:         { dasharray: '2 3', width: 1,   arrow: false },
 	takes_place_at: { dasharray: null,  width: 1,   arrow: false },
 	caused_by:      { dasharray: '4 3', width: 1.5, arrow: true  },
 	located_at:     { dasharray: '2 3', width: 1,   arrow: false },
-	appears_in:     { dasharray: '4 3', width: 1,   arrow: false },
 	note_of:        { dasharray: '2 3', width: 1,   arrow: false },
 	part_of:        { dasharray: null,  width: 1,   arrow: true  },
 	other:          { dasharray: null,  width: 1.5, arrow: false }
 };
 
-/**
- * Ordered list of relationship types for the StoryGraph create-relationship
- * form. Order is intentional — directed types first (most common), then
- * symmetric, with the deprecated `appears_in` last so it's never the
- * default but still selectable for backfill scenarios.
- */
 /**
  * Resolve a per-entity node color for the graph apps. Mirrors
  * timeline-v2-helpers.colorFor exactly for Characters so the same
@@ -128,15 +110,24 @@ export function nodeColorFor(
 	return NODE_COLOR[entity.type] ?? 'var(--color-accent)';
 }
 
+/**
+ * Ordered list of relationship types for the StoryGraph create-relationship
+ * form. Symmetric and directed flavor types first (most-common authoring
+ * choices), then spatial/structural, then the `other` escape hatch last.
+ *
+ * Intentionally excludes:
+ *   - note_of: owned by NotesSection (Note → parent direction is
+ *     structural — not authored via the generic picker). No endpoint-
+ *     type validator in the API layer means a Character→Character
+ *     note_of row would insert successfully but NotesSection would
+ *     silently drop it. Re-add only after the validator lands.
+ */
 export const REL_TYPES: RelationshipType[] = [
 	'allied_with',
 	'rivals',
-	'mentor_of',
-	'other',
-	'pov_of',
 	'takes_place_at',
 	'caused_by',
 	'located_at',
 	'part_of',
-	'appears_in'
+	'other'
 ];

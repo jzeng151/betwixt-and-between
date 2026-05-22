@@ -4,7 +4,7 @@
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
-  import { windowStore } from '$lib/stores/windows.js';
+  import { windowStore } from '$lib/os/windows-store.js';
   import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
@@ -17,7 +17,7 @@
     type GraphEdge
   } from '$lib/features/graph/GraphCanvas.svelte';
   import type { NodePosition } from '$lib/features/graph/radial-layout.js';
-  import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import ContextMenu from '$lib/os/ContextMenu.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import { entityAliases } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
@@ -161,7 +161,10 @@
     const edges: GraphEdge[] = [];
     for (const r of visibleRelationships) {
       const inWindow = isEdgeVisibleAtT(r, t);
-      const style = REL_EDGE_STYLE[r.type];
+      // Fallback to 'other' for any legacy pre-migration type that survives a
+      // deploy-before-migration window (drizzle/0011). REL_COLOR has the same
+      // defensive shape on the color line below.
+      const style = REL_EDGE_STYLE[r.type] ?? REL_EDGE_STYLE.other;
       const mystery = isMysteryEdgeAtT(r, t);
 
       // Ghost mode: show edges near the playhead that aren't currently active.

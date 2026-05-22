@@ -33,8 +33,8 @@ describe('REL_EDGE_STYLE', () => {
   });
 
   it('directed types whose direction carries strong meaning show an arrow', () => {
-    expect(REL_EDGE_STYLE.mentor_of.arrow).toBe(true);
     expect(REL_EDGE_STYLE.caused_by.arrow).toBe(true);
+    expect(REL_EDGE_STYLE.part_of.arrow).toBe(true);
   });
 
   it('uses three distinct dash families (solid / dashed / dotted)', () => {

@@ -3,11 +3,11 @@
 	import { browser } from '$app/environment';
 	import { worldMapStore, worldMaps, mapRegions } from '$lib/stores/world-map.js';
 	import { entities } from '$lib/stores/entities.js';
-	import { isInScope } from '$lib/stores/scope.js';
+	import { isInScope } from '$lib/os/scope-store.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
-	import { windowStore } from '$lib/stores/windows.js';
+	import { windowStore } from '$lib/os/windows-store.js';
 	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
 	import { resolveActiveVariant } from '$lib/world-map-variants.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';

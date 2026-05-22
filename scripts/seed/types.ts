@@ -71,8 +71,7 @@ export interface SeedAlias {
 export interface SeedRelationship {
   from: string; // entity name
   to: string; // entity name
-  /** appears_in is deprecated; use intervals instead. */
-  type: Exclude<RelationshipType, 'appears_in'>;
+  type: RelationshipType;
   label?: string;
 }
 

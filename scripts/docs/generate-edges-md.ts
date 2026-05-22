@@ -12,18 +12,15 @@ import { readManualBlocks, manualBlock, writeIfChanged } from './lib/sentinel.js
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const SCHEMA = path.join(ROOT, 'src/lib/server/db/schema.ts');
-const POLICY = path.join(ROOT, 'src/lib/graph/edge-policy.ts');
+const POLICY = path.join(ROOT, 'src/lib/features/graph/edge-policy.ts');
 const OUT = path.join(ROOT, 'docs/edges.md');
 
 const ENDPOINT_MAP: Record<string, string> = {
-	appears_in: 'Character ↔ Act/Scene (legacy; writes blocked, see ADR-0002)',
 	takes_place_at: 'Event → Location',
 	caused_by: 'Event/Scene → Event/Scene  (from = effect, to = cause)',
 	allied_with: 'Character ↔ Character',
 	rivals: 'Character ↔ Character',
-	mentor_of: 'Character → Character (mentor → mentee)',
 	located_at: 'Character → Location',
-	pov_of: 'Event/Scene → Character',
 	note_of: 'Note → any entity',
 	part_of: 'Location → Location (child → parent)',
 	other: 'any ↔ any'
@@ -33,14 +30,11 @@ const ENDPOINT_MAP: Record<string, string> = {
 // bounds via the generic relationship UI. "never" = code path always writes
 // null bounds (or write is blocked).
 const TEMPORAL_MAP: Record<string, 'always' | 'sometimes' | 'never' | 'n/a'> = {
-	appears_in: 'n/a',
 	takes_place_at: 'sometimes',
 	caused_by: 'sometimes',
 	allied_with: 'sometimes',
 	rivals: 'sometimes',
-	mentor_of: 'sometimes',
 	located_at: 'sometimes',
-	pov_of: 'never',
 	note_of: 'never',
 	part_of: 'never',
 	other: 'sometimes'
@@ -121,7 +115,7 @@ function main() {
 	const header = [
 		'# Relationship edges',
 		'',
-		'_Generated from `src/lib/server/db/schema.ts` (RelationshipType enum), `src/lib/graph/edge-policy.ts` (DIRECTION map), and static endpoint/temporal maps in `scripts/docs/generate-edges-md.ts`._',
+		'_Generated from `src/lib/server/db/schema.ts` (RelationshipType enum), `src/lib/features/graph/edge-policy.ts` (DIRECTION map), and static endpoint/temporal maps in `scripts/docs/generate-edges-md.ts`._',
 		'_Regenerate: `npm run docs:edges`. Adding a new edge type: extend the static maps in the generator and re-run._',
 		'',
 		'See [schema.md](schema.md) for the `relationships` table and dedup indexes, and [architecture.md](architecture.md) for graph-traversal context.',

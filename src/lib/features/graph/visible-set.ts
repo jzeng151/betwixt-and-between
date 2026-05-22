@@ -2,9 +2,10 @@
 //
 // The interesting rule lives here, not in the component: every mode
 // walks edges as undirected (a focal Character should reach a Scene
-// that is `pov_of` THEM, not just nodes the Character points AT), and
-// structural exclusion is OFF for all modes (1-hop and 2-hop don't
-// risk runaway fan-out the way transitive `reachable` did).
+// that points AT them via any directed edge, not just nodes the
+// Character points AT), and structural exclusion is OFF for all modes
+// (1-hop and 2-hop don't risk runaway fan-out the way transitive
+// `reachable` did).
 //
 //   - their_worlds: undirected 1-hop union — every entity directly
 //                   connected to any focal node.
@@ -16,7 +17,7 @@
 //                   prior transitive-closure semantic that produced
 //                   hairballs.
 import { sharedNeighbors, oneHopUnion, type Edge } from './traversal.js';
-import type { FocusedGraphMode } from '$lib/stores/windows.js';
+import type { FocusedGraphMode } from '$lib/os/windows-store.js';
 
 export function computeVisibleSet(
   mode: FocusedGraphMode,

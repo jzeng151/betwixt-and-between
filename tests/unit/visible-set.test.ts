@@ -1,6 +1,10 @@
 // Pins the FocusedGraph mode rules. The scenario uses Prestige-shaped
-// edges (a Character with directed `pov_of` edges INCOMING from
-// scenes, plus undirected rivalry/alliance edges).
+// edges (a Character with directed edges INCOMING from scenes, plus
+// undirected rivalry/alliance edges). The original fixture used pov_of
+// and mentor_of; both were cut by the 2026-05-20 audit (Step 5.5,
+// drizzle/0011_data_model_cleanup.sql). Replaced here with caused_by
+// since the test only exercises the directed/undirected traversal
+// mechanic and visible-set does not validate type endpoints.
 //
 // Locked semantics:
 //   - their_worlds: undirected 1-hop union
@@ -21,21 +25,23 @@ const SCENE_A = 'scene-apprenticeship';
 const SCENE_B = 'scene-julia-incident';
 
 const EDGES: Edge[] = [
-  // Directed pov_of from scenes INTO Borden — only reachable
-  // undirected. Tests the directed-edge bug fix.
-  { fromId: SCENE_A, toId: BORDEN, type: 'pov_of' },
-  { fromId: SCENE_B, toId: BORDEN, type: 'pov_of' },
+  // Directed edges from scenes INTO Borden — only reachable undirected.
+  // Tests the directed-edge bug fix (caused_by stands in for the cut
+  // pov_of; the type identity does not affect traversal semantics).
+  { fromId: SCENE_A, toId: BORDEN, type: 'caused_by' },
+  { fromId: SCENE_B, toId: BORDEN, type: 'caused_by' },
   // Symmetric rivalry/alliance — walks both ways either way.
   { fromId: BORDEN, toId: ANGIER, type: 'rivals' },
   { fromId: BORDEN, toId: SARAH, type: 'allied_with' },
-  // Cutter mentors both rivals (multi-rel pair from Cutter, but the
+  // Cutter directs both rivals (multi-rel pair from Cutter, but the
   // shared-mode test cares about Cutter being ADJACENT to both).
-  { fromId: CUTTER, toId: BORDEN, type: 'mentor_of' },
-  { fromId: CUTTER, toId: ANGIER, type: 'mentor_of' },
-  // Tesla mentors Angier; Edison rivals Tesla. Tests 2-hop reaching
+  // caused_by stands in for the cut mentor_of.
+  { fromId: CUTTER, toId: BORDEN, type: 'caused_by' },
+  { fromId: CUTTER, toId: ANGIER, type: 'caused_by' },
+  // Tesla directs Angier; Edison rivals Tesla. Tests 2-hop reaching
   // Edison from Borden via Angier→Tesla→Edison (3 hops, should NOT
   // be in 2-hop set).
-  { fromId: TESLA, toId: ANGIER, type: 'mentor_of' },
+  { fromId: TESLA, toId: ANGIER, type: 'caused_by' },
   { fromId: TESLA, toId: EDISON, type: 'rivals' }
 ];
 
@@ -46,7 +52,7 @@ describe('computeVisibleSet — their_worlds (undirected 1-hop)', () => {
     expect(out.has(SARAH)).toBe(true);
   });
 
-  it('includes scenes whose pov_of edge points AT the focal (undirected fix)', () => {
+  it('includes scenes whose directed edge points AT the focal (undirected fix)', () => {
     const out = computeVisibleSet('their_worlds', new Set([BORDEN]), EDGES);
     expect(out.has(SCENE_A)).toBe(true);
     expect(out.has(SCENE_B)).toBe(true);

@@ -4,7 +4,7 @@
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
-  import { windowStore, type FocusedGraphMode } from '$lib/stores/windows.js';
+  import { windowStore, type FocusedGraphMode } from '$lib/os/windows-store.js';
   import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
@@ -18,7 +18,7 @@
     type GraphEdge
   } from '$lib/features/graph/GraphCanvas.svelte';
   import type { NodePosition } from '$lib/features/graph/radial-layout.js';
-  import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import ContextMenu from '$lib/os/ContextMenu.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
   import Legend from '$lib/features/graph/Legend.svelte';
@@ -68,7 +68,8 @@
   // alter this set. Layout-by-type (C5) reads this same visibleSet. The
   // mode→traversal-options mapping lives in `computeVisibleSet` so the rule
   // is unit-testable. All modes walk undirected (a focal Character reaches
-  // scenes that are `pov_of` THEM); 'reachable' is 2-hop, not transitive.
+  // scenes that point AT them via any directed edge); 'reachable' is
+  // 2-hop, not transitive.
   const visibleSet = $derived.by(() =>
     computeVisibleSet(viewMode, focalSetIds, edgeList)
   );
@@ -180,7 +181,10 @@
     const edges: GraphEdge[] = [];
     for (const r of visibleRelationships) {
       const inWindow = isEdgeVisibleAtT(r, t);
-      const style = REL_EDGE_STYLE[r.type];
+      // Fallback to 'other' for any legacy pre-migration type that survives a
+      // deploy-before-migration window (drizzle/0011). REL_COLOR has the same
+      // defensive shape on the color line below.
+      const style = REL_EDGE_STYLE[r.type] ?? REL_EDGE_STYLE.other;
       const mystery = isMysteryEdgeAtT(r, t);
 
       // Ghost mode: show edges near the playhead that aren't currently active.

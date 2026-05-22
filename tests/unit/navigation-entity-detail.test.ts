@@ -10,7 +10,7 @@ vi.mock('../../src/lib/stores/entities.js', () => {
 });
 
 import { entities } from '../../src/lib/stores/entities.js';
-import { windowStore } from '../../src/lib/stores/windows.js';
+import { windowStore } from '../../src/lib/os/windows-store.js';
 // openEntityDetail is the new helper added in D10/9A. Import will fail at
 // runtime until the implementation lands — these tests are expected RED.
 import { openEntityDetail, openEntity } from '../../src/lib/navigation.js';

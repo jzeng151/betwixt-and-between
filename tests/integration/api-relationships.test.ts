@@ -78,7 +78,7 @@ describe('/api/relationships POST (non-hijack)', () => {
 
 	it('accepts optional label', async () => {
 		const res = await relRoute.POST(
-			mkEvent({ body: { fromId: alice, toId: bob, type: 'mentor_of', label: 'mentor' } })
+			mkEvent({ body: { fromId: alice, toId: bob, type: 'other', label: 'mentor' } })
 		);
 		const body = await readJson(res);
 		expect(body.label).toBe('mentor');
@@ -122,8 +122,8 @@ describe('/api/relationships POST (non-hijack)', () => {
 		// Locked 2026-04-29 in /plan-eng-review (Issue 18-revised B). Prevents
 		// two relationship rows of the same type between the same pair of
 		// entities. Multi-edge of DIFFERENT types between same pair is still
-		// allowed; multi-edge of pov_of from same event to DIFFERENT characters
-		// is also allowed (different to_id).
+		// allowed; multi-edge of the same type from same from-entity to
+		// DIFFERENT to-entities is also allowed (different to_id).
 		await currentDb.insert(relationships).values({ userId,
 			fromId: alice,
 			toId: bob,
@@ -160,7 +160,10 @@ describe('/api/relationships GET', () => {
 		expect(body).toEqual([]);
 	});
 
-	it('rejects appears_in writes (route is intervals API now)', async () => {
+	it('rejects unknown relationship types (e.g. legacy appears_in) with 400', async () => {
+		// appears_in was retired by drizzle/0011_data_model_cleanup.sql (Step 5.5,
+		// 2026-05-21). The route's named special-case rejection (was at +server.ts:53)
+		// is gone; the generic enum validator now turns it into a generic-shape 400.
 		const acts = await seedActs(currentDb, userId);
 		const [ellie] = await currentDb
 			.insert(entities)
