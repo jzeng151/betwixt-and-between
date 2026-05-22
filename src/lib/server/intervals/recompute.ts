@@ -23,7 +23,7 @@
  *   Half-open convention: end is exclusive. CHECK (start_position < end_position).
  */
 
-import { sql, eq, and, isNull } from 'drizzle-orm';
+import { sql, eq, and, isNull, inArray } from 'drizzle-orm';
 import { entities, intervals, relationships, mapAnchors, mapEvents, worldMaps } from '../db/schema.js';
 // Pure math (actRange, sceneRange, smartSnap) lives in
 // $lib/features/timeline/timeline-helpers so non-server code (drag-preview snap) can import it
@@ -579,11 +579,11 @@ async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<n
 //     CLAUDE.md invariant. `map_anchors` and `map_events` carry no user_id.
 // =============================================================================
 
-async function reprojectTPosition(
+function reprojectTPosition(
 	t: number,
 	preSnapshot: ActOrderingSnapshot,
 	cache: RecomputeCache
-): Promise<number | null> {
+): number | null {
 	if (!Number.isFinite(t)) return null;
 	const oldIdx = Math.floor(t);
 	const actId = preSnapshot.get(oldIdx);
@@ -594,26 +594,43 @@ async function reprojectTPosition(
 	return newIdx + frac;
 }
 
+// Defense-in-depth helper. The SELECT JOIN through worldMaps.userId scopes
+// reads correctly, but the per-row UPDATE targets only by id — relying on the
+// caller to keep both inside the same transaction. If a future caller invokes
+// recomputeAllIntervals on `db` outside a tx (or someone refactors the SELECT
+// JOIN away), the UPDATE alone would not block a cross-user write. Pre-
+// collecting userMapIds and gating the UPDATE with inArray(...) makes the
+// scoping self-enforcing — the UPDATE physically cannot touch another user's
+// rows even if the SELECT becomes stale or unscoped.
+async function loadUserMapIds(db: Db, userId: string): Promise<string[]> {
+	const maps = await db
+		.select({ id: worldMaps.id })
+		.from(worldMaps)
+		.where(eq(worldMaps.userId, userId));
+	return maps.map((m) => m.id);
+}
+
 async function recomputeMapAnchors(
 	db: Db,
 	userId: string,
 	preSnapshot: ActOrderingSnapshot,
 	cache: RecomputeCache
 ): Promise<number> {
+	const userMapIds = await loadUserMapIds(db, userId);
+	if (userMapIds.length === 0) return 0;
 	const rows = await db
 		.select({ id: mapAnchors.id, tPosition: mapAnchors.tPosition })
 		.from(mapAnchors)
-		.innerJoin(worldMaps, eq(mapAnchors.worldMapId, worldMaps.id))
-		.where(eq(worldMaps.userId, userId));
+		.where(inArray(mapAnchors.worldMapId, userMapIds));
 	let updated = 0;
 	for (const row of rows) {
-		const next = await reprojectTPosition(row.tPosition, preSnapshot, cache);
+		const next = reprojectTPosition(row.tPosition, preSnapshot, cache);
 		if (next === null) continue;
 		if (Math.abs(next - row.tPosition) <= POSITION_EPSILON) continue;
 		await db
 			.update(mapAnchors)
 			.set({ tPosition: next })
-			.where(eq(mapAnchors.id, row.id));
+			.where(and(eq(mapAnchors.id, row.id), inArray(mapAnchors.worldMapId, userMapIds)));
 		updated++;
 	}
 	return updated;
@@ -625,20 +642,21 @@ async function recomputeMapEvents(
 	preSnapshot: ActOrderingSnapshot,
 	cache: RecomputeCache
 ): Promise<number> {
+	const userMapIds = await loadUserMapIds(db, userId);
+	if (userMapIds.length === 0) return 0;
 	const rows = await db
 		.select({ id: mapEvents.id, tPosition: mapEvents.tPosition })
 		.from(mapEvents)
-		.innerJoin(worldMaps, eq(mapEvents.worldMapId, worldMaps.id))
-		.where(eq(worldMaps.userId, userId));
+		.where(inArray(mapEvents.worldMapId, userMapIds));
 	let updated = 0;
 	for (const row of rows) {
-		const next = await reprojectTPosition(row.tPosition, preSnapshot, cache);
+		const next = reprojectTPosition(row.tPosition, preSnapshot, cache);
 		if (next === null) continue;
 		if (Math.abs(next - row.tPosition) <= POSITION_EPSILON) continue;
 		await db
 			.update(mapEvents)
 			.set({ tPosition: next })
-			.where(eq(mapEvents.id, row.id));
+			.where(and(eq(mapEvents.id, row.id), inArray(mapEvents.worldMapId, userMapIds)));
 		updated++;
 	}
 	return updated;
