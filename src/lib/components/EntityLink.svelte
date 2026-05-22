@@ -23,7 +23,7 @@
   interface Props {
     id: string;
     name: string;
-    relationshipType?: RelationshipType | 'arc' | 'other';
+    relationshipType?: RelationshipType | 'arc';
     /** When provided, renders a × button inside the chip's right edge.
      *  Caller is responsible for the actual delete (e.g. calling
      *  relationships.deleteRelationship). */

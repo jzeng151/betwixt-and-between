@@ -94,11 +94,14 @@
 		const next = readOnly;
 		if (next && !_prevReadOnly) {
 			// Wrapper just flipped us into view (Done or Cancel). Discard
-			// any unsaved drafts and close the icon picker. The
-			// relationships section closes its own picker via the same
-			// readOnly transition.
+			// any unsaved drafts, close the icon picker, and clear any
+			// stale save error — the draft that produced the error is
+			// gone, so the error message would mislead. The relationships
+			// section closes its own picker via the same readOnly
+			// transition.
 			syncFromEntity();
 			iconPickerOpen = false;
+			saveError = '';
 		}
 		_prevReadOnly = next;
 	});
@@ -215,8 +218,10 @@
 					{motivation || 'Not set.'}
 				</p>
 			{/if}
-
-			{#if saveError}<p class="save-error">{saveError}</p>{/if}
+			<!-- saveError renders once near the top of the body (line ~187,
+			     above the relationships section) — second render dropped
+			     2026-05-21 to avoid the same error string appearing in two
+			     places simultaneously. -->
 		</div>
 	</div>
 {/if}

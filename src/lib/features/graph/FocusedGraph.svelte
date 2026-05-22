@@ -68,7 +68,8 @@
   // alter this set. Layout-by-type (C5) reads this same visibleSet. The
   // mode→traversal-options mapping lives in `computeVisibleSet` so the rule
   // is unit-testable. All modes walk undirected (a focal Character reaches
-  // scenes that are `pov_of` THEM); 'reachable' is 2-hop, not transitive.
+  // scenes that point AT them via any directed edge); 'reachable' is
+  // 2-hop, not transitive.
   const visibleSet = $derived.by(() =>
     computeVisibleSet(viewMode, focalSetIds, edgeList)
   );

@@ -1091,3 +1091,113 @@ describe('CharacterEditor — generic icon picker', () => {
 		});
 	});
 });
+
+describe('CharacterEditor — clicking Done closes any open icon picker (Step 5 carve regression guard)', () => {
+	it('Done resets iconPickerOpen so the icon grid is gone in view mode', async () => {
+		// After the 2026-05-21 character carve, CharacterEditorBody owns
+		// the iconPickerOpen state but mounts CharacterIconPicker as a
+		// child; the body's readOnly false→true $effect must close the
+		// picker on Done. Companion to the 'Done closes any open
+		// relationship picker' test above — same flip, different sibling
+		// section. Pre-carve this was an inline {#if} the body controlled
+		// directly; post-carve it's a prop+effect coordination.
+		const fixture = makeCharacter();
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([fixture])) as unknown as typeof fetch;
+		await entities.load();
+
+		const { getByText, queryByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		// Open the icon picker; 'Heroes' is one of the category labels
+		// (CHARACTER_ICON_CATEGORIES from registry.ts).
+		await fireEvent.click(getByText('Pick icon'));
+		await tick();
+		expect(getByText('Heroes')).toBeInTheDocument();
+		// Click Done WITHOUT closing the picker first.
+		await fireEvent.click(getByText('Done'));
+		await tick();
+		// The icon-picker block (and its 'Heroes' category label) is
+		// gone now — readOnly transition closed iconPickerOpen in the
+		// body, and the conditional mount unmounted the child.
+		expect(queryByText('Heroes')).toBeNull();
+	});
+});
+
+describe('CharacterEditor — bindable role/affiliation round-trip (Step 5 carve regression guard)', () => {
+	// After the carve, role + affiliation live on CharacterHeader with
+	// $bindable props pointing back at CharacterEditorBody's $state.
+	// Pre-carve they were body-owned directly. A missing $bindable() on
+	// the Header would not break type-check but WOULD silently break
+	// saves — the child's bind:value would write to a local copy that
+	// never propagates to saveAll's read of `role` / `affiliation`.
+	// These tests pin the round-trip.
+
+	it('changing role select PATCHes data.role through the bindable hop to /api/entities', async () => {
+		const fixture = makeCharacter();
+		globalThis.fetch = vi
+			.fn()
+			.mockImplementation(async (url: string, init?: RequestInit) => {
+				if (init?.method === 'PATCH') {
+					const body = JSON.parse(init.body as string);
+					return makeResponse(makeCharacter(body.data ?? {}));
+				}
+				if (url === '/api/relationships') return makeResponse([]);
+				return makeResponse([fixture]);
+			}) as unknown as typeof fetch;
+		await entities.load();
+
+		const { container, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		const roleSelect = container.querySelector(
+			'select.hfield-select'
+		) as HTMLSelectElement;
+		expect(roleSelect).toBeTruthy();
+		await fireEvent.change(roleSelect, { target: { value: 'Protagonist' } });
+		await waitFor(() => {
+			const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+			const patch = calls.find(([, init]) => init?.method === 'PATCH');
+			expect(patch).toBeDefined();
+			const body = JSON.parse((patch![1] as RequestInit).body as string);
+			expect(body.data.role).toBe('Protagonist');
+		});
+	});
+
+	it('blurring affiliation input PATCHes data.affiliation through the bindable hop', async () => {
+		const fixture = makeCharacter();
+		globalThis.fetch = vi
+			.fn()
+			.mockImplementation(async (url: string, init?: RequestInit) => {
+				if (init?.method === 'PATCH') {
+					const body = JSON.parse(init.body as string);
+					return makeResponse(makeCharacter(body.data ?? {}));
+				}
+				if (url === '/api/relationships') return makeResponse([]);
+				return makeResponse([fixture]);
+			}) as unknown as typeof fetch;
+		await entities.load();
+
+		const { container, getByText } = render(CharacterEditor, {
+			props: { winId: 'w1', entityId: 'char-1' }
+		});
+		await fireEvent.click(getByText('Edit'));
+		await tick();
+		const affInput = container.querySelector(
+			'input.hfield-input'
+		) as HTMLInputElement;
+		expect(affInput).toBeTruthy();
+		await fireEvent.input(affInput, { target: { value: 'The Fellowship' } });
+		await fireEvent.blur(affInput);
+		await waitFor(() => {
+			const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+			const patch = calls.find(([, init]) => init?.method === 'PATCH');
+			expect(patch).toBeDefined();
+			const body = JSON.parse((patch![1] as RequestInit).body as string);
+			expect(body.data.affiliation).toBe('The Fellowship');
+		});
+	});
+});

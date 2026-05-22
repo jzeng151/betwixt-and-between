@@ -63,36 +63,100 @@
 --
 -- The TS enum trim (RelationshipType, EntityType, PlaceableEntityType in
 -- src/lib/server/db/schema.ts) ships alongside this migration in the same
--- commit. The DB columns are plain text — the enum lives as TS const +
--- write-time validation in the API layer — so no DDL change is required
--- here. Vitest invariants in the same commit assert post-migration counts.
+-- commit. To defend against rolling-deploy drift (an old Worker instance
+-- still carrying the dead types in its TS enum, racing this migration on
+-- the way out), the migration also installs CHECK constraints at the end
+-- that fence the trimmed enum values at the DB level. A stale-Worker
+-- write attempting to re-introduce a cut type now fails with 23514
+-- instead of silently re-corrupting the data this migration just cleaned.
+-- Trade-off: every future enum addition needs a paired DROP CONSTRAINT
+-- + ADD CONSTRAINT block in its migration to stay in sync.
+--
+-- Each destructive statement is wrapped in a DO block with RAISE NOTICE
+-- so the operator running `npm run db:migrate` sees pre-counts ahead of
+-- the COMMIT — visible audit trail of what's about to be lost.
 
-DELETE FROM relationships WHERE type = 'pov_of';
+DO $$ DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM relationships WHERE type = 'pov_of';
+  RAISE NOTICE '0011: deleting % pov_of rows', n;
+  DELETE FROM relationships WHERE type = 'pov_of';
+END $$;
 --> statement-breakpoint
 -- Pre-collision DELETE — see comment 2(b) above. Drops mentor_of rows
 -- that would violate the partial-unique dedup indexes once rewritten
 -- to type='other'. Must run BEFORE the UPDATE; otherwise the UPDATE
 -- aborts the whole migration on any colliding pair.
-DELETE FROM relationships m
-WHERE m.type = 'mentor_of'
-  AND EXISTS (
-    SELECT 1 FROM relationships o
-    WHERE o.type = 'other'
-      AND o.from_id = m.from_id
-      AND o.to_id = m.to_id
-      AND (
-        (o.start_position IS NULL AND m.start_position IS NULL)
-        OR o.start_position = m.start_position
-      )
-  );
+DO $$ DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM relationships m
+    WHERE m.type = 'mentor_of'
+      AND EXISTS (
+        SELECT 1 FROM relationships o
+        WHERE o.type = 'other'
+          AND o.from_id = m.from_id
+          AND o.to_id = m.to_id
+          AND (
+            (o.start_position IS NULL AND m.start_position IS NULL)
+            OR o.start_position = m.start_position
+          )
+      );
+  RAISE NOTICE '0011: deleting % mentor_of rows that would collide with existing other rows', n;
+  DELETE FROM relationships m
+  WHERE m.type = 'mentor_of'
+    AND EXISTS (
+      SELECT 1 FROM relationships o
+      WHERE o.type = 'other'
+        AND o.from_id = m.from_id
+        AND o.to_id = m.to_id
+        AND (
+          (o.start_position IS NULL AND m.start_position IS NULL)
+          OR o.start_position = m.start_position
+        )
+    );
+END $$;
 --> statement-breakpoint
-UPDATE relationships
-SET type = 'other', label = COALESCE(label, 'mentor of')
-WHERE type = 'mentor_of';
+DO $$ DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM relationships WHERE type = 'mentor_of';
+  RAISE NOTICE '0011: rewriting % mentor_of rows to other + label', n;
+  UPDATE relationships
+    SET type = 'other', label = COALESCE(label, 'mentor of')
+    WHERE type = 'mentor_of';
+END $$;
 --> statement-breakpoint
-DELETE FROM relationships WHERE type = 'appears_in';
+DO $$ DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM relationships WHERE type = 'appears_in';
+  RAISE NOTICE '0011: deleting % appears_in rows', n;
+  DELETE FROM relationships WHERE type = 'appears_in';
+END $$;
 --> statement-breakpoint
-UPDATE entities
-SET type = 'Artifact',
-    data = jsonb_set(coalesce(data, '{}'::jsonb), '{legacySubtype}', '"door"'::jsonb)
-WHERE type = 'Door';
+DO $$ DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM entities WHERE type = 'Door';
+  RAISE NOTICE '0011: rewriting % Door entities to Artifact + data.legacySubtype', n;
+  UPDATE entities
+    SET type = 'Artifact',
+        data = jsonb_set(coalesce(data, '{}'::jsonb), '{legacySubtype}', '"door"'::jsonb)
+    WHERE type = 'Door';
+END $$;
+--> statement-breakpoint
+-- DB-level fence on the trimmed enum values. DROP IF EXISTS + ADD makes
+-- this migration idempotent — re-runs are safe (the constraint gets
+-- dropped and re-added with the same body). Future enum additions need
+-- their own migration with the paired DROP + ADD shape to stay in sync.
+ALTER TABLE relationships DROP CONSTRAINT IF EXISTS relationships_type_valid;
+--> statement-breakpoint
+ALTER TABLE relationships ADD CONSTRAINT relationships_type_valid CHECK (
+  type IN (
+    'takes_place_at','caused_by','allied_with','rivals',
+    'located_at','note_of','part_of','other'
+  )
+);
+--> statement-breakpoint
+ALTER TABLE entities DROP CONSTRAINT IF EXISTS entities_type_valid;
+--> statement-breakpoint
+ALTER TABLE entities ADD CONSTRAINT entities_type_valid CHECK (
+  type IN ('Character','Location','Event','Act','Scene','Note','Artifact','Item')
+);

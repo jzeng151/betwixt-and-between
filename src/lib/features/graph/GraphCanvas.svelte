@@ -201,8 +201,8 @@
 
 	// ── Screen-coord edge geometry ─────────────────────────────────────────────
 	// Two entities can have multiple relationships of different types between
-	// them (e.g. Character pov_of Event AND Character mentor_of Event). The
-	// schema's UNIQUE(from_id, to_id, type) allows this — the rendering layer
+	// them (e.g. Character allied_with Character AND Character rivals Character).
+	// The schema's UNIQUE(from_id, to_id, type) allows this — the rendering layer
 	// has to fan them out so they're visually distinguishable. Without
 	// fan-out the lines stack at the same coords and only the topmost edge
 	// renders meaningfully.
