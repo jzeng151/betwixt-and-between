@@ -1,26 +1,6 @@
 import { writable } from 'svelte/store';
 import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } from '$lib/types/world-map.js';
-
-// SvelteKit's `error()` helper returns JSON like { message: "..." }. Surfacing
-// the raw text into the UI shows users `{"message":"..."}`; parse and lift the
-// message instead so the variant-conflict copy reads naturally.
-async function errorMessage(res: Response): Promise<string> {
-	const text = await res.text();
-	try {
-		const parsed: unknown = JSON.parse(text);
-		if (
-			parsed &&
-			typeof parsed === 'object' &&
-			'message' in parsed &&
-			typeof (parsed as Record<string, unknown>).message === 'string'
-		) {
-			return (parsed as { message: string }).message;
-		}
-	} catch {
-		// fall through to raw text
-	}
-	return text;
-}
+import { errorMessage } from '$lib/util/api-error-message.js';
 
 function createWorldMapStore() {
 	const maps = writable<WorldMap[]>([]);

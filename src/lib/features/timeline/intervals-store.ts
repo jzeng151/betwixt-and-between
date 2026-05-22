@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { errorMessage } from '$lib/util/api-error-message.js';
 
 /**
  * Client-side store for the intervals API.
@@ -37,20 +38,6 @@ type UpdateIntervalInput = Partial<{
 	endPosition: number;
 }>;
 
-// SvelteKit error responses are JSON { message: string }. Extract the
-// human-readable message rather than surfacing raw JSON to the UI.
-async function errorMessage(res: Response): Promise<string> {
-	const text = await res.text();
-	try {
-		const parsed: unknown = JSON.parse(text);
-		if (parsed && typeof parsed === 'object' && 'message' in parsed && typeof (parsed as Record<string, unknown>).message === 'string') {
-			return (parsed as { message: string }).message;
-		}
-	} catch {
-		// fall through to raw text
-	}
-	return text;
-}
 
 function createIntervalStore() {
 	const { subscribe, set, update } = writable<Interval[]>([]);

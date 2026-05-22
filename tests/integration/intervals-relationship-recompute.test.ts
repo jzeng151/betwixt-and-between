@@ -104,18 +104,19 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 		const [ivBefore] = await db.select().from(intervals).where(eq(intervals.entityId, alice));
 		const [relBefore] = await db.select().from(relationships).where(eq(relationships.fromId, alice));
 
-		// Attempt a transaction that reorders acts AND recomputes, but then rolls back
-		try {
-			await db.transaction(async (tx) => {
+		// Attempt a transaction that reorders acts AND recomputes, but then rolls back.
+		// Assert on the forced-rollback message specifically — a bare catch would
+		// swallow a real recomputeAllIntervals failure and let the post-rollback
+		// assertions green for the wrong reason.
+		await expect(
+			db.transaction(async (tx) => {
 				await tx.update(entities).set({ position: 1 }).where(eq(entities.id, act0));
 				await tx.update(entities).set({ position: 0 }).where(eq(entities.id, act1));
 				await recomputeAllIntervals(tx, userId);
 				// Force rollback by throwing
 				throw new Error('forced rollback');
-			});
-		} catch {
-			// Expected — the transaction rolled back
-		}
+			})
+		).rejects.toThrow('forced rollback');
 
 		// Both interval and relationship positions must be unchanged
 		const [ivAfter] = await db.select().from(intervals).where(eq(intervals.entityId, alice));

@@ -12,24 +12,7 @@ import type {
 	CreatePlacementPayload,
 	UpdatePlacementPayload
 } from '$lib/types/map-placement.js';
-
-async function errorMessage(res: Response): Promise<string> {
-	const text = await res.text();
-	try {
-		const parsed: unknown = JSON.parse(text);
-		if (
-			parsed &&
-			typeof parsed === 'object' &&
-			'message' in parsed &&
-			typeof (parsed as Record<string, unknown>).message === 'string'
-		) {
-			return (parsed as { message: string }).message;
-		}
-	} catch {
-		/* fall through */
-	}
-	return text;
-}
+import { errorMessage } from '$lib/util/api-error-message.js';
 
 function createPlacementsStore() {
 	const placements = writable<MapPlacement[]>([]);
