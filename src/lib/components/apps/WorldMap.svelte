@@ -15,6 +15,9 @@
 		coalesceToRanges,
 		scenesInInterval as scenesInIntervalPure
 	} from '$lib/features/map/scene-ranges.js';
+	import CreateMapOfferModal from '$lib/features/map/CreateMapOfferModal.svelte';
+	import VariantFormModal from '$lib/features/map/VariantFormModal.svelte';
+	import RegionFormModal from '$lib/features/map/RegionFormModal.svelte';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
@@ -986,7 +989,6 @@
 		duplicating = false;
 	}
 
-	const PALETTE = ['#e8a838', '#3b82f6', '#ef4444', '#22c55e', '#a855f7', '#ec4899', '#f97316', '#06b6d4'];
 </script>
 
 {#if !hasMaps}
@@ -1166,188 +1168,48 @@
 {/if}
 
 {#if showRegionForm}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
-		<div class="modal-content">
-			<h3>{editingRegionId ? "Edit Region" : "New Region"}</h3>
-
-			<label>
-				Linked Location
-				{#if creatingRegionLocation}
-					<div class="region-new-loc-row">
-						<!-- svelte-ignore a11y_autofocus -->
-						<input
-							class="region-new-loc-input"
-							type="text"
-							placeholder="Name of new location…"
-							aria-label="Name of new location"
-							bind:value={regionNewLocationName}
-							autofocus
-							disabled={regionNewLocationBusy}
-							onkeydown={(e) => {
-								if (e.key === 'Enter') commitCreateRegionLocation();
-								if (e.key === 'Escape') cancelCreateRegionLocation();
-							}}
-						/>
-						<button type="button" onclick={commitCreateRegionLocation} disabled={regionNewLocationBusy}>Add</button>
-						<button type="button" onclick={cancelCreateRegionLocation} disabled={regionNewLocationBusy}>Cancel</button>
-					</div>
-					{#if regionNewLocationError}
-						<span class="region-new-loc-error">{regionNewLocationError}</span>
-					{/if}
-				{:else}
-					<div class="region-loc-row">
-						<select bind:value={regionFormLocationId}>
-							<option value={null}>None (unlinked)</option>
-							{#each regionFormLocations as loc}
-								<option value={loc.id}>{loc.name}</option>
-							{/each}
-						</select>
-						<button
-							type="button"
-							class="btn-icon"
-							onclick={startCreateRegionLocation}
-							title="Create a new Location and link this region to it"
-							aria-label="New location"
-						>+</button>
-					</div>
-				{/if}
-			</label>
-
-			<label>
-				Color
-				<div class="color-palette">
-					{#each PALETTE as c}
-						<button
-							class="color-swatch"
-							class:active={regionFormColor === c}
-							aria-label="Color {c}"
-							style="background: {c}"
-							onclick={() => regionFormColor = c}
-						></button>
-					{/each}
-				</div>
-			</label>
-
-			{#if regionFormLocationId}
-				<label>
-					Active during
-					<div class="scene-tree">
-						{#each acts as act}
-							{@const scenes = scenesByAct.get(act.id) ?? []}
-							{#if scenes.length > 0}
-								<div class="act-group">
-									<div class="act-label">{act.name}</div>
-									{#each scenes as scene}
-										<label class="scene-check">
-											<input type="checkbox"
-												checked={regionFormSceneIds.has(scene.id)}
-												onchange={() => toggleScene(scene.id)} />
-											{scene.name}
-										</label>
-									{/each}
-								</div>
-							{/if}
-						{/each}
-						{#if acts.length === 0 || acts.every((a) => (scenesByAct.get(a.id) ?? []).length === 0)}
-							<span class="hint">Create acts and scenes in the Timeline first.</span>
-						{/if}
-					</div>
-				</label>
-			{/if}
-
-			<div class="modal-actions">
-				<button class="btn-secondary" onclick={handleCancelRegion}>Cancel</button>
-				<button class="btn-primary" onclick={handleSaveRegion}>Save Region</button>
-			</div>
-		</div>
-	</div>
+	<RegionFormModal
+		isEditing={editingRegionId !== null}
+		{regionFormLocations}
+		{acts}
+		{scenesByAct}
+		bind:locationId={regionFormLocationId}
+		bind:color={regionFormColor}
+		bind:sceneIds={regionFormSceneIds}
+		bind:creatingLocation={creatingRegionLocation}
+		bind:newLocationName={regionNewLocationName}
+		newLocationError={regionNewLocationError}
+		newLocationBusy={regionNewLocationBusy}
+		onSave={handleSaveRegion}
+		onCancel={handleCancelRegion}
+		onStartCreateLocation={startCreateRegionLocation}
+		onCancelCreateLocation={cancelCreateRegionLocation}
+		onCommitCreateLocation={commitCreateRegionLocation}
+		onToggleScene={toggleScene}
+	/>
 {/if}
 
 {#if createMapOffer}
-	{@const offer = createMapOffer}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
-		<div class="modal-content">
-			<h3>No map for {offer.childName} yet</h3>
-			<p class="variant-help">
-				Drilling in opens the sublocation's map. <strong>{offer.childName}</strong>
-				doesn't have one — want to create one?
-			</p>
-			<div class="modal-actions">
-				<button class="btn-secondary" onclick={dismissCreateMapOffer}>Not now</button>
-				<button class="btn-primary" onclick={acceptCreateMapOffer}>
-					Create a map for {offer.childName}
-				</button>
-			</div>
-		</div>
-	</div>
+	<CreateMapOfferModal
+		offer={createMapOffer}
+		onAccept={acceptCreateMapOffer}
+		onDismiss={dismissCreateMapOffer}
+	/>
 {/if}
 
 {#if showVariantForm && activeMap}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
-		<div class="modal-content">
-			<h3>Variant range</h3>
-			<p class="variant-help">
-				Which story-time slice does this map depict? Default variant shows whenever
-				no scoped variant covers the playhead. A single-Act variant is fine — pick
-				the same Act for start and end.
-			</p>
-
-			<label class="variant-default">
-				<input type="checkbox" bind:checked={variantFormIsDefault} />
-				Default variant (no scene range — shows when nothing else covers)
-			</label>
-
-			{#if !variantFormIsDefault}
-				<div class="variant-grid">
-					<label>
-						Start act
-						<select bind:value={variantFormStartActId}>
-							<option value={null}>—</option>
-							{#each acts as act}
-								<option value={act.id}>{act.name}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						Start scene (optional)
-						<select bind:value={variantFormStartSceneId}>
-							<option value={null}>—</option>
-							{#each (variantFormStartActId ? scenesByAct.get(variantFormStartActId) ?? [] : []) as scene}
-								<option value={scene.id}>{scene.name}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						End act
-						<select bind:value={variantFormEndActId}>
-							<option value={null}>—</option>
-							{#each acts as act}
-								<option value={act.id}>{act.name}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						End scene (optional)
-						<select bind:value={variantFormEndSceneId}>
-							<option value={null}>—</option>
-							{#each (variantFormEndActId ? scenesByAct.get(variantFormEndActId) ?? [] : []) as scene}
-								<option value={scene.id}>{scene.name}</option>
-							{/each}
-						</select>
-					</label>
-				</div>
-			{/if}
-
-			{#if variantFormError}
-				<p class="variant-error">{variantFormError}</p>
-			{/if}
-
-			<div class="modal-actions">
-				<button class="btn-secondary" onclick={closeVariantForm}>Cancel</button>
-				<button class="btn-primary" onclick={saveVariant}>Save Variant</button>
-			</div>
-		</div>
-	</div>
+	<VariantFormModal
+		{acts}
+		{scenesByAct}
+		bind:isDefault={variantFormIsDefault}
+		bind:startActId={variantFormStartActId}
+		bind:startSceneId={variantFormStartSceneId}
+		bind:endActId={variantFormEndActId}
+		bind:endSceneId={variantFormEndSceneId}
+		error={variantFormError}
+		onSave={saveVariant}
+		onCancel={closeVariantForm}
+	/>
 {/if}
 
 {#if deleteConfirm}
@@ -1492,13 +1354,13 @@
 		color: var(--color-accent);
 	}
 
-	.variant-help {
+	:global(.variant-help) {
 		margin: 0 0 12px 0;
 		font-size: 12px;
 		color: var(--color-text-muted, #6b7280);
 	}
 
-	.variant-default {
+	:global(.variant-default) {
 		display: flex;
 		align-items: center;
 		gap: 6px;
@@ -1507,13 +1369,13 @@
 		cursor: pointer;
 	}
 
-	.variant-grid {
+	:global(.variant-grid) {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
 		gap: 10px 12px;
 	}
 
-	.variant-grid label {
+	:global(.variant-grid label) {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
@@ -1521,7 +1383,7 @@
 		color: var(--color-text-muted, #6b7280);
 	}
 
-	.variant-grid select {
+	:global(.variant-grid select) {
 		background: var(--color-surface);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
@@ -1531,7 +1393,7 @@
 		font-family: inherit;
 	}
 
-	.variant-error {
+	:global(.variant-error) {
 		margin: 10px 0 0 0;
 		color: var(--color-rel-rival, #ef4444);
 		font-size: 12px;
@@ -1620,7 +1482,7 @@
 		font-size: 14px;
 	}
 
-	.btn-primary {
+	:global(.btn-primary) {
 		background: var(--color-accent);
 		color: #000;
 		border: none;
@@ -1629,9 +1491,9 @@
 		font-size: 14px;
 		cursor: pointer;
 	}
-	.btn-primary:hover { filter: brightness(1.1); }
+	:global(.btn-primary:hover) { filter: brightness(1.1); }
 
-	.btn-secondary {
+	:global(.btn-secondary) {
 		background: transparent;
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
@@ -1660,7 +1522,7 @@
 	}
 
 	/* Modal */
-	.modal-overlay {
+	:global(.modal-overlay) {
 		position: fixed;
 		inset: 0;
 		z-index: 2000;
@@ -1670,7 +1532,7 @@
 		justify-content: center;
 	}
 
-	.modal-content {
+	:global(.modal-content) {
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
@@ -1681,11 +1543,11 @@
 		gap: 12px;
 	}
 
-	.modal-content h3 {
+	:global(.modal-content h3) {
 		margin: 0;
 	}
 
-	.modal-content label {
+	:global(.modal-content label) {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
@@ -1693,7 +1555,7 @@
 		color: var(--color-text-muted);
 	}
 
-	.modal-content select {
+	:global(.modal-content select) {
 		background: var(--color-surface);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
@@ -1702,16 +1564,16 @@
 		font-size: 14px;
 	}
 
-	.region-loc-row,
-	.region-new-loc-row {
+	:global(.region-loc-row),
+	:global(.region-new-loc-row) {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 	}
-	.region-loc-row select {
+	:global(.region-loc-row select) {
 		flex: 1;
 	}
-	.region-new-loc-input {
+	:global(.region-new-loc-input) {
 		flex: 1;
 		background: var(--color-surface);
 		color: var(--color-text);
@@ -1722,7 +1584,7 @@
 		font-family: inherit;
 		outline: none;
 	}
-	.region-new-loc-row button {
+	:global(.region-new-loc-row button) {
 		background: transparent;
 		border: 1px solid var(--color-border);
 		color: var(--color-text);
@@ -1732,43 +1594,43 @@
 		font-family: inherit;
 		cursor: pointer;
 	}
-	.region-new-loc-row button:hover:not(:disabled) {
+	:global(.region-new-loc-row button:hover:not(:disabled)) {
 		border-color: var(--color-accent);
 		color: var(--color-accent);
 	}
-	.region-new-loc-row button:disabled {
+	:global(.region-new-loc-row button:disabled) {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
-	.region-new-loc-error {
+	:global(.region-new-loc-error) {
 		font-size: 11px;
 		color: var(--color-rel-rival, #ef4444);
 	}
 
-	.color-palette {
+	:global(.color-palette) {
 		display: flex;
 		gap: 6px;
 		flex-wrap: wrap;
 	}
 
-	.color-swatch {
+	:global(.color-swatch) {
 		width: 28px;
 		height: 28px;
 		border-radius: 50%;
 		border: 2px solid transparent;
 		cursor: pointer;
 	}
-	.color-swatch.active {
+	:global(.color-swatch.active) {
 		border-color: var(--color-text);
 	}
 
-	.modal-actions {
+	:global(.modal-actions) {
 		display: flex;
 		gap: 8px;
 		justify-content: flex-end;
 		margin-top: 4px;
 	}
-.scene-tree {
+	:global(.scene-tree) {
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
@@ -1776,13 +1638,13 @@
 		overflow-y: auto;
 	}
 
-	.act-group {
+	:global(.act-group) {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
 	}
 
-	.act-label {
+	:global(.act-label) {
 		font-weight: 600;
 		font-size: 12px;
 		color: var(--color-text);
@@ -1791,7 +1653,7 @@
 		margin-top: 4px;
 	}
 
-	.scene-check {
+	:global(.scene-check) {
 		display: flex;
 		align-items: center;
 		gap: 6px;
