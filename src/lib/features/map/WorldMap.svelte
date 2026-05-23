@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { browser } from '$app/environment';
 	import { worldMapStore, worldMaps, mapRegions } from '$lib/features/map/store.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/os/scope-store.js';
@@ -10,7 +9,6 @@
 	import { windowStore } from '$lib/os/windows-store.js';
 	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
 	import { resolveActiveVariant } from '$lib/features/map/variants.js';
-	import { buildRegionPopup, escapeHtml } from '$lib/features/map/region-popup.js';
 	import {
 		coalesceToRanges,
 		scenesInInterval as scenesInIntervalPure
@@ -20,21 +18,25 @@
 	import RegionFormModal from '$lib/features/map/RegionFormModal.svelte';
 	import MapBreadcrumb from '$lib/features/map/MapBreadcrumb.svelte';
 	import MapToolbar from '$lib/features/map/MapToolbar.svelte';
+	import MapStage from '$lib/features/map/MapStage.svelte';
+	import RegionLayer from '$lib/features/map/RegionLayer.svelte';
+	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
+	import type { PopupCallbacks } from '$lib/features/map/leaflet-controller.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
-	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
-	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 
 	type LeafletNS = typeof import('leaflet');
 
 	let { entityId = $bindable<string | undefined>(undefined) }: { entityId?: string } = $props();
 
-	let mapContainer: HTMLDivElement = $state(null!);
+	// MapStage owns the canvas + Leaflet lifecycle and exposes these via
+	// $bindable. Sibling RegionLayer / PlacementLayer render onto the
+	// live handles once they're non-null.
 	let leafletMap: any = $state(null);
-	let imageOverlay: any = null;
-	let regionLayers: any[] = [];
-	let placementMarkers: any[] = [];
+	let L: LeafletNS | null = $state(null);
+	let drawnItems: any = $state(null);
+	let mapReady = $state(false);
 	// Step 4 — armed placeable id (chip selected in PlaceablesPalette). When
 	// non-null, the next click on the Leaflet canvas creates a placement at the
 	// clicked fractional coords for this entity.
@@ -46,10 +48,6 @@
 		if (!activeMap?.locationId || !hasImage) armedPlaceableId = null;
 	});
 	let placementError = $state('');
-	let drawnItems: any = null;
-	let drawControl: any = null;
-	let zoomControl: any = null;
-	let L: LeafletNS = $state(null as any);
 
 	// UI state
 	let activeMapId = $state<string | null>(null);
@@ -61,7 +59,6 @@
 	let uploadError = $state<string | null>(null);
 	let editingRegionId: string | null = $state(null);
 	let editingOriginalLocationId: string | null = $state(null);
-	let mapReady = $state(false);
 	let renamingMapName = $state<string | null>(null);
 	let deleteConfirm = $state<{ id: string; name: string; regionCount: number } | null>(null);
 	let deleting = $state(false);
@@ -142,8 +139,12 @@
 			}
 			regionFormSceneIds = sceneIds;
 		});
-	let accentColor = '#e8a838';
-	let borderColor = '#555';
+	// $state so MapStage's resolveCssColors callback propagates the resolved
+	// values into the RegionLayer prop on the next render. Original was a
+	// plain `let` because the closure was inside the same component; across
+	// component boundaries we need reactive tracking.
+	let accentColor = $state('#e8a838');
+	let borderColor = $state('#555');
 
 	function resolveCssColors() {
 		const root = document.documentElement;
@@ -152,139 +153,46 @@
 		borderColor = style.getPropertyValue('--color-border').trim() || '#555';
 	}
 
-	// ── Map lifecycle ──────────────────────────────────────────────────────
+	// ── Store loads ───────────────────────────────────────────────────────
 
 	onMount(() => {
 		worldMapStore.loadMaps();
 		intervalsStore.load();
 		relationships.load();
-
-		(async () => {
-			// Dynamic-import Leaflet (browser-only)
-			const leaflet = await import('leaflet');
-			await import('leaflet/dist/leaflet.css');
-			await import('leaflet-draw');
-			await import('leaflet-draw/dist/leaflet.draw.css');
-			L = leaflet.default;
-			drawnItems = new L.FeatureGroup();
-			mapReady = true;
-			resolveCssColors();
-		})();
-
-		return () => {
-			if (leafletMap) {
-				leafletMap.remove();
-				leafletMap = null;
-			}
-		};
 	});
 
-	function initMap() {
-		if (!L || !mapContainer) return;
-		if (leafletMap) leafletMap.remove();
+	// ── Stage callbacks ──────────────────────────────────────────────────
+	//
+	// MapStage owns leafletMap + L lifecycle and emits two events back:
+	// onPolygonCreated when leaflet-draw finishes a polygon, and
+	// onCanvasClick when a non-interactive click lands while a placeable
+	// chip is armed. The popup-button delegate (edit / delete / drill /
+	// open-entity / delete-placement) wiring lives in MapStage too; the
+	// orchestrator just supplies the callback bag.
 
-		leafletMap = L.map(mapContainer, {
-			crs: L.CRS.Simple,
-			minZoom: -2,
-			maxZoom: 4,
-			zoomControl: false,
-			attributionControl: false
-		});
-
-		leafletMap.addLayer(drawnItems);
-
-		leafletMap.on(L.Draw.Event.CREATED, (e: any) => {
-			const layer = e.layer;
-			const latLngs = layer.getLatLngs()[0].map((ll: any) => [ll.lat, ll.lng]);
-			pendingPolygon = latLngs;
-			showRegionForm = true;
-		});
-
-		leafletMap.on('popupopen', (e: any) => {
-			const popupEl = e.popup.getElement();
-			if (!popupEl) return;
-			const editBtn = popupEl.querySelector('[data-action="edit"]');
-			const deleteBtn = popupEl.querySelector('[data-action="delete"]');
-			const drillBtn = popupEl.querySelector('[data-action="drill"]');
-			const nameEl = popupEl.querySelector('.region-popup-name');
-			if (editBtn) {
-				editBtn.addEventListener('click', () => {
-					startEditRegion((editBtn as HTMLElement).dataset.regionId!);
-					leafletMap.closePopup();
-				});
-			}
-			if (deleteBtn) {
-				deleteBtn.addEventListener('click', () => {
-					handleDeleteRegion((deleteBtn as HTMLElement).dataset.regionId!);
-					leafletMap.closePopup();
-				});
-			}
-			if (drillBtn) {
-				drillBtn.addEventListener('click', () => {
-					const childId = (drillBtn as HTMLElement).dataset.locationId;
-					if (!childId) return;
-					leafletMap.closePopup();
-					if (!drillIntoLocation(childId)) {
-						const child = $entities.find((x) => x.id === childId);
-						if (child) {
-							createMapOffer = { childId: child.id, childName: child.name };
-						}
-					}
-				});
-			}
-			if (nameEl) {
-				nameEl.addEventListener('click', () => {
-					const locId = (nameEl as HTMLElement).dataset.locationId;
-					if (locId) windowStore.open('entity-detail', locId);
-					leafletMap.closePopup();
-				});
-			}
-
-			// Step 4 — placement popup buttons.
-			const openEntityBtn = popupEl.querySelector('[data-action="open-entity"]');
-			const deletePlacementBtn = popupEl.querySelector('[data-action="delete-placement"]');
-			if (openEntityBtn) {
-				openEntityBtn.addEventListener('click', () => {
-					const id = (openEntityBtn as HTMLElement).dataset.entityId;
-					if (id) windowStore.open('entity-detail', id);
-					leafletMap.closePopup();
-				});
-			}
-			if (deletePlacementBtn) {
-				deletePlacementBtn.addEventListener('click', () => {
-					const id = (deletePlacementBtn as HTMLElement).dataset.placementId;
-					if (id) void deletePlacement(id);
-					leafletMap.closePopup();
-				});
-			}
-		});
-
-		// Step 4 — placement-creation click. When a chip is armed in the
-		// PlaceablesPalette, the next map click drops a placement at the
-		// clicked location. We translate Leaflet (lat=y, lng=x) into fractional
-		// coords against the source-image dimensions so re-export at a new
-		// resolution (B11) leaves the placement at the same relative point.
-		leafletMap.on('click', (e: any) => {
-			if (!armedPlaceableId) return;
-			if (!activeMap?.width || !activeMap?.height) return;
-			// Skip clicks that landed on an existing interactive layer (region
-			// polygon, placement marker, popup): those have their own UX and
-			// shouldn't also drop a new placement underneath.
-			const target = e.originalEvent?.target as HTMLElement | undefined;
-			if (target?.closest?.('.leaflet-interactive, .leaflet-popup, .leaflet-marker-icon')) return;
-			const fx = e.latlng.lng / activeMap.width;
-			const fy = e.latlng.lat / activeMap.height;
-			if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
-			// Disarm synchronously before the await so a quick second click can't
-			// fire createPlacementAt twice while the POST is in flight.
-			const placeableId = armedPlaceableId;
-			armedPlaceableId = null;
-			void createPlacementAt(placeableId, fx, fy);
-		});
-
-		// Set initial view
-		leafletMap.setView([0, 0], 1);
+	function handlePolygonCreated(latLngs: number[][]) {
+		pendingPolygon = latLngs;
+		showRegionForm = true;
 	}
+
+	function handleCanvasClick(fx: number, fy: number) {
+		// Disarm synchronously before the await so a quick second click can't
+		// fire createPlacementAt twice while the POST is in flight.
+		if (!armedPlaceableId) return;
+		const placeableId = armedPlaceableId;
+		armedPlaceableId = null;
+		void createPlacementAt(placeableId, fx, fy);
+	}
+
+	const popupCallbacks: PopupCallbacks = {
+		onEditRegion: (regionId) => startEditRegion(regionId),
+		onDeleteRegion: (regionId) => void handleDeleteRegion(regionId),
+		onDrillIntoLocation: (locId) => drillIntoLocation(locId),
+		onCreateMapOffer: (offer) => (createMapOffer = offer),
+		onOpenEntity: (id) => windowStore.open('entity-detail', id),
+		onDeletePlacement: (id) => void deletePlacement(id),
+		getChildEntityName: (id) => $entities.find((x) => x.id === id)?.name ?? null
+	};
 
 	async function createPlacementAt(placeableId: string, x: number, y: number) {
 		placementError = '';
@@ -309,128 +217,12 @@
 		}
 	}
 
-	$effect(() => {
-		// Initialize map once Leaflet is loaded and DOM is ready
-		if (mapReady && mapContainer && !leafletMap) {
-			initMap();
-		}
-	});
-
-	$effect(() => {
-		// Draw tools only make sense once an image has been imported, so
-		// gate them on hasImage. The map-canvas mounts before any image is
-		// present (to keep Leaflet initialized across the upload prompt),
-		// so we attach/detach the control instead of conditionally rendering.
-		if (!leafletMap || !L) return;
-		if (hasImage && !drawControl) {
-			zoomControl = L.control.zoom();
-			leafletMap.addControl(zoomControl);
-			drawControl = new L.Control.Draw({
-				draw: {
-					polygon: {
-						allowIntersection: false,
-						shapeOptions: { color: accentColor, weight: 2 }
-					},
-					polyline: false,
-					circle: false,
-					rectangle: false,
-					marker: false,
-					circlemarker: false
-				},
-				// leaflet-draw's runtime accepts `false` here to disable the edit
-				// toolbar entirely, but @types/leaflet-draw only allows EditOptions.
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				edit: false as any
-			});
-			leafletMap.addControl(drawControl);
-		} else if (!hasImage && drawControl) {
-			leafletMap.removeControl(drawControl);
-			drawControl = null;
-			if (zoomControl) {
-				leafletMap.removeControl(zoomControl);
-				zoomControl = null;
-			}
-		}
-	});
-
-	// ── Render bitmap overlay ──────────────────────────────────────────────
-
-	$effect(() => {
-		if (!leafletMap) return;
-		const map = activeMap;
-		if (!map) return;
-
-		// Remove old overlay
-		if (imageOverlay) {
-			leafletMap.removeLayer(imageOverlay);
-			imageOverlay = null;
-		}
-
-		if (map.baseImageUrl && map.width && map.height) {
-			const bounds = L.latLngBounds([[0, 0], [map.height, map.width]]);
-			imageOverlay = L.imageOverlay(map.baseImageUrl, bounds).addTo(leafletMap);
-			// When this effect fires from the {#if !hasImage}→{:else} branch
-			// swap (first upload), the map-canvas div was just mounted and
-			// Leaflet measured the container at 0×0. Force a re-measure so
-			// fitBounds has real pixel dimensions to work with.
-			leafletMap.invalidateSize();
-			leafletMap.fitBounds(bounds, { padding: [20, 20] });
-		}
-	});
-
-	// ── Render regions with scope glow/dim ─────────────────────────────────
-
-	$effect(() => {
-		if (!leafletMap) return;
-		const regions = $mapRegions;
-		const checkScope = $isInScope;
-
-		// Remove old layers
-		for (const layer of regionLayers) {
-			leafletMap!.removeLayer(layer);
-		}
-		regionLayers = [];
-
-		for (const region of regions) {
-			const inScope = region.locationId ? checkScope(region.locationId) : false;
-			const isActive = inScope;
-
-			const latLngs = region.polygon.map(([lat, lng]) => L.latLng(lat, lng));
-
-			const layer = L.polygon(latLngs, {
-				color: isActive ? accentColor : (region.color || borderColor),
-				weight: isActive ? 2 : 1,
-				fillColor: isActive ? accentColor : (region.color || borderColor),
-				fillOpacity: isActive ? 0.13 : 0.08,
-				opacity: isActive ? 1 : 0.3,
-				className: isActive ? 'region-active' : 'region-inactive'
-			}).addTo(leafletMap!);
-
-			// Tooltip and popup with location info
-			const loc = region.locationId
-				? $entities.find((e) => e.id === region.locationId)
-				: null;
-			if (loc) layer.bindTooltip(loc.name, { sticky: true });
-			layer.bindPopup(
-				buildRegionPopup(region, loc?.name ?? null, {
-					activeMapLocationId: activeMap?.locationId,
-					entities: $entities,
-					worldMaps: $worldMaps,
-					playhead: $playhead
-				}),
-				{ closeButton: false, minWidth: 140 }
-			);
-
-			regionLayers.push(layer);
-		}
-	});
-
-	// ── Load + render placements (Step 4) ─────────────────────────────────
+	// ── Load placements ───────────────────────────────────────────────────
 	//
 	// Load placements scoped to the active map's anchor Location. Per M3, the
 	// projection is keyed on location_id so a variant swap doesn't drop the
-	// placements. Loads on map change; per-tick rendering filters in-memory by
-	// playhead via placementsAtPlayhead (no DB roundtrip on tick).
+	// placements. Loads on map change; per-tick rendering filters in-memory
+	// via PlacementLayer (no DB roundtrip on tick).
 	$effect(() => {
 		const locId = activeMap?.locationId;
 		if (!locId) {
@@ -441,56 +233,6 @@
 			return;
 		}
 		void placementsStore.load({ locationId: locId });
-	});
-
-	$effect(() => {
-		if (!leafletMap || !L) return;
-		const map = activeMap;
-		const playheadValue = $playhead;
-		const all = $placementsStore;
-
-		for (const m of placementMarkers) {
-			leafletMap.removeLayer(m);
-		}
-		placementMarkers = [];
-
-		if (!map?.width || !map?.height) return;
-
-		// Null playhead = pre-scrub state. Show only default (both-null-bounds)
-		// placements; t=0 would otherwise leak any time-scoped placement whose
-		// range happens to cover position 0.
-		const active =
-			playheadValue === null
-				? all.filter((p) => p.startPosition === null && p.endPosition === null)
-				: placementsAtPlayhead(all, playheadValue);
-		for (const placement of active) {
-			const placeable = $entities.find((e) => e.id === placement.placeableId);
-			if (!placeable) continue;
-			const lat = placement.y * map.height;
-			const lng = placement.x * map.width;
-			const color = getEntityTypeColor(placeable.type);
-			const html = `<span class="placement-pin" style="background:${color}"></span>`;
-			const icon = L.divIcon({
-				className: 'placement-marker',
-				html,
-				iconSize: [16, 16],
-				iconAnchor: [8, 8]
-			});
-			const marker = L.marker([lat, lng], { icon }).addTo(leafletMap);
-			const safeName = escapeHtml(placeable.name);
-			const safeType = escapeHtml(placeable.type);
-			marker.bindTooltip(`${safeName} (${safeType})`, { direction: 'top' });
-			const popupHtml = `
-				<div class="placement-popup">
-					<div class="placement-popup-name">${safeName}</div>
-					<div class="placement-popup-type">${safeType}</div>
-					<button data-action="open-entity" data-entity-id="${placeable.id}" type="button">Open ${safeType}</button>
-					<button data-action="delete-placement" data-placement-id="${placement.id}" type="button" class="danger">Delete placement</button>
-				</div>
-			`;
-			marker.bindPopup(popupHtml, { closeButton: false, minWidth: 160 });
-			placementMarkers.push(marker);
-		}
 	});
 
 	// ── Auto-select map ────────────────────────────────────────────────────
@@ -1047,11 +789,42 @@
 				<button type="button" onclick={() => (toolbarNewLocationError = '')}>✕</button>
 			</div>
 		{/if}
-		<div
-			class="map-canvas"
-			class:armed={armedPlaceableId !== null}
-			bind:this={mapContainer}
-		></div>
+		<MapStage
+			{activeMap}
+			{hasImage}
+			{armedPlaceableId}
+			{accentColor}
+			{popupCallbacks}
+			onPolygonCreated={handlePolygonCreated}
+			onCanvasClick={handleCanvasClick}
+			{resolveCssColors}
+			bind:leafletMap
+			bind:L
+			bind:drawnItems
+			bind:mapReady
+		/>
+		{#if leafletMap && L}
+			<RegionLayer
+				{leafletMap}
+				{L}
+				regions={$mapRegions}
+				entities={$entities}
+				worldMaps={$worldMaps}
+				{activeMap}
+				playhead={$playhead}
+				isInScope={$isInScope}
+				{accentColor}
+				{borderColor}
+			/>
+			<PlacementLayer
+				{leafletMap}
+				{L}
+				{activeMap}
+				playhead={$playhead}
+				placements={$placementsStore}
+				entities={$entities}
+			/>
+		{/if}
 		{#if hasImage && activeMap?.locationId}
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
@@ -1320,7 +1093,10 @@
 		border-bottom: 1px solid var(--color-accent);
 	}
 
-	.map-canvas {
+	/* .map-canvas lives inside MapStage (which owns the bind:this on the
+	   Leaflet container div). The wrapper still relies on flex children
+	   filling remaining space; MapStage's element matches via :global. */
+	:global(.map-canvas) {
 		flex: 1;
 		width: 100%;
 		min-height: 0;
@@ -1640,7 +1416,7 @@
 
 	/* Step 4 — placement marker + popup styles. Scoped :global because the
 	   markup is owned by Leaflet (divIcon HTML / bindPopup HTML). */
-	.map-canvas.armed { cursor: crosshair; }
+	:global(.map-canvas.armed) { cursor: crosshair; }
 	:global(.placement-marker) { background: transparent; border: none; }
 	:global(.placement-pin) {
 		display: block;

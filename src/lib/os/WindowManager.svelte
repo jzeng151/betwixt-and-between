@@ -6,7 +6,7 @@
   import CharacterEditor from '$lib/features/character/CharacterEditor.svelte';
   import Wiki from '$lib/components/apps/Wiki.svelte';
   import Timeline from '$lib/features/timeline/Timeline.svelte';
-  import WorldMap from '$lib/components/apps/WorldMap.svelte';
+  import WorldMap from '$lib/features/map/WorldMap.svelte';
   import StoryGraph from '$lib/features/graph/StoryGraph.svelte';
   import FocusedGraph from '$lib/features/graph/FocusedGraph.svelte';
   import Settings from '$lib/components/apps/Settings.svelte';
