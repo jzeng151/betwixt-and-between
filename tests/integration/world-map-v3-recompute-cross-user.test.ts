@@ -130,4 +130,70 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		expect(userBActs.find((a) => a.id === actsB.act1)?.position).toBe(1);
 		expect(userBActs.find((a) => a.id === actsB.act2)?.position).toBe(2);
 	});
+
+	it('swapping two acts with anchors at identical fractional offsets does not violate the unique index', async () => {
+		// Regression for the P1 Codex flagged on PR #52 (commit 23077b60):
+		// per-row UPDATE map_anchors during a reorder violates the
+		// (world_map_id, t_position) UNIQUE index when two anchors swap slots.
+		// Two anchors at t=1.5 (Act 1) and t=2.5 (Act 2) after a 1↔2 swap are
+		// each destined for the other's current value; a row-by-row UPDATE to
+		// the final value trips the unique index on the first write. The fix
+		// is a two-phase write — park then place. This test fails against the
+		// pre-fix code and passes against the fix.
+		const user = await seedTestUser(db, { email: 'swap@test.com' });
+		const acts = await seedActs(db, user.id);
+		const [map] = await db
+			.insert(worldMaps)
+			.values({ userId: user.id, name: 'Swap Map' })
+			.returning();
+		const [anchorAct1] = await db
+			.insert(mapAnchors)
+			.values({
+				worldMapId: map.id,
+				tPosition: 1.5,
+				stateJsonb: { regions: [], artifacts: [], chains: [], tag: 'act1' }
+			})
+			.returning();
+		const [anchorAct2] = await db
+			.insert(mapAnchors)
+			.values({
+				worldMapId: map.id,
+				tPosition: 2.5,
+				stateJsonb: { regions: [], artifacts: [], chains: [], tag: 'act2' }
+			})
+			.returning();
+
+		// Swap act1 (was at 1) with act2 (was at 2).
+		const preSnapshot = await snapshotActOrdering(db, user.id);
+		await db
+			.update(entities)
+			.set({ position: 1 })
+			.where(and(eq(entities.id, acts.act2), eq(entities.userId, user.id)));
+		await db
+			.update(entities)
+			.set({ position: 2 })
+			.where(and(eq(entities.id, acts.act1), eq(entities.userId, user.id)));
+
+		// Pre-fix this throws "duplicate key value violates unique constraint
+		// map_anchors_world_map_id_t_position_uniq" and the entire cascade
+		// rolls back. Post-fix it completes cleanly.
+		await expect(recomputeAllIntervals(db, user.id, preSnapshot)).resolves.not.toThrow();
+
+		// Verify both anchors landed at their swapped final positions.
+		// anchorAct1: oldIdx=1 → act1 → newIdx=2 → t=2.5
+		// anchorAct2: oldIdx=2 → act2 → newIdx=1 → t=1.5
+		const [a1After] = await db
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.id, anchorAct1.id));
+		const [a2After] = await db
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.id, anchorAct2.id));
+		expect(a1After.tPosition).toBeCloseTo(2.5, 9);
+		expect(a2After.tPosition).toBeCloseTo(1.5, 9);
+		// And the unique index is intact (no row got parked at ANCHOR_PARK_OFFSET).
+		const allAfter = await db.select().from(mapAnchors).where(eq(mapAnchors.worldMapId, map.id));
+		expect(allAfter.every((r) => Math.abs(r.tPosition) < 1e10)).toBe(true);
+	});
 });

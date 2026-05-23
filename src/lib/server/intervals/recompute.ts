@@ -610,6 +610,12 @@ async function loadUserMapIds(db: Db, userId: string): Promise<string[]> {
 	return maps.map((m) => m.id);
 }
 
+// Large constant that pushes parked rows outside any plausible authored
+// t_position range during phase 1 of the two-phase write below. Postgres
+// float8 handles this trivially; '-Infinity' rows are skipped by
+// reprojectTPosition so the offset never collides with the sentinel.
+const ANCHOR_PARK_OFFSET = 1e15;
+
 async function recomputeMapAnchors(
 	db: Db,
 	userId: string,
@@ -622,18 +628,49 @@ async function recomputeMapAnchors(
 		.select({ id: mapAnchors.id, tPosition: mapAnchors.tPosition })
 		.from(mapAnchors)
 		.where(inArray(mapAnchors.worldMapId, userMapIds));
-	let updated = 0;
+
+	// Compute every reprojection first; collect only rows that actually change.
+	const updates: { id: string; newT: number }[] = [];
 	for (const row of rows) {
 		const next = reprojectTPosition(row.tPosition, preSnapshot, cache);
 		if (next === null) continue;
 		if (Math.abs(next - row.tPosition) <= POSITION_EPSILON) continue;
+		updates.push({ id: row.id, newT: next });
+	}
+	if (updates.length === 0) return 0;
+
+	// Two-phase write to avoid violating the (world_map_id, t_position) UNIQUE
+	// index on intermediate row states. Per-row UPDATE to final values fails
+	// when two anchors swap slots (e.g., anchor at t=1.5 in Act 1 and anchor
+	// at t=2.5 in Act 2 after a 1↔2 reorder — each is destined for the other's
+	// current value, and the first UPDATE collides on the unique index).
+	//
+	// Phase 1: park every to-be-updated row at t_position + ANCHOR_PARK_OFFSET.
+	// Adding a constant preserves all pairwise distinctnesses, so the unique
+	// index never trips. Per-row write is safe.
+	//
+	// Phase 2: write each row's final value. The normal t_position range is
+	// now empty of to-be-updated rows (they're all parked), and the
+	// reprojection is invertible (distinct old t_positions map to distinct
+	// new t_positions because Acts have distinct indices both before and
+	// after the reorder), so no two final values collide either. Per-row
+	// write is safe.
+	//
+	// Codex (chatgpt-codex-connector) flagged this as a P1 on PR #52
+	// (commit 23077b60). Pre-fix code was per-row UPDATE to final value.
+	for (const u of updates) {
 		await db
 			.update(mapAnchors)
-			.set({ tPosition: next })
-			.where(and(eq(mapAnchors.id, row.id), inArray(mapAnchors.worldMapId, userMapIds)));
-		updated++;
+			.set({ tPosition: sql`${mapAnchors.tPosition} + ${ANCHOR_PARK_OFFSET}` })
+			.where(and(eq(mapAnchors.id, u.id), inArray(mapAnchors.worldMapId, userMapIds)));
 	}
-	return updated;
+	for (const u of updates) {
+		await db
+			.update(mapAnchors)
+			.set({ tPosition: u.newT })
+			.where(and(eq(mapAnchors.id, u.id), inArray(mapAnchors.worldMapId, userMapIds)));
+	}
+	return updates.length;
 }
 
 async function recomputeMapEvents(
