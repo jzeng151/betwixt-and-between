@@ -18,6 +18,8 @@
 	import CreateMapOfferModal from '$lib/features/map/CreateMapOfferModal.svelte';
 	import VariantFormModal from '$lib/features/map/VariantFormModal.svelte';
 	import RegionFormModal from '$lib/features/map/RegionFormModal.svelte';
+	import MapBreadcrumb from '$lib/features/map/MapBreadcrumb.svelte';
+	import MapToolbar from '$lib/features/map/MapToolbar.svelte';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
@@ -1007,129 +1009,38 @@
 		class:has-breadcrumb={breadcrumbAncestors.length > 0 && activeMap}
 	>
 		{#if breadcrumbAncestors.length > 0 && activeMap}
-			<nav class="map-breadcrumb" aria-label="Location hierarchy">
-				{#each breadcrumbAncestors as ancestor (ancestor.id)}
-					<button
-						type="button"
-						class="breadcrumb-link"
-						onclick={() => navigateBreadcrumb(ancestor.id)}
-					>
-						{ancestor.name}
-					</button>
-					<span class="breadcrumb-sep" aria-hidden="true">›</span>
-				{/each}
-				<span class="breadcrumb-current">
-					{$entities.find((e) => e.id === activeMap.locationId)?.name ?? '(current)'}
-				</span>
-			</nav>
+			<MapBreadcrumb
+				ancestors={breadcrumbAncestors}
+				currentName={$entities.find((e) => e.id === activeMap.locationId)?.name ?? '(current)'}
+				onNavigate={navigateBreadcrumb}
+			/>
 		{/if}
-		<div class="map-toolbar">
-			<select
-				class="map-switcher"
-				value={activeMapId}
-				onchange={(e) => switchMap((e.target as HTMLSelectElement).value)}
-			>
-				{#each $worldMaps as m}
-					<option value={m.id}>{m.name}</option>
-				{/each}
-			</select>
-			{#if renamingMapName !== null}
-				<!-- svelte-ignore a11y_autofocus -->
-				<input
-					class="map-name-input"
-					type="text"
-					bind:value={renamingMapName}
-					autofocus
-					onblur={commitRename}
-					onkeydown={(e) => {
-						if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-						if (e.key === 'Escape') cancelRename();
-					}}
-				/>
-			{:else}
-				<button
-					class="btn-icon"
-					onclick={startRename}
-					title="Rename map"
-					aria-label="Rename map"
-					disabled={!activeMap}
-				>
-					<svg width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden="true">
-						<path d="M7.5 1.5 l2 2 -6 6 -2.5 0.5 0.5-2.5 6-6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" fill="none"/>
-					</svg>
-				</button>
-			{/if}
-			<button class="btn-icon" onclick={handleCreateMap} title="New map">+</button>
-			<button
-				class="btn-icon btn-danger"
-				onclick={openDeleteConfirm}
-				title="Delete map"
-				disabled={!activeMap}>×</button
-			>
-			{#if hasImage}
-				<label class="btn-icon" title="Replace image">
-					📁
-					<input type="file" accept=".jpg,.jpeg,.png,.webp" onchange={handleImageUpload} hidden />
-				</label>
-			{/if}
-			{#if activeMap}
-				{#if creatingToolbarLocation}
-					<!-- svelte-ignore a11y_autofocus -->
-					<input
-						class="map-location-new-input"
-						type="text"
-						placeholder="Name of new location…"
-						aria-label="Name of new location"
-						bind:value={toolbarNewLocationName}
-						autofocus
-						disabled={toolbarNewLocationBusy}
-						onblur={commitCreateToolbarLocation}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-							if (e.key === 'Escape') cancelCreateToolbarLocation();
-						}}
-					/>
-				{:else}
-					<select
-						class="map-location-picker"
-						title="Linked location — what this map depicts"
-						aria-label="Linked location"
-						value={activeMap.locationId ?? ''}
-						onchange={(e) => changeLinkedLocation((e.target as HTMLSelectElement).value)}
-					>
-						<option value="">(no linked location)</option>
-						{#each locations as loc}
-							<option value={loc.id}>{loc.name}</option>
-						{/each}
-					</select>
-					<button
-						class="btn-icon"
-						onclick={startCreateToolbarLocation}
-						title="Create a new Location and link it to this map"
-						aria-label="New location"
-					>+</button>
-				{/if}
-				{#if activeMap.locationId}
-					<button
-						class="map-variant-chip"
-						onclick={openVariantForm}
-						title="Edit variant scene range"
-						aria-label="Edit variant scene range"
-					>
-						{variantLabel(activeMap)}
-					</button>
-				{/if}
-				<button
-					class="btn-icon"
-					onclick={handleDuplicate}
-					disabled={duplicating}
-					title="Duplicate this map (clones regions; clears variant range)"
-					aria-label="Duplicate map"
-				>
-					⧉
-				</button>
-			{/if}
-		</div>
+		<MapToolbar
+			worldMaps={$worldMaps}
+			{activeMap}
+			{activeMapId}
+			{hasImage}
+			{locations}
+			{duplicating}
+			bind:renamingMapName
+			bind:creatingToolbarLocation
+			bind:toolbarNewLocationName
+			{toolbarNewLocationBusy}
+			{variantLabel}
+			onSwitchMap={switchMap}
+			onCreateMap={handleCreateMap}
+			onOpenDeleteConfirm={openDeleteConfirm}
+			onImageUpload={handleImageUpload}
+			onChangeLinkedLocation={changeLinkedLocation}
+			onStartRename={startRename}
+			onCommitRename={commitRename}
+			onCancelRename={cancelRename}
+			onStartCreateToolbarLocation={startCreateToolbarLocation}
+			onCommitCreateToolbarLocation={commitCreateToolbarLocation}
+			onCancelCreateToolbarLocation={cancelCreateToolbarLocation}
+			onOpenVariantForm={openVariantForm}
+			onDuplicate={handleDuplicate}
+		/>
 		{#if toolbarNewLocationError}
 			<div class="placement-error" role="alert">
 				Couldn't create location: {toolbarNewLocationError}
@@ -1246,7 +1157,7 @@
 		flex-direction: column;
 	}
 
-	.map-toolbar {
+	:global(.map-toolbar) {
 		position: absolute;
 		top: 8px;
 		left: 60px;
@@ -1263,14 +1174,14 @@
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 	}
 
-	.map-wrapper.has-breadcrumb .map-toolbar {
+	.map-wrapper.has-breadcrumb :global(.map-toolbar) {
 		/* Breadcrumb bar sits in normal flow above the canvas; nudge the
 		   absolutely-positioned toolbar below it so the two don't overlap. */
 		top: 36px;
 	}
 
-	.map-switcher,
-	.map-location-picker {
+	:global(.map-switcher),
+	:global(.map-location-picker) {
 		background: var(--color-surface);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
@@ -1279,12 +1190,12 @@
 		font-size: 13px;
 	}
 
-	.map-location-picker {
+	:global(.map-location-picker) {
 		margin-left: auto;
 		max-width: 180px;
 	}
 
-	.map-location-new-input {
+	:global(.map-location-new-input) {
 		margin-left: auto;
 		background: var(--color-surface);
 		color: var(--color-text);
@@ -1297,7 +1208,7 @@
 		max-width: 200px;
 	}
 
-	.map-breadcrumb {
+	:global(.map-breadcrumb) {
 		display: flex;
 		align-items: center;
 		flex-wrap: wrap;
@@ -1309,7 +1220,7 @@
 		color: var(--color-text-muted, #6b7280);
 	}
 
-	.breadcrumb-link {
+	:global(.breadcrumb-link) {
 		background: none;
 		border: none;
 		color: var(--color-text-muted, #6b7280);
@@ -1319,22 +1230,22 @@
 		cursor: pointer;
 	}
 
-	.breadcrumb-link:hover {
+	:global(.breadcrumb-link:hover) {
 		color: var(--color-accent);
 		text-decoration: underline;
 	}
 
-	.breadcrumb-sep {
+	:global(.breadcrumb-sep) {
 		color: var(--color-text-muted, #6b7280);
 		opacity: 0.6;
 	}
 
-	.breadcrumb-current {
+	:global(.breadcrumb-current) {
 		color: var(--color-text);
 		font-weight: 600;
 	}
 
-	.map-variant-chip {
+	:global(.map-variant-chip) {
 		background: var(--color-surface);
 		color: var(--color-text);
 		border: 1px solid var(--color-rel-loc, var(--color-border));
@@ -1349,7 +1260,7 @@
 		text-overflow: ellipsis;
 	}
 
-	.map-variant-chip:hover {
+	:global(.map-variant-chip:hover) {
 		border-color: var(--color-accent);
 		color: var(--color-accent);
 	}
@@ -1399,7 +1310,7 @@
 		font-size: 12px;
 	}
 
-	.map-name-input {
+	:global(.map-name-input) {
 		background: transparent;
 		border: none;
 		color: var(--color-text);
@@ -1415,7 +1326,7 @@
 		min-height: 0;
 	}
 
-	.btn-icon {
+	:global(.btn-icon) {
 		background: transparent;
 		border: 1px solid var(--color-border);
 		color: var(--color-text);
@@ -1429,8 +1340,8 @@
 		font-size: 14px;
 		padding: 0;
 	}
-	.btn-icon:hover { background: var(--color-border); }
-	.btn-danger:hover { background: #c0392b; color: #fff; }
+	:global(.btn-icon:hover) { background: var(--color-border); }
+	:global(.btn-danger:hover) { background: #c0392b; color: #fff; }
 
 	.empty-state {
 		display: flex;
