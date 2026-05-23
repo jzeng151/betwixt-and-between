@@ -258,6 +258,64 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		expect(survivor.tPosition).toBeCloseTo(1.5, 9);
 	});
 
+	it('reprojects anchors at dense fractional positions without IEEE-754 collapse', async () => {
+		// Regression for the P1 Codex flagged on PR #52 commit adb43e0:
+		// the original two-phase parking added a fixed +1e15 offset, but
+		// float64 ULP at that magnitude is ~0.125, so two anchors at e.g.
+		// t=1.10 and t=1.11 both rounded to the same parked value during
+		// phase 1 and tripped the unique index. Verified: in plain JS,
+		// `1e15 + 1.10 === 1e15 + 1.11` returns true. The fix is to set
+		// each parked row to ANCHOR_PARK_BASE - i (a unique small-magnitude
+		// integer) rather than add a large offset.
+		const user = await seedTestUser(db, { email: 'dense@test.com' });
+		const acts = await seedActs(db, user.id);
+		const [map] = await db
+			.insert(worldMaps)
+			.values({ userId: user.id, name: 'Dense Map' })
+			.returning();
+		// Four anchors in Act 1 at dense fractional positions. After a
+		// 1↔2 swap each one needs to reproject from 1.X to 2.X. With the
+		// pre-fix +1e15 parking, the first two would have collapsed during
+		// phase 1 and aborted the transaction.
+		const dense = [1.1, 1.11, 1.12, 1.13];
+		const denseRows = [];
+		for (const t of dense) {
+			const [row] = await db
+				.insert(mapAnchors)
+				.values({
+					worldMapId: map.id,
+					tPosition: t,
+					stateJsonb: { regions: [], artifacts: [], chains: [], tag: `t=${t}` }
+				})
+				.returning();
+			denseRows.push(row);
+		}
+
+		// Swap Act 1 ↔ Act 2.
+		const preSnapshot = await snapshotActOrdering(db, user.id);
+		await db
+			.update(entities)
+			.set({ position: 1 })
+			.where(and(eq(entities.id, acts.act2), eq(entities.userId, user.id)));
+		await db
+			.update(entities)
+			.set({ position: 2 })
+			.where(and(eq(entities.id, acts.act1), eq(entities.userId, user.id)));
+
+		await expect(recomputeAllIntervals(db, user.id, preSnapshot)).resolves.not.toThrow();
+
+		// All four anchors landed at distinct 2.X positions preserving their
+		// fractional ordering.
+		const after = await db
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id))
+			.orderBy(mapAnchors.tPosition);
+		expect(after.map((r) => Number(r.tPosition.toFixed(2)))).toEqual([2.1, 2.11, 2.12, 2.13]);
+		// And no row is left parked (all back in the positive normal range).
+		expect(after.every((r) => r.tPosition > 0)).toBe(true);
+	});
+
 	it('inserting an Act between existing Acts reprojects map_anchor t_position via POST handler', async () => {
 		// Regression for the P1 Codex flagged on PR #52 commit a9c550f
 		// (line 433): POST /api/entities calls recomputeAllIntervals

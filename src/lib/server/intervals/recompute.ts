@@ -622,11 +622,29 @@ async function loadUserMapIds(db: Db, userId: string): Promise<string[]> {
 	return maps.map((m) => m.id);
 }
 
-// Large constant that pushes parked rows outside any plausible authored
-// t_position range during phase 1 of the two-phase write below. Postgres
-// float8 handles this trivially; '-Infinity' rows are skipped by
-// reprojectTPosition so the offset never collides with the sentinel.
-const ANCHOR_PARK_OFFSET = 1e15;
+// Phase-1 parking base for the two-phase anchor write below. Each parked
+// row gets a UNIQUE value of (ANCHOR_PARK_BASE - i) where i is its index in
+// the updates[] list. Distinctness is guaranteed by construction — no
+// IEEE-754 collapse possible because these are small-magnitude integers
+// that are exactly representable in float8.
+//
+// History: the original fix shipped in commit a9c550f added a constant
+// offset (`t_position + 1e15`). Codex (chatgpt-codex-connector) correctly
+// flagged that as a P1 on commit adb43e0: float64 ULP at magnitude 1e15 is
+// ≈0.125, so two anchors at e.g. t=1.10 and t=1.11 both round to the same
+// parked value after `+ 1e15` (verified — `1e15 + 1.10 === 1e15 + 1.11`
+// in JS / float8). Phase 1 then tripped the same UNIQUE index it was meant
+// to dodge. Setting absolute per-row unique values sidesteps the entire
+// IEEE-754 spacing question — small-magnitude integer t_positions are
+// exactly representable regardless of how dense the original fractions
+// were.
+//
+// -1_000_000 is chosen to be (a) well outside any user-authored t_position
+// (those are non-negative — Acts are at integer index ≥ 0), (b) clearly
+// recognizable as "parked" if it ever shows up in DB inspection during a
+// crash, (c) small enough in magnitude that ANCHOR_PARK_BASE - i remains
+// exact for i well into the trillions.
+const ANCHOR_PARK_BASE = -1_000_000;
 
 async function recomputeMapAnchors(
 	db: Db,
@@ -670,25 +688,30 @@ async function recomputeMapAnchors(
 	// Two-phase write to avoid violating the (world_map_id, t_position) UNIQUE
 	// index on intermediate row states. Per-row UPDATE to final values fails
 	// when two anchors swap slots (e.g., anchor at t=1.5 in Act 1 and anchor
-	// at t=2.5 in Act 2 after a 1↔2 reorder — each is destined for the other's
-	// current value, and the first UPDATE collides on the unique index).
+	// at t=2.5 in Act 2 after a 1↔2 reorder — each is destined for the
+	// other's current value, and the first UPDATE collides on the unique
+	// index).
 	//
-	// Phase 1: park every to-be-updated row at t_position + ANCHOR_PARK_OFFSET.
-	// Adding a constant preserves all pairwise distinctnesses, so the unique
-	// index never trips. Per-row write is safe.
+	// Phase 1: park each to-be-updated row to its OWN unique parked value
+	// (ANCHOR_PARK_BASE - i, see the constant docstring). Distinctness is by
+	// construction so no two parked rows collide; the negative magnitude is
+	// outside any user-authored t_position so no parked row collides with a
+	// non-updated existing row either. Per-row write is safe.
 	//
-	// Phase 2: write each row's final value. The normal t_position range is
-	// now empty of to-be-updated rows (they're all parked) AND of
-	// deleted-Act rows (the pre-pass above removed them), so no two final
-	// values collide either. Per-row write is safe.
+	// Phase 2: write each row's final value. The positive t_position range
+	// is now empty of to-be-updated rows (they're all parked at negatives)
+	// AND of deleted-Act rows (the pre-pass above removed them), so no two
+	// final values collide. Per-row write is safe.
 	//
 	// Codex (chatgpt-codex-connector) flagged the underlying swap collision
 	// as a P1 on PR #52 commit 23077b60; the deleted-Act collision as a
-	// follow-on P1 on commit a9c550f.
-	for (const u of updates) {
+	// follow-on P1 on commit a9c550f; the IEEE-754 collapse of the original
+	// constant-offset parking (1e15) as a third P1 on commit adb43e0.
+	for (let i = 0; i < updates.length; i++) {
+		const u = updates[i];
 		await db
 			.update(mapAnchors)
-			.set({ tPosition: sql`${mapAnchors.tPosition} + ${ANCHOR_PARK_OFFSET}` })
+			.set({ tPosition: ANCHOR_PARK_BASE - i })
 			.where(and(eq(mapAnchors.id, u.id), inArray(mapAnchors.worldMapId, userMapIds)));
 	}
 	for (const u of updates) {
