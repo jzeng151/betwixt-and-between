@@ -20,7 +20,7 @@
 	import EntityLink from './EntityLink.svelte';
 	import { entities } from '$lib/stores/entities.js';
 	import { relationships } from '$lib/stores/relationships.js';
-	import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
+	import { worldMapStore, worldMaps } from '$lib/features/map/store.js';
 	import { windowStore } from '$lib/os/windows-store.js';
 	import { CHARACTER_COLORS } from '$lib/features/timeline/timeline-helpers.js';
 	import {

@@ -5,7 +5,7 @@
   import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
   import { windowStore, type FocusedGraphMode } from '$lib/os/windows-store.js';
-  import { worldMapStore, worldMaps } from '$lib/stores/world-map.js';
+  import { worldMapStore, worldMaps } from '$lib/features/map/store.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';

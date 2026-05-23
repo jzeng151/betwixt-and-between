@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } from '$lib/types/world-map.js';
+import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } from './types.js';
 import { errorMessage } from '$lib/util/api-error-message.js';
 
 function createWorldMapStore() {

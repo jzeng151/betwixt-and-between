@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { worldMapStore, worldMaps, mapRegions } from '$lib/stores/world-map.js';
+	import { worldMapStore, worldMaps, mapRegions } from '$lib/features/map/store.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/os/scope-store.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
@@ -9,7 +9,12 @@
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
 	import { windowStore } from '$lib/os/windows-store.js';
 	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
-	import { resolveActiveVariant } from '$lib/world-map-variants.js';
+	import { resolveActiveVariant } from '$lib/features/map/variants.js';
+	import { buildRegionPopup, escapeHtml } from '$lib/features/map/region-popup.js';
+	import {
+		coalesceToRanges,
+		scenesInInterval as scenesInIntervalPure
+	} from '$lib/features/map/scene-ranges.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
@@ -17,18 +22,6 @@
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 
 	type LeafletNS = typeof import('leaflet');
-
-	// HTML-escape user-supplied strings before interpolating into the popup
-	// template strings owned by Leaflet (bindPopup HTML). Self-XSS is contained
-	// by the per-user auth gate, but escaping closes the surface uniformly.
-	function escapeHtml(s: string): string {
-		return s
-			.replace(/&/g, '&amp;')
-			.replace(/</g, '&lt;')
-			.replace(/>/g, '&gt;')
-			.replace(/"/g, '&quot;')
-			.replace(/'/g, '&#39;');
-	}
 
 	let { entityId = $bindable<string | undefined>(undefined) }: { entityId?: string } = $props();
 
@@ -413,10 +406,15 @@
 				? $entities.find((e) => e.id === region.locationId)
 				: null;
 			if (loc) layer.bindTooltip(loc.name, { sticky: true });
-			layer.bindPopup(buildRegionPopup(region, loc?.name ?? null), {
-				closeButton: false,
-				minWidth: 140
-			});
+			layer.bindPopup(
+				buildRegionPopup(region, loc?.name ?? null, {
+					activeMapLocationId: activeMap?.locationId,
+					entities: $entities,
+					worldMaps: $worldMaps,
+					playhead: $playhead
+				}),
+				{ closeButton: false, minWidth: 140 }
+			);
 
 			regionLayers.push(layer);
 		}
@@ -596,72 +594,8 @@
 		regionFormSceneIds = next;
 	}
 
-	type SceneRange = { startActId: string; startSceneId: string; endActId: string; endSceneId: string };
-
-	function coalesceToRanges(
-		selectedSceneIds: Set<string>,
-		scenesByAct: Map<string, typeof $entities[0][]>
-	): SceneRange[] {
-		const ranges: SceneRange[] = [];
-		for (const [actId, scenes] of scenesByAct) {
-			const selected = scenes.filter((s) => selectedSceneIds.has(s.id));
-			if (selected.length === 0) continue;
-			let runStart = selected[0];
-			let runEnd = selected[0];
-			for (let i = 1; i < selected.length; i++) {
-				const prevIdx = scenes.indexOf(runEnd);
-				const currIdx = scenes.indexOf(selected[i]);
-				if (currIdx === prevIdx + 1) {
-					runEnd = selected[i];
-				} else {
-					ranges.push({
-						startActId: actId, startSceneId: runStart.id,
-						endActId: actId, endSceneId: runEnd.id
-					});
-					runStart = selected[i];
-					runEnd = selected[i];
-				}
-			}
-			ranges.push({
-				startActId: actId, startSceneId: runStart.id,
-				endActId: actId, endSceneId: runEnd.id
-			});
-		}
-		return ranges;
-	}
-
 	function scenesInInterval(iv: typeof $intervalsStore[0]): string[] {
-		if (!iv.startSceneId || !iv.endSceneId || iv.startActId !== iv.endActId) return [];
-		const scenes = scenesByAct.get(iv.startActId) ?? [];
-		const startIdx = scenes.findIndex((s) => s.id === iv.startSceneId);
-		const endIdx = scenes.findIndex((s) => s.id === iv.endSceneId);
-		if (startIdx < 0 || endIdx < 0) return [];
-		const lo = Math.min(startIdx, endIdx);
-		const hi = Math.max(startIdx, endIdx);
-		return scenes.slice(lo, hi + 1).map((s) => s.id);
-	}
-
-	function buildRegionPopup(region: typeof $mapRegions[0], locName: string | null): string {
-		const locHtml = locName && region.locationId
-			? `<button class="region-popup-name" data-location-id="${region.locationId}">${escapeHtml(locName)}</button>`
-			: '<span class="region-popup-name">Unlinked region</span>';
-
-		// Drill-down: clicking the region's linked Location should descend into
-		// that Location's own map (one level deeper than the current map). If
-		// the Location has no map yet, surface the "Create map for X" CTA.
-		// Skip the affordance when the region links to the current map's
-		// anchor Location (drilling would be a no-op).
-		let drillHtml = '';
-		if (region.locationId && region.locationId !== activeMap?.locationId) {
-			const loc = $entities.find((e) => e.id === region.locationId);
-			if (loc) {
-				const locVariant = resolveActiveVariant($worldMaps, region.locationId, $playhead);
-				const verb = locVariant ? 'Zoom in to' : 'Create map for';
-				drillHtml = `<button class="region-popup-btn region-popup-btn-drill" data-action="drill" data-location-id="${region.locationId}">${verb} ${escapeHtml(loc.name)}</button>`;
-			}
-		}
-
-		return `<div class="region-popup">${locHtml}${drillHtml}<div class="region-popup-actions"><button class="region-popup-btn" data-action="edit" data-region-id="${region.id}">Edit</button><button class="region-popup-btn region-popup-btn-danger" data-action="delete" data-region-id="${region.id}">Delete</button></div></div>`;
+		return scenesInIntervalPure(iv, scenesByAct);
 	}
 
 	function startEditRegion(regionId: string) {
