@@ -2,7 +2,11 @@ import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
 import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
-import { recomputeAllIntervals, recomputeIntervalsForAct } from '$lib/server/intervals.js';
+import {
+	recomputeAllIntervals,
+	recomputeIntervalsForAct,
+	snapshotActOrdering
+} from '$lib/server/intervals.js';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 
@@ -42,69 +46,74 @@ export const POST: RequestHandler = async (event) => {
 		await assertParentOwned(db, userId, parentId);
 	}
 
-	// Insert-between cascade for Acts: if a position is given and there's
-	// already an act at that position (or beyond), bump siblings to make room.
-	// Locked 2026-04-29 in /plan-eng-review (D1/Issue 1A). The cascade runs
-	// before the insert; the recompute runs after.
-	// userId in WHERE: critical for multi-tenant isolation — User A's reorder
-	// must not bump User B's acts.
-	let didActInsertBetween = false;
-	if (type === 'Act' && parentId == null && typeof position === 'number') {
-		const existingAtOrAfter = await db
-			.select({ id: entities.id })
-			.from(entities)
-			.where(
-				and(
-					eq(entities.userId, userId),
-					eq(entities.type, 'Act'),
-					isNull(entities.parentId),
-					sql`${entities.position} >= ${position}`
-				)
-			);
-		if (existingAtOrAfter.length > 0) {
-			didActInsertBetween = true;
-			await db
-				.update(entities)
-				.set({
-					position: sql`${entities.position} + 1` as unknown as number,
-				})
-				.where(
-					and(
-						eq(entities.userId, userId),
-						eq(entities.type, 'Act'),
-						isNull(entities.parentId),
-						sql`${entities.position} >= ${position}`
-					)
-				);
-		}
-	}
-
-	let created;
+	// Insert-between cascade for Acts wrapped in a transaction so the sibling
+	// bump + insert + recompute are atomic. preSnapshot is captured BEFORE the
+	// sibling-position UPDATE so map_anchors / map_events can reproject from
+	// pre-insert Act indices (Codex P1 on PR #52 commit a9c550f, line 433:
+	// insert-between shifts indices identically to a reorder, but the
+	// pre-fix POST handler called recomputeAllIntervals WITHOUT a snapshot —
+	// anchors/events were silently skipped while intervals were rewritten).
+	// userId in WHERE: critical for multi-tenant isolation.
+	let created: typeof entities.$inferSelect;
 	try {
-		[created] = await db
-			.insert(entities)
-			.values({
-				userId,
-				type,
-				name: name.trim(),
-				data: (data ?? {}) as Record<string, unknown>,
-				parentId: typeof parentId === 'string' ? parentId : null,
-				position: typeof position === 'number' ? position : null
-			})
-			.returning();
-	} catch (err) {
-		// FK violation on parentId, etc. — surface as 400.
-		error(400, (err as Error).message);
-	}
+		created = await db.transaction(async (tx) => {
+			let didActInsertBetween = false;
+			let preSnapshot: Awaited<ReturnType<typeof snapshotActOrdering>> | undefined;
 
-	// When a Scene is added to an Act, recompute that act's intervals.
-	if (type === 'Scene' && created.parentId) {
-		await recomputeIntervalsForAct(db, created.parentId, userId);
-	}
-	// When an Act is inserted between existing acts, every interval needs
-	// its position re-derived because act_index shifted for some acts.
-	if (didActInsertBetween) {
-		await recomputeAllIntervals(db, userId);
+			if (type === 'Act' && parentId == null && typeof position === 'number') {
+				const existingAtOrAfter = await tx
+					.select({ id: entities.id })
+					.from(entities)
+					.where(
+						and(
+							eq(entities.userId, userId),
+							eq(entities.type, 'Act'),
+							isNull(entities.parentId),
+							sql`${entities.position} >= ${position}`
+						)
+					);
+				if (existingAtOrAfter.length > 0) {
+					didActInsertBetween = true;
+					preSnapshot = await snapshotActOrdering(tx, userId);
+					await tx
+						.update(entities)
+						.set({
+							position: sql`${entities.position} + 1` as unknown as number
+						})
+						.where(
+							and(
+								eq(entities.userId, userId),
+								eq(entities.type, 'Act'),
+								isNull(entities.parentId),
+								sql`${entities.position} >= ${position}`
+							)
+						);
+				}
+			}
+
+			const [row] = await tx
+				.insert(entities)
+				.values({
+					userId,
+					type,
+					name: name.trim(),
+					data: (data ?? {}) as Record<string, unknown>,
+					parentId: typeof parentId === 'string' ? parentId : null,
+					position: typeof position === 'number' ? position : null
+				})
+				.returning();
+
+			if (type === 'Scene' && row.parentId) {
+				await recomputeIntervalsForAct(tx, row.parentId, userId);
+			}
+			if (didActInsertBetween) {
+				await recomputeAllIntervals(tx, userId, preSnapshot);
+			}
+
+			return row;
+		});
+	} catch (err) {
+		error(400, (err as Error).message);
 	}
 
 	return json(created, { status: 201 });

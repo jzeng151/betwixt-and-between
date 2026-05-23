@@ -566,32 +566,44 @@ async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<n
 // that drift is the "semantic drift" CMT-7 explicitly defers to Slice 2.
 // U12 in TODOS captures the revisit (option B: add a scene_id FK).
 //
-// Edge cases:
-//   - `-Infinity` (initial-anchor sentinel): left unchanged. Always sorts
-//     before any user-authored t_position regardless of Act ordering.
-//   - `+Infinity`: shouldn't occur in writes, but if present is left unchanged
-//     for the same reason.
-//   - Deleted Act (oldIdx not in preSnapshot, OR snapshot's actId no longer
-//     in cache): leave t_position unchanged. The row points at a no-longer-
-//     existing Act slot; semantic drift accepted. Slice 2 may layer cascade-
-//     delete or snap-to-neighbor policy on top.
-//   - Cross-user scoping: queries JOIN through world_maps.user_id per the
-//     CLAUDE.md invariant. `map_anchors` and `map_events` carry no user_id.
+// Three classifications per row in classifyTPosition:
+//   - REPROJECT — finite t inside the snapshot, Act still exists in cache.
+//                 New t computed.
+//   - DELETE    — finite t in a now-deleted Act (snapshot has actId, cache
+//                 doesn't). Per Codex P1 on PR #52 commit a9c550f: leaving
+//                 the row at its old t_position causes UNIQUE-index
+//                 collisions with shifted-up anchors from later Acts (e.g.,
+//                 anchor at t=1.5 in deleted Act 1 collides with anchor at
+//                 old-t=2.5 from Act 2 whose new-t=1.5). The Act delete
+//                 transaction would abort. Resolution: drop the row. Slice 2
+//                 may layer a snap-to-neighbor or warn-before-delete policy.
+//   - SKIP      — `-Infinity` / `+Infinity` (initial-anchor sentinel), or
+//                 `floor(t)` outside the snapshot entirely (no oldIdx
+//                 mapping). Leave unchanged.
+//
+// Cross-user scoping: queries scope through worldMaps.userId via JOIN +
+// inArray defense-in-depth per CLAUDE.md. `map_anchors` and `map_events`
+// carry no user_id.
 // =============================================================================
 
-function reprojectTPosition(
+type TPositionAction =
+	| { kind: 'reproject'; newT: number }
+	| { kind: 'delete' }
+	| { kind: 'skip' };
+
+function classifyTPosition(
 	t: number,
 	preSnapshot: ActOrderingSnapshot,
 	cache: RecomputeCache
-): number | null {
-	if (!Number.isFinite(t)) return null;
+): TPositionAction {
+	if (!Number.isFinite(t)) return { kind: 'skip' };
 	const oldIdx = Math.floor(t);
 	const actId = preSnapshot.get(oldIdx);
-	if (!actId) return null;
+	if (!actId) return { kind: 'skip' };
 	const newIdx = cache.actIndex.get(actId);
-	if (newIdx === undefined) return null;
+	if (newIdx === undefined) return { kind: 'delete' };
 	const frac = t - oldIdx;
-	return newIdx + frac;
+	return { kind: 'reproject', newT: newIdx + frac };
 }
 
 // Defense-in-depth helper. The SELECT JOIN through worldMaps.userId scopes
@@ -629,14 +641,30 @@ async function recomputeMapAnchors(
 		.from(mapAnchors)
 		.where(inArray(mapAnchors.worldMapId, userMapIds));
 
-	// Compute every reprojection first; collect only rows that actually change.
 	const updates: { id: string; newT: number }[] = [];
+	const deletes: string[] = [];
 	for (const row of rows) {
-		const next = reprojectTPosition(row.tPosition, preSnapshot, cache);
-		if (next === null) continue;
-		if (Math.abs(next - row.tPosition) <= POSITION_EPSILON) continue;
-		updates.push({ id: row.id, newT: next });
+		const action = classifyTPosition(row.tPosition, preSnapshot, cache);
+		if (action.kind === 'delete') {
+			deletes.push(row.id);
+			continue;
+		}
+		if (action.kind === 'skip') continue;
+		if (Math.abs(action.newT - row.tPosition) <= POSITION_EPSILON) continue;
+		updates.push({ id: row.id, newT: action.newT });
 	}
+
+	// Pre-pass: drop anchors whose Act was deleted. Must run BEFORE the
+	// two-phase write so the deleted-Act t_positions vacate UNIQUE index
+	// slots that shifted-up anchors are about to move into. Without this,
+	// an Act delete with same-fraction anchors across acts aborts the
+	// cascade transaction (Codex P1 on PR #52 commit a9c550f, line 637).
+	if (deletes.length > 0) {
+		await db
+			.delete(mapAnchors)
+			.where(and(inArray(mapAnchors.id, deletes), inArray(mapAnchors.worldMapId, userMapIds)));
+	}
+
 	if (updates.length === 0) return 0;
 
 	// Two-phase write to avoid violating the (world_map_id, t_position) UNIQUE
@@ -650,14 +678,13 @@ async function recomputeMapAnchors(
 	// index never trips. Per-row write is safe.
 	//
 	// Phase 2: write each row's final value. The normal t_position range is
-	// now empty of to-be-updated rows (they're all parked), and the
-	// reprojection is invertible (distinct old t_positions map to distinct
-	// new t_positions because Acts have distinct indices both before and
-	// after the reorder), so no two final values collide either. Per-row
-	// write is safe.
+	// now empty of to-be-updated rows (they're all parked) AND of
+	// deleted-Act rows (the pre-pass above removed them), so no two final
+	// values collide either. Per-row write is safe.
 	//
-	// Codex (chatgpt-codex-connector) flagged this as a P1 on PR #52
-	// (commit 23077b60). Pre-fix code was per-row UPDATE to final value.
+	// Codex (chatgpt-codex-connector) flagged the underlying swap collision
+	// as a P1 on PR #52 commit 23077b60; the deleted-Act collision as a
+	// follow-on P1 on commit a9c550f.
 	for (const u of updates) {
 		await db
 			.update(mapAnchors)
@@ -685,16 +712,36 @@ async function recomputeMapEvents(
 		.select({ id: mapEvents.id, tPosition: mapEvents.tPosition })
 		.from(mapEvents)
 		.where(inArray(mapEvents.worldMapId, userMapIds));
-	let updated = 0;
+
+	const updates: { id: string; newT: number }[] = [];
+	const deletes: string[] = [];
 	for (const row of rows) {
-		const next = reprojectTPosition(row.tPosition, preSnapshot, cache);
-		if (next === null) continue;
-		if (Math.abs(next - row.tPosition) <= POSITION_EPSILON) continue;
+		const action = classifyTPosition(row.tPosition, preSnapshot, cache);
+		if (action.kind === 'delete') {
+			deletes.push(row.id);
+			continue;
+		}
+		if (action.kind === 'skip') continue;
+		if (Math.abs(action.newT - row.tPosition) <= POSITION_EPSILON) continue;
+		updates.push({ id: row.id, newT: action.newT });
+	}
+
+	// Drop events whose Act was deleted. map_events has no UNIQUE index on
+	// (world_map_id, t_position) so this isn't a correctness fix — it's a
+	// semantic fix: an event referencing a no-longer-existing Act slot is
+	// orphaned history. Matches the policy applied to anchors above.
+	if (deletes.length > 0) {
+		await db
+			.delete(mapEvents)
+			.where(and(inArray(mapEvents.id, deletes), inArray(mapEvents.worldMapId, userMapIds)));
+	}
+
+	// map_events has no unique index; per-row UPDATE is safe.
+	for (const u of updates) {
 		await db
 			.update(mapEvents)
-			.set({ tPosition: next })
-			.where(and(eq(mapEvents.id, row.id), inArray(mapEvents.worldMapId, userMapIds)));
-		updated++;
+			.set({ tPosition: u.newT })
+			.where(and(eq(mapEvents.id, u.id), inArray(mapEvents.worldMapId, userMapIds)));
 	}
-	return updated;
+	return updates.length;
 }

@@ -196,4 +196,127 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		const allAfter = await db.select().from(mapAnchors).where(eq(mapAnchors.worldMapId, map.id));
 		expect(allAfter.every((r) => Math.abs(r.tPosition) < 1e10)).toBe(true);
 	});
+
+	it('deleting an Act drops anchors in that Act and reprojects later-Act anchors without collision', async () => {
+		// Regression for the P1 Codex flagged on PR #52 commit a9c550f
+		// (line 637): during Act deletion, an anchor at t=1.5 in the deleted
+		// Act 1 was left at t=1.5 by the old "skip" branch. A later-Act
+		// anchor at t=2.5 in Act 2 shifts down to t=1.5 (Act 2 → newIdx=1
+		// after the delete). Both targeting t=1.5 → UNIQUE index collision
+		// → cascade transaction aborts. The fix: pre-pass DELETEs anchors
+		// whose Act no longer exists, vacating the slot before phase 2.
+		const user = await seedTestUser(db, { email: 'del@test.com' });
+		const acts = await seedActs(db, user.id);
+		const [map] = await db
+			.insert(worldMaps)
+			.values({ userId: user.id, name: 'Delete Map' })
+			.returning();
+		const [anchorInDeletedAct] = await db
+			.insert(mapAnchors)
+			.values({
+				worldMapId: map.id,
+				tPosition: 1.5,
+				stateJsonb: { regions: [], artifacts: [], chains: [], tag: 'in-deleted-act' }
+			})
+			.returning();
+		const [anchorInLaterAct] = await db
+			.insert(mapAnchors)
+			.values({
+				worldMapId: map.id,
+				tPosition: 2.5,
+				stateJsonb: { regions: [], artifacts: [], chains: [], tag: 'in-later-act' }
+			})
+			.returning();
+
+		// Simulate Act 1 delete: snapshot first, then drop the row, then
+		// recompute against the now-shifted ordering.
+		const preSnapshot = await snapshotActOrdering(db, user.id);
+		await db
+			.delete(entities)
+			.where(and(eq(entities.id, acts.act1), eq(entities.userId, user.id)));
+		// Shift Act 2 down to position 1 (matches what the entity DELETE
+		// cascade in the route handler does implicitly via the recompute).
+		await db
+			.update(entities)
+			.set({ position: 1 })
+			.where(and(eq(entities.id, acts.act2), eq(entities.userId, user.id)));
+
+		await expect(recomputeAllIntervals(db, user.id, preSnapshot)).resolves.not.toThrow();
+
+		// anchorInDeletedAct dropped.
+		const deletedRow = await db
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.id, anchorInDeletedAct.id));
+		expect(deletedRow).toHaveLength(0);
+
+		// anchorInLaterAct survives, reprojected to t=1.5 (Act 2 shifted to idx 1, frac 0.5).
+		const [survivor] = await db
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.id, anchorInLaterAct.id));
+		expect(survivor.tPosition).toBeCloseTo(1.5, 9);
+	});
+
+	it('inserting an Act between existing Acts reprojects map_anchor t_position via POST handler', async () => {
+		// Regression for the P1 Codex flagged on PR #52 commit a9c550f
+		// (line 433): POST /api/entities calls recomputeAllIntervals
+		// WITHOUT preSnapshot on insert-between flows, so intervals get
+		// rewritten but map_anchors are silently skipped. World-map history
+		// drifts: an anchor in old Act 1 keeps t=1.5 even though Act 1's
+		// new index is now 2 after a new Act was inserted at position 1.
+		const { POST } = await import('../../src/routes/api/entities/+server.js');
+		const user = await seedTestUser(db, { email: 'insert@test.com' });
+		const acts = await seedActs(db, user.id);
+		const [map] = await db
+			.insert(worldMaps)
+			.values({ userId: user.id, name: 'Insert Map' })
+			.returning();
+		const [anchor] = await db
+			.insert(mapAnchors)
+			.values({
+				worldMapId: map.id,
+				tPosition: 1.5,
+				stateJsonb: { regions: [], artifacts: [], chains: [], tag: 'in-act1' }
+			})
+			.returning();
+
+		// Call POST /api/entities directly to insert a new Act at position 1.
+		// Old Act 1 (at oldIdx=1) shifts to newIdx=2; the anchor at t=1.5
+		// should reproject to t=2.5.
+		// Minimal RequestEvent shape — same pattern as tests/integration/api-entities.test.ts.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const event: any = {
+			url: new URL('http://localhost/api/entities'),
+			params: {},
+			request: {
+				json: async () => ({ type: 'Act', name: 'Inserted Act', position: 1 })
+			},
+			locals: {
+				db,
+				user: { id: user.id, name: 'X', email: 'x@x.com', emailVerified: true },
+				session: {
+					id: crypto.randomUUID(),
+					userId: user.id,
+					expiresAt: new Date(Date.now() + 86400000),
+					token: 't'
+				}
+			}
+		};
+		const res = await POST(event);
+		expect(res.status).toBe(201);
+
+		const [anchorAfter] = await db
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.id, anchor.id));
+		expect(anchorAfter.tPosition).toBeCloseTo(2.5, 9);
+
+		// Sanity: original Act 1's new position is 2.
+		const [act1After] = await db
+			.select()
+			.from(entities)
+			.where(and(eq(entities.id, acts.act1), eq(entities.userId, user.id)));
+		expect(act1After.position).toBe(2);
+	});
 });
