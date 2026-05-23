@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.4.0] - 2026-05-22
+
+### Added
+- **World Map v3 Slice 1a foundation.** Three new tables back the projection engine that lands in Slice 1b: `map_anchors` (author-placed keyframes, `(world_map_id, t_position)` unique, mutable with bump_updated_at trigger), `map_events` (typed delta operations between anchors, append-only, indexed on `(world_map_id, t_position)`), and `factions` (region-ownership grouping with direct `user_id`). `t_position` is `doublePrecision` so the `'-Infinity'::float8` sentinel works at the lower bound. Migration `drizzle/0012_world_map_v3_foundation.sql` seeds one initial anchor per existing `world_maps` row at `-Infinity` with `state_jsonb.regions[]` snapshotted from current `map_regions`. `world_maps.grid_*` and `audio_url` columns are deferred to Slices 3 and 7 respectively, when their features ship.
+- **Cascade transaction wrappers.** `entities/[id]/+server.ts` PATCH and DELETE, and `entities/batch/+server.ts` POST, now wrap the full cascade in `db.transaction` so intervals, relationships, world-map variants, map-placements, and the new map_anchors / map_events end up either all in pre-state or all in post-state. Mid-cascade failures no longer leave intervals recomputed without the surrounding bookkeeping.
+- **Act-relative anchor reprojection (CMT-7 option A).** Act reorders and Act deletes now reproject every map_anchor and map_event `t_position` by preserving the fractional offset within the Act. `snapshotActOrdering` captures the pre-reorder Act indices inside the same transaction so `floor(t_position)` maps back to the original Act and forward to its new index. `-Infinity` is invariant; anchors pointing into a deleted Act are left at their old `t_position` (accepted semantic drift, revisited at Slice 2 design).
+- **`assertSourceEventIdIsEvent`** in `intervals/polymorphic-fk.ts` enforces the `map_events.source_event_id → entities(type='Event')` polymorphic FK invariant at the application layer. Wired through the `$lib/server/intervals.js` barrel for Slice 1b writers; the matching Vitest invariant test ships with U8.
+- **Cross-user JOIN regression test** at `tests/integration/world-map-v3-recompute-cross-user.test.ts`. Two users with identical 3-Act stories, User A reorders an Act, the test asserts User B's anchors and events are untouched. Pulled forward from U8 because the CLAUDE.md invariant ("a missing JOIN is a cross-user data leak") is load-bearing.
+
+### Security
+- **Defense-in-depth scoping on the new recompute paths.** `recomputeMapAnchors` and `recomputeMapEvents` pre-collect the user's `worldMapId` set once and gate both the SELECT and the per-row UPDATE with `inArray(worldMapId, userMapIds)`. The previous shape JOINed on `worldMaps.userId` for the SELECT but relied on caller-side transaction wrapping to keep the UPDATE safe; the new shape makes scoping self-enforcing — a future caller that forgets the transaction or drops the JOIN still cannot touch another user's rows.
+
 ## [0.7.3.0] - 2026-05-22
 
 ### Security

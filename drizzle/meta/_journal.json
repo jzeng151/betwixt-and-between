@@ -85,6 +85,13 @@
       "when": 1779404920943,
       "tag": "0011_data_model_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779660000000,
+      "tag": "0012_world_map_v3_foundation",
+      "breakpoints": true
     }
   ]
 }

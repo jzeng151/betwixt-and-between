@@ -50,35 +50,40 @@ export const POST: RequestHandler = async (event) => {
 	);
 	await assertParentsOwned(db, userId, parentIds);
 
-	// Insert each row; track the affected parent acts for deduped recompute.
-	const created: (typeof entities.$inferSelect)[] = [];
-	const affectedParentActs = new Set<string>();
+	// Insert + recompute in a single transaction (WM3 design doc atomicity).
+	// A mid-batch FK violation must leave NO partial inserts behind. No
+	// preSnapshot needed — recomputeIntervalsForAct is per-Act and does not
+	// shift any Act index, so map_anchors / map_events t_positions are
+	// unaffected.
+	let created: (typeof entities.$inferSelect)[] = [];
 	try {
-		for (const item of items) {
-			const [row] = await db
-				.insert(entities)
-				.values({
-					userId,
-					type: item.type,
-					name: item.name.trim(),
-					data: (item.data ?? {}) as Record<string, unknown>,
-					parentId: typeof item.parentId === 'string' ? item.parentId : null,
-					position: typeof item.position === 'number' ? item.position : null
-				})
-				.returning();
-			created.push(row);
-			if (row.type === 'Scene' && row.parentId) {
-				affectedParentActs.add(row.parentId);
+		created = await db.transaction(async (tx) => {
+			const rows: (typeof entities.$inferSelect)[] = [];
+			const affectedParentActs = new Set<string>();
+			for (const item of items) {
+				const [row] = await tx
+					.insert(entities)
+					.values({
+						userId,
+						type: item.type,
+						name: item.name.trim(),
+						data: (item.data ?? {}) as Record<string, unknown>,
+						parentId: typeof item.parentId === 'string' ? item.parentId : null,
+						position: typeof item.position === 'number' ? item.position : null
+					})
+					.returning();
+				rows.push(row);
+				if (row.type === 'Scene' && row.parentId) {
+					affectedParentActs.add(row.parentId);
+				}
 			}
-		}
+			for (const actId of affectedParentActs) {
+				await recomputeIntervalsForAct(tx, actId, userId);
+			}
+			return rows;
+		});
 	} catch (err) {
-		// FK violation, etc. — caller should treat the batch as failed.
 		error(400, (err as Error).message);
-	}
-
-	// Deduped recompute (one call per affected parent act).
-	for (const actId of affectedParentActs) {
-		await recomputeIntervalsForAct(db, actId, userId);
 	}
 
 	return json(created, { status: 201 });

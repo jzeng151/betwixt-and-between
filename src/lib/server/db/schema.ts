@@ -514,3 +514,69 @@ export const mapRegions = pgTable('map_regions', {
 	index('map_regions_map_id_idx').on(table.mapId),
 	index('map_regions_location_id_idx').on(table.locationId)
 ]);
+
+// =============================================================================
+// World Map v3 foundation — Slice 1a (2026-05-22)
+// =============================================================================
+//
+// `map_anchors` are author-placed keyframes: at `t_position`, `state_jsonb` is
+// the canonical snapshot of the world. `map_events` are typed delta operations
+// between anchors. `factions` group regions for ownership/color.
+//
+// Cross-user scoping (CLAUDE.md invariant): `map_anchors` and `map_events`
+// have NO `user_id` column. Every query must scope through
+// `world_maps.user_id` via JOIN. A missing JOIN is a cross-user data leak.
+// `factions` carries `user_id` directly (no natural parent).
+//
+// t_position is doublePrecision (float8) to match intervals.startPosition;
+// `'-Infinity'::float8` is the initial-anchor sentinel installed by the
+// 0012 migration backfill.
+//
+// `map_events.source_event_id` is a polymorphic FK to entities(id) where the
+// target's type must be 'Event'. Enforced at the app layer in writeMapEvent
+// + a Vitest invariant test (assertSourceEventIdIsEvent) — same pattern as
+// intervals.start_act_id and world_maps.location_id.
+//
+// `map_anchors` is mutable (user-edited snapshots) — bump_updated_at trigger
+// installed by 0012. `map_events` is append-only (delete-then-insert for
+// edits) — no `updated_at`, no trigger. `factions` is mutable — trigger
+// installed by 0012.
+// =============================================================================
+export const mapAnchors = pgTable('map_anchors', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	worldMapId: uuid('world_map_id')
+		.notNull()
+		.references(() => worldMaps.id, { onDelete: 'cascade' }),
+	tPosition: doublePrecision('t_position').notNull(),
+	stateJsonb: jsonb('state_jsonb').notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+}, (table) => [
+	uniqueIndex('map_anchors_world_map_id_t_position_uniq').on(table.worldMapId, table.tPosition)
+]);
+
+export const mapEvents = pgTable('map_events', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	worldMapId: uuid('world_map_id')
+		.notNull()
+		.references(() => worldMaps.id, { onDelete: 'cascade' }),
+	tPosition: doublePrecision('t_position').notNull(),
+	kind: text('kind').notNull(),
+	payloadJsonb: jsonb('payload_jsonb').notNull(),
+	sourceEventId: uuid('source_event_id').references(() => entities.id, { onDelete: 'set null' }),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+}, (table) => [
+	index('map_events_world_map_id_t_position_idx').on(table.worldMapId, table.tPosition)
+]);
+
+export const factions = pgTable('factions', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+	name: text('name').notNull(),
+	color: text('color').notNull(),
+	styleJsonb: jsonb('style_jsonb'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+}, (table) => [
+	index('factions_user_id_idx').on(table.userId)
+]);
