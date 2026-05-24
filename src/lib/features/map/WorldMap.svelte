@@ -27,7 +27,6 @@
 	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
 	import RendererToggle from '$lib/features/map/RendererToggle.svelte';
 	import { currentRenderer } from '$lib/features/map/renderer-flag.js';
-	import { fetchProjectionContextForMap } from '$lib/features/map/use-projection.js';
 	import { projectState, type ProjectionContext, type RenderedState } from '$lib/features/map/projection.js';
 	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
 	import { mapAnchorsStore } from '$lib/features/map/map-anchors-store.js';
@@ -191,36 +190,51 @@
 	// the iron-rule parity is preserved by feeding both paths from the same
 	// region geometry, with Pixi additionally layering faction overrides.
 
-	let projectionCtx = $state<ProjectionContext | null>(null);
+	// Codex P1 on PR #55 (commit 5ef25e5): projectionCtx was fetched only
+	// when activeMapId changed, so in-session mutations (creating a faction
+	// in MapSidebar, deleting a region via the popup, etc.) couldn't refresh
+	// the allowed sets. Stale ctx caused projectState's lazy GC to drop
+	// just-created factions/regions or keep references to just-deleted ones.
+	//
+	// Fix: derive ctx directly from the client stores that ALREADY carry
+	// the cross-user-scoped data ($factionsStore loaded from
+	// GET /api/factions; $mapRegions loaded per-map from GET /api/maps/[id]
+	// — both endpoints scope by userId server-side). The derive auto-fires
+	// when either store mutates, so mid-session adds/deletes immediately
+	// reach projectState. The /projection-context endpoint stays as a
+	// defense-in-depth audit point (and remains covered by G3 tests), but
+	// the client no longer fetches it.
+	let projectionCtx = $derived.by<ProjectionContext | null>(() => {
+		if (!activeMapId) return null;
+		const allowedFactions = new Map();
+		for (const f of $factionsStore) {
+			allowedFactions.set(f.id, { id: f.id, color: f.color });
+		}
+		const allowedRegions = new Set<string>();
+		for (const r of $mapRegions) {
+			allowedRegions.add(r.id);
+		}
+		return { allowedFactions, allowedRegions };
+	});
 	let projectionCtxLoading = $state(false);
 
 	$effect(() => {
 		const id = activeMapId;
 		if (!id) {
-			projectionCtx = null;
 			mapAnchorsStore.reset();
 			mapEventsStore.reset();
 			return;
 		}
 		let cancelled = false;
 		projectionCtxLoading = true;
-		void Promise.all([
-			fetchProjectionContextForMap(id).then((c) => {
-				if (!cancelled) projectionCtx = c;
-			}),
-			mapAnchorsStore.load(id),
-			mapEventsStore.load(id)
-		])
+		void Promise.all([mapAnchorsStore.load(id), mapEventsStore.load(id)])
 			.catch((err) => {
 				if (cancelled) return;
-				// Codex P2 on PR #55: a transient 500 on any of the three
-				// loads would otherwise leave the UI rendering stale
-				// projection data from a previously-loaded map. Clear the
-				// context + stores so the consumer falls back to a clean
-				// "no-projection" state instead of silently lying about
-				// what's drawn.
-				console.error('Failed to load projection inputs:', err);
-				projectionCtx = null;
+				// Codex P2 on PR #55: a transient 500 on either load
+				// would otherwise leave the UI rendering stale projection
+				// data from a previously-loaded map. Clear the stores so
+				// the consumer falls back to a clean "no-projection" state.
+				console.error('Failed to load anchors/events:', err);
 				mapAnchorsStore.reset();
 				mapEventsStore.reset();
 			})
@@ -958,7 +972,12 @@
 			</PixiStage>
 			<MapSidebar />
 		{/if}
-		{#if hasImage && activeMap?.locationId}
+		{#if hasImage && activeMap?.locationId && renderer === 'leaflet'}
+			<!-- Codex P2 on PR #55: placement creation/rendering is wired only
+			     through Leaflet (MapStage's onCanvasClick + PlacementLayer's
+			     L.marker). Showing the palette under ?renderer=pixi let users
+			     arm a placeable that no canvas click would ever consume.
+			     Pixi-side placements are deferred to Slice 2. -->
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
 				<div class="placement-error" role="alert">
