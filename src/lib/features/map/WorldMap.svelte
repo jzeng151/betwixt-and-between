@@ -237,30 +237,41 @@
 		}
 		return { allowedFactions, allowedRegions };
 	});
-	let projectionCtxLoading = $state(false);
+	// Codex P1 on PR #55 (commit f3948e1): projectionCtxLoading clearing
+	// in .finally() left ownership writes unblocked after a failed load.
+	// Replaced with projectionCtxHealthy (default false, true only on
+	// Promise.all success). The dataLoading derived treats !healthy as
+	// "still loading or known-broken" so snapshot/changeOwner stay gated
+	// until the user reloads the page or switches to a working map.
+	let projectionCtxHealthy = $state(false);
+	// True while worldMapStore.loadMapRegions is in flight for the active
+	// map. Tracked by switchMap / handleCreateMap / confirmDelete so the
+	// dataLoading signal covers map_regions too.
+	let mapRegionsLoading = $state(false);
 
 	$effect(() => {
 		const id = activeMapId;
 		if (!id) {
 			mapAnchorsStore.reset();
 			mapEventsStore.reset();
+			projectionCtxHealthy = false;
 			return;
 		}
 		let cancelled = false;
-		projectionCtxLoading = true;
+		projectionCtxHealthy = false;
 		void Promise.all([mapAnchorsStore.load(id), mapEventsStore.load(id)])
+			.then(() => {
+				if (cancelled) return;
+				projectionCtxHealthy = true;
+			})
 			.catch((err) => {
 				if (cancelled) return;
-				// Codex P2 on PR #55: a transient 500 on either load
-				// would otherwise leave the UI rendering stale projection
-				// data from a previously-loaded map. Clear the stores so
-				// the consumer falls back to a clean "no-projection" state.
+				// Transient 500/network: clear stores AND leave healthy
+				// at false so dataLoading stays live, blocking writes
+				// until the next map switch (or page reload).
 				console.error('Failed to load anchors/events:', err);
 				mapAnchorsStore.reset();
 				mapEventsStore.reset();
-			})
-			.finally(() => {
-				if (!cancelled) projectionCtxLoading = false;
 			});
 		return () => {
 			cancelled = true;
@@ -274,10 +285,21 @@
 	});
 
 	// Combined readiness signal piped through to PixiRegionLayer as
-	// dataLoading. True while anchors+events are still in flight OR
-	// factions haven't completed their initial load. snapshotWorldState
-	// gates on this so a snapshot can't capture a half-loaded projection.
-	let dataLoading = $derived(projectionCtxLoading || !factionsLoaded);
+	// dataLoading. True while ANY of these are in flight or unhealthy:
+	//  - anchors+events for the active map (projectionCtxHealthy)
+	//  - factions for the user (factionsLoaded)
+	//  - map_regions for the active map (mapRegionsLoading — see below)
+	// snapshotWorldState + changeOwner gate on this so writes can't
+	// race a load and persist partial state.
+	//
+	// Codex P1 on PR #55 (commit f3948e1): mapRegionsLoading was missing.
+	// switchMap sets activeMapId synchronously before awaiting
+	// loadMapRegions, so scopedRegions briefly empties during a switch.
+	// A snapshot in that window would persist an empty regions[] for a
+	// map that actually has regions.
+	let dataLoading = $derived(
+		!projectionCtxHealthy || !factionsLoaded || mapRegionsLoading
+	);
 
 	// Codex P2 on PR #55 (commits 4ccb183 + da20221): regions and
 	// activeMapId update independently during a map switch. switchMap()
@@ -316,7 +338,7 @@
 		if (renderer !== 'pixi') return;
 		if (!activeMapId) return;
 		if (pixiAutoScrubAppliedFor === activeMapId) return;
-		if (projectionCtxLoading) return;
+		if (dataLoading) return;
 		const events = $mapEventsStore;
 		if (events.length === 0) return;
 		if (get(playhead) != null) {
@@ -587,7 +609,16 @@
 
 	async function switchMap(mapId: string) {
 		activeMapId = mapId;
-		await worldMapStore.loadMapRegions(mapId);
+		mapRegionsLoading = true;
+		try {
+			await worldMapStore.loadMapRegions(mapId);
+		} finally {
+			// Only clear if this switchMap call is still the active one.
+			// A rapid switch A → B → A could leave a stale switchMap(A)
+			// resolving after switchMap(B) is mid-flight; check activeMapId
+			// to avoid clearing the wrong loading state.
+			if (activeMapId === mapId) mapRegionsLoading = false;
+		}
 	}
 
 	async function changeLinkedLocation(value: string) {
@@ -682,7 +713,12 @@
 	async function handleCreateMap() {
 		const map = await worldMapStore.createMap('New Map');
 		activeMapId = map.id;
-		await worldMapStore.loadMapRegions(map.id);
+		mapRegionsLoading = true;
+		try {
+			await worldMapStore.loadMapRegions(map.id);
+		} finally {
+			if (activeMapId === map.id) mapRegionsLoading = false;
+		}
 	}
 
 	function openDeleteConfirm() {
@@ -712,10 +748,13 @@
 		const nextId = $worldMaps.find((m) => m.id !== oldId)?.id ?? null;
 		activeMapId = nextId;
 		if (nextId) {
+			mapRegionsLoading = true;
 			try {
 				await worldMapStore.loadMapRegions(nextId);
 			} catch (err) {
 				console.error('Failed to load regions for switched map:', err);
+			} finally {
+				if (activeMapId === nextId) mapRegionsLoading = false;
 			}
 		}
 		deleting = false;
