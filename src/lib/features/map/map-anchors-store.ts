@@ -40,6 +40,13 @@ function createMapAnchorsStore() {
 		if (body.truncated) console.warn('anchors list truncated at server cap');
 	}
 
+	// Codex P1 on PR #55 (commit be1f09c): mutation responses must also
+	// honor lastLoadedMapId. If the user POSTs against map A, then
+	// switches to map B before the response returns, the A response
+	// must NOT merge into B's local store. The server-side write still
+	// lands (a tx is a tx); only the optimistic local update is gated.
+	// When the user returns to A, .load(A) refetches the canonical state.
+
 	async function create(mapId: string, input: AnchorInput): Promise<MapAnchor> {
 		const res = await fetch(`/api/maps/${mapId}/anchors`, {
 			method: 'POST',
@@ -48,6 +55,7 @@ function createMapAnchorsStore() {
 		});
 		if (!res.ok) throw new Error(`Failed to create anchor: ${await errorMessage(res)}`);
 		const created = (await res.json()) as MapAnchor;
+		if (lastLoadedMapId !== mapId) return created;
 		store.update((rows) =>
 			[...rows, created].sort((a, b) => a.tPosition - b.tPosition || a.id.localeCompare(b.id))
 		);
@@ -66,6 +74,7 @@ function createMapAnchorsStore() {
 		});
 		if (!res.ok) throw new Error(`Failed to update anchor: ${await errorMessage(res)}`);
 		const updated = (await res.json()) as MapAnchor;
+		if (lastLoadedMapId !== mapId) return updated;
 		store.update((rows) =>
 			rows
 				.map((r) => (r.id === anchorId ? updated : r))
@@ -77,6 +86,7 @@ function createMapAnchorsStore() {
 	async function remove(mapId: string, anchorId: string): Promise<void> {
 		const res = await fetch(`/api/maps/${mapId}/anchors/${anchorId}`, { method: 'DELETE' });
 		if (!res.ok) throw new Error(`Failed to delete anchor: ${await errorMessage(res)}`);
+		if (lastLoadedMapId !== mapId) return;
 		store.update((rows) => rows.filter((r) => r.id !== anchorId));
 	}
 
