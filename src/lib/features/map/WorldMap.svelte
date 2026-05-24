@@ -244,10 +244,14 @@
 	// "still loading or known-broken" so snapshot/changeOwner stay gated
 	// until the user reloads the page or switches to a working map.
 	let projectionCtxHealthy = $state(false);
-	// True while worldMapStore.loadMapRegions is in flight for the active
-	// map. Tracked by switchMap / handleCreateMap / confirmDelete so the
-	// dataLoading signal covers map_regions too.
-	let mapRegionsLoading = $state(false);
+	// Codex P1 on PR #55 (commit 4856a07): tracking mapRegionsLoading
+	// as a true/false-then-clear-in-finally signal silently passed
+	// failure as completion. Switched to the same Healthy-only pattern
+	// projectionCtxHealthy uses: default false, true only on successful
+	// load. On failure stays false, dataLoading stays live, ownership
+	// writes stay blocked. Tracked by switchMap / handleCreateMap /
+	// confirmDelete around each loadMapRegions call.
+	let mapRegionsHealthy = $state(false);
 
 	$effect(() => {
 		const id = activeMapId;
@@ -298,7 +302,7 @@
 	// A snapshot in that window would persist an empty regions[] for a
 	// map that actually has regions.
 	let dataLoading = $derived(
-		!projectionCtxHealthy || !factionsLoaded || mapRegionsLoading
+		!projectionCtxHealthy || !factionsLoaded || !mapRegionsHealthy
 	);
 
 	// Codex P2 on PR #55 (commits 4ccb183 + da20221): regions and
@@ -609,15 +613,17 @@
 
 	async function switchMap(mapId: string) {
 		activeMapId = mapId;
-		mapRegionsLoading = true;
+		mapRegionsHealthy = false;
 		try {
 			await worldMapStore.loadMapRegions(mapId);
-		} finally {
-			// Only clear if this switchMap call is still the active one.
-			// A rapid switch A → B → A could leave a stale switchMap(A)
-			// resolving after switchMap(B) is mid-flight; check activeMapId
-			// to avoid clearing the wrong loading state.
-			if (activeMapId === mapId) mapRegionsLoading = false;
+			// Only mark healthy if THIS switchMap call is still the active
+			// one. A rapid switch A → B could leave switchMap(A) resolving
+			// after switchMap(B) started; checking activeMapId avoids
+			// flipping healthy on stale data.
+			if (activeMapId === mapId) mapRegionsHealthy = true;
+		} catch (err) {
+			console.error('Failed to load regions for map:', mapId, err);
+			// Stay unhealthy — dataLoading remains true, blocking writes.
 		}
 	}
 
@@ -713,11 +719,12 @@
 	async function handleCreateMap() {
 		const map = await worldMapStore.createMap('New Map');
 		activeMapId = map.id;
-		mapRegionsLoading = true;
+		mapRegionsHealthy = false;
 		try {
 			await worldMapStore.loadMapRegions(map.id);
-		} finally {
-			if (activeMapId === map.id) mapRegionsLoading = false;
+			if (activeMapId === map.id) mapRegionsHealthy = true;
+		} catch (err) {
+			console.error('Failed to load regions for new map:', err);
 		}
 	}
 
@@ -747,14 +754,13 @@
 		deleteConfirm = null;
 		const nextId = $worldMaps.find((m) => m.id !== oldId)?.id ?? null;
 		activeMapId = nextId;
+		mapRegionsHealthy = false;
 		if (nextId) {
-			mapRegionsLoading = true;
 			try {
 				await worldMapStore.loadMapRegions(nextId);
+				if (activeMapId === nextId) mapRegionsHealthy = true;
 			} catch (err) {
 				console.error('Failed to load regions for switched map:', err);
-			} finally {
-				if (activeMapId === nextId) mapRegionsLoading = false;
 			}
 		}
 		deleting = false;
