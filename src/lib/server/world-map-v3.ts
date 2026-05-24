@@ -35,6 +35,19 @@ export type { EventKind, TransferRegionPayload };
 // valid CSS colors; reject them.
 const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
+// RFC 4122 UUID format. Postgres's `uuid` column type rejects malformed
+// strings with a 22P02 syntax error; without a write-time format check
+// these surface as 500s for any request that supplies a non-UUID route
+// param (e.g. /api/maps/not-a-uuid/anchors) or payload id. Validate at
+// the boundary so it's always a clean 400.
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+function assertUuid(value: unknown, label: string): asserts value is string {
+	if (typeof value !== 'string' || !UUID_RE.test(value)) {
+		error(400, `${label} must be a uuid`);
+	}
+}
+
 // Guard that a JSON body is a plain object before using `in`/key-access.
 // readJson() rejects malformed JSON but accepts valid JSON scalars/arrays —
 // `null in null` and `'x' in 42` throw TypeError, which would surface as a
@@ -87,6 +100,7 @@ export async function updateFaction(
 	factionId: string,
 	patch: Partial<FactionInput>
 ): Promise<typeof factions.$inferSelect> {
+	assertUuid(factionId, 'faction id');
 	assertObjectBody(patch);
 	const updates: Record<string, unknown> = {};
 	if ('name' in patch) {
@@ -128,6 +142,7 @@ export async function deleteFaction(
 	userId: string,
 	factionId: string
 ): Promise<void> {
+	assertUuid(factionId, 'faction id');
 	const [existing] = await db
 		.select({ id: factions.id })
 		.from(factions)
@@ -151,6 +166,7 @@ export async function countFactionDependents(
 	userId: string,
 	factionId: string
 ): Promise<number> {
+	assertUuid(factionId, 'faction id');
 	const [existing] = await db
 		.select({ id: factions.id })
 		.from(factions)
@@ -174,6 +190,7 @@ export async function countFactionDependents(
 // ── Map ownership gate ──────────────────────────────────────────────────────
 
 async function assertMapOwnership(db: Db, userId: string, worldMapId: string): Promise<void> {
+	assertUuid(worldMapId, 'map id');
 	const [row] = await db
 		.select({ id: worldMaps.id })
 		.from(worldMaps)
@@ -238,9 +255,7 @@ async function validateAnchorStateOwnership(
 		if (r === null || typeof r !== 'object' || Array.isArray(r)) {
 			error(400, 'state_jsonb.regions[] must contain objects');
 		}
-		if (typeof r.region_id !== 'string') {
-			error(400, 'state_jsonb.regions[].region_id must be a string');
-		}
+		assertUuid(r.region_id, 'state_jsonb.regions[].region_id');
 		regionIds.add(r.region_id);
 		// faction_id is optional and may be explicitly null (= unowned). Any
 		// OTHER non-string value (number, object, array, undefined-via-typo)
@@ -249,9 +264,7 @@ async function validateAnchorStateOwnership(
 		if (r.faction_id === null || r.faction_id === undefined) {
 			continue;
 		}
-		if (typeof r.faction_id !== 'string') {
-			error(400, 'state_jsonb.regions[].faction_id must be a string or null');
-		}
+		assertUuid(r.faction_id, 'state_jsonb.regions[].faction_id');
 		factionIds.add(r.faction_id);
 	}
 
@@ -349,6 +362,7 @@ export async function updateMapAnchor(
 	patch: Partial<AnchorInput>
 ): Promise<typeof mapAnchors.$inferSelect> {
 	await assertMapOwnership(db, userId, worldMapId);
+	assertUuid(anchorId, 'anchor id');
 	assertObjectBody(patch);
 
 	const updates: Record<string, unknown> = {};
@@ -396,6 +410,7 @@ export async function deleteMapAnchor(
 	anchorId: string
 ): Promise<void> {
 	await assertMapOwnership(db, userId, worldMapId);
+	assertUuid(anchorId, 'anchor id');
 	const deleted = await db
 		.delete(mapAnchors)
 		.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
@@ -424,12 +439,8 @@ async function validateEventPayload(
 	}
 	if (kind === 'transfer_region') {
 		const p = payload as Partial<TransferRegionPayload>;
-		if (typeof p.region_id !== 'string') {
-			error(400, 'transfer_region payload requires region_id (uuid string)');
-		}
-		if (typeof p.new_faction_id !== 'string') {
-			error(400, 'transfer_region payload requires new_faction_id (uuid string)');
-		}
+		assertUuid(p.region_id, 'transfer_region payload.region_id');
+		assertUuid(p.new_faction_id, 'transfer_region payload.new_faction_id');
 		// Verify the region belongs to THIS world map (which is already
 		// scoped to userId via assertMapOwnership upstream). Without this
 		// check, an attacker authenticated as user A could POST a
@@ -478,11 +489,24 @@ export async function createMapEvent(
 		if (typeof input.sourceEventId !== 'string' || input.sourceEventId === '') {
 			error(400, 'source_event_id must be a non-empty uuid string or null');
 		}
+		assertUuid(input.sourceEventId, 'source_event_id');
 		// Polymorphic FK invariant (CLAUDE.md). source_event_id must point at
 		// an entity of type='Event' owned by the caller. This is the second
 		// of the two required write-time enforcement points (the first lives
 		// in the migration test, the second is here at every writer site).
-		await assertSourceEventIdIsEvent(db, input.sourceEventId, userId);
+		// assertSourceEventIdIsEvent throws plain Errors ("Entity not found",
+		// "Polymorphic FK violation") which SvelteKit surfaces as 500. The
+		// invariant violation is client input, not internal failure — convert
+		// to 400 so the API contract stays clean.
+		try {
+			await assertSourceEventIdIsEvent(db, input.sourceEventId, userId);
+		} catch (err) {
+			const msg = (err as Error).message ?? 'source_event_id is invalid';
+			if (/Entity not found|Polymorphic FK violation/.test(msg)) {
+				error(400, msg);
+			}
+			throw err;
+		}
 	}
 
 	const [row] = await db
@@ -505,6 +529,7 @@ export async function deleteMapEvent(
 	eventId: string
 ): Promise<void> {
 	await assertMapOwnership(db, userId, worldMapId);
+	assertUuid(eventId, 'event id');
 	const deleted = await db
 		.delete(mapEvents)
 		.where(and(eq(mapEvents.id, eventId), eq(mapEvents.worldMapId, worldMapId)))

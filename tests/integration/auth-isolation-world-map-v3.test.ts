@@ -250,7 +250,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 					}
 				})
 			)
-		).rejects.toThrow(/Polymorphic FK violation/);
+		).rejects.toMatchObject({ status: 400, body: { message: /Polymorphic FK violation/ } });
 	});
 
 	it('rejects source_event_id pointing at another user Event', async () => {
@@ -271,7 +271,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 					}
 				})
 			)
-		).rejects.toThrow(/Entity not found/);
+		).rejects.toMatchObject({ status: 400, body: { message: /Entity not found/ } });
 	});
 
 	// ── Happy path for User A (sanity) ──────────────────────────────────────
@@ -647,6 +647,66 @@ describe('auth isolation: World Map v3 endpoints', () => {
 						kind: 'transfer_region',
 						payloadJsonb: { region_id: aRegionId, new_faction_id: aFactionId },
 						sourceEventId: 42
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	// ── UUID format validation at boundaries (Codex re-review 2544a4d) ──────
+	// Route params and payload IDs were feeding directly into Postgres uuid
+	// columns; malformed strings surfaced as 500 (Postgres 22P02 syntax
+	// error). assertUuid() at every boundary now surfaces a clean 400.
+
+	it('GET /api/maps/[id]/anchors with malformed map uuid returns 400, not 500', async () => {
+		await expect(
+			anchorsRoute.GET(mkEvent(userA, { params: { id: 'not-a-uuid' } }))
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('PATCH /api/factions/[id] with malformed faction uuid returns 400', async () => {
+		await expect(
+			factionIdRoute.PATCH(
+				mkEvent(userA, { params: { id: 'not-a-uuid' }, body: { name: 'x' } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('DELETE /api/maps/[id]/anchors/[anchorId] with malformed anchor uuid returns 400', async () => {
+		await expect(
+			anchorIdRoute.DELETE(
+				mkEvent(userA, { params: { id: aMapId, anchorId: 'not-a-uuid' } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('POST event with malformed region_id in payload returns 400', async () => {
+		await expect(
+			eventsRoute.POST(
+				mkEvent(userA, {
+					params: { id: aMapId },
+					body: {
+						tPosition: 20,
+						kind: 'transfer_region',
+						payloadJsonb: { region_id: 'not-a-uuid', new_faction_id: aFactionId }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('POST anchor with malformed region_id in state_jsonb returns 400', async () => {
+		await expect(
+			anchorsRoute.POST(
+				mkEvent(userA, {
+					params: { id: aMapId },
+					body: {
+						tPosition: 21,
+						stateJsonb: {
+							regions: [{ region_id: 'not-a-uuid', faction_id: null }],
+							artifacts: [],
+							chains: []
+						}
 					}
 				})
 			)
