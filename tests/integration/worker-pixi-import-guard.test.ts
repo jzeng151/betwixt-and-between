@@ -23,17 +23,26 @@ import { join } from 'node:path';
 
 const FORBIDDEN_IMPORTS = ['pixi.js', 'svelte-pixi', 'paper'];
 
-// Files that legitimately import these — every +page.svelte / +page.ts / +layout.svelte
-// that mounts Pixi is allowed; every src/lib/features/map/*.svelte and ts client
-// module is allowed. Server endpoints (+server.ts, +layout.server.ts, +page.server.ts,
-// hooks.server.ts) and all of src/lib/server/** are forbidden.
+// Files that legitimately import these — every +page.svelte / +layout.svelte
+// (script tags are client-only when `export const ssr = false` is declared
+// in the matching +page.ts/+layout.ts) is allowed; every
+// src/lib/features/map/*.{svelte,ts} client module is allowed.
+//
+// Forbidden:
+//   - Server endpoints: +server.{ts,js}, +page.server.{ts,js},
+//     +layout.server.{ts,js}, hooks.server.{ts,js}
+//   - Anything under src/lib/server/**
+//   - Universal SvelteKit modules: +page.{ts,js} and +layout.{ts,js}.
+//     Per SvelteKit semantics, universal modules execute server-side
+//     during SSR unless ssr=false is declared. Pixi imports belong in
+//     +page.svelte (script tag, client-only); +page.ts files exist to
+//     declare ssr=false, not to import canvas libs. Codex PR54#5.
 function isForbiddenPath(path: string): boolean {
-	// Worker / SSR entry points. +page.server.ts and +layout.server.ts both
-	// run server-side in SvelteKit and ship into the worker bundle.
 	if (/\+server\.(ts|js)$/.test(path)) return true;
 	if (/\+(page|layout)\.server\.(ts|js)$/.test(path)) return true;
 	if (/hooks\.server\.(ts|js)$/.test(path)) return true;
-	// Anything under src/lib/server/**
+	// Universal modules — server-risk by default.
+	if (/\+(page|layout)\.(ts|js)$/.test(path)) return true;
 	if (/^src\/lib\/server\//.test(path)) return true;
 	return false;
 }
@@ -64,12 +73,17 @@ describe('Δ1b-H — Worker-side Pixi/Paper import guard', () => {
 
 			const contents = await readFile(file, 'utf8');
 			for (const mod of FORBIDDEN_IMPORTS) {
-				// Match common import forms: `import … from 'mod'`,
-				// `await import('mod')`, `require('mod')`.
+				// Match common import forms:
+				//   - `import … from 'mod'`
+				//   - `await import('mod')`
+				//   - `require('mod')`
+				//   - `import 'mod'`            (side-effect, Codex PR54#4)
+				//   - `import 'mod/sub'`        (side-effect for sub-modules)
 				const patterns = [
-					new RegExp(`from\\s+['"]${mod}['"]`),
-					new RegExp(`import\\s*\\(\\s*['"]${mod}['"]`),
-					new RegExp(`require\\s*\\(\\s*['"]${mod}['"]`)
+					new RegExp(`from\\s+['"]${mod}(?:/[^'"]*)?['"]`),
+					new RegExp(`import\\s*\\(\\s*['"]${mod}(?:/[^'"]*)?['"]`),
+					new RegExp(`require\\s*\\(\\s*['"]${mod}(?:/[^'"]*)?['"]`),
+					new RegExp(`^\\s*import\\s+['"]${mod}(?:/[^'"]*)?['"]`, 'm')
 				];
 				if (patterns.some((re) => re.test(contents))) {
 					offenders.push({ file: rel, matched: mod });

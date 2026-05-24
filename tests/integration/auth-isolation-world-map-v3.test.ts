@@ -575,4 +575,99 @@ describe('auth isolation: World Map v3 endpoints', () => {
 		const created = (await readJson(res)) as { id: string };
 		expect(created.id).toBeTruthy();
 	});
+
+	// ── POST body must be an object (Codex re-review #1) ────────────────────
+	// Same class as the PATCH-null tests above, applied to POST handlers.
+	// readJson() accepts JSON scalars; assertObjectBody must reject them.
+
+	it('POST /api/factions with JSON null body returns 400', async () => {
+		await expect(
+			factionsRoute.POST(mkEvent(userA, { body: null }))
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('POST /api/maps/[id]/anchors with JSON null body returns 400', async () => {
+		await expect(
+			anchorsRoute.POST(
+				mkEvent(userA, { params: { id: aMapId }, body: null })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('POST /api/maps/[id]/events with JSON null body returns 400', async () => {
+		await expect(
+			eventsRoute.POST(
+				mkEvent(userA, { params: { id: aMapId }, body: null })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	// ── Anchor state_jsonb must not be an array (Codex re-review #2) ────────
+	// typeof [] === 'object' — the shape validator must reject arrays
+	// explicitly or state_jsonb: [] would persist.
+
+	it('POST anchor with array state_jsonb returns 400', async () => {
+		await expect(
+			anchorsRoute.POST(
+				mkEvent(userA, {
+					params: { id: aMapId },
+					body: { tPosition: 14, stateJsonb: [] }
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	// ── source_event_id empty-string rejection (Codex re-review #3) ─────────
+	// truthy check would skip validation; nullish coalescing would still
+	// write the empty string. Explicit typeof + length check now in place.
+
+	it('POST event with sourceEventId: "" returns 400', async () => {
+		await expect(
+			eventsRoute.POST(
+				mkEvent(userA, {
+					params: { id: aMapId },
+					body: {
+						tPosition: 15,
+						kind: 'transfer_region',
+						payloadJsonb: { region_id: aRegionId, new_faction_id: aFactionId },
+						sourceEventId: ''
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('POST event with sourceEventId: 42 returns 400', async () => {
+		await expect(
+			eventsRoute.POST(
+				mkEvent(userA, {
+					params: { id: aMapId },
+					body: {
+						tPosition: 16,
+						kind: 'transfer_region',
+						payloadJsonb: { region_id: aRegionId, new_faction_id: aFactionId },
+						sourceEventId: 42
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('POST event with sourceEventId: null is accepted', async () => {
+		// Positive case: null/undefined skip the polymorphic FK check (no
+		// source event linkage). Pins that we didn't over-reject.
+		const res = await eventsRoute.POST(
+			mkEvent(userA, {
+				params: { id: aMapId },
+				body: {
+					tPosition: 17,
+					kind: 'transfer_region',
+					payloadJsonb: { region_id: aRegionId, new_faction_id: aFactionId },
+					sourceEventId: null
+				}
+			})
+		);
+		const created = (await readJson(res)) as { id: string };
+		expect(created.id).toBeTruthy();
+	});
 });

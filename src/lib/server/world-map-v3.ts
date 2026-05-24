@@ -67,6 +67,7 @@ export async function createFaction(
 	userId: string,
 	input: FactionInput
 ): Promise<typeof factions.$inferSelect> {
+	assertObjectBody(input);
 	validateFactionInput(input);
 	const [row] = await db
 		.insert(factions)
@@ -202,7 +203,11 @@ async function assertMapOwnership(db: Db, userId: string, worldMapId: string): P
 // slices wire the write paths.
 
 function validateAnchorStateShape(state: unknown): asserts state is AnchorState {
-	if (!state || typeof state !== 'object') {
+	// `typeof [] === 'object'` is true — arrays must be rejected explicitly
+	// or `state_jsonb: []` would pass and persist (Codex PR54#2). Same
+	// pattern as assertObjectBody but kept inline so the call sites read
+	// cleanly.
+	if (state === null || typeof state !== 'object' || Array.isArray(state)) {
 		error(400, 'state_jsonb must be an object');
 	}
 	const s = state as Record<string, unknown>;
@@ -293,6 +298,7 @@ export async function createMapAnchor(
 	input: AnchorInput
 ): Promise<typeof mapAnchors.$inferSelect> {
 	await assertMapOwnership(db, userId, worldMapId);
+	assertObjectBody(input);
 	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition)) {
 		// Note: '-Infinity' sentinel is created by the 0012 backfill, not by
 		// authored writes. App code must never write Infinity/-Infinity here.
@@ -454,6 +460,7 @@ export async function createMapEvent(
 	input: EventInput
 ): Promise<typeof mapEvents.$inferSelect> {
 	await assertMapOwnership(db, userId, worldMapId);
+	assertObjectBody(input);
 	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition)) {
 		error(400, 'tPosition must be a finite number');
 	}
@@ -462,7 +469,15 @@ export async function createMapEvent(
 	}
 	await validateEventPayload(db, userId, worldMapId, input.kind, input.payloadJsonb);
 
-	if (input.sourceEventId) {
+	// source_event_id: explicit type check, not a truthy check. Codex PR54#2:
+	// `if (input.sourceEventId)` would skip validation for the empty string,
+	// but `"" ?? null` is `""` (nullish coalescing only triggers on null/
+	// undefined), so the INSERT would still write the empty string and hit
+	// a DB error. Coerce explicitly.
+	if (input.sourceEventId !== null && input.sourceEventId !== undefined) {
+		if (typeof input.sourceEventId !== 'string' || input.sourceEventId === '') {
+			error(400, 'source_event_id must be a non-empty uuid string or null');
+		}
 		// Polymorphic FK invariant (CLAUDE.md). source_event_id must point at
 		// an entity of type='Event' owned by the caller. This is the second
 		// of the two required write-time enforcement points (the first lives
