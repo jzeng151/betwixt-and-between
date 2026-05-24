@@ -333,6 +333,89 @@ describe('auth isolation: World Map v3 endpoints', () => {
 		).rejects.toMatchObject({ status: 400 });
 	});
 
+	// ── Anchor state ownership defense ──────────────────────────────────────
+	// Mirror of the event payload defense above, applied to anchor state_jsonb.
+	// An attacker authenticated as user A POSTs an anchor on their own map
+	// whose state_jsonb.regions[].region_id is user B's region uuid — must be
+	// rejected at write. Validates the validateAnchorStateOwnership path.
+
+	it('user A POST anchor referencing user B region returns 400', async () => {
+		const [bMap] = await currentDb
+			.insert(worldMaps)
+			.values({ userId: userB, name: 'B map for anchor test' })
+			.returning();
+		const [bRegion] = await currentDb
+			.insert(mapRegions)
+			.values({
+				mapId: bMap.id,
+				polygon: [
+					[0, 0],
+					[1, 0],
+					[1, 1]
+				]
+			})
+			.returning();
+
+		await expect(
+			anchorsRoute.POST(
+				mkEvent(userA, {
+					params: { id: aMapId },
+					body: {
+						tPosition: 7,
+						stateJsonb: {
+							regions: [{ region_id: bRegion.id, faction_id: null }],
+							artifacts: [],
+							chains: []
+						}
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('user A POST anchor referencing user B faction returns 400', async () => {
+		const [bFaction] = await currentDb
+			.insert(factions)
+			.values({ userId: userB, name: 'B faction for anchor test', color: '#0000bb' })
+			.returning();
+
+		await expect(
+			anchorsRoute.POST(
+				mkEvent(userA, {
+					params: { id: aMapId },
+					body: {
+						tPosition: 8,
+						stateJsonb: {
+							regions: [{ region_id: aRegionId, faction_id: bFaction.id }],
+							artifacts: [],
+							chains: []
+						}
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('user A POST anchor with own region + own faction succeeds', async () => {
+		// Positive case: confirms the ownership validator isn't over-eager and
+		// rejects legitimate writes.
+		const res = await anchorsRoute.POST(
+			mkEvent(userA, {
+				params: { id: aMapId },
+				body: {
+					tPosition: 9,
+					stateJsonb: {
+						regions: [{ region_id: aRegionId, faction_id: aFactionId }],
+						artifacts: [],
+						chains: []
+					}
+				}
+			})
+		);
+		const created = (await readJson(res)) as { id: string };
+		expect(created.id).toBeTruthy();
+	});
+
 	// ── 409 UNIQUE collision on anchor t_position ───────────────────────────
 
 	it('POST two anchors at the same t_position returns 409 on the second', async () => {
