@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { worldMaps, mapAnchors } from '$lib/server/db/schema.js';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import {
 	assertLocationIdIsLocation,
@@ -100,7 +100,13 @@ export const POST: RequestHandler = async (event) => {
 				.returning();
 			await tx.insert(mapAnchors).values({
 				worldMapId: row.id,
-				tPosition: Number.NEGATIVE_INFINITY,
+				// `-Infinity`::float8 SQL literal — postgres-js (Neon driver)
+				// doesn't serialize JS Number.NEGATIVE_INFINITY to Postgres's
+				// '-Infinity' float8 special value reliably (silent 500 in dev),
+				// even though PGlite in tests does. Match what migration 0012
+				// did. Cast through `unknown` because Drizzle's typed-column
+				// .values() expects `number` here, not `SQL`.
+				tPosition: sql`'-Infinity'::float8` as unknown as number,
 				stateJsonb: { regions: [], artifacts: [], chains: [] }
 			});
 			return row;

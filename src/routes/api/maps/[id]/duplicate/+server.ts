@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { worldMaps, mapRegions, mapAnchors } from '$lib/server/db/schema.js';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import type { RequestHandler } from './$types';
 
@@ -79,7 +79,9 @@ export const POST: RequestHandler = async (event) => {
 
 		await tx.insert(mapAnchors).values({
 			worldMapId: clone.id,
-			tPosition: Number.NEGATIVE_INFINITY,
+			// SQL literal for -Infinity — see comment in /api/maps/+server.ts
+			// POST handler; postgres-js doesn't serialize JS Infinity reliably.
+			tPosition: sql`'-Infinity'::float8` as unknown as number,
 			stateJsonb: {
 				regions: cloneRegions.map((r) => ({
 					region_id: r.id,
