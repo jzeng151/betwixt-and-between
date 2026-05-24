@@ -21,6 +21,7 @@
 	import MapStage from '$lib/features/map/MapStage.svelte';
 	import PixiStage from '$lib/features/map/PixiStage.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
+	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import RegionLayer from '$lib/features/map/RegionLayer.svelte';
 	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
 	import RendererToggle from '$lib/features/map/RendererToggle.svelte';
@@ -897,6 +898,7 @@
 					<PixiRegionLayer regions={$mapRegions} {renderedState} />
 				{/snippet}
 			</PixiStage>
+			<MapSidebar />
 		{/if}
 		{#if hasImage && activeMap?.locationId}
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />

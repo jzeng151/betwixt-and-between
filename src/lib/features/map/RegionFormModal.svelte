@@ -7,8 +7,7 @@
 	// :global(.color-*), :global(.scene-*), :global(.act-*) rules.
 
 	import type { Entity } from '$lib/stores/entities.js';
-
-	const PALETTE = ['#e8a838', '#3b82f6', '#ef4444', '#22c55e', '#a855f7', '#ec4899', '#f97316', '#06b6d4'];
+	import { MAP_PALETTE as PALETTE } from './color-palette.js';
 
 	let {
 		isEditing,
