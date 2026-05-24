@@ -70,6 +70,17 @@
 		| { kind: 'snapshot'; x: number; y: number };
 	let menu = $state<MenuState | null>(null);
 	let actionError = $state<string | null>(null);
+	let actionInfo = $state<string | null>(null);
+	let actionInfoTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function flashInfo(msg: string) {
+		actionInfo = msg;
+		if (actionInfoTimer) clearTimeout(actionInfoTimer);
+		actionInfoTimer = setTimeout(() => {
+			actionInfo = null;
+			actionInfoTimer = null;
+		}, 3500);
+	}
 
 	onMount(() => {
 		let cancelled = false;
@@ -144,6 +155,9 @@
 					renderedRegionMap.set(r.regionId, r.factionId);
 				}
 			}
+			const ownedRegionCount = Array.from(renderedRegionMap.values()).filter(
+				(f) => f !== null
+			).length;
 			const stateJsonb = {
 				regions: regions.map((r) => ({
 					region_id: r.id,
@@ -154,6 +168,12 @@
 				chains: []
 			};
 			await mapAnchorsStore.create(mapId, { tPosition, stateJsonb });
+			// Snapshot doesn't visually change anything (it just records
+			// current state). Toast so the user knows the POST succeeded
+			// and what got captured.
+			flashInfo(
+				`Snapshot saved at T=${tPosition.toFixed(2)} — ${regions.length} region${regions.length === 1 ? '' : 's'}, ${ownedRegionCount} owned`
+			);
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : String(err);
 		}
@@ -313,6 +333,12 @@
 	</div>
 {/if}
 
+{#if actionInfo}
+	<div class="action-info" role="status">
+		{actionInfo}
+	</div>
+{/if}
+
 <style>
 	.action-error {
 		position: absolute;
@@ -336,5 +362,19 @@
 		cursor: pointer;
 		font-size: 14px;
 		line-height: 1;
+	}
+	.action-info {
+		position: absolute;
+		bottom: 16px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 1100;
+		background: #0f3622;
+		color: #d1fae5;
+		padding: 6px 14px;
+		border-radius: 6px;
+		font-size: 12px;
+		border: 1px solid #14532d;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 	}
 </style>
