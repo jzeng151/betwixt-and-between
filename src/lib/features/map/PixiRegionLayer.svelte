@@ -59,6 +59,14 @@
 
 	let PIXI = $state<PixiModule | null>(null);
 	let layer: PixiContainer | null = null;
+	// Codex P2 on PR #55 (commit da20221): keep a handle to the stage-level
+	// rightclick listener so onDestroy can detach it. Without this, the
+	// PixiStage's app.stage accumulates a listener every time this layer
+	// remounts (e.g., scopedRegions changes in a way Svelte considers a
+	// remount, or a future gate cycles it). Each accumulated listener
+	// opens an additional snapshot menu per click.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let stageRightClickHandler: ((e: FederatedPointerEvent) => void) | null = null;
 
 	// Subscribe to factions for the Change-owner submenu. Plain subscribe
 	// (not the $store auto-subscribe) because this is a .svelte component
@@ -223,6 +231,15 @@
 			actionError = 'No active map';
 			return;
 		}
+		if (dataLoading) {
+			// Codex P1 on PR #55 (commit da20221): writes while the initial
+			// events load is still in flight can be clobbered when load()
+			// arrives with a pre-mutation snapshot. Gate on the same
+			// readiness signal snapshotWorldState uses. The menu items also
+			// disable the change-owner entries while loading.
+			actionError = 'Map data is still loading — try again in a moment.';
+			return;
+		}
 		actionError = null;
 		try {
 			// Anchor the event at the current playhead. When playhead is null
@@ -271,6 +288,16 @@
 			];
 		}
 		const regionId = menu.regionId;
+		if (dataLoading) {
+			return [
+				{
+					label: 'Loading map data… try again in a moment',
+					icon: '⏳',
+					disabled: true,
+					onSelect: () => {}
+				}
+			];
+		}
 		if (factionList.length === 0) {
 			return [
 				{
@@ -315,9 +342,10 @@
 			// stopPropagation so this fires only on EMPTY-area clicks.
 			app.stage.eventMode = 'static';
 			app.stage.hitArea = app.screen;
-			app.stage.on('rightclick', (e: FederatedPointerEvent) => {
+			stageRightClickHandler = (e: FederatedPointerEvent) => {
 				openSnapshotMenu(e);
-			});
+			};
+			app.stage.on('rightclick', stageRightClickHandler);
 		}
 
 		// Clear previous draws + listeners. removeChildren returns the
@@ -362,6 +390,19 @@
 		if (actionInfoTimer) {
 			clearTimeout(actionInfoTimer);
 			actionInfoTimer = null;
+		}
+		// Detach the stage-level rightclick listener before the layer
+		// goes away. PixiStage's app may outlive this component when
+		// regionsMatchMap-style gates remount us; without .off() the
+		// stage accumulates a fresh listener per remount.
+		const app = stageCtx.app;
+		if (app && stageRightClickHandler) {
+			try {
+				app.stage.off('rightclick', stageRightClickHandler);
+			} catch (_) {
+				/* stage may have been destroyed already */
+			}
+			stageRightClickHandler = null;
 		}
 		if (layer) {
 			try {

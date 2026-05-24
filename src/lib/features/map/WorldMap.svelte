@@ -187,9 +187,19 @@
 		relationships.load();
 		// Factions are user-scoped (not map-scoped) — load once per session.
 		// The map-scoped stores (anchors, events) load on activeMapId change.
-		void factionsStore.load().finally(() => {
-			factionsLoaded = true;
-		});
+		// Codex P2 on PR #55 (da20221): only flip factionsLoaded on success
+		// — on failure, leaving it true would clear dataLoading and let
+		// snapshots persist with empty allowedFactions. On failure the
+		// loading signal stays live and ownership-write UX (snapshot,
+		// changeOwner) stays gated. User can refresh to retry.
+		void factionsStore
+			.load()
+			.then(() => {
+				factionsLoaded = true;
+			})
+			.catch((err) => {
+				console.error('Failed to load factions:', err);
+			});
 	});
 
 	// ── Slice 1b projection pipeline ────────────────────────────────────
@@ -269,17 +279,23 @@
 	// gates on this so a snapshot can't capture a half-loaded projection.
 	let dataLoading = $derived(projectionCtxLoading || !factionsLoaded);
 
-	// Codex P2 on PR #55 (commit 4ccb183): regions and activeMapId update
-	// independently during a map switch. switchMap() sets activeMapId
-	// synchronously, then awaits loadMapRegions. In between, $mapRegions
-	// still holds the previous map's rows while activeMapId points at the
-	// new map. A right-click landing in that window would POST events or
-	// snapshots against the new mapId using old-map region ids — the
-	// server rejects via cross-user validation, but the local store gets
-	// briefly inconsistent. Gate Pixi rendering on a "regions belong to
-	// the current map" check.
-	let regionsMatchMap = $derived(
-		!activeMapId || $mapRegions.every((r) => r.mapId === activeMapId)
+	// Codex P2 on PR #55 (commits 4ccb183 + da20221): regions and
+	// activeMapId update independently during a map switch. switchMap()
+	// sets activeMapId synchronously, then awaits loadMapRegions. In
+	// between, $mapRegions still holds the previous map's rows while
+	// activeMapId points at the new map. A right-click landing in that
+	// window would POST against the new mapId using old-map region ids.
+	//
+	// First cut used a binary regionsMatchMap gate that hid PixiRegionLayer
+	// entirely during the mismatch — but Codex flagged that if
+	// loadMapRegions FAILS (5xx, network), the stale rows linger and the
+	// layer stays hidden forever with no error surface. Replaced with a
+	// filtered derive: scopedRegions only contains rows for the current
+	// activeMapId. During transition or load failure, scopedRegions is
+	// empty → PixiRegionLayer stays mounted and renders an empty canvas
+	// (honest "no data yet"), instead of hiding indefinitely.
+	let scopedRegions = $derived(
+		activeMapId ? $mapRegions.filter((r) => r.mapId === activeMapId) : []
 	);
 
 	// Auto-scrub the playhead past the latest event when entering Pixi mode
@@ -993,14 +1009,12 @@
 		{:else}
 			<PixiStage {activeMap}>
 				{#snippet children()}
-					{#if regionsMatchMap}
-						<PixiRegionLayer
-							regions={$mapRegions}
-							{renderedState}
-							mapId={activeMapId}
-							{dataLoading}
-						/>
-					{/if}
+					<PixiRegionLayer
+						regions={scopedRegions}
+						{renderedState}
+						mapId={activeMapId}
+						{dataLoading}
+					/>
 				{/snippet}
 			</PixiStage>
 			<MapSidebar />
