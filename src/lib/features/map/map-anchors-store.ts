@@ -21,11 +21,21 @@ export type AnchorInput = {
 
 function createMapAnchorsStore() {
 	const store = writable<MapAnchor[]>([]);
+	// Tracks the most recent load() target so out-of-order responses from
+	// stale map switches don't clobber the current map's data. Codex P1 on
+	// PR #55: a slow load(A) resolving after the user switched to map B
+	// would otherwise overwrite B's freshly-loaded rows with A's stale
+	// content. Each load() records its target; on response, we no-op the
+	// store.set() if the target changed during the await.
+	let lastLoadedMapId: string | null = null;
 
 	async function load(mapId: string): Promise<void> {
+		lastLoadedMapId = mapId;
 		const res = await fetch(`/api/maps/${mapId}/anchors`);
+		if (lastLoadedMapId !== mapId) return; // stale — newer load() is in flight
 		if (!res.ok) throw new Error(`Failed to load anchors: ${await errorMessage(res)}`);
 		const body = (await res.json()) as { rows: MapAnchor[]; truncated: boolean };
+		if (lastLoadedMapId !== mapId) return; // stale — re-check after JSON parse
 		store.set(body.rows);
 		if (body.truncated) console.warn('anchors list truncated at server cap');
 	}
@@ -71,6 +81,7 @@ function createMapAnchorsStore() {
 	}
 
 	function reset(): void {
+		lastLoadedMapId = null;
 		store.set([]);
 	}
 

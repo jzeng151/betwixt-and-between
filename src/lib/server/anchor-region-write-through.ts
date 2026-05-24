@@ -10,66 +10,89 @@
 // per the original test-plan wording). Geometry is atemporal — a region
 // either exists or it doesn't, regardless of which T's snapshot you load.
 //
-// transfer_region overrides (faction_id !== null in an anchor entry) are
-// preserved on UPDATE: only the baseline color/geometry fields rewrite.
-// On DELETE the entire entry is removed (region no longer exists, so its
-// faction ownership history is moot).
+// Concurrency model (Codex P1 on PR #55):
 //
-// Read-modify-write pattern: SELECT all anchors, mutate state_jsonb in JS,
-// UPDATE each. N+1 round-trips per write per anchor — acceptable at demo
-// scale (≤5 anchors per map). Flagged in eng-review § Performance for a
-// future jsonb_set batch query when anchor counts climb.
+// The first cut used JS-side read-modify-write — SELECT all anchors, mutate
+// state_jsonb in Node, write each row back. Two concurrent fan-outs could
+// both read the same baseline anchor snapshot and clobber each other on
+// write. Demo scale made this rare but the structural fix is to keep the
+// mutation server-side as a single atomic UPDATE per row, which PG handles
+// correctly via MVCC without explicit row locks.
+//
+// Each helper now issues ONE UPDATE per map that mutates every anchor on
+// the map in a single statement, using jsonb_set / jsonb path expressions
+// to splice in/remove entries. Per-row atomicity holds; concurrent fan-outs
+// on different regions serialize at the row level via MVCC; concurrent
+// fan-outs on the SAME region produce a deterministic last-writer-wins.
+//
+// transfer_region overrides (faction_id !== null in an anchor entry) are
+// preserved on color UPDATE — the SQL only rewrites the `color` field,
+// leaving `faction_id` untouched. On DELETE the entire entry is removed
+// (region no longer exists, so its faction ownership history is moot).
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { mapAnchors, worldMaps } from './db/schema.js';
-import type { AnchorRegion, AnchorState } from '$lib/features/map/projection.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Tx = any;
 
-async function loadAnchors(tx: Tx, mapId: string, userId: string) {
-	// Cross-user scoping (CLAUDE.md): map_anchors has no user_id column.
-	// JOIN through worldMaps.userId so a future stray call from an
-	// unscoped handler can't touch another user's anchors.
-	return tx
-		.select({ id: mapAnchors.id, stateJsonb: mapAnchors.stateJsonb })
-		.from(mapAnchors)
-		.innerJoin(worldMaps, eq(mapAnchors.worldMapId, worldMaps.id))
-		.where(and(eq(mapAnchors.worldMapId, mapId), eq(worldMaps.userId, userId)));
-}
-
+/**
+ * Append a new region entry to every anchor's `state_jsonb.regions[]` for
+ * the given map. If a region with the same `region_id` already exists in
+ * an anchor's array (idempotency / retry safety), it's replaced rather
+ * than duplicated.
+ *
+ * Single atomic UPDATE per anchor — PG handles concurrent updates via
+ * MVCC. Cross-user scoped via the worldMaps.userId predicate so a stray
+ * call from an unscoped handler can't touch another user's anchors.
+ */
 export async function fanOutRegionAdd(
 	tx: Tx,
 	mapId: string,
 	userId: string,
 	region: { id: string; color: string | null }
 ): Promise<void> {
-	const anchors: Array<{ id: string; stateJsonb: AnchorState }> = await loadAnchors(
-		tx,
-		mapId,
-		userId
-	);
-	const newEntry: AnchorRegion = {
+	const entry = JSON.stringify({
 		region_id: region.id,
 		faction_id: null,
 		color: region.color
-	};
-	for (const a of anchors) {
-		const state: AnchorState = a.stateJsonb ?? {};
-		// Defensive: if (somehow) this region_id is already present, replace
-		// rather than duplicate. POST shouldn't hit this branch since IDs
-		// are newly minted, but make the helper idempotent for retry safety.
-		const existing = state.regions?.find((r) => r.region_id === region.id);
-		const next = existing
-			? (state.regions ?? []).map((r) => (r.region_id === region.id ? newEntry : r))
-			: [...(state.regions ?? []), newEntry];
-		await tx
-			.update(mapAnchors)
-			.set({ stateJsonb: { ...state, regions: next } })
-			.where(eq(mapAnchors.id, a.id));
-	}
+	});
+	// Build the new regions array in SQL: filter out any existing entry
+	// with this region_id (idempotency), then append the new entry. The
+	// filter uses jsonb_array_elements + jsonb_agg in a subquery, with
+	// COALESCE for the empty-after-filter case.
+	await tx.execute(sql`
+		UPDATE ${mapAnchors}
+		SET state_jsonb = jsonb_set(
+			state_jsonb,
+			'{regions}',
+			COALESCE(
+				(
+					SELECT jsonb_agg(r)
+					FROM jsonb_array_elements(COALESCE(state_jsonb->'regions', '[]'::jsonb)) AS r
+					WHERE r->>'region_id' != ${region.id}
+				),
+				'[]'::jsonb
+			) || ${entry}::jsonb,
+			true
+		)
+		FROM ${worldMaps}
+		WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
+			AND ${mapAnchors.worldMapId} = ${mapId}
+			AND ${worldMaps.userId} = ${userId}
+	`);
 }
 
+/**
+ * Rewrite the `color` field of the matching region entry in every anchor's
+ * `state_jsonb.regions[]`. Preserves `faction_id` (ownership overlay is a
+ * separate layer added by transfer_region events; only the baseline color
+ * is geometry-author-controlled).
+ *
+ * Anchors without a matching region_id are untouched — `jsonb_agg` over
+ * the same array with an in-place rewrite via CASE produces the original
+ * array for non-matching rows, so the UPDATE is a no-op there.
+ */
 export async function fanOutRegionColorUpdate(
 	tx: Tx,
 	mapId: string,
@@ -77,51 +100,68 @@ export async function fanOutRegionColorUpdate(
 	regionId: string,
 	color: string | null
 ): Promise<void> {
-	const anchors: Array<{ id: string; stateJsonb: AnchorState }> = await loadAnchors(
-		tx,
-		mapId,
-		userId
-	);
-	for (const a of anchors) {
-		const state: AnchorState = a.stateJsonb ?? {};
-		if (!state.regions || state.regions.length === 0) continue;
-		let touched = false;
-		const next = state.regions.map((r) => {
-			if (r.region_id !== regionId) return r;
-			touched = true;
-			// Preserve faction_id (faction ownership is a separate concern
-			// layered by transfer_region events). Only the baseline color
-			// updates here.
-			return { ...r, color };
-		});
-		if (!touched) continue;
-		await tx
-			.update(mapAnchors)
-			.set({ stateJsonb: { ...state, regions: next } })
-			.where(eq(mapAnchors.id, a.id));
-	}
+	// color = null serializes to JSON null literal; PG jsonb_build_object
+	// handles both null and string values correctly.
+	const colorJson = color === null ? 'null' : JSON.stringify(color);
+	await tx.execute(sql`
+		UPDATE ${mapAnchors}
+		SET state_jsonb = jsonb_set(
+			state_jsonb,
+			'{regions}',
+			COALESCE(
+				(
+					SELECT jsonb_agg(
+						CASE
+							WHEN r->>'region_id' = ${regionId}
+								THEN jsonb_set(r, '{color}', ${colorJson}::jsonb, true)
+							ELSE r
+						END
+					)
+					FROM jsonb_array_elements(COALESCE(state_jsonb->'regions', '[]'::jsonb)) AS r
+				),
+				'[]'::jsonb
+			),
+			true
+		)
+		FROM ${worldMaps}
+		WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
+			AND ${mapAnchors.worldMapId} = ${mapId}
+			AND ${worldMaps.userId} = ${userId}
+	`);
 }
 
+/**
+ * Remove the entry matching `regionId` from every anchor's
+ * `state_jsonb.regions[]`. Region's faction ownership (if any) is dropped
+ * with it — the region no longer exists.
+ */
 export async function fanOutRegionDelete(
 	tx: Tx,
 	mapId: string,
 	userId: string,
 	regionId: string
 ): Promise<void> {
-	const anchors: Array<{ id: string; stateJsonb: AnchorState }> = await loadAnchors(
-		tx,
-		mapId,
-		userId
-	);
-	for (const a of anchors) {
-		const state: AnchorState = a.stateJsonb ?? {};
-		if (!state.regions || state.regions.length === 0) continue;
-		const next = state.regions.filter((r) => r.region_id !== regionId);
-		if (next.length === state.regions.length) continue; // no change
-		await tx
-			.update(mapAnchors)
-			.set({ stateJsonb: { ...state, regions: next } })
-			.where(eq(mapAnchors.id, a.id));
-	}
+	await tx.execute(sql`
+		UPDATE ${mapAnchors}
+		SET state_jsonb = jsonb_set(
+			state_jsonb,
+			'{regions}',
+			COALESCE(
+				(
+					SELECT jsonb_agg(r)
+					FROM jsonb_array_elements(COALESCE(state_jsonb->'regions', '[]'::jsonb)) AS r
+					WHERE r->>'region_id' != ${regionId}
+				),
+				'[]'::jsonb
+			),
+			true
+		)
+		FROM ${worldMaps}
+		WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
+			AND ${mapAnchors.worldMapId} = ${mapId}
+			AND ${worldMaps.userId} = ${userId}
+	`);
 }
 
+// Re-exports keep tests happy without re-importing.
+export { and, eq };

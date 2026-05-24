@@ -117,6 +117,23 @@
 		};
 	});
 
+	// Codex P2 on PR #55: PixiStage stays mounted across the toolbar map
+	// switcher, so the canvas dimensions need to follow activeMap. Without
+	// this, switching to a map with different width/height leaves the
+	// renderer sized for the previous map and polygon coordinates land at
+	// the wrong screen positions. Skip the resize when activeMap is null
+	// or hasn't been initialized yet (init in onMount already used the
+	// then-current dimensions).
+	$effect(() => {
+		const app = stageCtx.app;
+		if (!app || !activeMap?.width || !activeMap?.height) return;
+		const w = activeMap.width;
+		const h = activeMap.height;
+		if (app.renderer.width !== w || app.renderer.height !== h) {
+			app.renderer.resize(w, h);
+		}
+	});
+
 	// A4 HMR fallback — `import.meta.hot.invalidate()` doesn't escalate to
 	// a full page reload in this app's HMR graph (an ancestor accepts the
 	// update). Force an explicit reload so editing this file doesn't

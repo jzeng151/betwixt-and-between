@@ -113,12 +113,26 @@
 	});
 
 	function parseHex(input: string): number {
-		const s = input.trim().replace(/^#/, '');
-		if (s.length === 3) {
-			return parseInt(s.split('').map((c) => c + c).join(''), 16);
+		// Pixi v8's .fill({ color }) takes RGB-only as a Number (alpha is a
+		// separate channel). We strip alpha from 4/8-digit hex and return
+		// just the RGB integer so the polygon's alpha is controlled by the
+		// fill's `alpha` option, not silently mangled by the hex parser.
+		// Codex P2 on PR #55: prior version treated `#RRGGBBAA` as a plain
+		// 8-digit integer, shifting channels and producing wrong colors.
+		let s = input.trim().replace(/^#/, '');
+		if (s.length === 3 || s.length === 4) {
+			// Expand short form: #abc → #aabbcc, #abcd → #aabbccdd
+			s = s.split('').map((c) => c + c).join('');
+		}
+		if (s.length === 8) {
+			// #RRGGBBAA — drop the AA alpha byte; Pixi handles alpha separately.
+			s = s.slice(0, 6);
+		}
+		if (s.length !== 6) {
+			return 0x9ca3af; // neutral gray fallback for malformed input
 		}
 		const n = parseInt(s, 16);
-		return Number.isFinite(n) ? n : 0x9ca3af;
+		return Number.isFinite(n) && !Number.isNaN(n) ? n : 0x9ca3af;
 	}
 
 	function clientXY(e: FederatedPointerEvent): { x: number; y: number } {

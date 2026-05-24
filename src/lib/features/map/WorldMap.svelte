@@ -220,6 +220,14 @@
 				// projectState applies no events → regions show baseline color
 				// even though the events are loaded and the override would
 				// apply at any playhead ≥ event.tPosition.
+				//
+				// Codex P2 on PR #55: gate by renderer. Under ?renderer=leaflet
+				// this auto-scrub mutates the global timeline position even
+				// though the leaflet path doesn't render faction overlays —
+				// surprising behavior for any other timeline-aware app open
+				// at the same time. Pixi is the only consumer that needs
+				// playhead > -Infinity to make faction state visible.
+				if (renderer !== 'pixi') return;
 				const events = $mapEventsStore;
 				if (events.length === 0) return;
 				if (get(playhead) != null) return;
@@ -232,7 +240,17 @@
 				}
 			})
 			.catch((err) => {
-				if (!cancelled) console.error('Failed to load projection inputs:', err);
+				if (cancelled) return;
+				// Codex P2 on PR #55: a transient 500 on any of the three
+				// loads would otherwise leave the UI rendering stale
+				// projection data from a previously-loaded map. Clear the
+				// context + stores so the consumer falls back to a clean
+				// "no-projection" state instead of silently lying about
+				// what's drawn.
+				console.error('Failed to load projection inputs:', err);
+				projectionCtx = null;
+				mapAnchorsStore.reset();
+				mapEventsStore.reset();
 			})
 			.finally(() => {
 				if (!cancelled) projectionCtxLoading = false;
