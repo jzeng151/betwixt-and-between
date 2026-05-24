@@ -172,13 +172,24 @@
 
 	// ── Store loads ───────────────────────────────────────────────────────
 
+	// Codex P2 on PR #55 (commit 4ccb183): factionsStore is loaded once on
+	// mount but isn't part of the per-map readiness signal. If /api/factions
+	// resolves AFTER /api/maps/[id]/anchors|events, projectState briefly
+	// runs with an empty allowedFactions Map and faction overrides drop —
+	// then re-runs cleanly once factions arrive. Snapshot taken during that
+	// window would persist null faction_ids. Track factionsLoaded so the
+	// dataLoading prop reflects all three sources.
+	let factionsLoaded = $state(false);
+
 	onMount(() => {
 		worldMapStore.loadMaps();
 		intervalsStore.load();
 		relationships.load();
 		// Factions are user-scoped (not map-scoped) — load once per session.
 		// The map-scoped stores (anchors, events) load on activeMapId change.
-		void factionsStore.load();
+		void factionsStore.load().finally(() => {
+			factionsLoaded = true;
+		});
 	});
 
 	// ── Slice 1b projection pipeline ────────────────────────────────────
@@ -251,6 +262,25 @@
 		const t = $playhead ?? Number.NEGATIVE_INFINITY;
 		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx);
 	});
+
+	// Combined readiness signal piped through to PixiRegionLayer as
+	// dataLoading. True while anchors+events are still in flight OR
+	// factions haven't completed their initial load. snapshotWorldState
+	// gates on this so a snapshot can't capture a half-loaded projection.
+	let dataLoading = $derived(projectionCtxLoading || !factionsLoaded);
+
+	// Codex P2 on PR #55 (commit 4ccb183): regions and activeMapId update
+	// independently during a map switch. switchMap() sets activeMapId
+	// synchronously, then awaits loadMapRegions. In between, $mapRegions
+	// still holds the previous map's rows while activeMapId points at the
+	// new map. A right-click landing in that window would POST events or
+	// snapshots against the new mapId using old-map region ids — the
+	// server rejects via cross-user validation, but the local store gets
+	// briefly inconsistent. Gate Pixi rendering on a "regions belong to
+	// the current map" check.
+	let regionsMatchMap = $derived(
+		!activeMapId || $mapRegions.every((r) => r.mapId === activeMapId)
+	);
 
 	// Auto-scrub the playhead past the latest event when entering Pixi mode
 	// with events present. Lives in its own $effect (instead of inside the
@@ -963,12 +993,14 @@
 		{:else}
 			<PixiStage {activeMap}>
 				{#snippet children()}
-					<PixiRegionLayer
-						regions={$mapRegions}
-						{renderedState}
-						mapId={activeMapId}
-						dataLoading={projectionCtxLoading}
-					/>
+					{#if regionsMatchMap}
+						<PixiRegionLayer
+							regions={$mapRegions}
+							{renderedState}
+							mapId={activeMapId}
+							{dataLoading}
+						/>
+					{/if}
 				{/snippet}
 			</PixiStage>
 			<MapSidebar />
