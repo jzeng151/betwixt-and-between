@@ -18,11 +18,20 @@ import { worldMaps } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { fetchProjectionContext } from '$lib/server/projection-context.js';
+import { isUuid } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
+
+	// Codex P2 on PR #55: feeding a malformed param into a UUID-typed
+	// predicate raises a Postgres `invalid input syntax for type uuid`
+	// error (500), masking what's really a client-side bug. Surface it
+	// as 404 — same response shape as "map exists but belongs to another
+	// user," matching the existence-leak defense-in-depth pattern used
+	// elsewhere in this codebase.
+	if (!event.params.id || !isUuid(event.params.id)) error(404, 'Map not found');
 
 	const [map] = await db
 		.select({ id: worldMaps.id })

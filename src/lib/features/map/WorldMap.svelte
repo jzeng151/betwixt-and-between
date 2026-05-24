@@ -211,34 +211,6 @@
 			mapAnchorsStore.load(id),
 			mapEventsStore.load(id)
 		])
-			.then(() => {
-				if (cancelled) return;
-				// UX: if events exist on this map AND the user has no active
-				// spotlight yet, jump the playhead just past the latest event
-				// so the persisted faction ownership is visible immediately on
-				// page reload. Without this, null playhead → -Infinity →
-				// projectState applies no events → regions show baseline color
-				// even though the events are loaded and the override would
-				// apply at any playhead ≥ event.tPosition.
-				//
-				// Codex P2 on PR #55: gate by renderer. Under ?renderer=leaflet
-				// this auto-scrub mutates the global timeline position even
-				// though the leaflet path doesn't render faction overlays —
-				// surprising behavior for any other timeline-aware app open
-				// at the same time. Pixi is the only consumer that needs
-				// playhead > -Infinity to make faction state visible.
-				if (renderer !== 'pixi') return;
-				const events = $mapEventsStore;
-				if (events.length === 0) return;
-				if (get(playhead) != null) return;
-				const maxT = events.reduce(
-					(acc, e) => (e.tPosition > acc ? e.tPosition : acc),
-					Number.NEGATIVE_INFINITY
-				);
-				if (Number.isFinite(maxT) && maxT >= 0) {
-					playhead.scrubTo(maxT);
-				}
-			})
 			.catch((err) => {
 				if (cancelled) return;
 				// Codex P2 on PR #55: a transient 500 on any of the three
@@ -264,6 +236,49 @@
 		if (!projectionCtx) return null;
 		const t = $playhead ?? Number.NEGATIVE_INFINITY;
 		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx);
+	});
+
+	// Auto-scrub the playhead past the latest event when entering Pixi mode
+	// with events present. Lives in its own $effect (instead of inside the
+	// map-load effect) so it ALSO fires when the user toggles renderer
+	// mid-session — Codex P2 on PR #55 noticed the prior version only fired
+	// on activeMapId change, leaving a map opened under Leaflet without
+	// auto-jump when the user later switched to Pixi.
+	//
+	// One-shot per "playhead is null" episode: tracked via
+	// pixiAutoScrubAppliedFor so the auto-scrub doesn't re-fire every time
+	// events mutate (e.g., user adds another transfer_region). Once the
+	// playhead is set, this effect no-ops until playhead returns to null
+	// AND a fresh activeMapId arrives.
+	let pixiAutoScrubAppliedFor = $state<string | null>(null);
+
+	$effect(() => {
+		if (renderer !== 'pixi') return;
+		if (!activeMapId) return;
+		if (pixiAutoScrubAppliedFor === activeMapId) return;
+		if (projectionCtxLoading) return;
+		const events = $mapEventsStore;
+		if (events.length === 0) return;
+		if (get(playhead) != null) {
+			pixiAutoScrubAppliedFor = activeMapId;
+			return;
+		}
+		const maxT = events.reduce(
+			(acc, e) => (e.tPosition > acc ? e.tPosition : acc),
+			Number.NEGATIVE_INFINITY
+		);
+		if (Number.isFinite(maxT) && maxT >= 0) {
+			playhead.scrubTo(maxT);
+			pixiAutoScrubAppliedFor = activeMapId;
+		}
+	});
+
+	// Reset the auto-scrub gate when activeMapId changes so a freshly-
+	// loaded map gets its own auto-scrub attempt.
+	$effect(() => {
+		const _id = activeMapId;
+		pixiAutoScrubAppliedFor = null;
+		void _id;
 	});
 
 	// ── Stage callbacks ──────────────────────────────────────────────────
