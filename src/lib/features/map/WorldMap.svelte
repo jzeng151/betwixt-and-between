@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { browser } from '$app/environment';
-	import { worldMapStore, worldMaps, mapRegions } from '$lib/stores/world-map.js';
+	import { worldMapStore, worldMaps, mapRegions } from '$lib/features/map/store.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/os/scope-store.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
@@ -9,34 +8,34 @@
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
 	import { windowStore } from '$lib/os/windows-store.js';
 	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
-	import { resolveActiveVariant } from '$lib/world-map-variants.js';
+	import { resolveActiveVariant } from '$lib/features/map/variants.js';
+	import {
+		coalesceToRanges,
+		scenesInInterval as scenesInIntervalPure
+	} from '$lib/features/map/scene-ranges.js';
+	import CreateMapOfferModal from '$lib/features/map/CreateMapOfferModal.svelte';
+	import VariantFormModal from '$lib/features/map/VariantFormModal.svelte';
+	import RegionFormModal from '$lib/features/map/RegionFormModal.svelte';
+	import MapBreadcrumb from '$lib/features/map/MapBreadcrumb.svelte';
+	import MapToolbar from '$lib/features/map/MapToolbar.svelte';
+	import MapStage from '$lib/features/map/MapStage.svelte';
+	import RegionLayer from '$lib/features/map/RegionLayer.svelte';
+	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
+	import type { PopupCallbacks } from '$lib/features/map/leaflet-controller.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
-	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
-	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 
 	type LeafletNS = typeof import('leaflet');
 
-	// HTML-escape user-supplied strings before interpolating into the popup
-	// template strings owned by Leaflet (bindPopup HTML). Self-XSS is contained
-	// by the per-user auth gate, but escaping closes the surface uniformly.
-	function escapeHtml(s: string): string {
-		return s
-			.replace(/&/g, '&amp;')
-			.replace(/</g, '&lt;')
-			.replace(/>/g, '&gt;')
-			.replace(/"/g, '&quot;')
-			.replace(/'/g, '&#39;');
-	}
-
 	let { entityId = $bindable<string | undefined>(undefined) }: { entityId?: string } = $props();
 
-	let mapContainer: HTMLDivElement = $state(null!);
+	// MapStage owns the canvas + Leaflet lifecycle and exposes these via
+	// $bindable. Sibling RegionLayer / PlacementLayer render onto the
+	// live handles once they're non-null.
 	let leafletMap: any = $state(null);
-	let imageOverlay: any = null;
-	let regionLayers: any[] = [];
-	let placementMarkers: any[] = [];
+	let L: LeafletNS | null = $state(null);
+	let drawnItems: any = $state(null);
 	// Step 4 — armed placeable id (chip selected in PlaceablesPalette). When
 	// non-null, the next click on the Leaflet canvas creates a placement at the
 	// clicked fractional coords for this entity.
@@ -48,10 +47,6 @@
 		if (!activeMap?.locationId || !hasImage) armedPlaceableId = null;
 	});
 	let placementError = $state('');
-	let drawnItems: any = null;
-	let drawControl: any = null;
-	let zoomControl: any = null;
-	let L: LeafletNS = $state(null as any);
 
 	// UI state
 	let activeMapId = $state<string | null>(null);
@@ -63,7 +58,6 @@
 	let uploadError = $state<string | null>(null);
 	let editingRegionId: string | null = $state(null);
 	let editingOriginalLocationId: string | null = $state(null);
-	let mapReady = $state(false);
 	let renamingMapName = $state<string | null>(null);
 	let deleteConfirm = $state<{ id: string; name: string; regionCount: number } | null>(null);
 	let deleting = $state(false);
@@ -128,8 +122,7 @@
 		return map;
 	});
 
-	// Resolve CSS custom properties to actual color values for Leaflet
-		// Pre-fill scene checkboxes from existing intervals when location changes
+	// Pre-fill scene checkboxes from existing intervals when location changes
 		$effect(() => {
 			const locId = regionFormLocationId;
 			if (!locId) {
@@ -144,8 +137,12 @@
 			}
 			regionFormSceneIds = sceneIds;
 		});
-	let accentColor = '#e8a838';
-	let borderColor = '#555';
+	// $state so MapStage's resolveCssColors callback propagates the resolved
+	// values into the RegionLayer prop on the next render. Original was a
+	// plain `let` because the closure was inside the same component; across
+	// component boundaries we need reactive tracking.
+	let accentColor = $state('#e8a838');
+	let borderColor = $state('#555');
 
 	function resolveCssColors() {
 		const root = document.documentElement;
@@ -154,139 +151,46 @@
 		borderColor = style.getPropertyValue('--color-border').trim() || '#555';
 	}
 
-	// ── Map lifecycle ──────────────────────────────────────────────────────
+	// ── Store loads ───────────────────────────────────────────────────────
 
 	onMount(() => {
 		worldMapStore.loadMaps();
 		intervalsStore.load();
 		relationships.load();
-
-		(async () => {
-			// Dynamic-import Leaflet (browser-only)
-			const leaflet = await import('leaflet');
-			await import('leaflet/dist/leaflet.css');
-			await import('leaflet-draw');
-			await import('leaflet-draw/dist/leaflet.draw.css');
-			L = leaflet.default;
-			drawnItems = new L.FeatureGroup();
-			mapReady = true;
-			resolveCssColors();
-		})();
-
-		return () => {
-			if (leafletMap) {
-				leafletMap.remove();
-				leafletMap = null;
-			}
-		};
 	});
 
-	function initMap() {
-		if (!L || !mapContainer) return;
-		if (leafletMap) leafletMap.remove();
+	// ── Stage callbacks ──────────────────────────────────────────────────
+	//
+	// MapStage owns leafletMap + L lifecycle and emits two events back:
+	// onPolygonCreated when leaflet-draw finishes a polygon, and
+	// onCanvasClick when a non-interactive click lands while a placeable
+	// chip is armed. The popup-button delegate (edit / delete / drill /
+	// open-entity / delete-placement) wiring lives in MapStage too; the
+	// orchestrator just supplies the callback bag.
 
-		leafletMap = L.map(mapContainer, {
-			crs: L.CRS.Simple,
-			minZoom: -2,
-			maxZoom: 4,
-			zoomControl: false,
-			attributionControl: false
-		});
-
-		leafletMap.addLayer(drawnItems);
-
-		leafletMap.on(L.Draw.Event.CREATED, (e: any) => {
-			const layer = e.layer;
-			const latLngs = layer.getLatLngs()[0].map((ll: any) => [ll.lat, ll.lng]);
-			pendingPolygon = latLngs;
-			showRegionForm = true;
-		});
-
-		leafletMap.on('popupopen', (e: any) => {
-			const popupEl = e.popup.getElement();
-			if (!popupEl) return;
-			const editBtn = popupEl.querySelector('[data-action="edit"]');
-			const deleteBtn = popupEl.querySelector('[data-action="delete"]');
-			const drillBtn = popupEl.querySelector('[data-action="drill"]');
-			const nameEl = popupEl.querySelector('.region-popup-name');
-			if (editBtn) {
-				editBtn.addEventListener('click', () => {
-					startEditRegion((editBtn as HTMLElement).dataset.regionId!);
-					leafletMap.closePopup();
-				});
-			}
-			if (deleteBtn) {
-				deleteBtn.addEventListener('click', () => {
-					handleDeleteRegion((deleteBtn as HTMLElement).dataset.regionId!);
-					leafletMap.closePopup();
-				});
-			}
-			if (drillBtn) {
-				drillBtn.addEventListener('click', () => {
-					const childId = (drillBtn as HTMLElement).dataset.locationId;
-					if (!childId) return;
-					leafletMap.closePopup();
-					if (!drillIntoLocation(childId)) {
-						const child = $entities.find((x) => x.id === childId);
-						if (child) {
-							createMapOffer = { childId: child.id, childName: child.name };
-						}
-					}
-				});
-			}
-			if (nameEl) {
-				nameEl.addEventListener('click', () => {
-					const locId = (nameEl as HTMLElement).dataset.locationId;
-					if (locId) windowStore.open('entity-detail', locId);
-					leafletMap.closePopup();
-				});
-			}
-
-			// Step 4 — placement popup buttons.
-			const openEntityBtn = popupEl.querySelector('[data-action="open-entity"]');
-			const deletePlacementBtn = popupEl.querySelector('[data-action="delete-placement"]');
-			if (openEntityBtn) {
-				openEntityBtn.addEventListener('click', () => {
-					const id = (openEntityBtn as HTMLElement).dataset.entityId;
-					if (id) windowStore.open('entity-detail', id);
-					leafletMap.closePopup();
-				});
-			}
-			if (deletePlacementBtn) {
-				deletePlacementBtn.addEventListener('click', () => {
-					const id = (deletePlacementBtn as HTMLElement).dataset.placementId;
-					if (id) void deletePlacement(id);
-					leafletMap.closePopup();
-				});
-			}
-		});
-
-		// Step 4 — placement-creation click. When a chip is armed in the
-		// PlaceablesPalette, the next map click drops a placement at the
-		// clicked location. We translate Leaflet (lat=y, lng=x) into fractional
-		// coords against the source-image dimensions so re-export at a new
-		// resolution (B11) leaves the placement at the same relative point.
-		leafletMap.on('click', (e: any) => {
-			if (!armedPlaceableId) return;
-			if (!activeMap?.width || !activeMap?.height) return;
-			// Skip clicks that landed on an existing interactive layer (region
-			// polygon, placement marker, popup): those have their own UX and
-			// shouldn't also drop a new placement underneath.
-			const target = e.originalEvent?.target as HTMLElement | undefined;
-			if (target?.closest?.('.leaflet-interactive, .leaflet-popup, .leaflet-marker-icon')) return;
-			const fx = e.latlng.lng / activeMap.width;
-			const fy = e.latlng.lat / activeMap.height;
-			if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
-			// Disarm synchronously before the await so a quick second click can't
-			// fire createPlacementAt twice while the POST is in flight.
-			const placeableId = armedPlaceableId;
-			armedPlaceableId = null;
-			void createPlacementAt(placeableId, fx, fy);
-		});
-
-		// Set initial view
-		leafletMap.setView([0, 0], 1);
+	function handlePolygonCreated(latLngs: number[][]) {
+		pendingPolygon = latLngs;
+		showRegionForm = true;
 	}
+
+	function handleCanvasClick(fx: number, fy: number) {
+		// Disarm synchronously before the await so a quick second click can't
+		// fire createPlacementAt twice while the POST is in flight.
+		if (!armedPlaceableId) return;
+		const placeableId = armedPlaceableId;
+		armedPlaceableId = null;
+		void createPlacementAt(placeableId, fx, fy);
+	}
+
+	const popupCallbacks: PopupCallbacks = {
+		onEditRegion: (regionId) => startEditRegion(regionId),
+		onDeleteRegion: (regionId) => void handleDeleteRegion(regionId),
+		onDrillIntoLocation: (locId) => drillIntoLocation(locId),
+		onCreateMapOffer: (offer) => (createMapOffer = offer),
+		onOpenEntity: (id) => windowStore.open('entity-detail', id),
+		onDeletePlacement: (id) => void deletePlacement(id),
+		getChildEntityName: (id) => $entities.find((x) => x.id === id)?.name ?? null
+	};
 
 	async function createPlacementAt(placeableId: string, x: number, y: number) {
 		placementError = '';
@@ -311,123 +215,12 @@
 		}
 	}
 
-	$effect(() => {
-		// Initialize map once Leaflet is loaded and DOM is ready
-		if (mapReady && mapContainer && !leafletMap) {
-			initMap();
-		}
-	});
-
-	$effect(() => {
-		// Draw tools only make sense once an image has been imported, so
-		// gate them on hasImage. The map-canvas mounts before any image is
-		// present (to keep Leaflet initialized across the upload prompt),
-		// so we attach/detach the control instead of conditionally rendering.
-		if (!leafletMap || !L) return;
-		if (hasImage && !drawControl) {
-			zoomControl = L.control.zoom();
-			leafletMap.addControl(zoomControl);
-			drawControl = new L.Control.Draw({
-				draw: {
-					polygon: {
-						allowIntersection: false,
-						shapeOptions: { color: accentColor, weight: 2 }
-					},
-					polyline: false,
-					circle: false,
-					rectangle: false,
-					marker: false,
-					circlemarker: false
-				},
-				// leaflet-draw's runtime accepts `false` here to disable the edit
-				// toolbar entirely, but @types/leaflet-draw only allows EditOptions.
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				edit: false as any
-			});
-			leafletMap.addControl(drawControl);
-		} else if (!hasImage && drawControl) {
-			leafletMap.removeControl(drawControl);
-			drawControl = null;
-			if (zoomControl) {
-				leafletMap.removeControl(zoomControl);
-				zoomControl = null;
-			}
-		}
-	});
-
-	// ── Render bitmap overlay ──────────────────────────────────────────────
-
-	$effect(() => {
-		if (!leafletMap) return;
-		const map = activeMap;
-		if (!map) return;
-
-		// Remove old overlay
-		if (imageOverlay) {
-			leafletMap.removeLayer(imageOverlay);
-			imageOverlay = null;
-		}
-
-		if (map.baseImageUrl && map.width && map.height) {
-			const bounds = L.latLngBounds([[0, 0], [map.height, map.width]]);
-			imageOverlay = L.imageOverlay(map.baseImageUrl, bounds).addTo(leafletMap);
-			// When this effect fires from the {#if !hasImage}→{:else} branch
-			// swap (first upload), the map-canvas div was just mounted and
-			// Leaflet measured the container at 0×0. Force a re-measure so
-			// fitBounds has real pixel dimensions to work with.
-			leafletMap.invalidateSize();
-			leafletMap.fitBounds(bounds, { padding: [20, 20] });
-		}
-	});
-
-	// ── Render regions with scope glow/dim ─────────────────────────────────
-
-	$effect(() => {
-		if (!leafletMap) return;
-		const regions = $mapRegions;
-		const checkScope = $isInScope;
-
-		// Remove old layers
-		for (const layer of regionLayers) {
-			leafletMap!.removeLayer(layer);
-		}
-		regionLayers = [];
-
-		for (const region of regions) {
-			const inScope = region.locationId ? checkScope(region.locationId) : false;
-			const isActive = inScope;
-
-			const latLngs = region.polygon.map(([lat, lng]) => L.latLng(lat, lng));
-
-			const layer = L.polygon(latLngs, {
-				color: isActive ? accentColor : (region.color || borderColor),
-				weight: isActive ? 2 : 1,
-				fillColor: isActive ? accentColor : (region.color || borderColor),
-				fillOpacity: isActive ? 0.13 : 0.08,
-				opacity: isActive ? 1 : 0.3,
-				className: isActive ? 'region-active' : 'region-inactive'
-			}).addTo(leafletMap!);
-
-			// Tooltip and popup with location info
-			const loc = region.locationId
-				? $entities.find((e) => e.id === region.locationId)
-				: null;
-			if (loc) layer.bindTooltip(loc.name, { sticky: true });
-			layer.bindPopup(buildRegionPopup(region, loc?.name ?? null), {
-				closeButton: false,
-				minWidth: 140
-			});
-
-			regionLayers.push(layer);
-		}
-	});
-
-	// ── Load + render placements (Step 4) ─────────────────────────────────
+	// ── Load placements ───────────────────────────────────────────────────
 	//
 	// Load placements scoped to the active map's anchor Location. Per M3, the
 	// projection is keyed on location_id so a variant swap doesn't drop the
-	// placements. Loads on map change; per-tick rendering filters in-memory by
-	// playhead via placementsAtPlayhead (no DB roundtrip on tick).
+	// placements. Loads on map change; per-tick rendering filters in-memory
+	// via PlacementLayer (no DB roundtrip on tick).
 	$effect(() => {
 		const locId = activeMap?.locationId;
 		if (!locId) {
@@ -438,56 +231,6 @@
 			return;
 		}
 		void placementsStore.load({ locationId: locId });
-	});
-
-	$effect(() => {
-		if (!leafletMap || !L) return;
-		const map = activeMap;
-		const playheadValue = $playhead;
-		const all = $placementsStore;
-
-		for (const m of placementMarkers) {
-			leafletMap.removeLayer(m);
-		}
-		placementMarkers = [];
-
-		if (!map?.width || !map?.height) return;
-
-		// Null playhead = pre-scrub state. Show only default (both-null-bounds)
-		// placements; t=0 would otherwise leak any time-scoped placement whose
-		// range happens to cover position 0.
-		const active =
-			playheadValue === null
-				? all.filter((p) => p.startPosition === null && p.endPosition === null)
-				: placementsAtPlayhead(all, playheadValue);
-		for (const placement of active) {
-			const placeable = $entities.find((e) => e.id === placement.placeableId);
-			if (!placeable) continue;
-			const lat = placement.y * map.height;
-			const lng = placement.x * map.width;
-			const color = getEntityTypeColor(placeable.type);
-			const html = `<span class="placement-pin" style="background:${color}"></span>`;
-			const icon = L.divIcon({
-				className: 'placement-marker',
-				html,
-				iconSize: [16, 16],
-				iconAnchor: [8, 8]
-			});
-			const marker = L.marker([lat, lng], { icon }).addTo(leafletMap);
-			const safeName = escapeHtml(placeable.name);
-			const safeType = escapeHtml(placeable.type);
-			marker.bindTooltip(`${safeName} (${safeType})`, { direction: 'top' });
-			const popupHtml = `
-				<div class="placement-popup">
-					<div class="placement-popup-name">${safeName}</div>
-					<div class="placement-popup-type">${safeType}</div>
-					<button data-action="open-entity" data-entity-id="${placeable.id}" type="button">Open ${safeType}</button>
-					<button data-action="delete-placement" data-placement-id="${placement.id}" type="button" class="danger">Delete placement</button>
-				</div>
-			`;
-			marker.bindPopup(popupHtml, { closeButton: false, minWidth: 160 });
-			placementMarkers.push(marker);
-		}
 	});
 
 	// ── Auto-select map ────────────────────────────────────────────────────
@@ -549,19 +292,19 @@
 
 	// ── Drill-down navigation ────────────────────────────────────────────────
 	//
-	// Click a region whose linked Location has children (via part_of).
-	// Resolution per design Decision #3 (2026-05-14):
-	//   - 0 drillable children → no-op (region popup behavior unchanged)
-	//   - exactly 1 child with a map → drill into that child's active variant
-	//   - exactly 1 child without a map → "Create a map for X?" CTA
-	//   - multiple children → defer (handled by popup chooser added in Step 7)
-	// Navigate to a Location's active variant. Deliberately does NOT mutate
-	// the `entityId` prop: that prop is the *external* deep-link signal watched
-	// by the reactive effect below. Mutating it from in-component navigation
-	// causes a feedback loop — the parent's prop expression keeps re-supplying
-	// the original entityId, which trips the watcher into switching the map
-	// back. switchMap is enough; breadcrumb + active map both derive from
-	// activeMap.locationId, not from entityId.
+	// Resolve a child Location's active variant and switch to it. The 0/1/many
+	// child-resolution policy from design Decision #3 (2026-05-14) lives in
+	// leaflet-controller.ts's popup-click handler — this function just answers
+	// "is there a variant?". Returns false → caller surfaces the "Create map
+	// for X?" CTA.
+	//
+	// Deliberately does NOT mutate the `entityId` prop: that prop is the
+	// *external* deep-link signal watched by the reactive effect below.
+	// Mutating it from in-component navigation causes a feedback loop — the
+	// parent's prop expression keeps re-supplying the original entityId,
+	// which trips the watcher into switching the map back. switchMap is
+	// enough; breadcrumb + active map both derive from activeMap.locationId,
+	// not from entityId.
 	function drillIntoLocation(locationId: string) {
 		const variant = resolveActiveVariant($worldMaps, locationId, $playhead);
 		if (variant) {
@@ -596,72 +339,8 @@
 		regionFormSceneIds = next;
 	}
 
-	type SceneRange = { startActId: string; startSceneId: string; endActId: string; endSceneId: string };
-
-	function coalesceToRanges(
-		selectedSceneIds: Set<string>,
-		scenesByAct: Map<string, typeof $entities[0][]>
-	): SceneRange[] {
-		const ranges: SceneRange[] = [];
-		for (const [actId, scenes] of scenesByAct) {
-			const selected = scenes.filter((s) => selectedSceneIds.has(s.id));
-			if (selected.length === 0) continue;
-			let runStart = selected[0];
-			let runEnd = selected[0];
-			for (let i = 1; i < selected.length; i++) {
-				const prevIdx = scenes.indexOf(runEnd);
-				const currIdx = scenes.indexOf(selected[i]);
-				if (currIdx === prevIdx + 1) {
-					runEnd = selected[i];
-				} else {
-					ranges.push({
-						startActId: actId, startSceneId: runStart.id,
-						endActId: actId, endSceneId: runEnd.id
-					});
-					runStart = selected[i];
-					runEnd = selected[i];
-				}
-			}
-			ranges.push({
-				startActId: actId, startSceneId: runStart.id,
-				endActId: actId, endSceneId: runEnd.id
-			});
-		}
-		return ranges;
-	}
-
 	function scenesInInterval(iv: typeof $intervalsStore[0]): string[] {
-		if (!iv.startSceneId || !iv.endSceneId || iv.startActId !== iv.endActId) return [];
-		const scenes = scenesByAct.get(iv.startActId) ?? [];
-		const startIdx = scenes.findIndex((s) => s.id === iv.startSceneId);
-		const endIdx = scenes.findIndex((s) => s.id === iv.endSceneId);
-		if (startIdx < 0 || endIdx < 0) return [];
-		const lo = Math.min(startIdx, endIdx);
-		const hi = Math.max(startIdx, endIdx);
-		return scenes.slice(lo, hi + 1).map((s) => s.id);
-	}
-
-	function buildRegionPopup(region: typeof $mapRegions[0], locName: string | null): string {
-		const locHtml = locName && region.locationId
-			? `<button class="region-popup-name" data-location-id="${region.locationId}">${escapeHtml(locName)}</button>`
-			: '<span class="region-popup-name">Unlinked region</span>';
-
-		// Drill-down: clicking the region's linked Location should descend into
-		// that Location's own map (one level deeper than the current map). If
-		// the Location has no map yet, surface the "Create map for X" CTA.
-		// Skip the affordance when the region links to the current map's
-		// anchor Location (drilling would be a no-op).
-		let drillHtml = '';
-		if (region.locationId && region.locationId !== activeMap?.locationId) {
-			const loc = $entities.find((e) => e.id === region.locationId);
-			if (loc) {
-				const locVariant = resolveActiveVariant($worldMaps, region.locationId, $playhead);
-				const verb = locVariant ? 'Zoom in to' : 'Create map for';
-				drillHtml = `<button class="region-popup-btn region-popup-btn-drill" data-action="drill" data-location-id="${region.locationId}">${verb} ${escapeHtml(loc.name)}</button>`;
-			}
-		}
-
-		return `<div class="region-popup">${locHtml}${drillHtml}<div class="region-popup-actions"><button class="region-popup-btn" data-action="edit" data-region-id="${region.id}">Edit</button><button class="region-popup-btn region-popup-btn-danger" data-action="delete" data-region-id="${region.id}">Delete</button></div></div>`;
+		return scenesInIntervalPure(iv, scenesByAct);
 	}
 
 	function startEditRegion(regionId: string) {
@@ -1052,7 +731,6 @@
 		duplicating = false;
 	}
 
-	const PALETTE = ['#e8a838', '#3b82f6', '#ef4444', '#22c55e', '#a855f7', '#ec4899', '#f97316', '#06b6d4'];
 </script>
 
 {#if !hasMaps}
@@ -1071,140 +749,79 @@
 		class:has-breadcrumb={breadcrumbAncestors.length > 0 && activeMap}
 	>
 		{#if breadcrumbAncestors.length > 0 && activeMap}
-			<nav class="map-breadcrumb" aria-label="Location hierarchy">
-				{#each breadcrumbAncestors as ancestor (ancestor.id)}
-					<button
-						type="button"
-						class="breadcrumb-link"
-						onclick={() => navigateBreadcrumb(ancestor.id)}
-					>
-						{ancestor.name}
-					</button>
-					<span class="breadcrumb-sep" aria-hidden="true">›</span>
-				{/each}
-				<span class="breadcrumb-current">
-					{$entities.find((e) => e.id === activeMap.locationId)?.name ?? '(current)'}
-				</span>
-			</nav>
+			<MapBreadcrumb
+				ancestors={breadcrumbAncestors}
+				currentName={$entities.find((e) => e.id === activeMap.locationId)?.name ?? '(current)'}
+				onNavigate={navigateBreadcrumb}
+			/>
 		{/if}
-		<div class="map-toolbar">
-			<select
-				class="map-switcher"
-				value={activeMapId}
-				onchange={(e) => switchMap((e.target as HTMLSelectElement).value)}
-			>
-				{#each $worldMaps as m}
-					<option value={m.id}>{m.name}</option>
-				{/each}
-			</select>
-			{#if renamingMapName !== null}
-				<!-- svelte-ignore a11y_autofocus -->
-				<input
-					class="map-name-input"
-					type="text"
-					bind:value={renamingMapName}
-					autofocus
-					onblur={commitRename}
-					onkeydown={(e) => {
-						if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-						if (e.key === 'Escape') cancelRename();
-					}}
-				/>
-			{:else}
-				<button
-					class="btn-icon"
-					onclick={startRename}
-					title="Rename map"
-					aria-label="Rename map"
-					disabled={!activeMap}
-				>
-					<svg width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden="true">
-						<path d="M7.5 1.5 l2 2 -6 6 -2.5 0.5 0.5-2.5 6-6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" fill="none"/>
-					</svg>
-				</button>
-			{/if}
-			<button class="btn-icon" onclick={handleCreateMap} title="New map">+</button>
-			<button
-				class="btn-icon btn-danger"
-				onclick={openDeleteConfirm}
-				title="Delete map"
-				disabled={!activeMap}>×</button
-			>
-			{#if hasImage}
-				<label class="btn-icon" title="Replace image">
-					📁
-					<input type="file" accept=".jpg,.jpeg,.png,.webp" onchange={handleImageUpload} hidden />
-				</label>
-			{/if}
-			{#if activeMap}
-				{#if creatingToolbarLocation}
-					<!-- svelte-ignore a11y_autofocus -->
-					<input
-						class="map-location-new-input"
-						type="text"
-						placeholder="Name of new location…"
-						aria-label="Name of new location"
-						bind:value={toolbarNewLocationName}
-						autofocus
-						disabled={toolbarNewLocationBusy}
-						onblur={commitCreateToolbarLocation}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-							if (e.key === 'Escape') cancelCreateToolbarLocation();
-						}}
-					/>
-				{:else}
-					<select
-						class="map-location-picker"
-						title="Linked location — what this map depicts"
-						aria-label="Linked location"
-						value={activeMap.locationId ?? ''}
-						onchange={(e) => changeLinkedLocation((e.target as HTMLSelectElement).value)}
-					>
-						<option value="">(no linked location)</option>
-						{#each locations as loc}
-							<option value={loc.id}>{loc.name}</option>
-						{/each}
-					</select>
-					<button
-						class="btn-icon"
-						onclick={startCreateToolbarLocation}
-						title="Create a new Location and link it to this map"
-						aria-label="New location"
-					>+</button>
-				{/if}
-				{#if activeMap.locationId}
-					<button
-						class="map-variant-chip"
-						onclick={openVariantForm}
-						title="Edit variant scene range"
-						aria-label="Edit variant scene range"
-					>
-						{variantLabel(activeMap)}
-					</button>
-				{/if}
-				<button
-					class="btn-icon"
-					onclick={handleDuplicate}
-					disabled={duplicating}
-					title="Duplicate this map (clones regions; clears variant range)"
-					aria-label="Duplicate map"
-				>
-					⧉
-				</button>
-			{/if}
-		</div>
+		<MapToolbar
+			worldMaps={$worldMaps}
+			{activeMap}
+			{activeMapId}
+			{hasImage}
+			{locations}
+			{duplicating}
+			bind:renamingMapName
+			bind:creatingToolbarLocation
+			bind:toolbarNewLocationName
+			{toolbarNewLocationBusy}
+			{variantLabel}
+			onSwitchMap={switchMap}
+			onCreateMap={handleCreateMap}
+			onOpenDeleteConfirm={openDeleteConfirm}
+			onImageUpload={handleImageUpload}
+			onChangeLinkedLocation={changeLinkedLocation}
+			onStartRename={startRename}
+			onCommitRename={commitRename}
+			onCancelRename={cancelRename}
+			onStartCreateToolbarLocation={startCreateToolbarLocation}
+			onCommitCreateToolbarLocation={commitCreateToolbarLocation}
+			onCancelCreateToolbarLocation={cancelCreateToolbarLocation}
+			onOpenVariantForm={openVariantForm}
+			onDuplicate={handleDuplicate}
+		/>
 		{#if toolbarNewLocationError}
 			<div class="placement-error" role="alert">
 				Couldn't create location: {toolbarNewLocationError}
 				<button type="button" onclick={() => (toolbarNewLocationError = '')}>✕</button>
 			</div>
 		{/if}
-		<div
-			class="map-canvas"
-			class:armed={armedPlaceableId !== null}
-			bind:this={mapContainer}
-		></div>
+		<MapStage
+			{activeMap}
+			{hasImage}
+			{armedPlaceableId}
+			{accentColor}
+			{popupCallbacks}
+			onPolygonCreated={handlePolygonCreated}
+			onCanvasClick={handleCanvasClick}
+			{resolveCssColors}
+			bind:leafletMap
+			bind:L
+			bind:drawnItems
+		/>
+		{#if leafletMap && L}
+			<RegionLayer
+				{leafletMap}
+				{L}
+				regions={$mapRegions}
+				entities={$entities}
+				worldMaps={$worldMaps}
+				{activeMap}
+				playhead={$playhead}
+				isInScope={$isInScope}
+				{accentColor}
+				{borderColor}
+			/>
+			<PlacementLayer
+				{leafletMap}
+				{L}
+				{activeMap}
+				playhead={$playhead}
+				placements={$placementsStore}
+				entities={$entities}
+			/>
+		{/if}
 		{#if hasImage && activeMap?.locationId}
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
@@ -1232,188 +849,48 @@
 {/if}
 
 {#if showRegionForm}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
-		<div class="modal-content">
-			<h3>{editingRegionId ? "Edit Region" : "New Region"}</h3>
-
-			<label>
-				Linked Location
-				{#if creatingRegionLocation}
-					<div class="region-new-loc-row">
-						<!-- svelte-ignore a11y_autofocus -->
-						<input
-							class="region-new-loc-input"
-							type="text"
-							placeholder="Name of new location…"
-							aria-label="Name of new location"
-							bind:value={regionNewLocationName}
-							autofocus
-							disabled={regionNewLocationBusy}
-							onkeydown={(e) => {
-								if (e.key === 'Enter') commitCreateRegionLocation();
-								if (e.key === 'Escape') cancelCreateRegionLocation();
-							}}
-						/>
-						<button type="button" onclick={commitCreateRegionLocation} disabled={regionNewLocationBusy}>Add</button>
-						<button type="button" onclick={cancelCreateRegionLocation} disabled={regionNewLocationBusy}>Cancel</button>
-					</div>
-					{#if regionNewLocationError}
-						<span class="region-new-loc-error">{regionNewLocationError}</span>
-					{/if}
-				{:else}
-					<div class="region-loc-row">
-						<select bind:value={regionFormLocationId}>
-							<option value={null}>None (unlinked)</option>
-							{#each regionFormLocations as loc}
-								<option value={loc.id}>{loc.name}</option>
-							{/each}
-						</select>
-						<button
-							type="button"
-							class="btn-icon"
-							onclick={startCreateRegionLocation}
-							title="Create a new Location and link this region to it"
-							aria-label="New location"
-						>+</button>
-					</div>
-				{/if}
-			</label>
-
-			<label>
-				Color
-				<div class="color-palette">
-					{#each PALETTE as c}
-						<button
-							class="color-swatch"
-							class:active={regionFormColor === c}
-							aria-label="Color {c}"
-							style="background: {c}"
-							onclick={() => regionFormColor = c}
-						></button>
-					{/each}
-				</div>
-			</label>
-
-			{#if regionFormLocationId}
-				<label>
-					Active during
-					<div class="scene-tree">
-						{#each acts as act}
-							{@const scenes = scenesByAct.get(act.id) ?? []}
-							{#if scenes.length > 0}
-								<div class="act-group">
-									<div class="act-label">{act.name}</div>
-									{#each scenes as scene}
-										<label class="scene-check">
-											<input type="checkbox"
-												checked={regionFormSceneIds.has(scene.id)}
-												onchange={() => toggleScene(scene.id)} />
-											{scene.name}
-										</label>
-									{/each}
-								</div>
-							{/if}
-						{/each}
-						{#if acts.length === 0 || acts.every((a) => (scenesByAct.get(a.id) ?? []).length === 0)}
-							<span class="hint">Create acts and scenes in the Timeline first.</span>
-						{/if}
-					</div>
-				</label>
-			{/if}
-
-			<div class="modal-actions">
-				<button class="btn-secondary" onclick={handleCancelRegion}>Cancel</button>
-				<button class="btn-primary" onclick={handleSaveRegion}>Save Region</button>
-			</div>
-		</div>
-	</div>
+	<RegionFormModal
+		isEditing={editingRegionId !== null}
+		{regionFormLocations}
+		{acts}
+		{scenesByAct}
+		bind:locationId={regionFormLocationId}
+		bind:color={regionFormColor}
+		sceneIds={regionFormSceneIds}
+		bind:creatingLocation={creatingRegionLocation}
+		bind:newLocationName={regionNewLocationName}
+		newLocationError={regionNewLocationError}
+		newLocationBusy={regionNewLocationBusy}
+		onSave={handleSaveRegion}
+		onCancel={handleCancelRegion}
+		onStartCreateLocation={startCreateRegionLocation}
+		onCancelCreateLocation={cancelCreateRegionLocation}
+		onCommitCreateLocation={commitCreateRegionLocation}
+		onToggleScene={toggleScene}
+	/>
 {/if}
 
 {#if createMapOffer}
-	{@const offer = createMapOffer}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
-		<div class="modal-content">
-			<h3>No map for {offer.childName} yet</h3>
-			<p class="variant-help">
-				Drilling in opens the sublocation's map. <strong>{offer.childName}</strong>
-				doesn't have one — want to create one?
-			</p>
-			<div class="modal-actions">
-				<button class="btn-secondary" onclick={dismissCreateMapOffer}>Not now</button>
-				<button class="btn-primary" onclick={acceptCreateMapOffer}>
-					Create a map for {offer.childName}
-				</button>
-			</div>
-		</div>
-	</div>
+	<CreateMapOfferModal
+		offer={createMapOffer}
+		onAccept={acceptCreateMapOffer}
+		onDismiss={dismissCreateMapOffer}
+	/>
 {/if}
 
 {#if showVariantForm && activeMap}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
-		<div class="modal-content">
-			<h3>Variant range</h3>
-			<p class="variant-help">
-				Which story-time slice does this map depict? Default variant shows whenever
-				no scoped variant covers the playhead. A single-Act variant is fine — pick
-				the same Act for start and end.
-			</p>
-
-			<label class="variant-default">
-				<input type="checkbox" bind:checked={variantFormIsDefault} />
-				Default variant (no scene range — shows when nothing else covers)
-			</label>
-
-			{#if !variantFormIsDefault}
-				<div class="variant-grid">
-					<label>
-						Start act
-						<select bind:value={variantFormStartActId}>
-							<option value={null}>—</option>
-							{#each acts as act}
-								<option value={act.id}>{act.name}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						Start scene (optional)
-						<select bind:value={variantFormStartSceneId}>
-							<option value={null}>—</option>
-							{#each (variantFormStartActId ? scenesByAct.get(variantFormStartActId) ?? [] : []) as scene}
-								<option value={scene.id}>{scene.name}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						End act
-						<select bind:value={variantFormEndActId}>
-							<option value={null}>—</option>
-							{#each acts as act}
-								<option value={act.id}>{act.name}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						End scene (optional)
-						<select bind:value={variantFormEndSceneId}>
-							<option value={null}>—</option>
-							{#each (variantFormEndActId ? scenesByAct.get(variantFormEndActId) ?? [] : []) as scene}
-								<option value={scene.id}>{scene.name}</option>
-							{/each}
-						</select>
-					</label>
-				</div>
-			{/if}
-
-			{#if variantFormError}
-				<p class="variant-error">{variantFormError}</p>
-			{/if}
-
-			<div class="modal-actions">
-				<button class="btn-secondary" onclick={closeVariantForm}>Cancel</button>
-				<button class="btn-primary" onclick={saveVariant}>Save Variant</button>
-			</div>
-		</div>
-	</div>
+	<VariantFormModal
+		{acts}
+		{scenesByAct}
+		bind:isDefault={variantFormIsDefault}
+		bind:startActId={variantFormStartActId}
+		bind:startSceneId={variantFormStartSceneId}
+		bind:endActId={variantFormEndActId}
+		bind:endSceneId={variantFormEndSceneId}
+		error={variantFormError}
+		onSave={saveVariant}
+		onCancel={closeVariantForm}
+	/>
 {/if}
 
 {#if deleteConfirm}
@@ -1450,7 +927,7 @@
 		flex-direction: column;
 	}
 
-	.map-toolbar {
+	:global(.map-toolbar) {
 		position: absolute;
 		top: 8px;
 		left: 60px;
@@ -1467,14 +944,14 @@
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 	}
 
-	.map-wrapper.has-breadcrumb .map-toolbar {
+	.map-wrapper.has-breadcrumb :global(.map-toolbar) {
 		/* Breadcrumb bar sits in normal flow above the canvas; nudge the
 		   absolutely-positioned toolbar below it so the two don't overlap. */
 		top: 36px;
 	}
 
-	.map-switcher,
-	.map-location-picker {
+	:global(.map-switcher),
+	:global(.map-location-picker) {
 		background: var(--color-surface);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
@@ -1483,12 +960,12 @@
 		font-size: 13px;
 	}
 
-	.map-location-picker {
+	:global(.map-location-picker) {
 		margin-left: auto;
 		max-width: 180px;
 	}
 
-	.map-location-new-input {
+	:global(.map-location-new-input) {
 		margin-left: auto;
 		background: var(--color-surface);
 		color: var(--color-text);
@@ -1501,7 +978,7 @@
 		max-width: 200px;
 	}
 
-	.map-breadcrumb {
+	:global(.map-breadcrumb) {
 		display: flex;
 		align-items: center;
 		flex-wrap: wrap;
@@ -1513,7 +990,7 @@
 		color: var(--color-text-muted, #6b7280);
 	}
 
-	.breadcrumb-link {
+	:global(.breadcrumb-link) {
 		background: none;
 		border: none;
 		color: var(--color-text-muted, #6b7280);
@@ -1523,22 +1000,22 @@
 		cursor: pointer;
 	}
 
-	.breadcrumb-link:hover {
+	:global(.breadcrumb-link:hover) {
 		color: var(--color-accent);
 		text-decoration: underline;
 	}
 
-	.breadcrumb-sep {
+	:global(.breadcrumb-sep) {
 		color: var(--color-text-muted, #6b7280);
 		opacity: 0.6;
 	}
 
-	.breadcrumb-current {
+	:global(.breadcrumb-current) {
 		color: var(--color-text);
 		font-weight: 600;
 	}
 
-	.map-variant-chip {
+	:global(.map-variant-chip) {
 		background: var(--color-surface);
 		color: var(--color-text);
 		border: 1px solid var(--color-rel-loc, var(--color-border));
@@ -1553,18 +1030,18 @@
 		text-overflow: ellipsis;
 	}
 
-	.map-variant-chip:hover {
+	:global(.map-variant-chip:hover) {
 		border-color: var(--color-accent);
 		color: var(--color-accent);
 	}
 
-	.variant-help {
+	:global(.variant-help) {
 		margin: 0 0 12px 0;
 		font-size: 12px;
 		color: var(--color-text-muted, #6b7280);
 	}
 
-	.variant-default {
+	:global(.variant-default) {
 		display: flex;
 		align-items: center;
 		gap: 6px;
@@ -1573,13 +1050,13 @@
 		cursor: pointer;
 	}
 
-	.variant-grid {
+	:global(.variant-grid) {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
 		gap: 10px 12px;
 	}
 
-	.variant-grid label {
+	:global(.variant-grid label) {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
@@ -1587,7 +1064,7 @@
 		color: var(--color-text-muted, #6b7280);
 	}
 
-	.variant-grid select {
+	:global(.variant-grid select) {
 		background: var(--color-surface);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
@@ -1597,13 +1074,13 @@
 		font-family: inherit;
 	}
 
-	.variant-error {
+	:global(.variant-error) {
 		margin: 10px 0 0 0;
 		color: var(--color-rel-rival, #ef4444);
 		font-size: 12px;
 	}
 
-	.map-name-input {
+	:global(.map-name-input) {
 		background: transparent;
 		border: none;
 		color: var(--color-text);
@@ -1613,13 +1090,16 @@
 		border-bottom: 1px solid var(--color-accent);
 	}
 
-	.map-canvas {
+	/* .map-canvas lives inside MapStage (which owns the bind:this on the
+	   Leaflet container div). The wrapper still relies on flex children
+	   filling remaining space; MapStage's element matches via :global. */
+	:global(.map-canvas) {
 		flex: 1;
 		width: 100%;
 		min-height: 0;
 	}
 
-	.btn-icon {
+	:global(.btn-icon) {
 		background: transparent;
 		border: 1px solid var(--color-border);
 		color: var(--color-text);
@@ -1633,8 +1113,8 @@
 		font-size: 14px;
 		padding: 0;
 	}
-	.btn-icon:hover { background: var(--color-border); }
-	.btn-danger:hover { background: #c0392b; color: #fff; }
+	:global(.btn-icon:hover) { background: var(--color-border); }
+	:global(.btn-danger:hover) { background: #c0392b; color: #fff; }
 
 	.empty-state {
 		display: flex;
@@ -1686,7 +1166,7 @@
 		font-size: 14px;
 	}
 
-	.btn-primary {
+	:global(.btn-primary) {
 		background: var(--color-accent);
 		color: #000;
 		border: none;
@@ -1695,9 +1175,9 @@
 		font-size: 14px;
 		cursor: pointer;
 	}
-	.btn-primary:hover { filter: brightness(1.1); }
+	:global(.btn-primary:hover) { filter: brightness(1.1); }
 
-	.btn-secondary {
+	:global(.btn-secondary) {
 		background: transparent;
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
@@ -1726,7 +1206,7 @@
 	}
 
 	/* Modal */
-	.modal-overlay {
+	:global(.modal-overlay) {
 		position: fixed;
 		inset: 0;
 		z-index: 2000;
@@ -1736,7 +1216,7 @@
 		justify-content: center;
 	}
 
-	.modal-content {
+	:global(.modal-content) {
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
@@ -1747,11 +1227,11 @@
 		gap: 12px;
 	}
 
-	.modal-content h3 {
+	:global(.modal-content h3) {
 		margin: 0;
 	}
 
-	.modal-content label {
+	:global(.modal-content label) {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
@@ -1759,7 +1239,7 @@
 		color: var(--color-text-muted);
 	}
 
-	.modal-content select {
+	:global(.modal-content select) {
 		background: var(--color-surface);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
@@ -1768,16 +1248,16 @@
 		font-size: 14px;
 	}
 
-	.region-loc-row,
-	.region-new-loc-row {
+	:global(.region-loc-row),
+	:global(.region-new-loc-row) {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 	}
-	.region-loc-row select {
+	:global(.region-loc-row select) {
 		flex: 1;
 	}
-	.region-new-loc-input {
+	:global(.region-new-loc-input) {
 		flex: 1;
 		background: var(--color-surface);
 		color: var(--color-text);
@@ -1788,7 +1268,7 @@
 		font-family: inherit;
 		outline: none;
 	}
-	.region-new-loc-row button {
+	:global(.region-new-loc-row button) {
 		background: transparent;
 		border: 1px solid var(--color-border);
 		color: var(--color-text);
@@ -1798,43 +1278,43 @@
 		font-family: inherit;
 		cursor: pointer;
 	}
-	.region-new-loc-row button:hover:not(:disabled) {
+	:global(.region-new-loc-row button:hover:not(:disabled)) {
 		border-color: var(--color-accent);
 		color: var(--color-accent);
 	}
-	.region-new-loc-row button:disabled {
+	:global(.region-new-loc-row button:disabled) {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
-	.region-new-loc-error {
+	:global(.region-new-loc-error) {
 		font-size: 11px;
 		color: var(--color-rel-rival, #ef4444);
 	}
 
-	.color-palette {
+	:global(.color-palette) {
 		display: flex;
 		gap: 6px;
 		flex-wrap: wrap;
 	}
 
-	.color-swatch {
+	:global(.color-swatch) {
 		width: 28px;
 		height: 28px;
 		border-radius: 50%;
 		border: 2px solid transparent;
 		cursor: pointer;
 	}
-	.color-swatch.active {
+	:global(.color-swatch.active) {
 		border-color: var(--color-text);
 	}
 
-	.modal-actions {
+	:global(.modal-actions) {
 		display: flex;
 		gap: 8px;
 		justify-content: flex-end;
 		margin-top: 4px;
 	}
-.scene-tree {
+	:global(.scene-tree) {
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
@@ -1842,13 +1322,13 @@
 		overflow-y: auto;
 	}
 
-	.act-group {
+	:global(.act-group) {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
 	}
 
-	.act-label {
+	:global(.act-label) {
 		font-weight: 600;
 		font-size: 12px;
 		color: var(--color-text);
@@ -1857,7 +1337,7 @@
 		margin-top: 4px;
 	}
 
-	.scene-check {
+	:global(.scene-check) {
 		display: flex;
 		align-items: center;
 		gap: 6px;
@@ -1933,7 +1413,7 @@
 
 	/* Step 4 — placement marker + popup styles. Scoped :global because the
 	   markup is owned by Leaflet (divIcon HTML / bindPopup HTML). */
-	.map-canvas.armed { cursor: crosshair; }
+	:global(.map-canvas.armed) { cursor: crosshair; }
 	:global(.placement-marker) { background: transparent; border: none; }
 	:global(.placement-pin) {
 		display: block;

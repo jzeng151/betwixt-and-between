@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
-import { entities, intervals } from '../../src/lib/server/db/schema.js';
+import { entities, intervals, mapAnchors, worldMaps } from '../../src/lib/server/db/schema.js';
 
 describe('bump_updated_at BEFORE UPDATE trigger', () => {
 	let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -73,6 +73,35 @@ describe('bump_updated_at BEFORE UPDATE trigger', () => {
 			.select()
 			.from(intervals)
 			.where(eq(intervals.id, interval.id));
+		expect(after.updatedAt.getTime()).toBeGreaterThan((initial as Date).getTime());
+	});
+
+	// Δ1a-B: map_anchors is mutable (user-edited snapshots); 0012 installs
+	// bump_updated_at on it. world_maps + map_anchors both need the trigger
+	// for the Slice 1a authoring loop to stamp last-edit times correctly.
+	it('advances map_anchors.updated_at on UPDATE (Δ1a-B)', async () => {
+		const [map] = await db
+			.insert(worldMaps)
+			.values({ userId, name: 'Map' })
+			.returning();
+		const [anchor] = await db
+			.insert(mapAnchors)
+			.values({
+				worldMapId: map.id,
+				tPosition: 0,
+				stateJsonb: { regions: [], artifacts: [], chains: [] }
+			})
+			.returning();
+		const initial = anchor.updatedAt;
+
+		await new Promise((r) => setTimeout(r, 10));
+
+		await db
+			.update(mapAnchors)
+			.set({ stateJsonb: { regions: [{ region_id: 'r1' }], artifacts: [], chains: [] } })
+			.where(eq(mapAnchors.id, anchor.id));
+
+		const [after] = await db.select().from(mapAnchors).where(eq(mapAnchors.id, anchor.id));
 		expect(after.updatedAt.getTime()).toBeGreaterThan((initial as Date).getTime());
 	});
 

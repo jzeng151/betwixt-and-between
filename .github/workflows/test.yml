@@ -17,6 +17,9 @@ jobs:
           node-version: '24'
           cache: 'npm'
       - run: npm ci
+      # Asserts patches/svelte-pixi+8.0.1.patch landed via postinstall.
+      # See docs/plans/world-map-v3-pre-slice-0-spike-findings.md § HMR teardown.
+      - run: npm run verify:patches
       - run: npm run check
       # Vitest unit + integration tests run against PGlite in-process —
       # no Postgres service needed in CI.

@@ -1,0 +1,43 @@
+diff --git a/node_modules/svelte-pixi/dist/svelte-5/Application.svelte b/node_modules/svelte-pixi/dist/svelte-5/Application.svelte
+index f2e8d03..e074a86 100644
+--- a/node_modules/svelte-pixi/dist/svelte-5/Application.svelte
++++ b/node_modules/svelte-pixi/dist/svelte-5/Application.svelte
+@@ -77,6 +77,16 @@ let invalidated = true;
+ setApp(instance);
+ onMount(() => {
+     return () => {
++        // betwixt-and-between patch: upstream svelte-pixi@8.0.1 never calls
++        // app.destroy() on unmount, leaking a Pixi.Application + WebGL context
++        // every mount/unmount cycle. Browsers cap WebGL contexts at ~16. See
++        // docs/plans/world-map-v3-pre-slice-0-spike-findings.md § HMR teardown.
++        try {
++            instance?.destroy(true, { children: true, texture: true, textureSource: true, context: true });
++        }
++        catch (_) {
++            // ignore: Pixi destroy can throw if context was already lost
++        }
+         instance = undefined;
+     };
+ });
+diff --git a/node_modules/svelte-pixi/dist/svelte-5/Ticker.svelte b/node_modules/svelte-pixi/dist/svelte-5/Ticker.svelte
+index 25968f1..0198269 100644
+--- a/node_modules/svelte-pixi/dist/svelte-5/Ticker.svelte
++++ b/node_modules/svelte-pixi/dist/svelte-5/Ticker.svelte
+@@ -12,7 +12,16 @@ if (!instance) {
+ setTicker(instance);
+ onMount(() => {
+     return () => {
+-        instance?.destroy();
++        // betwixt-and-between patch: Pixi 8 Ticker.destroy() walks an internal
++        // linked list and throws "Cannot read properties of null (reading 'next')"
++        // when called after the owning Application destroyed its context. See
++        // docs/plans/world-map-v3-pre-slice-0-spike-findings.md § HMR teardown.
++        try {
++            instance?.destroy();
++        }
++        catch (_) {
++            // ignore: upstream Pixi 8 Ticker.destroy null-deref after context loss
++        }
+         instance = undefined;
+     };
+ });

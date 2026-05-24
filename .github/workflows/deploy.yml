@@ -42,6 +42,7 @@ jobs:
       # CI gates — same as .github/workflows/test.yml. Mirrored here (not
       # delegated via workflow_run) so the deploy job is self-contained and
       # an accidental change to test.yml can't silently bypass deploy gating.
+      - run: npm run verify:patches
       - run: npm run check
       - run: npm test
 

@@ -16,7 +16,7 @@
  *   4. If no default exists either, return null (the Location has no map
  *      authored for this story-time slice — UI should surface as "no map").
  */
-import type { WorldMap } from './types/world-map.js';
+import type { WorldMap } from './types.js';
 
 export function resolveActiveVariant(
 	maps: WorldMap[],

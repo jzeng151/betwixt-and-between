@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { resolveActiveVariant, variantsForLocation } from '../../src/lib/world-map-variants.js';
-import type { WorldMap } from '../../src/lib/types/world-map.js';
+import { resolveActiveVariant, variantsForLocation } from '../../src/lib/features/map/variants.js';
+import type { WorldMap } from '../../src/lib/features/map/types.js';
 
 function mkMap(overrides: Partial<WorldMap> & { id: string }): WorldMap {
 	return {
