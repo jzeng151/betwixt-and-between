@@ -29,6 +29,7 @@
 	import { NEUTRAL_REGION_COLOR, type RenderedState } from './projection.js';
 	import { factions as factionsStore, type Faction } from './factions-store.js';
 	import { mapEventsStore } from './map-events-store.js';
+	import { mapAnchorsStore } from './map-anchors-store.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
 	import type { MapRegion } from './types.js';
 
@@ -61,7 +62,13 @@
 
 	// Right-click menu state. `x` / `y` are viewport-local (clientX/clientY
 	// from the underlying DOM event); ContextMenu uses position: fixed.
-	let menu = $state<{ x: number; y: number; regionId: string } | null>(null);
+	// `kind: 'region'` → change-owner submenu against a specific region.
+	// `kind: 'snapshot'` → "Snapshot world state here" for empty-area
+	// right-clicks (Δ1b-E).
+	type MenuState =
+		| { kind: 'region'; x: number; y: number; regionId: string }
+		| { kind: 'snapshot'; x: number; y: number };
+	let menu = $state<MenuState | null>(null);
 	let actionError = $state<string | null>(null);
 
 	onMount(() => {
@@ -103,12 +110,53 @@
 		return Number.isFinite(n) ? n : 0x9ca3af;
 	}
 
-	function openRegionMenu(regionId: string, e: FederatedPointerEvent) {
-		// e.client gives viewport coords on Pixi v8's FederatedPointerEvent.
-		// Fall back to nativeEvent if missing on some browser path.
+	function clientXY(e: FederatedPointerEvent): { x: number; y: number } {
 		const x = (e.client?.x ?? e.nativeEvent?.clientX ?? 0) as number;
 		const y = (e.client?.y ?? e.nativeEvent?.clientY ?? 0) as number;
-		menu = { x, y, regionId };
+		return { x, y };
+	}
+
+	function openRegionMenu(regionId: string, e: FederatedPointerEvent) {
+		const { x, y } = clientXY(e);
+		menu = { kind: 'region', x, y, regionId };
+	}
+
+	function openSnapshotMenu(e: FederatedPointerEvent) {
+		const { x, y } = clientXY(e);
+		menu = { kind: 'snapshot', x, y };
+	}
+
+	async function snapshotWorldState() {
+		if (!mapId) {
+			actionError = 'No active map';
+			return;
+		}
+		actionError = null;
+		try {
+			// State at the playhead's current value, baked into a new anchor.
+			// Captures faction ownership AS RENDERED right now — same shape
+			// as the baseline anchor commit 3a writes for new maps + migration
+			// 0012 backfilled for legacy maps.
+			const tPosition = get(playhead) ?? 0;
+			const renderedRegionMap = new Map<string, string | null>();
+			if (renderedState) {
+				for (const r of renderedState.regions) {
+					renderedRegionMap.set(r.regionId, r.factionId);
+				}
+			}
+			const stateJsonb = {
+				regions: regions.map((r) => ({
+					region_id: r.id,
+					faction_id: renderedRegionMap.get(r.id) ?? null,
+					color: r.color
+				})),
+				artifacts: [],
+				chains: []
+			};
+			await mapAnchorsStore.create(mapId, { tPosition, stateJsonb });
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : String(err);
+		}
 	}
 
 	async function changeOwner(regionId: string, factionId: string) {
@@ -134,11 +182,34 @@
 		}
 	}
 
-	let menuItems = $derived.by(() => {
+	type MenuItem = {
+		label: string;
+		icon?: string;
+		disabled?: boolean;
+		onSelect: () => void;
+	};
+	let menuItems: MenuItem[] = $derived.by<MenuItem[]>(() => {
 		if (!menu) return [];
+		if (menu.kind === 'snapshot') {
+			return [
+				{
+					label: 'Snapshot world state here',
+					icon: '📌',
+					onSelect: () => {
+						void snapshotWorldState();
+					}
+				}
+			];
+		}
 		const regionId = menu.regionId;
 		if (factionList.length === 0) {
-			return [{ label: 'No factions yet — create one first', disabled: true, onSelect: () => {} }];
+			return [
+				{
+					label: 'No factions yet — create one first',
+					disabled: true,
+					onSelect: () => {}
+				}
+			];
 		}
 		// Current owner of this region at the active playhead, per the most
 		// recent projectState pass. Disable the item that points back to the
@@ -147,15 +218,19 @@
 		const currentFactionId = renderedState?.regions.find(
 			(r) => r.regionId === regionId
 		)?.factionId ?? null;
-		return factionList.map((f) => ({
-			label:
-				f.id === currentFactionId
-					? `${f.name} (current owner)`
-					: `Change owner → ${f.name}`,
-			icon: '●',
-			disabled: f.id === currentFactionId,
-			onSelect: () => void changeOwner(regionId, f.id)
-		}));
+		return factionList.map(
+			(f): MenuItem => ({
+				label:
+					f.id === currentFactionId
+						? `${f.name} (current owner)`
+						: `Change owner → ${f.name}`,
+				icon: '●',
+				disabled: f.id === currentFactionId,
+				onSelect: () => {
+					void changeOwner(regionId, f.id);
+				}
+			})
+		);
 	});
 
 	$effect(() => {
@@ -165,6 +240,15 @@
 		if (!layer) {
 			layer = new PIXI.Container();
 			app.stage.addChild(layer);
+			// Stage-level right-click → "Snapshot world state here" menu.
+			// Stage must be event-aware ('static') so events bubble from
+			// children up to it. Regions' rightclick handlers call
+			// stopPropagation so this fires only on EMPTY-area clicks.
+			app.stage.eventMode = 'static';
+			app.stage.hitArea = app.screen;
+			app.stage.on('rightclick', (e: FederatedPointerEvent) => {
+				openSnapshotMenu(e);
+			});
 		}
 
 		// Clear previous draws + listeners. removeChildren returns the
@@ -195,6 +279,10 @@
 			// the spike's documented Pixi v8 API. Close any existing menu
 			// before opening a new one so rapid right-clicks don't stack.
 			g.on('rightclick', (e: FederatedPointerEvent) => {
+				// Stop propagation so the stage-level snapshot menu doesn't
+				// also fire — region right-click takes precedence over the
+				// empty-area "Snapshot here" affordance.
+				e.stopPropagation();
 				openRegionMenu(region.id, e);
 			});
 			layer.addChild(g);
