@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.5.0] - 2026-05-23
+
+### Added
+- **Pure `projectState()` projection engine** at `src/lib/features/map/projection.ts`. Given a playhead `t`, a list of anchors, a list of events, and a user-scoped reference context, returns the canonical `RenderedState` for that frame. Same contract both renderers consume — Leaflet today, Pixi in Slice 1b. Slice 1 only interprets `transfer_region` events; other event kinds pass through inert so Slice 2 extends by adding cases, not by changing the signature.
+- **Cross-user JSONB lazy-GC defense (Δ1a-C).** `src/lib/server/projection-context.ts` pre-fetches the user's allowed factions and regions, scoped through `world_maps.user_id` at the SQL layer. A malicious anchor payload referencing another user's `faction_id` cannot leak the foreign color into the rendered output — `projectState` drops any ref not present in the scoped allowed-sets and falls back to neutral. Two PGlite-backed integration tests pin the invariant.
+- **Same-T ordering rule (Δ1a-D, CMT-5).** Anchor at T is "world state AT T"; events at exactly `anchor.tPosition` are excluded from the fold. Formula: `apply(events WHERE t_position > anchor.t AND t_position <= t)`. Tiebreak: `(t_position, created_at, id)`. Nine unit tests cover the rule (anchor exclusion, event tiebreak, anchor tiebreak, id tiebreak, neutral fallback).
+- **Projection-engine parity fixtures (Δ1a-F).** Twelve `{inputs, expected RenderedState}` pairs covering empty / single region / many regions / variants / drill-down isolation / spotlight scope-agnostic / deleted faction / deleted region / cross-user GC / anchor+event-at-T / event sequence / foreign region_id. The Pixi-side parity check in Slice 1b lifts this list verbatim.
+- **Recompute transaction atomicity test (Δ1a-E).** Wraps `recomputeAllIntervals` in `db.transaction` that throws after the cascade completes; asserts intervals + map_anchors + map_events all roll back together. Mirror image confirms they commit together on success.
+- **`assertSourceEventIdIsEvent` invariant test (Δ1a-A).** Polymorphic FK `map_events.source_event_id → entities(type='Event')` enforcement: accepts Event entity, rejects non-Event (Location), rejects missing id, rejects cross-user Event via the scoped `WHERE userId=...` predicate.
+- **`bump_updated_at` trigger coverage for `map_anchors` (Δ1a-B).** Extends `tests/integration/updated-at-trigger.test.ts` so UPDATE on a map_anchor row stamps `updated_at` without app-side intervention.
+
+### Changed
+- **`src/lib/components/apps/WorldMap.svelte` (1990 LOC) decomposed into `src/lib/features/map/` (16 files).** Zero behavior change — iron rule. New layout: `WorldMap.svelte` orchestrator + `MapStage.svelte` (Leaflet lifecycle) + `RegionLayer.svelte` + `PlacementLayer.svelte` + `MapToolbar.svelte` + `MapBreadcrumb.svelte` + 3 modals (Region/Variant/CreateMapOffer) + pure helpers (`projection.ts`, `region-popup.ts`, `scene-ranges.ts`, `variants.ts`, `leaflet-controller.ts`) + colocated `store.ts` and `types.ts`. Modal-shared CSS uses `:global()` so parent rules reach into children without duplication.
+- **`src/lib/types/world-map.ts` and `src/lib/stores/world-map.ts` moved into `src/lib/features/map/`.** Renames preserve git history. Five consumer files (`LocationEditor`, `FocusedGraph`, `StoryGraph`, `routes/app/+page.svelte`, `tests/unit/world-map-variants.test.ts`) updated to the new import paths.
+- **`accentColor` / `borderColor` promoted from plain `let` to `$state` in the orchestrator** so the post-mount `resolveCssColors` callback propagates resolved values into `RegionLayer` through the prop boundary. The original closure-captured pattern only worked when everything lived in the same component.
+
+### Infrastructure
+- **`pixi.js@8.18.1` and `svelte-pixi@8.0.1` adopted** as the Slice 1b Pixi+Svelte 5 substrate, per the Pre-Slice 0 spike findings.
+- **`patch-package@^8.0.1` (devDep) + `postinstall: "patch-package"`** keep `patches/svelte-pixi+8.0.1.patch` applied locally. The patch fixes two upstream defects: `Application.svelte` never destroys the Pixi `Application` on unmount (leaks a WebGL context per cycle, browsers cap at ~16) and `Ticker.svelte` teardown crashes if the Pixi `Ticker` was destroyed externally (null linked-list pointer). Both spots wrap the destroy call in `try/catch`.
+- **`scripts/verify-patches.ts` + CI hash check.** SHA-256 + sentinel-string check on both patched files. Wired into `.github/workflows/test.yml` and `.github/workflows/deploy.yml` after `npm ci` so a missing postinstall, a dropped patches entry, or a `svelte-pixi` version bump fails the build instead of silently regressing the leak.
+
 ## [0.7.4.0] - 2026-05-22
 
 ### Added
