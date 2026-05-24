@@ -28,15 +28,17 @@ function createMapEventsStore() {
 	// See map-anchors-store.ts for the rationale. Codex P1 on PR #55.
 	let lastLoadedMapId: string | null = null;
 
-	async function load(mapId: string): Promise<void> {
+	async function load(mapId: string): Promise<{ truncated: boolean }> {
 		lastLoadedMapId = mapId;
 		const res = await fetch(`/api/maps/${mapId}/events`);
-		if (lastLoadedMapId !== mapId) return;
+		if (lastLoadedMapId !== mapId) return { truncated: false };
 		if (!res.ok) throw new Error(`Failed to load events: ${await errorMessage(res)}`);
 		const body = (await res.json()) as { rows: MapEvent[]; truncated: boolean };
-		if (lastLoadedMapId !== mapId) return;
+		if (lastLoadedMapId !== mapId) return { truncated: false };
 		store.set(body.rows);
 		if (body.truncated) console.warn('events list truncated at server cap');
+		// See map-anchors-store.ts for rationale (Codex P1 on PR #55).
+		return { truncated: body.truncated };
 	}
 
 	// See map-anchors-store.ts for the rationale. Codex P1 on PR #55

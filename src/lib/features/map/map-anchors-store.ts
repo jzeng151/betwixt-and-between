@@ -29,15 +29,21 @@ function createMapAnchorsStore() {
 	// store.set() if the target changed during the await.
 	let lastLoadedMapId: string | null = null;
 
-	async function load(mapId: string): Promise<void> {
+	async function load(mapId: string): Promise<{ truncated: boolean }> {
 		lastLoadedMapId = mapId;
 		const res = await fetch(`/api/maps/${mapId}/anchors`);
-		if (lastLoadedMapId !== mapId) return; // stale — newer load() is in flight
+		if (lastLoadedMapId !== mapId) return { truncated: false };
 		if (!res.ok) throw new Error(`Failed to load anchors: ${await errorMessage(res)}`);
 		const body = (await res.json()) as { rows: MapAnchor[]; truncated: boolean };
-		if (lastLoadedMapId !== mapId) return; // stale — re-check after JSON parse
+		if (lastLoadedMapId !== mapId) return { truncated: false };
 		store.set(body.rows);
 		if (body.truncated) console.warn('anchors list truncated at server cap');
+		// Surface truncated to the caller so projection readiness can stay
+		// false when the load returns capped data. Codex P1 on PR #55
+		// (commit e32c973): healthy flipped true on partial data,
+		// allowing snapshots that dropped ownership state for anchors
+		// past the 500-row cap.
+		return { truncated: body.truncated };
 	}
 
 	// Codex P1 on PR #55 (commit be1f09c): mutation responses must also

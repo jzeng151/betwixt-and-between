@@ -5,6 +5,14 @@ import { errorMessage } from '$lib/util/api-error-message.js';
 function createWorldMapStore() {
 	const maps = writable<WorldMap[]>([]);
 	const regions = writable<MapRegion[]>([]);
+	// Codex P1 on PR #55 (commit e32c973): rapid map switches A→B→C
+	// could let B's loadMapRegions response arrive AFTER C's started and
+	// clobber the regions store with B's data. Mirror the pattern from
+	// map-anchors-store / map-events-store: track lastLoadedMapId and
+	// drop out-of-order writes. The caller's activeMapId === mapId
+	// guard alone isn't enough because this function writes to the
+	// shared regions store unconditionally.
+	let lastLoadedMapId: string | null = null;
 
 	async function loadMaps(): Promise<void> {
 		const res = await fetch('/api/maps');
@@ -14,12 +22,15 @@ function createWorldMapStore() {
 	}
 
 	async function loadMapRegions(mapId: string): Promise<WorldMap | null> {
+		lastLoadedMapId = mapId;
 		const res = await fetch(`/api/maps/${mapId}`);
+		if (lastLoadedMapId !== mapId) return null; // stale — newer load() in flight
 		if (!res.ok) {
 			if (res.status === 404) return null;
 			throw new Error('Failed to load map');
 		}
 		const data = await res.json();
+		if (lastLoadedMapId !== mapId) return null; // stale — re-check after JSON parse
 		const { regions: loadedRegions, ...map } = data;
 		regions.set(loadedRegions as MapRegion[]);
 		return map as WorldMap;

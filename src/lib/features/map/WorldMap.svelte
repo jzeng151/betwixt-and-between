@@ -264,8 +264,20 @@
 		let cancelled = false;
 		projectionCtxHealthy = false;
 		void Promise.all([mapAnchorsStore.load(id), mapEventsStore.load(id)])
-			.then(() => {
+			.then(([anchorsResult, eventsResult]) => {
 				if (cancelled) return;
+				// Codex P1 on PR #55 (commit e32c973): truncated:true means
+				// the server capped at LIST_LIMIT (500 rows). Treating
+				// that as "healthy" would let Pixi snapshots persist
+				// state that drops ownership for anchors/events past the
+				// cap. Keep healthy at false so writes stay blocked;
+				// cursor pagination is the Slice 5+ fix.
+				if (anchorsResult.truncated || eventsResult.truncated) {
+					console.error(
+						'Anchors or events list truncated at server cap (500). Projection incomplete; Pixi ownership writes disabled until pagination ships (Slice 5+).'
+					);
+					return;
+				}
 				projectionCtxHealthy = true;
 			})
 			.catch((err) => {
