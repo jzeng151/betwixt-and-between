@@ -24,16 +24,31 @@
 	// PIXI.Graphics against `app.stage`, or re-introduce svelte-pixi
 	// INSIDE this canvas's subtree where the lifecycle split is contained.
 
-	import { onMount } from 'svelte';
+	import { onMount, setContext, type Snippet } from 'svelte';
 	import type { WorldMap } from './types.js';
+	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
 
 	type PixiApplication = import('pixi.js').Application;
 
-	let { activeMap }: { activeMap: WorldMap | null } = $props();
+	let {
+		activeMap,
+		children
+	}: {
+		activeMap: WorldMap | null;
+		children?: Snippet;
+	} = $props();
 
 	let canvasContainer = $state<HTMLDivElement | null>(null);
 	let loadError = $state<string | null>(null);
 	let ready = $state(false);
+
+	// Reactive context wrapper so descendants can read the live Application
+	// via getContext(PIXI_STAGE_CONTEXT). $state-backed object: PixiRegionLayer's
+	// $effect re-runs when `app` mutates (null → PIXI.Application → null on
+	// renderer-flag flip). Avoids the props_invalid_value bug that $bindable
+	// hit at the orchestrator layer (see commit 2 history).
+	const stageCtx = $state<PixiStageContext>({ app: null });
+	setContext(PIXI_STAGE_CONTEXT, stageCtx);
 
 	onMount(() => {
 		let cancelled = false;
@@ -71,6 +86,7 @@
 				if (canvasContainer) {
 					canvasContainer.appendChild(app.canvas);
 				}
+				stageCtx.app = newApp;
 				ready = true;
 			} catch (err) {
 				if (cancelled) return;
@@ -80,6 +96,7 @@
 
 		return () => {
 			cancelled = true;
+			stageCtx.app = null;
 			if (app) {
 				try {
 					app.destroy(true, {
@@ -117,6 +134,8 @@
 		<div class="pixi-loading">
 			<p>Loading Pixi renderer…</p>
 		</div>
+	{:else}
+		{@render children?.()}
 	{/if}
 </div>
 

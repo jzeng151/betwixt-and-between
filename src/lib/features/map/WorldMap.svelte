@@ -20,10 +20,16 @@
 	import MapToolbar from '$lib/features/map/MapToolbar.svelte';
 	import MapStage from '$lib/features/map/MapStage.svelte';
 	import PixiStage from '$lib/features/map/PixiStage.svelte';
+	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import RegionLayer from '$lib/features/map/RegionLayer.svelte';
 	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
 	import RendererToggle from '$lib/features/map/RendererToggle.svelte';
 	import { currentRenderer } from '$lib/features/map/renderer-flag.js';
+	import { fetchProjectionContextForMap } from '$lib/features/map/use-projection.js';
+	import { projectState, type ProjectionContext, type RenderedState } from '$lib/features/map/projection.js';
+	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
+	import { mapAnchorsStore } from '$lib/features/map/map-anchors-store.js';
+	import { mapEventsStore } from '$lib/features/map/map-events-store.js';
 	import type { PopupCallbacks } from '$lib/features/map/leaflet-controller.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
@@ -169,6 +175,55 @@
 		worldMapStore.loadMaps();
 		intervalsStore.load();
 		relationships.load();
+		// Factions are user-scoped (not map-scoped) — load once per session.
+		// The map-scoped stores (anchors, events) load on activeMapId change.
+		void factionsStore.load();
+	});
+
+	// ── Slice 1b projection pipeline ────────────────────────────────────
+	//
+	// Computed RenderedState for the Pixi path. Refetches the cross-user-
+	// scoped projection context on map change, and per-map anchors + events;
+	// projectState() is pure and runs on every playhead tick via $derived.
+	// Leaflet path doesn't consume this (it reads map_regions directly) so
+	// the iron-rule parity is preserved by feeding both paths from the same
+	// region geometry, with Pixi additionally layering faction overrides.
+
+	let projectionCtx = $state<ProjectionContext | null>(null);
+	let projectionCtxLoading = $state(false);
+
+	$effect(() => {
+		const id = activeMapId;
+		if (!id) {
+			projectionCtx = null;
+			mapAnchorsStore.reset();
+			mapEventsStore.reset();
+			return;
+		}
+		let cancelled = false;
+		projectionCtxLoading = true;
+		void Promise.all([
+			fetchProjectionContextForMap(id).then((c) => {
+				if (!cancelled) projectionCtx = c;
+			}),
+			mapAnchorsStore.load(id),
+			mapEventsStore.load(id)
+		])
+			.catch((err) => {
+				if (!cancelled) console.error('Failed to load projection inputs:', err);
+			})
+			.finally(() => {
+				if (!cancelled) projectionCtxLoading = false;
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	let renderedState = $derived.by<RenderedState | null>(() => {
+		if (!projectionCtx) return null;
+		const t = $playhead ?? Number.NEGATIVE_INFINITY;
+		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx);
 	});
 
 	// ── Stage callbacks ──────────────────────────────────────────────────
@@ -837,7 +892,11 @@
 				/>
 			{/if}
 		{:else}
-			<PixiStage {activeMap} />
+			<PixiStage {activeMap}>
+				{#snippet children()}
+					<PixiRegionLayer regions={$mapRegions} {renderedState} />
+				{/snippet}
+			</PixiStage>
 		{/if}
 		{#if hasImage && activeMap?.locationId}
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
