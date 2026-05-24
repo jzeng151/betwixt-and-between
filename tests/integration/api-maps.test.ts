@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { and, eq } from 'drizzle-orm';
-import { entities, relationships } from '../../src/lib/server/db/schema.js';
+import { entities, relationships, mapAnchors, worldMaps } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 let userId: string;
@@ -28,6 +28,9 @@ const regionIdRoute = await import(
 );
 const uploadImageRoute = await import(
 	'../../src/routes/api/maps/[id]/upload-image/+server.js'
+);
+const { POST: DUPLICATE_MAP } = await import(
+	'../../src/routes/api/maps/[id]/duplicate/+server.js'
 );
 
 function mkEvent(
@@ -1114,5 +1117,183 @@ describe('recomputeWorldMapVariantsAll — degenerate-variant normalization (Cod
 		expect(after.endActId).toBeNull();
 		expect(after.startPosition).toBeNull();
 		expect(after.endPosition).toBeNull();
+	});
+});
+
+// Slice 1b A1 — every world_maps row gets a baseline anchor at
+// t_position=-Infinity so the Pixi renderer (which reads state via
+// projectState) doesn't render an empty map under ?renderer=pixi.
+// G1 covers POST /api/maps; G2 covers POST /api/maps/[id]/duplicate.
+describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	it('G1: POST /api/maps inserts one baseline anchor at -Infinity with empty state', async () => {
+		const res = await CREATE_MAP(mkEvent({ body: { name: 'Fresh Map' } }));
+		expect(res.status).toBe(201);
+		const map = await readJson(res);
+
+		const anchors = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		expect(anchors).toHaveLength(1);
+		// Drizzle's doublePrecision round-trips Number.NEGATIVE_INFINITY as the
+		// JS constant; Postgres stores it as -Infinity (float8 special value).
+		expect(anchors[0].tPosition).toBe(Number.NEGATIVE_INFINITY);
+		expect(anchors[0].stateJsonb).toEqual({
+			regions: [],
+			artifacts: [],
+			chains: []
+		});
+	});
+
+	it('G1: anchor + map insert is atomic — if the row insert fails, no orphan anchor', async () => {
+		// Trip the "default variant already exists" check with a duplicate locationId.
+		// First map for the location succeeds; second should fail at the worldMaps
+		// insert (unique partial index) before any anchor is created.
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Loc' })
+			.returning();
+		await CREATE_MAP(mkEvent({ body: { name: 'A', locationId: loc.id } }));
+		await expect(
+			CREATE_MAP(mkEvent({ body: { name: 'B', locationId: loc.id } }))
+		).rejects.toMatchObject({ status: 409 });
+
+		// Exactly one map → exactly one anchor. If the transaction leaked, we'd
+		// see an anchor for the failed B insert with no matching world_maps row,
+		// which the FK + cascade would prevent anyway — this is the belt-and-
+		// suspenders assertion.
+		const maps = await currentDb
+			.select()
+			.from(worldMaps)
+			.where(eq(worldMaps.userId, userId));
+		expect(maps).toHaveLength(1);
+		const anchors = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, maps[0].id));
+		expect(anchors).toHaveLength(1);
+	});
+
+	it('G2: duplicateMap creates a baseline anchor referencing the cloned regions, not the source regions', async () => {
+		// Source map with two regions linked to two Locations.
+		const [locA] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'A' })
+			.returning();
+		const [locB] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'B' })
+			.returning();
+		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Source' } }));
+		const source = await readJson(sourceRes);
+
+		const regionA = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: source.id },
+					body: {
+						locationId: locA.id,
+						polygon: [[0, 0], [0, 10], [10, 10]],
+						color: '#ff0000'
+					}
+				})
+			)
+		);
+		const regionB = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: source.id },
+					body: {
+						locationId: locB.id,
+						polygon: [[20, 20], [20, 30], [30, 30]],
+						color: '#00ff00'
+					}
+				})
+			)
+		);
+
+		const cloneRes = await DUPLICATE_MAP(
+			mkEvent({ params: { id: source.id } })
+		);
+		expect(cloneRes.status).toBe(201);
+		const clone = await readJson(cloneRes);
+		expect(clone.regions).toHaveLength(2);
+
+		// Anchor's region_ids must point at the CLONE's regions, not the source's.
+		// Stale source-region refs would lazy-GC under projection and render an
+		// empty map under ?renderer=pixi — the iron-rule parity violation A1
+		// exists to prevent.
+		const anchors = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, clone.id));
+		expect(anchors).toHaveLength(1);
+		expect(anchors[0].tPosition).toBe(Number.NEGATIVE_INFINITY);
+
+		const state = anchors[0].stateJsonb as {
+			regions: { region_id: string; faction_id: string | null; color: string }[];
+			artifacts: unknown[];
+			chains: unknown[];
+		};
+		expect(state.regions).toHaveLength(2);
+		const cloneRegionIds = clone.regions.map((r: { id: string }) => r.id).sort();
+		const anchorRegionIds = state.regions.map((r) => r.region_id).sort();
+		expect(anchorRegionIds).toEqual(cloneRegionIds);
+		// No anchor entry should reference a SOURCE region id.
+		const sourceRegionIds = new Set([regionA.id, regionB.id]);
+		for (const ref of state.regions) {
+			expect(sourceRegionIds.has(ref.region_id)).toBe(false);
+		}
+		// Colors preserved per region.
+		for (const ref of state.regions) {
+			expect(['#ff0000', '#00ff00']).toContain(ref.color);
+			expect(ref.faction_id).toBeNull();
+		}
+		expect(state.artifacts).toEqual([]);
+		expect(state.chains).toEqual([]);
+	});
+
+	it('G2: duplicating a region-less map still produces one baseline anchor with empty regions', async () => {
+		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Empty' } }));
+		const source = await readJson(sourceRes);
+		const cloneRes = await DUPLICATE_MAP(
+			mkEvent({ params: { id: source.id } })
+		);
+		const clone = await readJson(cloneRes);
+
+		const anchors = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, clone.id));
+		expect(anchors).toHaveLength(1);
+		expect(anchors[0].stateJsonb).toEqual({
+			regions: [],
+			artifacts: [],
+			chains: []
+		});
+	});
+
+	it('G2: source map keeps its own baseline anchor untouched after duplicate', async () => {
+		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Source' } }));
+		const source = await readJson(sourceRes);
+		const sourceAnchorsBefore = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, source.id));
+
+		await DUPLICATE_MAP(mkEvent({ params: { id: source.id } }));
+
+		const sourceAnchorsAfter = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, source.id));
+		expect(sourceAnchorsAfter).toHaveLength(sourceAnchorsBefore.length);
+		expect(sourceAnchorsAfter[0].id).toBe(sourceAnchorsBefore[0].id);
 	});
 });

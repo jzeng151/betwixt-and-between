@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { worldMaps } from '$lib/server/db/schema.js';
+import { worldMaps, mapAnchors } from '$lib/server/db/schema.js';
 import { desc, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import {
@@ -74,22 +74,37 @@ export const POST: RequestHandler = async (event) => {
 		error(400, (err as Error).message);
 	}
 
+	// Slice 1b A1 invariant: every world_maps row has at least one baseline
+	// anchor at t_position = -Infinity so the Pixi renderer (which reads
+	// state via projectState) doesn't show an empty map under ?renderer=pixi
+	// even though Leaflet (which reads map_regions directly) renders fine.
+	// The 0012 migration backfilled this for existing maps; new maps create
+	// it in the same transaction as the worldMaps insert so partial-failure
+	// can't leave an anchor-less map.
 	let created;
 	try {
-		[created] = await db
-			.insert(worldMaps)
-			.values({
-				userId,
-				name: name.trim(),
-				locationId: locationId ?? null,
-				startActId: normalizedStartActId,
-				startSceneId: normalizedStartSceneId,
-				endActId: normalizedEndActId,
-				endSceneId: normalizedEndSceneId,
-				startPosition,
-				endPosition
-			})
-			.returning();
+		created = await db.transaction(async (tx) => {
+			const [row] = await tx
+				.insert(worldMaps)
+				.values({
+					userId,
+					name: name.trim(),
+					locationId: locationId ?? null,
+					startActId: normalizedStartActId,
+					startSceneId: normalizedStartSceneId,
+					endActId: normalizedEndActId,
+					endSceneId: normalizedEndSceneId,
+					startPosition,
+					endPosition
+				})
+				.returning();
+			await tx.insert(mapAnchors).values({
+				worldMapId: row.id,
+				tPosition: Number.NEGATIVE_INFINITY,
+				stateJsonb: { regions: [], artifacts: [], chains: [] }
+			});
+			return row;
+		});
 	} catch (err) {
 		// Drizzle wraps PG errors; unwrap to get the constraint code + message.
 		const wrapped = err as { code?: string; cause?: { code?: string }; message?: string };
