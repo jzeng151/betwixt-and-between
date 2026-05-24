@@ -19,8 +19,11 @@
 	import MapBreadcrumb from '$lib/features/map/MapBreadcrumb.svelte';
 	import MapToolbar from '$lib/features/map/MapToolbar.svelte';
 	import MapStage from '$lib/features/map/MapStage.svelte';
+	import PixiStage from '$lib/features/map/PixiStage.svelte';
 	import RegionLayer from '$lib/features/map/RegionLayer.svelte';
 	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
+	import RendererToggle from '$lib/features/map/RendererToggle.svelte';
+	import { currentRenderer } from '$lib/features/map/renderer-flag.js';
 	import type { PopupCallbacks } from '$lib/features/map/leaflet-controller.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
@@ -74,6 +77,9 @@
 	let duplicating = $state(false);
 
 	// Computed — $worldMaps / $mapRegions / $entities / $isInScope are Svelte store subscriptions
+	// Strangler-fig renderer flag (Slice 1b). `?renderer=pixi` swaps MapStage
+	// for PixiStage; default is leaflet. See src/lib/features/map/renderer-flag.ts.
+	let renderer = $derived(currentRenderer());
 	let activeMap = $derived($worldMaps.find((m) => m.id === activeMapId) ?? null);
 	let locations = $derived($entities.filter((e) => e.type === 'Location'));
 	let hasMaps = $derived($worldMaps.length > 0);
@@ -748,6 +754,7 @@
 		class="map-wrapper"
 		class:has-breadcrumb={breadcrumbAncestors.length > 0 && activeMap}
 	>
+		<RendererToggle current={renderer} />
 		{#if breadcrumbAncestors.length > 0 && activeMap}
 			<MapBreadcrumb
 				ancestors={breadcrumbAncestors}
@@ -787,40 +794,44 @@
 				<button type="button" onclick={() => (toolbarNewLocationError = '')}>✕</button>
 			</div>
 		{/if}
-		<MapStage
-			{activeMap}
-			{hasImage}
-			{armedPlaceableId}
-			{accentColor}
-			{popupCallbacks}
-			onPolygonCreated={handlePolygonCreated}
-			onCanvasClick={handleCanvasClick}
-			{resolveCssColors}
-			bind:leafletMap
-			bind:L
-			bind:drawnItems
-		/>
-		{#if leafletMap && L}
-			<RegionLayer
-				{leafletMap}
-				{L}
-				regions={$mapRegions}
-				entities={$entities}
-				worldMaps={$worldMaps}
+		{#if renderer === 'leaflet'}
+			<MapStage
 				{activeMap}
-				playhead={$playhead}
-				isInScope={$isInScope}
+				{hasImage}
+				{armedPlaceableId}
 				{accentColor}
-				{borderColor}
+				{popupCallbacks}
+				onPolygonCreated={handlePolygonCreated}
+				onCanvasClick={handleCanvasClick}
+				{resolveCssColors}
+				bind:leafletMap
+				bind:L
+				bind:drawnItems
 			/>
-			<PlacementLayer
-				{leafletMap}
-				{L}
-				{activeMap}
-				playhead={$playhead}
-				placements={$placementsStore}
-				entities={$entities}
-			/>
+			{#if leafletMap && L}
+				<RegionLayer
+					{leafletMap}
+					{L}
+					regions={$mapRegions}
+					entities={$entities}
+					worldMaps={$worldMaps}
+					{activeMap}
+					playhead={$playhead}
+					isInScope={$isInScope}
+					{accentColor}
+					{borderColor}
+				/>
+				<PlacementLayer
+					{leafletMap}
+					{L}
+					{activeMap}
+					playhead={$playhead}
+					placements={$placementsStore}
+					entities={$entities}
+				/>
+			{/if}
+		{:else}
+			<PixiStage />
 		{/if}
 		{#if hasImage && activeMap?.locationId}
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
