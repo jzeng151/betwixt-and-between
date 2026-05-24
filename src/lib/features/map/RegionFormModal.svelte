@@ -17,7 +17,7 @@
 		scenesByAct,
 		locationId = $bindable(),
 		color = $bindable(),
-		sceneIds = $bindable(),
+		sceneIds,
 		creatingLocation = $bindable(),
 		newLocationName = $bindable(),
 		newLocationError,

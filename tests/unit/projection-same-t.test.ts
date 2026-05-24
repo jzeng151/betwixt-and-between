@@ -99,6 +99,30 @@ describe('projectState — same-T ordering (Δ1a-D)', () => {
 		expect(state.regions[0].factionId).toBe(FACTION_RED);
 	});
 
+	it('anchor same-T tiebreak: later createdAt wins', () => {
+		// Two anchors at the same t_position with different createdAt. The
+		// UNIQUE (world_map_id, t_position) index should keep this rare, but
+		// migration backfills can produce the case (see projection.ts §
+		// pickActiveAnchor docstring). Asserts the deterministic tiebreak
+		// path. Input order is reversed from createdAt order to prove
+		// pickActiveAnchor sorts internally rather than relying on input
+		// order.
+		const earlier: ProjectionAnchor = {
+			id: 'anchor-earlier',
+			tPosition: 5,
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+			stateJsonb: { regions: [{ region_id: REGION_ID, faction_id: FACTION_RED }] }
+		};
+		const later: ProjectionAnchor = {
+			id: 'anchor-later',
+			tPosition: 5,
+			createdAt: new Date('2026-01-02T00:00:00Z'),
+			stateJsonb: { regions: [{ region_id: REGION_ID, faction_id: FACTION_BLUE }] }
+		};
+		const state = projectState(5, [earlier, later], [], ctx());
+		expect(state.regions[0].factionId).toBe(FACTION_BLUE);
+	});
+
 	it('id tiebreak when t_position and created_at collide', () => {
 		const ts = new Date('2026-01-01T02:00:00Z');
 		const eventLowId: ProjectionEvent = {

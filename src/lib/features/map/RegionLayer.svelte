@@ -46,10 +46,8 @@
 	$effect(() => {
 		if (!leafletMap || !L) return;
 
-		for (const layer of regionLayers) {
-			leafletMap.removeLayer(layer);
-		}
-		regionLayers = [];
+		// Previous layers are torn down by this effect's cleanup return below.
+		// No need to re-clear at the top — Svelte runs cleanup before re-run.
 
 		for (const region of regions) {
 			const inScope = region.locationId ? isInScope(region.locationId) : false;

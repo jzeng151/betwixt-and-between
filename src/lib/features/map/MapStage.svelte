@@ -22,7 +22,6 @@
 		leafletMap = $bindable(null),
 		L = $bindable(null),
 		drawnItems = $bindable(null),
-		mapReady = $bindable(false),
 		resolveCssColors
 	}: {
 		activeMap: WorldMap | null;
@@ -35,11 +34,14 @@
 		leafletMap: any;
 		L: LeafletNS | null;
 		drawnItems: any;
-		mapReady: boolean;
 		resolveCssColors: () => void;
 	} = $props();
 
 	let mapContainer: HTMLDivElement = $state(null!);
+	// Internal: tracks "Leaflet finished dynamic-import" so the initMap
+	// effect knows when to fire. Parent doesn't need this signal — the
+	// `{#if leafletMap && L}` gate around the layers serves the same role.
+	let mapReady = $state(false);
 	let imageOverlay: any = null;
 	let drawControl: any = null;
 	let zoomControl: any = null;

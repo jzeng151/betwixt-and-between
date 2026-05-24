@@ -36,10 +36,7 @@
 		const map = activeMap;
 		const all = placements;
 
-		for (const m of placementMarkers) {
-			leafletMap.removeLayer(m);
-		}
-		placementMarkers = [];
+		// Previous markers are torn down by this effect's cleanup return below.
 
 		if (!map?.width || !map?.height) return;
 

@@ -36,7 +36,6 @@
 	let leafletMap: any = $state(null);
 	let L: LeafletNS | null = $state(null);
 	let drawnItems: any = $state(null);
-	let mapReady = $state(false);
 	// Step 4 — armed placeable id (chip selected in PlaceablesPalette). When
 	// non-null, the next click on the Leaflet canvas creates a placement at the
 	// clicked fractional coords for this entity.
@@ -123,8 +122,7 @@
 		return map;
 	});
 
-	// Resolve CSS custom properties to actual color values for Leaflet
-		// Pre-fill scene checkboxes from existing intervals when location changes
+	// Pre-fill scene checkboxes from existing intervals when location changes
 		$effect(() => {
 			const locId = regionFormLocationId;
 			if (!locId) {
@@ -294,19 +292,19 @@
 
 	// ── Drill-down navigation ────────────────────────────────────────────────
 	//
-	// Click a region whose linked Location has children (via part_of).
-	// Resolution per design Decision #3 (2026-05-14):
-	//   - 0 drillable children → no-op (region popup behavior unchanged)
-	//   - exactly 1 child with a map → drill into that child's active variant
-	//   - exactly 1 child without a map → "Create a map for X?" CTA
-	//   - multiple children → defer (handled by popup chooser added in Step 7)
-	// Navigate to a Location's active variant. Deliberately does NOT mutate
-	// the `entityId` prop: that prop is the *external* deep-link signal watched
-	// by the reactive effect below. Mutating it from in-component navigation
-	// causes a feedback loop — the parent's prop expression keeps re-supplying
-	// the original entityId, which trips the watcher into switching the map
-	// back. switchMap is enough; breadcrumb + active map both derive from
-	// activeMap.locationId, not from entityId.
+	// Resolve a child Location's active variant and switch to it. The 0/1/many
+	// child-resolution policy from design Decision #3 (2026-05-14) lives in
+	// leaflet-controller.ts's popup-click handler — this function just answers
+	// "is there a variant?". Returns false → caller surfaces the "Create map
+	// for X?" CTA.
+	//
+	// Deliberately does NOT mutate the `entityId` prop: that prop is the
+	// *external* deep-link signal watched by the reactive effect below.
+	// Mutating it from in-component navigation causes a feedback loop — the
+	// parent's prop expression keeps re-supplying the original entityId,
+	// which trips the watcher into switching the map back. switchMap is
+	// enough; breadcrumb + active map both derive from activeMap.locationId,
+	// not from entityId.
 	function drillIntoLocation(locationId: string) {
 		const variant = resolveActiveVariant($worldMaps, locationId, $playhead);
 		if (variant) {
@@ -801,7 +799,6 @@
 			bind:leafletMap
 			bind:L
 			bind:drawnItems
-			bind:mapReady
 		/>
 		{#if leafletMap && L}
 			<RegionLayer
@@ -859,7 +856,7 @@
 		{scenesByAct}
 		bind:locationId={regionFormLocationId}
 		bind:color={regionFormColor}
-		bind:sceneIds={regionFormSceneIds}
+		sceneIds={regionFormSceneIds}
 		bind:creatingLocation={creatingRegionLocation}
 		bind:newLocationName={regionNewLocationName}
 		newLocationError={regionNewLocationError}
