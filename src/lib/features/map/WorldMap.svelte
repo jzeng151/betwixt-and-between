@@ -1200,7 +1200,11 @@
 
 	.hint-overlay {
 		position: absolute;
-		top: 12px;
+		/* bottom-center: the hint shows only on an empty new map ($mapRegions
+		   is empty), which is the moment the .map-toolbar is most needed for
+		   picking a Location. Centering at top:12 collides horizontally with
+		   the toolbar's controls. Bottom is unused real estate. */
+		bottom: 16px;
 		left: 50%;
 		transform: translateX(-50%);
 		z-index: 1000;
