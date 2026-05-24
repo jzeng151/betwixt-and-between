@@ -143,12 +143,14 @@
 			return;
 		}
 		actionError = null;
+		// State at the playhead's current value, baked into a new anchor.
+		// Captures faction ownership AS RENDERED right now — same shape
+		// as the baseline anchor commit 3a writes for new maps + migration
+		// 0012 backfilled for legacy maps.
+		// Hoisted out of the try so the catch's friendly UNIQUE-conflict
+		// message can reference tPosition.
+		const tPosition = get(playhead) ?? 0;
 		try {
-			// State at the playhead's current value, baked into a new anchor.
-			// Captures faction ownership AS RENDERED right now — same shape
-			// as the baseline anchor commit 3a writes for new maps + migration
-			// 0012 backfilled for legacy maps.
-			const tPosition = get(playhead) ?? 0;
 			const renderedRegionMap = new Map<string, string | null>();
 			if (renderedState) {
 				for (const r of renderedState.regions) {
@@ -175,7 +177,15 @@
 				`Snapshot saved at T=${tPosition.toFixed(2)} — ${regions.length} region${regions.length === 1 ? '' : 's'}, ${ownedRegionCount} owned`
 			);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : String(err);
+			const raw = err instanceof Error ? err.message : String(err);
+			// (world_map_id, t_position) is UNIQUE — two snapshots at the
+			// same playhead T collide. Surface a friendlier message so the
+			// user knows they need to scrub to a different T first.
+			if (/already exists|unique|duplicate key|conflict/i.test(raw)) {
+				actionError = `An anchor already exists at T=${tPosition.toFixed(2)} — scrub to a different position before snapshotting again.`;
+			} else {
+				actionError = raw;
+			}
 		}
 	}
 
@@ -310,6 +320,10 @@
 	});
 
 	onDestroy(() => {
+		if (actionInfoTimer) {
+			clearTimeout(actionInfoTimer);
+			actionInfoTimer = null;
+		}
 		if (layer) {
 			try {
 				layer.destroy({ children: true });

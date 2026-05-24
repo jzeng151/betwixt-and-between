@@ -11,6 +11,7 @@
 	// events orphaned (lazy-GC under projection — they render as neutral).
 	// PR 1 ships the dependent count via GET /api/factions/[id]/dependents.
 
+	import { onDestroy } from 'svelte';
 	import { factions as factionsStore, type Faction } from './factions-store.js';
 	import { MAP_PALETTE, DEFAULT_FACTION_COLOR } from './color-palette.js';
 
@@ -18,7 +19,6 @@
 	const unsub = factionsStore.subscribe((list) => {
 		factionList = list;
 	});
-	import { onDestroy } from 'svelte';
 	onDestroy(unsub);
 
 	// Create form
