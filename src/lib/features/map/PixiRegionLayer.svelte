@@ -41,11 +41,18 @@
 	let {
 		regions,
 		renderedState,
-		mapId
+		mapId,
+		dataLoading = false
 	}: {
 		regions: MapRegion[];
 		renderedState: RenderedState | null;
 		mapId: string | null;
+		// Codex P2 on PR #55 (commit d849ea0): true while anchors/events
+		// for this map are still loading. snapshotWorldState() reads
+		// renderedState ownership; if loads are in flight, that ownership
+		// is incomplete and a snapshot persists silently-wrong null
+		// faction_ids. Gate menu + function on this signal.
+		dataLoading?: boolean;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -156,6 +163,14 @@
 			actionError = 'No active map';
 			return;
 		}
+		if (dataLoading) {
+			// Defense-in-depth — the menu item is already disabled in this
+			// state, but a programmatic invocation could still slip through.
+			// A snapshot of "ownership not yet loaded" would silently persist
+			// faction_id: null where there should be real owners.
+			actionError = 'Map data is still loading — try again in a moment.';
+			return;
+		}
 		actionError = null;
 		// State at the playhead's current value, baked into a new anchor.
 		// Captures faction ownership AS RENDERED right now — same shape
@@ -235,6 +250,16 @@
 	let menuItems: MenuItem[] = $derived.by<MenuItem[]>(() => {
 		if (!menu) return [];
 		if (menu.kind === 'snapshot') {
+			if (dataLoading) {
+				return [
+					{
+						label: 'Loading map data… try again in a moment',
+						icon: '⏳',
+						disabled: true,
+						onSelect: () => {}
+					}
+				];
+			}
 			return [
 				{
 					label: 'Snapshot world state here',

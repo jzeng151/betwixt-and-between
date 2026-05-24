@@ -967,6 +967,7 @@
 						regions={$mapRegions}
 						{renderedState}
 						mapId={activeMapId}
+						dataLoading={projectionCtxLoading}
 					/>
 				{/snippet}
 			</PixiStage>
