@@ -27,7 +27,9 @@ function createFactionStore() {
 	async function load(): Promise<void> {
 		const res = await fetch('/api/factions');
 		if (!res.ok) throw new Error(`Failed to load factions: ${await errorMessage(res)}`);
-		store.set((await res.json()) as Faction[]);
+		const body = (await res.json()) as { rows: Faction[]; truncated: boolean };
+		store.set(body.rows);
+		if (body.truncated) console.warn('factions list truncated at server cap');
 	}
 
 	async function create(input: FactionInput): Promise<Faction> {
@@ -54,12 +56,17 @@ function createFactionStore() {
 		return updated;
 	}
 
-	async function remove(id: string): Promise<{ dependentEventCount: number }> {
+	async function countDependents(id: string): Promise<number> {
+		const res = await fetch(`/api/factions/${id}/dependents`);
+		if (!res.ok) throw new Error(`Failed to count dependents: ${await errorMessage(res)}`);
+		const result = (await res.json()) as { dependentEventCount: number };
+		return result.dependentEventCount;
+	}
+
+	async function remove(id: string): Promise<void> {
 		const res = await fetch(`/api/factions/${id}`, { method: 'DELETE' });
 		if (!res.ok) throw new Error(`Failed to delete faction: ${await errorMessage(res)}`);
-		const result = (await res.json()) as { dependentEventCount: number };
 		store.update((rows) => rows.filter((r) => r.id !== id));
-		return result;
 	}
 
 	function reset(): void {
@@ -71,6 +78,7 @@ function createFactionStore() {
 		load,
 		create,
 		update,
+		countDependents,
 		delete: remove,
 		reset
 	};

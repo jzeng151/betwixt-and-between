@@ -33,7 +33,7 @@
   "size-limit": [
     {
       "name": "client bundle (gzipped)",
-      "path": ".svelte-kit/output/client/_app/immutable/chunks/*.js",
+      "path": ".svelte-kit/output/client/_app/immutable/**/*.js",
       "limit": "1.2 MB",
       "gzip": true
     }

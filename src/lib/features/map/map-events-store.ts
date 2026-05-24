@@ -4,6 +4,7 @@
 
 import { writable } from 'svelte/store';
 import { errorMessage } from '$lib/util/api-error-message.js';
+import type { EventKind } from './projection.js';
 
 export type MapEvent = {
 	id: string;
@@ -17,7 +18,7 @@ export type MapEvent = {
 
 export type EventInput = {
 	tPosition: number;
-	kind: 'transfer_region';
+	kind: EventKind;
 	payloadJsonb: unknown;
 	sourceEventId?: string | null;
 };
@@ -28,7 +29,9 @@ function createMapEventsStore() {
 	async function load(mapId: string): Promise<void> {
 		const res = await fetch(`/api/maps/${mapId}/events`);
 		if (!res.ok) throw new Error(`Failed to load events: ${await errorMessage(res)}`);
-		store.set((await res.json()) as MapEvent[]);
+		const body = (await res.json()) as { rows: MapEvent[]; truncated: boolean };
+		store.set(body.rows);
+		if (body.truncated) console.warn('events list truncated at server cap');
 	}
 
 	async function create(mapId: string, input: EventInput): Promise<MapEvent> {

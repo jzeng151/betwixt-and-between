@@ -10,7 +10,14 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
-import { entities, factions, mapAnchors, mapEvents, worldMaps } from '../../src/lib/server/db/schema.js';
+import {
+	entities,
+	factions,
+	mapAnchors,
+	mapEvents,
+	mapRegions,
+	worldMaps
+} from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
@@ -54,6 +61,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 	let aFactionId: string;
 	let aAnchorId: string;
 	let aEventId: string;
+	let aRegionId: string;
 
 	beforeEach(async () => {
 		currentDb = await createTestDb();
@@ -72,6 +80,19 @@ describe('auth isolation: World Map v3 endpoints', () => {
 			.returning();
 		aFactionId = faction.id;
 
+		const [region] = await currentDb
+			.insert(mapRegions)
+			.values({
+				mapId: aMapId,
+				polygon: [
+					[0, 0],
+					[1, 0],
+					[1, 1]
+				]
+			})
+			.returning();
+		aRegionId = region.id;
+
 		const [anchor] = await currentDb
 			.insert(mapAnchors)
 			.values({
@@ -88,7 +109,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 				worldMapId: aMapId,
 				tPosition: 1,
 				kind: 'transfer_region',
-				payloadJsonb: { region_id: crypto.randomUUID(), new_faction_id: aFactionId }
+				payloadJsonb: { region_id: aRegionId, new_faction_id: aFactionId }
 			})
 			.returning();
 		aEventId = event.id;
@@ -98,7 +119,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 
 	it('user B GET /api/factions returns empty', async () => {
 		const res = await factionsRoute.GET(mkEvent(userB));
-		expect(await readJson(res)).toEqual([]);
+		expect(await readJson(res)).toEqual({ rows: [], truncated: false });
 	});
 
 	it('user B PATCH /api/factions/[id] returns 404', async () => {
@@ -202,7 +223,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 					body: {
 						tPosition: 2,
 						kind: 'transfer_region',
-						payloadJsonb: { region_id: crypto.randomUUID(), new_faction_id: bFaction.id }
+						payloadJsonb: { region_id: aRegionId, new_faction_id: bFaction.id }
 					}
 				})
 			)
@@ -224,7 +245,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 					body: {
 						tPosition: 3,
 						kind: 'transfer_region',
-						payloadJsonb: { region_id: crypto.randomUUID(), new_faction_id: aFactionId },
+						payloadJsonb: { region_id: aRegionId, new_faction_id: aFactionId },
 						sourceEventId: location.id
 					}
 				})
@@ -245,7 +266,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 					body: {
 						tPosition: 4,
 						kind: 'transfer_region',
-						payloadJsonb: { region_id: crypto.randomUUID(), new_faction_id: aFactionId },
+						payloadJsonb: { region_id: aRegionId, new_faction_id: aFactionId },
 						sourceEventId: bEvent.id
 					}
 				})
@@ -257,8 +278,9 @@ describe('auth isolation: World Map v3 endpoints', () => {
 
 	it('user A can list their own factions', async () => {
 		const res = await factionsRoute.GET(mkEvent(userA));
-		const rows = (await readJson(res)) as Array<{ id: string }>;
-		expect(rows.map((r) => r.id)).toContain(aFactionId);
+		const body = (await readJson(res)) as { rows: Array<{ id: string }>; truncated: boolean };
+		expect(body.rows.map((r) => r.id)).toContain(aFactionId);
+		expect(body.truncated).toBe(false);
 	});
 
 	it('user A can POST + DELETE their own anchor', async () => {
@@ -273,5 +295,114 @@ describe('auth isolation: World Map v3 endpoints', () => {
 			mkEvent(userA, { params: { id: aMapId, anchorId: created.id } })
 		);
 		expect(delRes.status).toBe(204);
+	});
+
+	// ── Region ownership defense in event payload ───────────────────────────
+	// Mirror of the cross-user faction defense, but for region_id. An attacker
+	// authenticated as user A POSTs a transfer_region whose region_id is user
+	// B's region uuid — must be rejected at write, not lazy-GC'd at render.
+
+	it('user A POST event referencing user B region returns 400', async () => {
+		const [bMap] = await currentDb
+			.insert(worldMaps)
+			.values({ userId: userB, name: 'B map' })
+			.returning();
+		const [bRegion] = await currentDb
+			.insert(mapRegions)
+			.values({
+				mapId: bMap.id,
+				polygon: [
+					[0, 0],
+					[1, 0],
+					[1, 1]
+				]
+			})
+			.returning();
+
+		await expect(
+			eventsRoute.POST(
+				mkEvent(userA, {
+					params: { id: aMapId },
+					body: {
+						tPosition: 5,
+						kind: 'transfer_region',
+						payloadJsonb: { region_id: bRegion.id, new_faction_id: aFactionId }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	// ── 409 UNIQUE collision on anchor t_position ───────────────────────────
+
+	it('POST two anchors at the same t_position returns 409 on the second', async () => {
+		const params = { id: aMapId };
+		const body = {
+			tPosition: 42,
+			stateJsonb: { regions: [], artifacts: [], chains: [] }
+		};
+		await anchorsRoute.POST(mkEvent(userA, { params, body }));
+		await expect(
+			anchorsRoute.POST(mkEvent(userA, { params, body }))
+		).rejects.toMatchObject({ status: 409 });
+	});
+
+	it('PATCH anchor onto an occupied t_position returns 409', async () => {
+		// Seed two anchors at distinct positions, then PATCH one onto the
+		// other's slot. updateMapAnchor's 23505 catch should fire.
+		const aRes = await anchorsRoute.POST(
+			mkEvent(userA, {
+				params: { id: aMapId },
+				body: { tPosition: 10, stateJsonb: { regions: [], artifacts: [], chains: [] } }
+			})
+		);
+		const aAnchor = (await readJson(aRes)) as { id: string };
+		const bRes = await anchorsRoute.POST(
+			mkEvent(userA, {
+				params: { id: aMapId },
+				body: { tPosition: 11, stateJsonb: { regions: [], artifacts: [], chains: [] } }
+			})
+		);
+		const bAnchor = (await readJson(bRes)) as { id: string };
+
+		await expect(
+			anchorIdRoute.PATCH(
+				mkEvent(userA, {
+					params: { id: aMapId, anchorId: bAnchor.id },
+					body: { tPosition: 10 }
+				})
+			)
+		).rejects.toMatchObject({ status: 409 });
+
+		// Sanity: bAnchor still at its original position.
+		void aAnchor;
+	});
+
+	// ── Malformed JSON body ─────────────────────────────────────────────────
+	// readJson() converts SyntaxError to 400. Validates the wrapper without
+	// depending on real network buffers — request.json() throws when fed a
+	// garbage body, which is what malformed JSON looks like to the handler.
+
+	it('POST with malformed JSON body returns 400, not 500', async () => {
+		const garbage: any = {
+			url: new URL('http://localhost/api/factions'),
+			params: {},
+			request: {
+				json: async () => {
+					throw new SyntaxError('Unexpected token { in JSON');
+				}
+			},
+			locals: {
+				db: currentDb,
+				user: { id: userA, name: 'u', email: 'a@t.com', emailVerified: true },
+				session: {
+					id: crypto.randomUUID(),
+					userId: userA,
+					expiresAt: new Date(Date.now() + 86400000),
+					token: 't'
+				}
+			}
+		};
+		await expect(factionsRoute.POST(garbage)).rejects.toMatchObject({ status: 400 });
 	});
 });

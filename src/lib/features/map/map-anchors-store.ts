@@ -25,7 +25,9 @@ function createMapAnchorsStore() {
 	async function load(mapId: string): Promise<void> {
 		const res = await fetch(`/api/maps/${mapId}/anchors`);
 		if (!res.ok) throw new Error(`Failed to load anchors: ${await errorMessage(res)}`);
-		store.set((await res.json()) as MapAnchor[]);
+		const body = (await res.json()) as { rows: MapAnchor[]; truncated: boolean };
+		store.set(body.rows);
+		if (body.truncated) console.warn('anchors list truncated at server cap');
 	}
 
 	async function create(mapId: string, input: AnchorInput): Promise<MapAnchor> {

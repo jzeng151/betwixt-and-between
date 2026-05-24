@@ -82,6 +82,17 @@ export type ProjectionAnchor = {
 // Slice 1 event-kind union is just `transfer_region`. Unknown kinds are
 // preserved through the sort but ignored by the fold — forward-compatible
 // with Slice 2's continuous/windowed kinds.
+//
+// `EVENT_KINDS` and `EventKind` live here (not in src/lib/server/) so the
+// client store and the server validator share one source of truth without
+// the client crossing the server-only-import barrier (CLAUDE.md trust
+// boundary). Adding `move_entity`/`link_chain` in Slice 2 means updating:
+//   1. this array
+//   2. src/lib/server/world-map-v3.ts validateEventPayload's switch
+//   3. projection.ts's applyTransferRegion fold (or its successor)
+
+export const EVENT_KINDS = ['transfer_region'] as const;
+export type EventKind = (typeof EVENT_KINDS)[number];
 
 export type TransferRegionPayload = {
 	region_id: string;
