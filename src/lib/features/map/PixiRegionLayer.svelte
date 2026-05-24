@@ -21,6 +21,7 @@
 
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
+	import { get } from 'svelte/store';
 	import {
 		PIXI_STAGE_CONTEXT,
 		type PixiStageContext
@@ -75,6 +76,16 @@
 		};
 	});
 
+	// DEFERRED DESIGN DECISION (Slice 2+): region.color vs faction.color.
+	// Current behavior: faction color overrides region.color whenever a
+	// transfer_region event applies at the active playhead; otherwise
+	// region.color wins. Side effect noticed during commit-6 QA: once any
+	// event exists at T=0, scrubbing back to "before any event" is
+	// forbidden by scrubTo(t<0), so the baseline region.color is
+	// functionally unreachable. Three resolutions tabled (faction-only,
+	// region-as-default + faction-as-overlay with reachable baseline,
+	// visually layered). Picked: leave as-is for Slice 1b PR 2, revisit
+	// in Slice 2 when the renderer flag is deleted.
 	let renderedColorById = $derived.by(() => {
 		const m = new Map<string, string>();
 		if (renderedState) {
@@ -107,8 +118,14 @@
 		}
 		actionError = null;
 		try {
+			// Anchor the event at the current playhead. When playhead is null
+			// (spotlight off), use T=0 — events apply at any playhead ≥ 0, so
+			// the assignment is "from the start of story-time" by default.
+			// The playhead is intentionally NOT moved by this action;
+			// assigning ownership is a write, not a navigation.
+			const tPosition = get(playhead) ?? 0;
 			await mapEventsStore.create(mapId, {
-				tPosition: $playhead ?? 0,
+				tPosition,
 				kind: 'transfer_region',
 				payloadJsonb: { region_id: regionId, new_faction_id: factionId }
 			});
@@ -123,9 +140,20 @@
 		if (factionList.length === 0) {
 			return [{ label: 'No factions yet — create one first', disabled: true, onSelect: () => {} }];
 		}
+		// Current owner of this region at the active playhead, per the most
+		// recent projectState pass. Disable the item that points back to the
+		// same faction so users can't double-stamp an existing assignment
+		// (which would silently inflate the faction's dependent-event count).
+		const currentFactionId = renderedState?.regions.find(
+			(r) => r.regionId === regionId
+		)?.factionId ?? null;
 		return factionList.map((f) => ({
-			label: `Change owner → ${f.name}`,
+			label:
+				f.id === currentFactionId
+					? `${f.name} (current owner)`
+					: `Change owner → ${f.name}`,
 			icon: '●',
+			disabled: f.id === currentFactionId,
 			onSelect: () => void changeOwner(regionId, f.id)
 		}));
 	});

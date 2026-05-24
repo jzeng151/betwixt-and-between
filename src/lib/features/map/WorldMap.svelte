@@ -6,6 +6,7 @@
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
+	import { get } from 'svelte/store';
 	import { windowStore } from '$lib/os/windows-store.js';
 	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
 	import { resolveActiveVariant } from '$lib/features/map/variants.js';
@@ -210,6 +211,26 @@
 			mapAnchorsStore.load(id),
 			mapEventsStore.load(id)
 		])
+			.then(() => {
+				if (cancelled) return;
+				// UX: if events exist on this map AND the user has no active
+				// spotlight yet, jump the playhead just past the latest event
+				// so the persisted faction ownership is visible immediately on
+				// page reload. Without this, null playhead → -Infinity →
+				// projectState applies no events → regions show baseline color
+				// even though the events are loaded and the override would
+				// apply at any playhead ≥ event.tPosition.
+				const events = $mapEventsStore;
+				if (events.length === 0) return;
+				if (get(playhead) != null) return;
+				const maxT = events.reduce(
+					(acc, e) => (e.tPosition > acc ? e.tPosition : acc),
+					Number.NEGATIVE_INFINITY
+				);
+				if (Number.isFinite(maxT) && maxT >= 0) {
+					playhead.scrubTo(maxT);
+				}
+			})
 			.catch((err) => {
 				if (!cancelled) console.error('Failed to load projection inputs:', err);
 			})
