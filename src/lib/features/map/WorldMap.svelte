@@ -39,6 +39,12 @@
 	let leafletMap: any = $state(null);
 	let L: LeafletNS | null = $state(null);
 	let drawnItems: any = $state(null);
+	// pixiApp handle deferred to commit 4 — when PixiRegionLayer arrives it
+	// reads PIXI.Application via svelte-pixi's `getApp()` context from
+	// inside the <Application> subtree, so no top-level bind needed here.
+	// Initial attempt with `bind:pixiApp` triggered Svelte's
+	// `props_invalid_value` ($state(null) read as undefined inside the
+	// bind expression for reasons I couldn't pin down remotely).
 	// Step 4 — armed placeable id (chip selected in PlaceablesPalette). When
 	// non-null, the next click on the Leaflet canvas creates a placement at the
 	// clicked fractional coords for this entity.
@@ -831,7 +837,7 @@
 				/>
 			{/if}
 		{:else}
-			<PixiStage />
+			<PixiStage {activeMap} />
 		{/if}
 		{#if hasImage && activeMap?.locationId}
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
