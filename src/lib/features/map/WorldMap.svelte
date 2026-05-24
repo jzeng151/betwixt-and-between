@@ -895,7 +895,11 @@
 		{:else}
 			<PixiStage {activeMap}>
 				{#snippet children()}
-					<PixiRegionLayer regions={$mapRegions} {renderedState} />
+					<PixiRegionLayer
+						regions={$mapRegions}
+						{renderedState}
+						mapId={activeMapId}
+					/>
 				{/snippet}
 			</PixiStage>
 			<MapSidebar />

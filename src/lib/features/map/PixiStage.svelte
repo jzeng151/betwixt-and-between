@@ -85,6 +85,10 @@
 				app = newApp;
 				if (canvasContainer) {
 					canvasContainer.appendChild(app.canvas);
+					// Slice 1b commit 6: PixiRegionLayer wires right-click ↔ custom
+					// ContextMenu. Suppress the browser's native context menu over
+					// the canvas so our menu is the only one users see.
+					app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 				}
 				stageCtx.app = newApp;
 				ready = true;
