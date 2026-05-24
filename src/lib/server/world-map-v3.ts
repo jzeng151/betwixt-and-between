@@ -35,6 +35,16 @@ export type { EventKind, TransferRegionPayload };
 // valid CSS colors; reject them.
 const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
+// Guard that a JSON body is a plain object before using `in`/key-access.
+// readJson() rejects malformed JSON but accepts valid JSON scalars/arrays —
+// `null in null` and `'x' in 42` throw TypeError, which would surface as a
+// 500 instead of a clean 400. Every PATCH entry routes through here.
+function assertObjectBody(body: unknown): asserts body is Record<string, unknown> {
+	if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+		error(400, 'Request body must be a JSON object');
+	}
+}
+
 // ── Faction CRUD ────────────────────────────────────────────────────────────
 
 export type FactionInput = {
@@ -76,6 +86,7 @@ export async function updateFaction(
 	factionId: string,
 	patch: Partial<FactionInput>
 ): Promise<typeof factions.$inferSelect> {
+	assertObjectBody(patch);
 	const updates: Record<string, unknown> = {};
 	if ('name' in patch) {
 		if (typeof patch.name !== 'string' || patch.name.trim() === '') {
@@ -219,11 +230,24 @@ async function validateAnchorStateOwnership(
 	const regionIds = new Set<string>();
 	const factionIds = new Set<string>();
 	for (const r of regions) {
+		if (r === null || typeof r !== 'object' || Array.isArray(r)) {
+			error(400, 'state_jsonb.regions[] must contain objects');
+		}
 		if (typeof r.region_id !== 'string') {
 			error(400, 'state_jsonb.regions[].region_id must be a string');
 		}
 		regionIds.add(r.region_id);
-		if (typeof r.faction_id === 'string') factionIds.add(r.faction_id);
+		// faction_id is optional and may be explicitly null (= unowned). Any
+		// OTHER non-string value (number, object, array, undefined-via-typo)
+		// is a malformed write — reject rather than silently dropping the
+		// scope check. null is the only non-string we tolerate.
+		if (r.faction_id === null || r.faction_id === undefined) {
+			continue;
+		}
+		if (typeof r.faction_id !== 'string') {
+			error(400, 'state_jsonb.regions[].faction_id must be a string or null');
+		}
+		factionIds.add(r.faction_id);
 	}
 
 	// Region ownership: must belong to THIS map.
@@ -319,6 +343,7 @@ export async function updateMapAnchor(
 	patch: Partial<AnchorInput>
 ): Promise<typeof mapAnchors.$inferSelect> {
 	await assertMapOwnership(db, userId, worldMapId);
+	assertObjectBody(patch);
 
 	const updates: Record<string, unknown> = {};
 	if ('tPosition' in patch) {

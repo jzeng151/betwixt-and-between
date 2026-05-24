@@ -25,12 +25,13 @@ const FORBIDDEN_IMPORTS = ['pixi.js', 'svelte-pixi', 'paper'];
 
 // Files that legitimately import these — every +page.svelte / +page.ts / +layout.svelte
 // that mounts Pixi is allowed; every src/lib/features/map/*.svelte and ts client
-// module is allowed. Server endpoints (+server.ts, +layout.server.ts, hooks.server.ts)
-// and all of src/lib/server/** are forbidden.
+// module is allowed. Server endpoints (+server.ts, +layout.server.ts, +page.server.ts,
+// hooks.server.ts) and all of src/lib/server/** are forbidden.
 function isForbiddenPath(path: string): boolean {
-	// Worker / SSR entry points
-	if (/\+server\.ts$/.test(path)) return true;
-	if (/\+layout\.server\.(ts|js)$/.test(path)) return true;
+	// Worker / SSR entry points. +page.server.ts and +layout.server.ts both
+	// run server-side in SvelteKit and ship into the worker bundle.
+	if (/\+server\.(ts|js)$/.test(path)) return true;
+	if (/\+(page|layout)\.server\.(ts|js)$/.test(path)) return true;
 	if (/hooks\.server\.(ts|js)$/.test(path)) return true;
 	// Anything under src/lib/server/**
 	if (/^src\/lib\/server\//.test(path)) return true;

@@ -488,4 +488,91 @@ describe('auth isolation: World Map v3 endpoints', () => {
 		};
 		await expect(factionsRoute.POST(garbage)).rejects.toMatchObject({ status: 400 });
 	});
+
+	// ── PATCH body must be an object (Codex P1) ─────────────────────────────
+	// Without assertObjectBody, `'name' in null` and `'tPosition' in 'x'`
+	// throw TypeError → SvelteKit surfaces 500. The handlers must surface
+	// a clean 400 instead.
+
+	it('PATCH faction with JSON null body returns 400, not 500', async () => {
+		await expect(
+			factionIdRoute.PATCH(
+				mkEvent(userA, { params: { id: aFactionId }, body: null })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('PATCH faction with JSON scalar body returns 400, not 500', async () => {
+		await expect(
+			factionIdRoute.PATCH(
+				mkEvent(userA, { params: { id: aFactionId }, body: 'not-an-object' })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('PATCH anchor with JSON null body returns 400, not 500', async () => {
+		await expect(
+			anchorIdRoute.PATCH(
+				mkEvent(userA, {
+					params: { id: aMapId, anchorId: aAnchorId },
+					body: null
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	// ── Anchor state malformed regions (Codex P1+P2) ────────────────────────
+	// validateAnchorStateOwnership iterated state_jsonb.regions[] without
+	// checking each element was an object, and silently dropped non-string
+	// faction_id values. Both surface as 400 now.
+
+	it('POST anchor with null in regions[] returns 400', async () => {
+		await expect(
+			anchorsRoute.POST(
+				mkEvent(userA, {
+					params: { id: aMapId },
+					body: {
+						tPosition: 11,
+						stateJsonb: { regions: [null], artifacts: [], chains: [] }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('POST anchor with non-string faction_id returns 400', async () => {
+		await expect(
+			anchorsRoute.POST(
+				mkEvent(userA, {
+					params: { id: aMapId },
+					body: {
+						tPosition: 12,
+						stateJsonb: {
+							regions: [{ region_id: aRegionId, faction_id: 42 }],
+							artifacts: [],
+							chains: []
+						}
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('POST anchor with faction_id: null is accepted (unowned region)', async () => {
+		const res = await anchorsRoute.POST(
+			mkEvent(userA, {
+				params: { id: aMapId },
+				body: {
+					tPosition: 13,
+					stateJsonb: {
+						regions: [{ region_id: aRegionId, faction_id: null }],
+						artifacts: [],
+						chains: []
+					}
+				}
+			})
+		);
+		const created = (await readJson(res)) as { id: string };
+		expect(created.id).toBeTruthy();
+	});
 });
