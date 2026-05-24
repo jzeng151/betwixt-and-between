@@ -4,6 +4,10 @@ import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf, removeImpliedPartOf } from '$lib/server/location-hierarchy.js';
+import {
+	fanOutRegionColorUpdate,
+	fanOutRegionDelete
+} from '$lib/server/anchor-region-write-through.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -103,6 +107,21 @@ export const PATCH: RequestHandler = async (event) => {
 					await ensurePartOf(tx, userId, updates.locationId, parentMap.locationId);
 				}
 			}
+			// Slice 1b A3: write-through color changes to every anchor's
+			// state_jsonb.regions[] entry for this region. faction_id is
+			// preserved (faction ownership is a separate layer, not a
+			// geometry concern). locationId is NOT in anchor state — no
+			// write-through needed for that field.
+			if ('color' in updates) {
+				const newColor = updates.color === null ? null : (updates.color as string);
+				await fanOutRegionColorUpdate(
+					tx,
+					event.params.id!,
+					userId,
+					event.params.rid!,
+					newColor
+				);
+			}
 			return row;
 		});
 	} catch (err) {
@@ -135,6 +154,10 @@ export const DELETE: RequestHandler = async (event) => {
 				await removeImpliedPartOf(tx, userId, region.locationId, parentMap.locationId);
 			}
 		}
+		// Slice 1b A3: remove this region from every anchor's
+		// state_jsonb.regions[]. Faction ownership of this region (if any)
+		// is dropped with it — the region no longer exists.
+		await fanOutRegionDelete(tx, event.params.id!, userId, event.params.rid!);
 	});
 
 	return new Response(null, { status: 204 });

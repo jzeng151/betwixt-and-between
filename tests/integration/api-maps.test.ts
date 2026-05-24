@@ -1297,3 +1297,185 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		expect(sourceAnchorsAfter[0].id).toBe(sourceAnchorsBefore[0].id);
 	});
 });
+
+// Slice 1b A3 — region write-through to anchor state_jsonb.regions[].
+// G6 extends Δ1b-F to cover all three region CRUD verbs (POST/PATCH/DELETE).
+// Iron-rule parity: under ?renderer=pixi, projectState reads regions from
+// the anchor's state_jsonb; under ?renderer=leaflet, regions are read
+// directly from the map_regions table. Both must stay consistent.
+describe('Slice 1b — region write-through (G6)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	async function readAnchor(mapId: string) {
+		const rows = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, mapId));
+		expect(rows).toHaveLength(1); // baseline anchor only in these tests
+		return rows[0];
+	}
+
+	it('POST /api/maps/[id]/regions adds the new region to every anchor', async () => {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+
+		// Baseline anchor starts with regions: [] (per commit 3a).
+		const before = await readAnchor(map.id);
+		const beforeState = before.stateJsonb as {
+			regions: Array<{ region_id: string }>;
+		};
+		expect(beforeState.regions).toEqual([]);
+
+		const regionRes = await CREATE_REGION(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					polygon: [[0, 0], [0, 10], [10, 10]],
+					color: '#ff0000'
+				}
+			})
+		);
+		const region = await readJson(regionRes);
+
+		const after = await readAnchor(map.id);
+		const afterState = after.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string | null; color: string }>;
+		};
+		expect(afterState.regions).toHaveLength(1);
+		expect(afterState.regions[0]).toEqual({
+			region_id: region.id,
+			faction_id: null,
+			color: '#ff0000'
+		});
+	});
+
+	it('PATCH /api/maps/[id]/regions/[rid] updates the color in anchor state', async () => {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		const region = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: map.id },
+					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#ff0000' }
+				})
+			)
+		);
+		await regionIdRoute.PATCH(
+			mkEvent({
+				params: { id: map.id, rid: region.id },
+				body: { color: '#00ff00' }
+			})
+		);
+
+		const after = await readAnchor(map.id);
+		const afterState = after.stateJsonb as {
+			regions: Array<{ region_id: string; color: string }>;
+		};
+		expect(afterState.regions[0].color).toBe('#00ff00');
+	});
+
+	it('PATCH preserves faction_id in anchor state (faction overlay survives a color edit)', async () => {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		const region = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: map.id },
+					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#ff0000' }
+				})
+			)
+		);
+
+		// Simulate transfer_region having folded faction ownership into the
+		// baseline anchor's state_jsonb.regions[] (e.g. via a Slice 2 anchor-
+		// edit UX that promotes an event into a snapshot). Then PATCH the
+		// region's color and assert faction_id survives.
+		const [anchorBefore] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const stateBefore = anchorBefore.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string | null; color: string }>;
+		};
+		stateBefore.regions[0].faction_id = '550e8400-e29b-41d4-a716-446655440000';
+		await currentDb
+			.update(mapAnchors)
+			.set({ stateJsonb: stateBefore })
+			.where(eq(mapAnchors.id, anchorBefore.id));
+
+		await regionIdRoute.PATCH(
+			mkEvent({
+				params: { id: map.id, rid: region.id },
+				body: { color: '#00ff00' }
+			})
+		);
+
+		const after = await readAnchor(map.id);
+		const afterState = after.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string | null; color: string }>;
+		};
+		expect(afterState.regions[0].color).toBe('#00ff00');
+		expect(afterState.regions[0].faction_id).toBe(
+			'550e8400-e29b-41d4-a716-446655440000'
+		);
+	});
+
+	it('DELETE /api/maps/[id]/regions/[rid] removes the region from anchor state', async () => {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		const region = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: map.id },
+					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#ff0000' }
+				})
+			)
+		);
+
+		await regionIdRoute.DELETE(
+			mkEvent({ params: { id: map.id, rid: region.id } })
+		);
+
+		const after = await readAnchor(map.id);
+		const afterState = after.stateJsonb as {
+			regions: Array<{ region_id: string }>;
+		};
+		expect(afterState.regions).toEqual([]);
+	});
+
+	it('multiple anchors on the same map all see the write-through', async () => {
+		// Manually seed a second anchor so the fan-out has more than one
+		// target. Slice 1b only exposes user-authored anchors via the
+		// snapshot UX, so this test simulates that pre-existing state.
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		await currentDb.insert(mapAnchors).values({
+			worldMapId: map.id,
+			tPosition: 5,
+			stateJsonb: { regions: [], artifacts: [], chains: [] }
+		});
+
+		const region = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: map.id },
+					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#abcdef' }
+				})
+			)
+		);
+
+		const allAnchors = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		expect(allAnchors).toHaveLength(2);
+		for (const a of allAnchors) {
+			const state = a.stateJsonb as { regions: Array<{ region_id: string }> };
+			expect(state.regions.map((r) => r.region_id)).toContain(region.id);
+		}
+	});
+});
