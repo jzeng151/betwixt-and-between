@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.6.0] - 2026-05-23
+
+### Added
+- **World Map v3 Slice 1b backend foundation.** Server endpoints for the projection engine's authoring surface: `GET/POST /api/factions`, `PATCH/DELETE /api/factions/[id]`, `GET /api/factions/[id]/dependents`, `GET/POST /api/maps/[id]/anchors`, `PATCH/DELETE /api/maps/[id]/anchors/[anchorId]`, `GET/POST /api/maps/[id]/events`, `DELETE /api/maps/[id]/events/[eventId]`. All writes route through `src/lib/server/world-map-v3.ts` chokepoints. UI lands in Slice 1b PR 2.
+- **Cross-user write-time defenses.** `validateEventPayload` rejects `transfer_region` payloads whose `region_id` belongs to a different map or whose `new_faction_id` belongs to another user. `validateAnchorStateOwnership` enforces the same invariant on anchor `state_jsonb.regions[]` — every region must live on the current map, every faction must be owned by the caller. Cross-user references no longer reach the DB; the renderer's lazy GC remains as a second line of defense.
+- **Faction delete UX.** `DELETE /api/factions/[id]` returns 204 (consistent with anchor + event DELETEs). New `GET /api/factions/[id]/dependents` exposes the count of `transfer_region` events referencing the faction, so the UI can render "deleting will leave N events with ownership-unknown" before posting DELETE.
+- **Anchor write-time conflict handling.** `createMapAnchor` + `updateMapAnchor` catch `(world_map_id, t_position)` UNIQUE violations and surface 409 (was opaque 500). PGlite/Drizzle wrap Postgres errors in `.cause`; the shared `isUniqueViolation` helper checks both levels.
+- **`assertSourceEventIdIsEvent` enforcement at every event write.** `createMapEvent` runs the polymorphic-FK check before insert when `source_event_id` is supplied. Rejects non-Event entities and cross-user Event references. Pairs with the Vitest invariant shipped in v0.7.5.0.
+- **3 reactive client stores** at `src/lib/features/map/{factions,map-anchors,map-events}-store.ts` consume the new endpoints with the same write-through pattern as the existing world-map store.
+- **Hard list bounds.** GET endpoints for factions / anchors / events return `{rows, truncated}` with a 500-row cap. The truncated flag flips when a user has authored more than the cap; client stores log a console warn so the truncation isn't silent. Cursor pagination is a Slice 5+ replacement.
+- **Malformed-JSON shim** (`src/lib/server/read-json.ts`). Every API handler that takes a JSON body routes through `readJson(event)`, which converts SyntaxError → 400 instead of bubbling to a 500.
+
+### Infrastructure
+- **Client bundle size budget** (1.2 MB gzipped). `size-limit` config covers `_app/immutable/**/*.js` and runs in CI after `npm run build`. Baseline today: 180 kB gzipped — well under cap. Slice 1b PR 2 lifts the bundle to ~600-700 kB once Pixi mounts.
+- **Worker-side import guard test** at `tests/integration/worker-pixi-import-guard.test.ts`. Static-grep asserts `pixi.js` / `svelte-pixi` / `paper` are never imported from `src/lib/server/**`, any `+server.ts`, `+layout.server.ts`, or `hooks.server.ts`. Catches the accidental top-level import that would push the Workers bundle past Cloudflare's 1 MB compressed limit.
+
+### Tests
+- **22 PGlite-backed auth-isolation cases** (`tests/integration/auth-isolation-world-map-v3.test.ts`) pin the CLAUDE.md cross-user invariant on every new endpoint: User B cannot list / read / write / delete User A's factions, anchors, events. Cross-user payload defense, polymorphic-FK enforcement, anchor 409 collision paths (POST and PATCH), malformed-JSON 400, and the new anchor state ownership defense are all covered.
+
 ## [0.7.5.0] - 2026-05-23
 
 ### Added

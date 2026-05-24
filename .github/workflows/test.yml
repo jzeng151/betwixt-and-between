@@ -24,3 +24,8 @@ jobs:
       # Vitest unit + integration tests run against PGlite in-process —
       # no Postgres service needed in CI.
       - run: npm test
+      # Δ1b-G — client bundle size budget. Pixi.js + svelte-pixi are large
+      # client-only deps; a Worker-side import leak would double the
+      # number. 1.2 MB gzipped initial; tune at end of Slice 1b.
+      - run: npm run build
+      - run: npm run size
