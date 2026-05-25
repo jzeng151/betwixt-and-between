@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
-import { worldMaps, mapRegions } from '$lib/server/db/schema.js';
-import { and, eq } from 'drizzle-orm';
+import { worldMaps, mapRegions, mapAnchors } from '$lib/server/db/schema.js';
+import { and, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import type { RequestHandler } from './$types';
 
@@ -22,6 +22,13 @@ import type { RequestHandler } from './$types';
  * The name is suffixed with " (copy)" so the clone is visually distinct in
  * the map switcher. Regions are deep-copied (polygon arrays cloned via
  * JSON.parse/stringify; locationId/color preserved).
+ *
+ * Slice 1b A1: the clone gets one baseline anchor at t_position=-Infinity
+ * built from the CLONED region ids (so anchor state_jsonb.regions[].region_id
+ * resolves under projection's lazy GC). Source's non-baseline anchors
+ * (user-authored snapshots tied to source.region.id values) are NOT cloned —
+ * their region_id refs would be stale post-clone. If duplicate-with-faction-
+ * history becomes a real workflow, add explicit region-id translation then.
  */
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
@@ -69,6 +76,22 @@ export const POST: RequestHandler = async (event) => {
 				)
 				.returning();
 		}
+
+		await tx.insert(mapAnchors).values({
+			worldMapId: clone.id,
+			// SQL literal for -Infinity — see comment in /api/maps/+server.ts
+			// POST handler; postgres-js doesn't serialize JS Infinity reliably.
+			tPosition: sql`'-Infinity'::float8` as unknown as number,
+			stateJsonb: {
+				regions: cloneRegions.map((r) => ({
+					region_id: r.id,
+					faction_id: null,
+					color: r.color
+				})),
+				artifacts: [],
+				chains: []
+			}
+		});
 
 		return { clone, cloneRegions };
 	});

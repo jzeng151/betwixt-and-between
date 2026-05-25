@@ -27,6 +27,9 @@ const anchorsRoute = await import('../../src/routes/api/maps/[id]/anchors/+serve
 const anchorIdRoute = await import('../../src/routes/api/maps/[id]/anchors/[anchorId]/+server.js');
 const eventsRoute = await import('../../src/routes/api/maps/[id]/events/+server.js');
 const eventIdRoute = await import('../../src/routes/api/maps/[id]/events/[eventId]/+server.js');
+const projectionContextRoute = await import(
+	'../../src/routes/api/maps/[id]/projection-context/+server.js'
+);
 
 function mkEvent(
 	userId: string,
@@ -729,5 +732,69 @@ describe('auth isolation: World Map v3 endpoints', () => {
 		);
 		const created = (await readJson(res)) as { id: string };
 		expect(created.id).toBeTruthy();
+	});
+
+	// G3 (Slice 1b /plan-eng-review) — GET /api/maps/[id]/projection-context
+	// scopes both factions and regions through world_maps.user_id. A missing
+	// JOIN here would leak cross-user faction colors or region ids into a
+	// foreign viewer's projection.
+	it('GET projection-context: 404 when user B requests user A\'s map', async () => {
+		await expect(
+			projectionContextRoute.GET(mkEvent(userB, { params: { id: aMapId } }))
+		).rejects.toMatchObject({ status: 404 });
+	});
+
+	it('GET projection-context: user A sees their own factions + regions', async () => {
+		const res = await projectionContextRoute.GET(
+			mkEvent(userA, { params: { id: aMapId } })
+		);
+		const body = (await readJson(res)) as {
+			allowedFactions: Array<{ id: string; color: string }>;
+			allowedRegions: string[];
+		};
+		expect(body.allowedFactions.map((f) => f.id)).toContain(aFactionId);
+		expect(body.allowedRegions).toContain(aRegionId);
+	});
+
+	it('GET projection-context: user A does NOT see user B\'s factions', async () => {
+		const [bFaction] = await currentDb
+			.insert(factions)
+			.values({ userId: userB, name: 'B faction', color: '#0000bb' })
+			.returning();
+
+		const res = await projectionContextRoute.GET(
+			mkEvent(userA, { params: { id: aMapId } })
+		);
+		const body = (await readJson(res)) as {
+			allowedFactions: Array<{ id: string; color: string }>;
+			allowedRegions: string[];
+		};
+		expect(body.allowedFactions.map((f) => f.id)).not.toContain(bFaction.id);
+	});
+
+	it("GET projection-context: user A's own faction list excludes cross-user regions even when faction has matching id pattern", async () => {
+		// Even if user B had a region in a map B owns, user A's projection-
+		// context for A's map must not list it. fetchProjectionContext joins
+		// mapRegions through worldMaps.user_id so cross-map ids stay scoped.
+		const [bMap] = await currentDb
+			.insert(worldMaps)
+			.values({ userId: userB, name: 'B map' })
+			.returning();
+		const [bRegion] = await currentDb
+			.insert(mapRegions)
+			.values({
+				mapId: bMap.id,
+				polygon: [[0, 0], [1, 0], [1, 1]]
+			})
+			.returning();
+
+		const res = await projectionContextRoute.GET(
+			mkEvent(userA, { params: { id: aMapId } })
+		);
+		const body = (await readJson(res)) as {
+			allowedFactions: Array<{ id: string; color: string }>;
+			allowedRegions: string[];
+		};
+		expect(body.allowedRegions).not.toContain(bRegion.id);
 	});
 });

@@ -47,12 +47,20 @@
 	let zoomControl: any = null;
 
 	onMount(() => {
+		// Rapid renderer-flag toggles (Slice 1b) can unmount MapStage while
+		// the leaflet dynamic-import is mid-flight (~4 awaits). Without this
+		// cancelled flag, the stale promise resolves AFTER unmount and writes
+		// to $bindable props that now belong to a remounted MapStage —
+		// poisoning the new instance's L/drawnItems with a half-initialized
+		// Leaflet from the old mount, which surfaces later as
+		// `_leaflet_pos undefined` when removeLayer touches the orphan.
+		let cancelled = false;
 		(async () => {
-			// Dynamic-import Leaflet (browser-only).
 			const leaflet = await import('leaflet');
 			await import('leaflet/dist/leaflet.css');
 			await import('leaflet-draw');
 			await import('leaflet-draw/dist/leaflet.draw.css');
+			if (cancelled) return;
 			L = leaflet.default;
 			drawnItems = new L.FeatureGroup();
 			mapReady = true;
@@ -60,7 +68,15 @@
 		})();
 
 		return () => {
+			cancelled = true;
 			if (leafletMap) {
+				// stop() aborts in-flight pan/zoom animations + detaches their
+				// CSS transitionend handlers. Without it, a rapid renderer-flag
+				// toggle during fitBounds()'s zoom animation lets transitionend
+				// fire after remove() has nulled _mapPane — surfaces as
+				// `_leaflet_pos undefined` from _onZoomTransitionEnd ~250ms post-
+				// unmount.
+				leafletMap.stop();
 				leafletMap.remove();
 				leafletMap = null;
 			}
@@ -179,7 +195,10 @@
 			// Leaflet measured the container at 0×0. Force a re-measure so
 			// fitBounds has real pixel dimensions to work with.
 			leafletMap.invalidateSize();
-			leafletMap.fitBounds(bounds, { padding: [20, 20] });
+			// animate:false — the initial bitmap centering doesn't need a zoom
+			// animation; skipping it also removes the orphan-transitionend race
+			// when the user toggles renderers while fitBounds is mid-flight.
+			leafletMap.fitBounds(bounds, { padding: [20, 20], animate: false });
 		}
 	});
 </script>

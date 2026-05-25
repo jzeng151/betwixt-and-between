@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf } from '$lib/server/location-hierarchy.js';
+import { fanOutRegionAdd } from '$lib/server/anchor-region-write-through.js';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
@@ -70,6 +71,14 @@ export const POST: RequestHandler = async (event) => {
 			if (typeof locationId === 'string' && map.locationId) {
 				await ensurePartOf(tx, userId, locationId, map.locationId);
 			}
+			// Slice 1b A3: fan out the new region into every anchor's
+			// state_jsonb.regions[] so the Pixi renderer (which reads
+			// projected anchor state) sees the same geometry the Leaflet
+			// renderer reads directly from map_regions.
+			await fanOutRegionAdd(tx, event.params.id!, userId, {
+				id: row.id,
+				color: row.color
+			});
 			return row;
 		});
 	} catch (err) {

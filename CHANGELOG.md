@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.7.0] - 2026-05-24
+
+### Added
+- **World Map v3 Slice 1b — Pixi renderer + faction tide demo (PR 2 of 2).** `?renderer=pixi` URL query param swaps the canvas from Leaflet to a Pixi-based renderer. The Pixi path consumes `RenderedState` from `projectState()`, so faction-ownership events composed in commit 6 fold through the projection engine and recolor regions when the playhead crosses the event's T. Iron-rule parity preserved: `?renderer=leaflet` (default) renders identically to v0.7.6.0.
+- **In-app `RendererToggle.svelte`** (top-right pill) flips between renderers via SvelteKit `goto()` — client-side navigation, no SPA reload, no open-window loss. Polishes the strangler-fig flag's discoverability and gives Δ1b-C a Playwright target.
+- **Imperative `PixiStage.svelte`** owns the `PIXI.Application` lifecycle directly (new + await init + canvas append + destroy). Original svelte-pixi `<Application>` wrapper hit a destroy-during-init race under rapid renderer-toggle, leaking 1-2 WebGL contexts per cycle; the imperative pattern (spike findings' prescribed approach for orchestrator-level ownership) eliminates the leak. svelte-pixi 8.0.1 still in the dep tree for potential leaf-layer use later.
+- **`PixiRegionLayer.svelte`** renders polygons via `PIXI.Graphics` with per-region colors layered from the projection engine's `RenderedState` (faction override) → `region.color` (geometry-author baseline) → neutral gray. Right-click a region → custom `ContextMenu` lists `Change owner → <faction>` per available faction; the current owner is shown disabled as `<faction> (current owner)` to prevent accidental double-stamping. Right-click an empty area → "Snapshot world state here" creates a `map_anchors` row at the current playhead capturing the rendered ownership state.
+- **`MapSidebar.svelte`** — floating right-side panel for faction CRUD. Create form with shared color palette (see Infrastructure). Delete with dependents warning: fetches `GET /api/factions/[id]/dependents` count first, dialog enumerates affected events and warns about resulting ownership-unknown rendering.
+- **`GET /api/maps/[id]/projection-context`** (NEW endpoint) returns `{allowedFactions, allowedRegions}` from server-side `fetchProjectionContext`. Cross-user scoping baked into the SQL — defense-in-depth `404` on missing/cross-user map. Client `use-projection.ts` helper converts the array payload into Map/Set form for `projectState()`.
+- **Baseline anchor invariant (A1).** `POST /api/maps` and `POST /api/maps/[id]/duplicate` now insert/clone a baseline `map_anchors` row at `t_position = -Infinity` inside the same transaction as the worldMaps insert. New maps no longer render empty under `?renderer=pixi`. Anchor `t_position` uses Drizzle `sql` template tag with the literal `'-Infinity'::float8` cast because postgres-js (Neon serverless) doesn't reliably serialize JS `Number.NEGATIVE_INFINITY`; PGlite in tests does.
+- **Region write-through to anchor state (A3).** Region POST / PATCH / DELETE handlers fan out the change to every `map_anchors.state_jsonb.regions[]` for the same map (`src/lib/server/anchor-region-write-through.ts`). Geometry stays parity-consistent between Pixi (which reads anchor state) and Leaflet (which reads `map_regions` directly). `faction_id` overlays survive color edits; deletes drop the entire entry.
+
+### Changed
+- **Empty-map hint moved to bottom-center** so it no longer collides with the `.map-toolbar` when both are visible on a new map.
+- **MapStage.svelte** gains a cancellation flag on its leaflet dynamic-import, `leafletMap.stop()` before `.remove()` in cleanup (cancels in-flight zoom animations whose `transitionend` would otherwise hit a destroyed `_mapPane`), and `{ animate: false }` on the initial `fitBounds`. Latent bugs exposed by the renderer toggle; fixed proactively.
+- **RegionLayer / PlacementLayer** wrap `removeLayer` calls in their effect cleanup with `try/catch` — sibling-unmount-order races during renderer flip can destroy the Leaflet map before these layers clean up their references.
+- **`color-palette.ts` extracted** from `RegionFormModal.svelte` so faction CRUD reuses the same swatch set (region authoring and faction authoring share the same visual vocabulary).
+
+### Infrastructure
+- **Vite HMR fallback in `PixiStage.svelte`.** `import.meta.hot.accept(() => window.location.reload())` forces a full page reload on edits to this module — `import.meta.hot.invalidate()` didn't cascade in this app's HMR graph and was leaking WebGL contexts on save. Dev-only (stripped from prod bundles); only affects edits to PixiStage itself, other map files HMR normally.
+
+### Tests
+- **G1 + G2** (5 cases): baseline anchor inserted on `POST /api/maps`, atomicity under duplicate-default-location failure, duplicate-map anchor cloning carries the CLONE's new region ids (not source's stale refs), region-less duplicate still produces a baseline anchor, source anchors untouched after duplicate.
+- **G3** (4 cases): `GET /api/maps/[id]/projection-context` cross-user scoping. User B's request for User A's map returns 404; User A sees only their own factions + regions; cross-user faction and region ids excluded from the payload.
+- **G6** (5 cases): region write-through CRUD. POST adds entry to baseline anchor with `faction_id=null`. PATCH updates color. PATCH preserves `faction_id` (faction overlay survives baseline edits). DELETE removes entry. Multi-anchor maps see write-through on every anchor.
+- **G9** (8 cases): `use-projection.ts` unit tests. `toProjectionContext` shape conversion, deduplication semantics, last-write-wins on duplicate faction ids. `fetchProjectionContextForMap` GET URL shape, 404 surfacing, 500 surfacing.
+
+### Test scope deferred
+- **Δ1b-A / Δ1b-B** (svelte-pixi patch teardown tests) — defunct since `PixiStage.svelte` went imperative and no longer mounts svelte-pixi's `<Application>` wrapper at the orchestrator level. patch-package patches are still applied via postinstall, but the test path through this codebase is gone. To revisit if a leaf layer (e.g., a Slice 2 `PixiMarkerLayer`) re-introduces svelte-pixi components.
+- **Δ1b-C / Δ1b-E** (Playwright E2E: renderer-flag toggle and right-click snapshot anchor) deferred to a separate test-harness PR. The Pixi canvas + right-click + scrub interactions need a real headless-Chrome harness; G6 covers the write-through behavior at the integration layer.
+- **G7** (`?renderer=foo` fallback) — one-line ternary in `currentRenderer()`, trivially correct.
+
 ## [0.7.6.0] - 2026-05-23
 
 ### Added

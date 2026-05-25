@@ -82,8 +82,18 @@
 		}
 
 		return () => {
+			// MapStage's onMount cleanup runs leafletMap.remove() during the same
+			// teardown as the renderer-flag flip — by the time this $effect cleanup
+			// fires, the Leaflet map may already be destroyed (DOM nuked, internal
+			// state cleared). Calling removeLayer in that window throws
+			// `_leaflet_pos undefined`. Swallow: leafletMap.remove() already
+			// cascade-destroyed our layers.
 			for (const layer of regionLayers) {
-				leafletMap?.removeLayer(layer);
+				try {
+					leafletMap?.removeLayer(layer);
+				} catch {
+					/* map already destroyed by sibling unmount */
+				}
 			}
 			regionLayers = [];
 		};

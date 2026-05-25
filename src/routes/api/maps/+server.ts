@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
-import { worldMaps } from '$lib/server/db/schema.js';
-import { desc, eq } from 'drizzle-orm';
+import { worldMaps, mapAnchors } from '$lib/server/db/schema.js';
+import { desc, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import {
 	assertLocationIdIsLocation,
@@ -74,22 +74,43 @@ export const POST: RequestHandler = async (event) => {
 		error(400, (err as Error).message);
 	}
 
+	// Slice 1b A1 invariant: every world_maps row has at least one baseline
+	// anchor at t_position = -Infinity so the Pixi renderer (which reads
+	// state via projectState) doesn't show an empty map under ?renderer=pixi
+	// even though Leaflet (which reads map_regions directly) renders fine.
+	// The 0012 migration backfilled this for existing maps; new maps create
+	// it in the same transaction as the worldMaps insert so partial-failure
+	// can't leave an anchor-less map.
 	let created;
 	try {
-		[created] = await db
-			.insert(worldMaps)
-			.values({
-				userId,
-				name: name.trim(),
-				locationId: locationId ?? null,
-				startActId: normalizedStartActId,
-				startSceneId: normalizedStartSceneId,
-				endActId: normalizedEndActId,
-				endSceneId: normalizedEndSceneId,
-				startPosition,
-				endPosition
-			})
-			.returning();
+		created = await db.transaction(async (tx) => {
+			const [row] = await tx
+				.insert(worldMaps)
+				.values({
+					userId,
+					name: name.trim(),
+					locationId: locationId ?? null,
+					startActId: normalizedStartActId,
+					startSceneId: normalizedStartSceneId,
+					endActId: normalizedEndActId,
+					endSceneId: normalizedEndSceneId,
+					startPosition,
+					endPosition
+				})
+				.returning();
+			await tx.insert(mapAnchors).values({
+				worldMapId: row.id,
+				// `-Infinity`::float8 SQL literal — postgres-js (Neon driver)
+				// doesn't serialize JS Number.NEGATIVE_INFINITY to Postgres's
+				// '-Infinity' float8 special value reliably (silent 500 in dev),
+				// even though PGlite in tests does. Match what migration 0012
+				// did. Cast through `unknown` because Drizzle's typed-column
+				// .values() expects `number` here, not `SQL`.
+				tPosition: sql`'-Infinity'::float8` as unknown as number,
+				stateJsonb: { regions: [], artifacts: [], chains: [] }
+			});
+			return row;
+		});
 	} catch (err) {
 		// Drizzle wraps PG errors; unwrap to get the constraint code + message.
 		const wrapped = err as { code?: string; cause?: { code?: string }; message?: string };

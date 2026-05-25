@@ -77,8 +77,17 @@
 		}
 
 		return () => {
+			// See RegionLayer's matching cleanup comment: a renderer-flag flip
+			// unmounts MapStage + this layer in the same teardown; MapStage's
+			// leafletMap.remove() may run first, leaving removeLayer to throw
+			// `_leaflet_pos undefined`. Swallow — the map's destroy already
+			// cascade-removed our markers.
 			for (const m of placementMarkers) {
-				leafletMap?.removeLayer(m);
+				try {
+					leafletMap?.removeLayer(m);
+				} catch {
+					/* map already destroyed by sibling unmount */
+				}
 			}
 			placementMarkers = [];
 		};

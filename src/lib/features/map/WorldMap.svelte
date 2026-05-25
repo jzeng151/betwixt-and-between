@@ -6,6 +6,7 @@
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
+	import { get } from 'svelte/store';
 	import { windowStore } from '$lib/os/windows-store.js';
 	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
 	import { resolveActiveVariant } from '$lib/features/map/variants.js';
@@ -19,8 +20,17 @@
 	import MapBreadcrumb from '$lib/features/map/MapBreadcrumb.svelte';
 	import MapToolbar from '$lib/features/map/MapToolbar.svelte';
 	import MapStage from '$lib/features/map/MapStage.svelte';
+	import PixiStage from '$lib/features/map/PixiStage.svelte';
+	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
+	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import RegionLayer from '$lib/features/map/RegionLayer.svelte';
 	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
+	import RendererToggle from '$lib/features/map/RendererToggle.svelte';
+	import { currentRenderer } from '$lib/features/map/renderer-flag.js';
+	import { projectState, type ProjectionContext, type RenderedState } from '$lib/features/map/projection.js';
+	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
+	import { mapAnchorsStore } from '$lib/features/map/map-anchors-store.js';
+	import { mapEventsStore } from '$lib/features/map/map-events-store.js';
 	import type { PopupCallbacks } from '$lib/features/map/leaflet-controller.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
@@ -36,6 +46,12 @@
 	let leafletMap: any = $state(null);
 	let L: LeafletNS | null = $state(null);
 	let drawnItems: any = $state(null);
+	// pixiApp handle deferred to commit 4 — when PixiRegionLayer arrives it
+	// reads PIXI.Application via svelte-pixi's `getApp()` context from
+	// inside the <Application> subtree, so no top-level bind needed here.
+	// Initial attempt with `bind:pixiApp` triggered Svelte's
+	// `props_invalid_value` ($state(null) read as undefined inside the
+	// bind expression for reasons I couldn't pin down remotely).
 	// Step 4 — armed placeable id (chip selected in PlaceablesPalette). When
 	// non-null, the next click on the Leaflet canvas creates a placement at the
 	// clicked fractional coords for this entity.
@@ -74,6 +90,9 @@
 	let duplicating = $state(false);
 
 	// Computed — $worldMaps / $mapRegions / $entities / $isInScope are Svelte store subscriptions
+	// Strangler-fig renderer flag (Slice 1b). `?renderer=pixi` swaps MapStage
+	// for PixiStage; default is leaflet. See src/lib/features/map/renderer-flag.ts.
+	let renderer = $derived(currentRenderer());
 	let activeMap = $derived($worldMaps.find((m) => m.id === activeMapId) ?? null);
 	let locations = $derived($entities.filter((e) => e.type === 'Location'));
 	let hasMaps = $derived($worldMaps.length > 0);
@@ -153,10 +172,211 @@
 
 	// ── Store loads ───────────────────────────────────────────────────────
 
+	// Codex P2 on PR #55 (commit 4ccb183): factionsStore is loaded once on
+	// mount but isn't part of the per-map readiness signal. If /api/factions
+	// resolves AFTER /api/maps/[id]/anchors|events, projectState briefly
+	// runs with an empty allowedFactions Map and faction overrides drop —
+	// then re-runs cleanly once factions arrive. Snapshot taken during that
+	// window would persist null faction_ids. Track factionsLoaded so the
+	// dataLoading prop reflects all three sources.
+	let factionsLoaded = $state(false);
+
 	onMount(() => {
 		worldMapStore.loadMaps();
 		intervalsStore.load();
 		relationships.load();
+		// Factions are user-scoped (not map-scoped) — load once per session.
+		// The map-scoped stores (anchors, events) load on activeMapId change.
+		// Codex P2 on PR #55 (da20221): only flip factionsLoaded on success
+		// — on failure, leaving it true would clear dataLoading and let
+		// snapshots persist with empty allowedFactions. On failure the
+		// loading signal stays live and ownership-write UX (snapshot,
+		// changeOwner) stays gated. User can refresh to retry.
+		void factionsStore
+			.load()
+			.then(() => {
+				factionsLoaded = true;
+			})
+			.catch((err) => {
+				console.error('Failed to load factions:', err);
+			});
+	});
+
+	// ── Slice 1b projection pipeline ────────────────────────────────────
+	//
+	// Computed RenderedState for the Pixi path. Refetches the cross-user-
+	// scoped projection context on map change, and per-map anchors + events;
+	// projectState() is pure and runs on every playhead tick via $derived.
+	// Leaflet path doesn't consume this (it reads map_regions directly) so
+	// the iron-rule parity is preserved by feeding both paths from the same
+	// region geometry, with Pixi additionally layering faction overrides.
+
+	// Codex P1 on PR #55 (commit 5ef25e5): projectionCtx was fetched only
+	// when activeMapId changed, so in-session mutations (creating a faction
+	// in MapSidebar, deleting a region via the popup, etc.) couldn't refresh
+	// the allowed sets. Stale ctx caused projectState's lazy GC to drop
+	// just-created factions/regions or keep references to just-deleted ones.
+	//
+	// Fix: derive ctx directly from the client stores that ALREADY carry
+	// the cross-user-scoped data ($factionsStore loaded from
+	// GET /api/factions; $mapRegions loaded per-map from GET /api/maps/[id]
+	// — both endpoints scope by userId server-side). The derive auto-fires
+	// when either store mutates, so mid-session adds/deletes immediately
+	// reach projectState. The /projection-context endpoint stays as a
+	// defense-in-depth audit point (and remains covered by G3 tests), but
+	// the client no longer fetches it.
+	let projectionCtx = $derived.by<ProjectionContext | null>(() => {
+		if (!activeMapId) return null;
+		const allowedFactions = new Map();
+		for (const f of $factionsStore) {
+			allowedFactions.set(f.id, { id: f.id, color: f.color });
+		}
+		const allowedRegions = new Set<string>();
+		for (const r of $mapRegions) {
+			allowedRegions.add(r.id);
+		}
+		return { allowedFactions, allowedRegions };
+	});
+	// Codex P1 on PR #55 (commit f3948e1): projectionCtxLoading clearing
+	// in .finally() left ownership writes unblocked after a failed load.
+	// Replaced with projectionCtxHealthy (default false, true only on
+	// Promise.all success). The dataLoading derived treats !healthy as
+	// "still loading or known-broken" so snapshot/changeOwner stay gated
+	// until the user reloads the page or switches to a working map.
+	let projectionCtxHealthy = $state(false);
+	// Codex P1 on PR #55 (commit 4856a07): tracking mapRegionsLoading
+	// as a true/false-then-clear-in-finally signal silently passed
+	// failure as completion. Switched to the same Healthy-only pattern
+	// projectionCtxHealthy uses: default false, true only on successful
+	// load. On failure stays false, dataLoading stays live, ownership
+	// writes stay blocked. Tracked by switchMap / handleCreateMap /
+	// confirmDelete around each loadMapRegions call.
+	let mapRegionsHealthy = $state(false);
+
+	$effect(() => {
+		const id = activeMapId;
+		if (!id) {
+			mapAnchorsStore.reset();
+			mapEventsStore.reset();
+			projectionCtxHealthy = false;
+			return;
+		}
+		let cancelled = false;
+		projectionCtxHealthy = false;
+		void Promise.all([mapAnchorsStore.load(id), mapEventsStore.load(id)])
+			.then(([anchorsResult, eventsResult]) => {
+				if (cancelled) return;
+				// Codex P1 on PR #55 (commit e32c973): truncated:true means
+				// the server capped at LIST_LIMIT (500 rows). Treating
+				// that as "healthy" would let Pixi snapshots persist
+				// state that drops ownership for anchors/events past the
+				// cap. Keep healthy at false so writes stay blocked;
+				// cursor pagination is the Slice 5+ fix.
+				if (anchorsResult.truncated || eventsResult.truncated) {
+					console.error(
+						'Anchors or events list truncated at server cap (500). Projection incomplete; Pixi ownership writes disabled until pagination ships (Slice 5+).'
+					);
+					return;
+				}
+				projectionCtxHealthy = true;
+			})
+			.catch((err) => {
+				if (cancelled) return;
+				// Transient 500/network: clear stores AND leave healthy
+				// at false so dataLoading stays live, blocking writes
+				// until the next map switch (or page reload).
+				console.error('Failed to load anchors/events:', err);
+				mapAnchorsStore.reset();
+				mapEventsStore.reset();
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	let renderedState = $derived.by<RenderedState | null>(() => {
+		if (!projectionCtx) return null;
+		const t = $playhead ?? Number.NEGATIVE_INFINITY;
+		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx);
+	});
+
+	// Combined readiness signal piped through to PixiRegionLayer as
+	// dataLoading. True while ANY of these are in flight or unhealthy:
+	//  - anchors+events for the active map (projectionCtxHealthy)
+	//  - factions for the user (factionsLoaded)
+	//  - map_regions for the active map (mapRegionsLoading — see below)
+	// snapshotWorldState + changeOwner gate on this so writes can't
+	// race a load and persist partial state.
+	//
+	// Codex P1 on PR #55 (commit f3948e1): mapRegionsLoading was missing.
+	// switchMap sets activeMapId synchronously before awaiting
+	// loadMapRegions, so scopedRegions briefly empties during a switch.
+	// A snapshot in that window would persist an empty regions[] for a
+	// map that actually has regions.
+	let dataLoading = $derived(
+		!projectionCtxHealthy || !factionsLoaded || !mapRegionsHealthy
+	);
+
+	// Codex P2 on PR #55 (commits 4ccb183 + da20221): regions and
+	// activeMapId update independently during a map switch. switchMap()
+	// sets activeMapId synchronously, then awaits loadMapRegions. In
+	// between, $mapRegions still holds the previous map's rows while
+	// activeMapId points at the new map. A right-click landing in that
+	// window would POST against the new mapId using old-map region ids.
+	//
+	// First cut used a binary regionsMatchMap gate that hid PixiRegionLayer
+	// entirely during the mismatch — but Codex flagged that if
+	// loadMapRegions FAILS (5xx, network), the stale rows linger and the
+	// layer stays hidden forever with no error surface. Replaced with a
+	// filtered derive: scopedRegions only contains rows for the current
+	// activeMapId. During transition or load failure, scopedRegions is
+	// empty → PixiRegionLayer stays mounted and renders an empty canvas
+	// (honest "no data yet"), instead of hiding indefinitely.
+	let scopedRegions = $derived(
+		activeMapId ? $mapRegions.filter((r) => r.mapId === activeMapId) : []
+	);
+
+	// Auto-scrub the playhead past the latest event when entering Pixi mode
+	// with events present. Lives in its own $effect (instead of inside the
+	// map-load effect) so it ALSO fires when the user toggles renderer
+	// mid-session — Codex P2 on PR #55 noticed the prior version only fired
+	// on activeMapId change, leaving a map opened under Leaflet without
+	// auto-jump when the user later switched to Pixi.
+	//
+	// One-shot per "playhead is null" episode: tracked via
+	// pixiAutoScrubAppliedFor so the auto-scrub doesn't re-fire every time
+	// events mutate (e.g., user adds another transfer_region). Once the
+	// playhead is set, this effect no-ops until playhead returns to null
+	// AND a fresh activeMapId arrives.
+	let pixiAutoScrubAppliedFor = $state<string | null>(null);
+
+	$effect(() => {
+		if (renderer !== 'pixi') return;
+		if (!activeMapId) return;
+		if (pixiAutoScrubAppliedFor === activeMapId) return;
+		if (dataLoading) return;
+		const events = $mapEventsStore;
+		if (events.length === 0) return;
+		if (get(playhead) != null) {
+			pixiAutoScrubAppliedFor = activeMapId;
+			return;
+		}
+		const maxT = events.reduce(
+			(acc, e) => (e.tPosition > acc ? e.tPosition : acc),
+			Number.NEGATIVE_INFINITY
+		);
+		if (Number.isFinite(maxT) && maxT >= 0) {
+			playhead.scrubTo(maxT);
+			pixiAutoScrubAppliedFor = activeMapId;
+		}
+	});
+
+	// Reset the auto-scrub gate when activeMapId changes so a freshly-
+	// loaded map gets its own auto-scrub attempt.
+	$effect(() => {
+		const _id = activeMapId;
+		pixiAutoScrubAppliedFor = null;
+		void _id;
 	});
 
 	// ── Stage callbacks ──────────────────────────────────────────────────
@@ -405,7 +625,18 @@
 
 	async function switchMap(mapId: string) {
 		activeMapId = mapId;
-		await worldMapStore.loadMapRegions(mapId);
+		mapRegionsHealthy = false;
+		try {
+			await worldMapStore.loadMapRegions(mapId);
+			// Only mark healthy if THIS switchMap call is still the active
+			// one. A rapid switch A → B could leave switchMap(A) resolving
+			// after switchMap(B) started; checking activeMapId avoids
+			// flipping healthy on stale data.
+			if (activeMapId === mapId) mapRegionsHealthy = true;
+		} catch (err) {
+			console.error('Failed to load regions for map:', mapId, err);
+			// Stay unhealthy — dataLoading remains true, blocking writes.
+		}
 	}
 
 	async function changeLinkedLocation(value: string) {
@@ -500,7 +731,13 @@
 	async function handleCreateMap() {
 		const map = await worldMapStore.createMap('New Map');
 		activeMapId = map.id;
-		await worldMapStore.loadMapRegions(map.id);
+		mapRegionsHealthy = false;
+		try {
+			await worldMapStore.loadMapRegions(map.id);
+			if (activeMapId === map.id) mapRegionsHealthy = true;
+		} catch (err) {
+			console.error('Failed to load regions for new map:', err);
+		}
 	}
 
 	function openDeleteConfirm() {
@@ -529,9 +766,11 @@
 		deleteConfirm = null;
 		const nextId = $worldMaps.find((m) => m.id !== oldId)?.id ?? null;
 		activeMapId = nextId;
+		mapRegionsHealthy = false;
 		if (nextId) {
 			try {
 				await worldMapStore.loadMapRegions(nextId);
+				if (activeMapId === nextId) mapRegionsHealthy = true;
 			} catch (err) {
 				console.error('Failed to load regions for switched map:', err);
 			}
@@ -748,6 +987,7 @@
 		class="map-wrapper"
 		class:has-breadcrumb={breadcrumbAncestors.length > 0 && activeMap}
 	>
+		<RendererToggle current={renderer} />
 		{#if breadcrumbAncestors.length > 0 && activeMap}
 			<MapBreadcrumb
 				ancestors={breadcrumbAncestors}
@@ -787,42 +1027,61 @@
 				<button type="button" onclick={() => (toolbarNewLocationError = '')}>✕</button>
 			</div>
 		{/if}
-		<MapStage
-			{activeMap}
-			{hasImage}
-			{armedPlaceableId}
-			{accentColor}
-			{popupCallbacks}
-			onPolygonCreated={handlePolygonCreated}
-			onCanvasClick={handleCanvasClick}
-			{resolveCssColors}
-			bind:leafletMap
-			bind:L
-			bind:drawnItems
-		/>
-		{#if leafletMap && L}
-			<RegionLayer
-				{leafletMap}
-				{L}
-				regions={$mapRegions}
-				entities={$entities}
-				worldMaps={$worldMaps}
+		{#if renderer === 'leaflet'}
+			<MapStage
 				{activeMap}
-				playhead={$playhead}
-				isInScope={$isInScope}
+				{hasImage}
+				{armedPlaceableId}
 				{accentColor}
-				{borderColor}
+				{popupCallbacks}
+				onPolygonCreated={handlePolygonCreated}
+				onCanvasClick={handleCanvasClick}
+				{resolveCssColors}
+				bind:leafletMap
+				bind:L
+				bind:drawnItems
 			/>
-			<PlacementLayer
-				{leafletMap}
-				{L}
-				{activeMap}
-				playhead={$playhead}
-				placements={$placementsStore}
-				entities={$entities}
-			/>
+			{#if leafletMap && L}
+				<RegionLayer
+					{leafletMap}
+					{L}
+					regions={$mapRegions}
+					entities={$entities}
+					worldMaps={$worldMaps}
+					{activeMap}
+					playhead={$playhead}
+					isInScope={$isInScope}
+					{accentColor}
+					{borderColor}
+				/>
+				<PlacementLayer
+					{leafletMap}
+					{L}
+					{activeMap}
+					playhead={$playhead}
+					placements={$placementsStore}
+					entities={$entities}
+				/>
+			{/if}
+		{:else}
+			<PixiStage {activeMap}>
+				{#snippet children()}
+					<PixiRegionLayer
+						regions={scopedRegions}
+						{renderedState}
+						mapId={activeMapId}
+						{dataLoading}
+					/>
+				{/snippet}
+			</PixiStage>
+			<MapSidebar />
 		{/if}
-		{#if hasImage && activeMap?.locationId}
+		{#if hasImage && activeMap?.locationId && renderer === 'leaflet'}
+			<!-- Codex P2 on PR #55: placement creation/rendering is wired only
+			     through Leaflet (MapStage's onCanvasClick + PlacementLayer's
+			     L.marker). Showing the palette under ?renderer=pixi let users
+			     arm a placeable that no canvas click would ever consume.
+			     Pixi-side placements are deferred to Slice 2. -->
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
 				<div class="placement-error" role="alert">
@@ -1189,7 +1448,11 @@
 
 	.hint-overlay {
 		position: absolute;
-		top: 12px;
+		/* bottom-center: the hint shows only on an empty new map ($mapRegions
+		   is empty), which is the moment the .map-toolbar is most needed for
+		   picking a Location. Centering at top:12 collides horizontally with
+		   the toolbar's controls. Bottom is unused real estate. */
+		bottom: 16px;
 		left: 50%;
 		transform: translateX(-50%);
 		z-index: 1000;
