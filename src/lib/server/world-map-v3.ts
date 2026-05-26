@@ -60,6 +60,45 @@ function assertObjectBody(body: unknown): asserts body is Record<string, unknown
 
 // ── Faction CRUD ────────────────────────────────────────────────────────────
 
+/**
+ * Slice 2 D1: every user has a per-user "Neutral" faction (is_system=true).
+ * The migration drizzle/0014_d1_faction_only_color.sql backfills existing
+ * users. New users get Neutral lazily on their first faction-or-region
+ * write via this helper — the plan's better-auth signup-hook approach
+ * works too but threading the request-scoped db through better-auth's
+ * hook system is more plumbing than this lazy-create pattern. The result
+ * is the same: by the time any region-write needs a Neutral faction_id,
+ * one exists.
+ *
+ * Idempotent. The partial unique index factions_user_one_system enforces
+ * "at most one is_system row per user" at the storage layer; this helper
+ * checks-then-inserts but a concurrent race that lost the insert would
+ * either still see the existing row on retry OR the unique index would
+ * have rejected the duplicate. Both outcomes leave us with one row.
+ */
+export const NEUTRAL_FACTION_COLOR = '#9ca3af';
+export const NEUTRAL_FACTION_NAME = 'Neutral';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyTx = any;
+export async function ensureNeutralFaction(tx: AnyTx, userId: string): Promise<string> {
+	const [existing] = await tx
+		.select({ id: factions.id })
+		.from(factions)
+		.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+	if (existing) return existing.id;
+	const [row] = await tx
+		.insert(factions)
+		.values({
+			userId,
+			name: NEUTRAL_FACTION_NAME,
+			color: NEUTRAL_FACTION_COLOR,
+			isSystem: true
+		})
+		.returning({ id: factions.id });
+	return row.id;
+}
+
 export type FactionInput = {
 	name: string;
 	color: string;

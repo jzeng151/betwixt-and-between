@@ -264,13 +264,13 @@ describe('/api/maps/[id]/regions', () => {
 		const res = await CREATE_REGION(
 			mkEvent({
 				params: { id: map.id },
-				body: { polygon, color: '#ff0000' }
+				body: { polygon }
 			})
 		);
 		expect(res.status).toBe(201);
 		const body = await readJson(res);
 		expect(body.polygon).toEqual(polygon);
-		expect(body.color).toBe('#ff0000');
+		// Slice 2 D1: color field removed from map_regions.
 		expect(body.mapId).toBe(map.id);
 		expect(body.locationId).toBeNull();
 	});
@@ -358,18 +358,9 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 		return { map, region };
 	}
 
-	it('PATCH updates region color', async () => {
-		const { map, region } = await setupMapWithRegion();
-		const res = await regionIdRoute.PATCH(
-			mkEvent({
-				params: { id: map.id, rid: region.id },
-				body: { color: '#00ff00' }
-			})
-		);
-		expect(res.status).toBe(200);
-		const body = await readJson(res);
-		expect(body.color).toBe('#00ff00');
-	});
+	// Slice 2 D1: color removed from map_regions; PATCH color is no longer
+	// a supported operation. Test deleted intentionally — the field is gone,
+	// not just renamed. Visual color now derives from faction_id.
 
 	it('PATCH updates polygon', async () => {
 		const { map, region } = await setupMapWithRegion();
@@ -408,7 +399,7 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 						id: map.id,
 						rid: '00000000-0000-0000-0000-000000000000'
 					},
-					body: { color: '#000' }
+					body: { locationId: null }
 				})
 			)
 		).rejects.toMatchObject({ status: 404 });
@@ -453,7 +444,9 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 		expect(body.locationId).toBeNull();
 	});
 
-	it('PATCH sets color to null', async () => {
+	// Slice 2 D1: color column removed. Test below kept disabled as a
+	// historical marker; restore as a faction_id test if useful.
+	it.skip('PATCH sets color to null (obsolete: color removed in Slice 2 D1)', async () => {
 		const { map, region } = await setupMapWithRegion();
 		// First set a color
 		await regionIdRoute.PATCH(
@@ -1209,8 +1202,7 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 					params: { id: source.id },
 					body: {
 						locationId: locA.id,
-						polygon: [[0, 0], [0, 10], [10, 10]],
-						color: '#ff0000'
+						polygon: [[0, 0], [0, 10], [10, 10]]
 					}
 				})
 			)
@@ -1221,8 +1213,7 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 					params: { id: source.id },
 					body: {
 						locationId: locB.id,
-						polygon: [[20, 20], [20, 30], [30, 30]],
-						color: '#00ff00'
+						polygon: [[20, 20], [20, 30], [30, 30]]
 					}
 				})
 			)
@@ -1247,7 +1238,7 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		expect(anchors[0].tPosition).toBe(Number.NEGATIVE_INFINITY);
 
 		const state = anchors[0].stateJsonb as {
-			regions: { region_id: string; faction_id: string | null; color: string }[];
+			regions: { region_id: string; faction_id: string | null }[];
 			artifacts: unknown[];
 			chains: unknown[];
 		};
@@ -1260,10 +1251,11 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		for (const ref of state.regions) {
 			expect(sourceRegionIds.has(ref.region_id)).toBe(false);
 		}
-		// Colors preserved per region.
+		// Slice 2 D1: faction_id is set to the user's Neutral faction
+		// (created by the migration / signup hook / ensureNeutralFaction).
+		// Color field no longer present.
 		for (const ref of state.regions) {
-			expect(['#ff0000', '#00ff00']).toContain(ref.color);
-			expect(ref.faction_id).toBeNull();
+			expect(ref.faction_id).toBeTruthy();
 		}
 		expect(state.artifacts).toEqual([]);
 		expect(state.chains).toEqual([]);
@@ -1344,8 +1336,7 @@ describe('Slice 1b — region write-through (G6)', () => {
 			mkEvent({
 				params: { id: map.id },
 				body: {
-					polygon: [[0, 0], [0, 10], [10, 10]],
-					color: '#ff0000'
+					polygon: [[0, 0], [0, 10], [10, 10]]
 				}
 			})
 		);
@@ -1353,86 +1344,19 @@ describe('Slice 1b — region write-through (G6)', () => {
 
 		const after = await readAnchor(map.id);
 		const afterState = after.stateJsonb as {
-			regions: Array<{ region_id: string; faction_id: string | null; color: string }>;
+			regions: Array<{ region_id: string; faction_id: string | null }>;
 		};
 		expect(afterState.regions).toHaveLength(1);
-		expect(afterState.regions[0]).toEqual({
-			region_id: region.id,
-			faction_id: null,
-			color: '#ff0000'
-		});
+		// Slice 2 D1: faction_id is the user's Neutral faction. Color field
+		// is no longer written by the POST flow.
+		expect(afterState.regions[0].region_id).toBe(region.id);
+		expect(afterState.regions[0].faction_id).toBeTruthy();
 	});
 
-	it('PATCH /api/maps/[id]/regions/[rid] updates the color in anchor state', async () => {
-		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
-		const map = await readJson(mapRes);
-		const region = await readJson(
-			await CREATE_REGION(
-				mkEvent({
-					params: { id: map.id },
-					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#ff0000' }
-				})
-			)
-		);
-		await regionIdRoute.PATCH(
-			mkEvent({
-				params: { id: map.id, rid: region.id },
-				body: { color: '#00ff00' }
-			})
-		);
-
-		const after = await readAnchor(map.id);
-		const afterState = after.stateJsonb as {
-			regions: Array<{ region_id: string; color: string }>;
-		};
-		expect(afterState.regions[0].color).toBe('#00ff00');
-	});
-
-	it('PATCH preserves faction_id in anchor state (faction overlay survives a color edit)', async () => {
-		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
-		const map = await readJson(mapRes);
-		const region = await readJson(
-			await CREATE_REGION(
-				mkEvent({
-					params: { id: map.id },
-					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#ff0000' }
-				})
-			)
-		);
-
-		// Simulate transfer_region having folded faction ownership into the
-		// baseline anchor's state_jsonb.regions[] (e.g. via a Slice 2 anchor-
-		// edit UX that promotes an event into a snapshot). Then PATCH the
-		// region's color and assert faction_id survives.
-		const [anchorBefore] = await currentDb
-			.select()
-			.from(mapAnchors)
-			.where(eq(mapAnchors.worldMapId, map.id));
-		const stateBefore = anchorBefore.stateJsonb as {
-			regions: Array<{ region_id: string; faction_id: string | null; color: string }>;
-		};
-		stateBefore.regions[0].faction_id = '550e8400-e29b-41d4-a716-446655440000';
-		await currentDb
-			.update(mapAnchors)
-			.set({ stateJsonb: stateBefore })
-			.where(eq(mapAnchors.id, anchorBefore.id));
-
-		await regionIdRoute.PATCH(
-			mkEvent({
-				params: { id: map.id, rid: region.id },
-				body: { color: '#00ff00' }
-			})
-		);
-
-		const after = await readAnchor(map.id);
-		const afterState = after.stateJsonb as {
-			regions: Array<{ region_id: string; faction_id: string | null; color: string }>;
-		};
-		expect(afterState.regions[0].color).toBe('#00ff00');
-		expect(afterState.regions[0].faction_id).toBe(
-			'550e8400-e29b-41d4-a716-446655440000'
-		);
-	});
+	// Slice 2 D1: "PATCH updates color in anchor state" and "PATCH preserves
+	// faction_id during color edit" were tests against the now-removed
+	// color column. Tests deleted intentionally; faction-overlay survival
+	// during polygon edits is covered by T4 anchor-schema work.
 
 	it('DELETE /api/maps/[id]/regions/[rid] removes the region from anchor state', async () => {
 		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
@@ -1441,7 +1365,7 @@ describe('Slice 1b — region write-through (G6)', () => {
 			await CREATE_REGION(
 				mkEvent({
 					params: { id: map.id },
-					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#ff0000' }
+					body: { polygon: [[0, 0], [0, 10], [10, 10]] }
 				})
 			)
 		);
@@ -1473,7 +1397,7 @@ describe('Slice 1b — region write-through (G6)', () => {
 			await CREATE_REGION(
 				mkEvent({
 					params: { id: map.id },
-					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#abcdef' }
+					body: { polygon: [[0, 0], [0, 10], [10, 10]] }
 				})
 			)
 		);
@@ -1809,5 +1733,133 @@ describe('Slice 2 D1 — factions.is_system guards', () => {
 			await CREATE_FACTION(mkEvent({ body: { name: 'X', color: '#ff0000' } }))
 		);
 		expect(created.isSystem).toBe(false);
+	});
+});
+
+describe('Slice 2 D1 — Neutral faction backfill (T3)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	it('first region POST creates a Neutral faction for the user', async () => {
+		// Before any region is created, no factions exist for this user.
+		const before = await currentDb
+			.select()
+			.from(factions)
+			.where(eq(factions.userId, userId));
+		expect(before).toHaveLength(0);
+
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		await CREATE_REGION(
+			mkEvent({
+				params: { id: map.id },
+				body: { polygon: [[0, 0], [0, 10], [10, 10]] }
+			})
+		);
+
+		const after = await currentDb
+			.select()
+			.from(factions)
+			.where(eq(factions.userId, userId));
+		expect(after).toHaveLength(1);
+		expect(after[0].isSystem).toBe(true);
+		expect(after[0].name).toBe('Neutral');
+		expect(after[0].color).toBe('#9ca3af');
+	});
+
+	it('subsequent region POSTs do not create a second Neutral (idempotent)', async () => {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		await CREATE_REGION(
+			mkEvent({ params: { id: map.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+		);
+		await CREATE_REGION(
+			mkEvent({ params: { id: map.id }, body: { polygon: [[20, 20], [20, 30], [30, 30]] } })
+		);
+
+		const all = await currentDb
+			.select()
+			.from(factions)
+			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+		expect(all).toHaveLength(1);
+	});
+
+	it('anchor regions[] entries point at the user Neutral faction id', async () => {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		await CREATE_REGION(
+			mkEvent({ params: { id: map.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+		);
+
+		const [neutral] = await currentDb
+			.select({ id: factions.id })
+			.from(factions)
+			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+
+		const [anchor] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const state = anchor.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string }>;
+		};
+		expect(state.regions).toHaveLength(1);
+		expect(state.regions[0].faction_id).toBe(neutral.id);
+	});
+
+	it('two users get distinct Neutral factions (per-user partitioning)', async () => {
+		const mapA = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'A' } })));
+		await CREATE_REGION(
+			mkEvent({ params: { id: mapA.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+		);
+		const userB = await seedTestUser(currentDb, { name: 'B', email: 'b@b.com' });
+		const prevUserId = userId;
+		userId = userB.id;
+		const mapB = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'B' } })));
+		await CREATE_REGION(
+			mkEvent({ params: { id: mapB.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+		);
+		userId = prevUserId;
+
+		const aNeutral = await currentDb
+			.select({ id: factions.id })
+			.from(factions)
+			.where(and(eq(factions.userId, prevUserId), eq(factions.isSystem, true)));
+		const bNeutral = await currentDb
+			.select({ id: factions.id })
+			.from(factions)
+			.where(and(eq(factions.userId, userB.id), eq(factions.isSystem, true)));
+		expect(aNeutral).toHaveLength(1);
+		expect(bNeutral).toHaveLength(1);
+		expect(aNeutral[0].id).not.toBe(bNeutral[0].id);
+	});
+
+	it('duplicate map uses Neutral as faction_id on cloned regions', async () => {
+		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Source' } }));
+		const source = await readJson(sourceRes);
+		await CREATE_REGION(
+			mkEvent({ params: { id: source.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+		);
+
+		const cloneRes = await DUPLICATE_MAP(mkEvent({ params: { id: source.id } }));
+		const clone = await readJson(cloneRes);
+
+		const [neutral] = await currentDb
+			.select({ id: factions.id })
+			.from(factions)
+			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+
+		const [anchor] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, clone.id));
+		const state = anchor.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string }>;
+		};
+		expect(state.regions).toHaveLength(1);
+		expect(state.regions[0].faction_id).toBe(neutral.id);
 	});
 });

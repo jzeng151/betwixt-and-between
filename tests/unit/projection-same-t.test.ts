@@ -154,12 +154,15 @@ describe('projectState — same-T ordering (Δ1a-D)', () => {
 		});
 	});
 
-	it('region with explicit color and no faction_id resolves to that color', () => {
+	it('region with no faction_id resolves to Neutral (Slice 2 D1: explicit color ignored)', () => {
 		const anchor: ProjectionAnchor = {
 			id: 'a',
 			tPosition: 0,
 			createdAt: new Date('2026-01-01T00:00:00Z'),
 			stateJsonb: {
+				// Legacy color field present in anchor JSON; D1 projection
+				// ignores it and falls to Neutral. The field stays on disk
+				// for round-tripping historical data.
 				regions: [{ region_id: REGION_ID, faction_id: null, color: '#abcdef' }]
 			}
 		};
@@ -167,7 +170,7 @@ describe('projectState — same-T ordering (Δ1a-D)', () => {
 		expect(state.regions[0]).toEqual({
 			regionId: REGION_ID,
 			factionId: null,
-			color: '#abcdef'
+			color: '#9ca3af' // NEUTRAL_REGION_COLOR
 		});
 	});
 

@@ -5,6 +5,7 @@ import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf } from '$lib/server/location-hierarchy.js';
 import { fanOutRegionAdd } from '$lib/server/anchor-region-write-through.js';
+import { ensureNeutralFaction } from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
@@ -19,7 +20,10 @@ export const POST: RequestHandler = async (event) => {
 	if (!map) error(404, 'Map not found');
 
 	const body = await event.request.json();
-	const { locationId, polygon, color } = body;
+	// Slice 2 D1: color is no longer accepted — visual color resolves
+	// through faction_id (defaults to Neutral). The body shape narrows
+	// to { locationId?, polygon }.
+	const { locationId, polygon } = body;
 
 	if (!Array.isArray(polygon) || polygon.length < 3) {
 		error(400, 'Polygon must have at least 3 vertices');
@@ -58,7 +62,6 @@ export const POST: RequestHandler = async (event) => {
 		polygon
 	};
 	if (typeof locationId === 'string') values.locationId = locationId;
-	if (typeof color === 'string') values.color = color;
 
 	// Insert + part_of upsert are wrapped in a single transaction so a cycle /
 	// single-parent / type failure in ensurePartOf rolls back the region row.
@@ -67,17 +70,21 @@ export const POST: RequestHandler = async (event) => {
 	let created;
 	try {
 		created = await db.transaction(async (tx) => {
+			// Slice 2 D1: ensure the user has a Neutral faction before the
+			// region's anchor entry needs to reference one. Idempotent —
+			// existing Neutral is returned, new one created if missing.
+			const neutralFactionId = await ensureNeutralFaction(tx, userId);
 			const [row] = await tx.insert(mapRegions).values(values).returning();
 			if (typeof locationId === 'string' && map.locationId) {
 				await ensurePartOf(tx, userId, locationId, map.locationId);
 			}
-			// Slice 1b A3: fan out the new region into every anchor's
-			// state_jsonb.regions[] so the Pixi renderer (which reads
-			// projected anchor state) sees the same geometry the Leaflet
-			// renderer reads directly from map_regions.
+			// Slice 1b A3 + Slice 2 D1: fan out the new region into every
+			// anchor's state_jsonb.regions[] with faction_id = Neutral.
+			// transfer_region events can override later by setting a
+			// different faction_id on that anchor's entry.
 			await fanOutRegionAdd(tx, event.params.id!, userId, {
 				id: row.id,
-				color: row.color
+				factionId: neutralFactionId
 			});
 			return row;
 		});

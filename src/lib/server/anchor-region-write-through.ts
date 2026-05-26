@@ -25,10 +25,10 @@
 // on different regions serialize at the row level via MVCC; concurrent
 // fan-outs on the SAME region produce a deterministic last-writer-wins.
 //
-// transfer_region overrides (faction_id !== null in an anchor entry) are
-// preserved on color UPDATE — the SQL only rewrites the `color` field,
-// leaving `faction_id` untouched. On DELETE the entire entry is removed
-// (region no longer exists, so its faction ownership history is moot).
+// Slice 2 D1: fanOutRegionAdd now writes faction_id (defaulting to the
+// user's Neutral faction) instead of color. fanOutRegionColorUpdate was
+// deleted — the color column on map_regions is gone, so no color-update
+// write-through is needed.
 
 import { and, eq, sql } from 'drizzle-orm';
 import { mapAnchors, worldMaps } from './db/schema.js';
@@ -42,6 +42,10 @@ type Tx = any;
  * an anchor's array (idempotency / retry safety), it's replaced rather
  * than duplicated.
  *
+ * factionId is the user's Neutral faction id by default (set in the POST
+ * handler via ensureNeutralFaction). transfer_region events override this
+ * on later anchors.
+ *
  * Single atomic UPDATE per anchor — PG handles concurrent updates via
  * MVCC. Cross-user scoped via the worldMaps.userId predicate so a stray
  * call from an unscoped handler can't touch another user's anchors.
@@ -50,12 +54,11 @@ export async function fanOutRegionAdd(
 	tx: Tx,
 	mapId: string,
 	userId: string,
-	region: { id: string; color: string | null }
+	region: { id: string; factionId: string }
 ): Promise<void> {
 	const entry = JSON.stringify({
 		region_id: region.id,
-		faction_id: null,
-		color: region.color
+		faction_id: region.factionId
 	});
 	// Build the new regions array in SQL: filter out any existing entry
 	// with this region_id (idempotency), then append the new entry. The
@@ -74,53 +77,6 @@ export async function fanOutRegionAdd(
 				),
 				'[]'::jsonb
 			) || ${entry}::jsonb,
-			true
-		)
-		FROM ${worldMaps}
-		WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
-			AND ${mapAnchors.worldMapId} = ${mapId}
-			AND ${worldMaps.userId} = ${userId}
-	`);
-}
-
-/**
- * Rewrite the `color` field of the matching region entry in every anchor's
- * `state_jsonb.regions[]`. Preserves `faction_id` (ownership overlay is a
- * separate layer added by transfer_region events; only the baseline color
- * is geometry-author-controlled).
- *
- * Anchors without a matching region_id are untouched — `jsonb_agg` over
- * the same array with an in-place rewrite via CASE produces the original
- * array for non-matching rows, so the UPDATE is a no-op there.
- */
-export async function fanOutRegionColorUpdate(
-	tx: Tx,
-	mapId: string,
-	userId: string,
-	regionId: string,
-	color: string | null
-): Promise<void> {
-	// color = null serializes to JSON null literal; PG jsonb_build_object
-	// handles both null and string values correctly.
-	const colorJson = color === null ? 'null' : JSON.stringify(color);
-	await tx.execute(sql`
-		UPDATE ${mapAnchors}
-		SET state_jsonb = jsonb_set(
-			state_jsonb,
-			'{regions}',
-			COALESCE(
-				(
-					SELECT jsonb_agg(
-						CASE
-							WHEN r->>'region_id' = ${regionId}
-								THEN jsonb_set(r, '{color}', ${colorJson}::jsonb, true)
-							ELSE r
-						END
-					)
-					FROM jsonb_array_elements(COALESCE(state_jsonb->'regions', '[]'::jsonb)) AS r
-				),
-				'[]'::jsonb
-			),
 			true
 		)
 		FROM ${worldMaps}

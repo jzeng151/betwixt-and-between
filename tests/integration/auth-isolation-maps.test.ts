@@ -115,13 +115,15 @@ describe('auth isolation: /api/maps', () => {
 			regionIdRoute.PATCH(
 				mkEvent(userB, {
 					params: { id: aMapId, rid: aRegionId },
-					body: { color: '#ff0000' }
+					// Slice 2 D1: color is gone; use locationId=null as a
+					// harmless PATCH body to exercise the cross-user 404 path.
+					body: { locationId: null }
 				})
 			)
 		).rejects.toMatchObject({ status: 404 });
 
 		const [row] = await currentDb.select().from(mapRegions).where(eq(mapRegions.id, aRegionId));
-		expect(row.color).toBeNull();
+		expect(row).toBeDefined();
 	});
 
 	it('user B DELETE region returns 404, region survives', async () => {

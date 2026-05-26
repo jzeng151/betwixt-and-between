@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { worldMaps, mapRegions, mapAnchors } from '$lib/server/db/schema.js';
 import { and, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { ensureNeutralFaction } from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -70,12 +71,16 @@ export const POST: RequestHandler = async (event) => {
 					sourceRegions.map((r) => ({
 						mapId: clone.id,
 						locationId: r.locationId,
-						polygon: JSON.parse(JSON.stringify(r.polygon)),
-						color: r.color
+						polygon: JSON.parse(JSON.stringify(r.polygon))
 					}))
 				)
 				.returning();
 		}
+
+		// Slice 2 D1: anchor regions[] carry faction_id (defaulting to the
+		// user's Neutral faction) instead of color. ensureNeutralFaction is
+		// idempotent — safe in a duplicate-map flow.
+		const neutralFactionId = await ensureNeutralFaction(tx, userId);
 
 		await tx.insert(mapAnchors).values({
 			worldMapId: clone.id,
@@ -85,8 +90,7 @@ export const POST: RequestHandler = async (event) => {
 			stateJsonb: {
 				regions: cloneRegions.map((r) => ({
 					region_id: r.id,
-					faction_id: null,
-					color: r.color
+					faction_id: neutralFactionId
 				})),
 				artifacts: [],
 				chains: []

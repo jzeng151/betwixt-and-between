@@ -395,8 +395,7 @@ describe('/api/maps/[id]/duplicate', () => {
 				[0, 0],
 				[1, 0],
 				[1, 1]
-			],
-			color: '#abcdef'
+			]
 		});
 
 		const dupRes = await dupRoute.POST(
@@ -418,9 +417,9 @@ describe('/api/maps/[id]/duplicate', () => {
 		expect(clone.endPosition).toBeNull();
 
 		// Regions cloned with new ids + new mapId.
+		// Slice 2 D1: color field removed from map_regions.
 		expect(clone.regions).toHaveLength(1);
 		expect(clone.regions[0].mapId).toBe(clone.id);
-		expect(clone.regions[0].color).toBe('#abcdef');
 		expect(clone.regions[0].polygon).toEqual([
 			[0, 0],
 			[1, 0],

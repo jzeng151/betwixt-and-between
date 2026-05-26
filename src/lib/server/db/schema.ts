@@ -507,7 +507,10 @@ export const mapRegions = pgTable('map_regions', {
 	locationId: uuid('location_id')
 		.references(() => entities.id, { onDelete: 'set null' }),
 	polygon: jsonb('polygon').notNull().$type<number[][]>(),
-	color: text('color'),
+	// Slice 2 D1: color column dropped (drizzle/0014_d1_faction_only_color.sql).
+	// Visual color resolves through faction_id in anchor state_jsonb. The
+	// per-user Neutral faction (factions.is_system=true) is the fallback
+	// owner for un-faction-ed regions.
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [

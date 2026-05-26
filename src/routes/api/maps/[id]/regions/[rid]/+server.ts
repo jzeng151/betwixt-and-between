@@ -4,10 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf, removeImpliedPartOf } from '$lib/server/location-hierarchy.js';
-import {
-	fanOutRegionColorUpdate,
-	fanOutRegionDelete
-} from '$lib/server/anchor-region-write-through.js';
+import { fanOutRegionDelete } from '$lib/server/anchor-region-write-through.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -55,8 +52,9 @@ export const PATCH: RequestHandler = async (event) => {
 		updates.locationId = body.locationId;
 	}
 
-	if (typeof body.color === 'string') updates.color = body.color;
-	if (body.color === null) updates.color = null;
+	// Slice 2 D1: color is no longer a region field — drop silently if
+	// included so legacy callers degrade rather than 400. The field has
+	// been removed from the table; no UPDATE path exists.
 
 	if (Array.isArray(body.polygon)) {
 		if (body.polygon.length < 3) error(400, 'Polygon must have at least 3 vertices');
@@ -107,21 +105,8 @@ export const PATCH: RequestHandler = async (event) => {
 					await ensurePartOf(tx, userId, updates.locationId, parentMap.locationId);
 				}
 			}
-			// Slice 1b A3: write-through color changes to every anchor's
-			// state_jsonb.regions[] entry for this region. faction_id is
-			// preserved (faction ownership is a separate layer, not a
-			// geometry concern). locationId is NOT in anchor state — no
-			// write-through needed for that field.
-			if ('color' in updates) {
-				const newColor = updates.color === null ? null : (updates.color as string);
-				await fanOutRegionColorUpdate(
-					tx,
-					event.params.id!,
-					userId,
-					event.params.rid!,
-					newColor
-				);
-			}
+			// Slice 2 D1: color write-through removed (column dropped).
+			// Polygon write-through lands in T4 (anchor schema gains polygon).
 			return row;
 		});
 	} catch (err) {

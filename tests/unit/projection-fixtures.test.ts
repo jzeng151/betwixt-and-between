@@ -123,7 +123,9 @@ const FIXTURES: Fixture[] = [
 			regions: [
 				{ regionId: REG_1, factionId: FAC_A, color: '#aa0000' },
 				{ regionId: REG_2, factionId: FAC_B, color: '#0000bb' },
-				{ regionId: REG_3, factionId: null, color: '#abcdef' }
+				// Slice 2 D1: explicit color in anchor jsonb is ignored;
+				// faction_id=null resolves to Neutral grey at render.
+				{ regionId: REG_3, factionId: null, color: '#9ca3af' }
 			],
 			artifacts: [],
 			chains: []

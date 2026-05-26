@@ -223,12 +223,17 @@ function resolveRegionColor(
 			};
 		}
 		// Faction missing OR owned by another user → fall through to
-		// explicit color, then neutral. The viewer sees "ownership unknown".
+		// Neutral. The viewer sees "ownership unknown" in grey.
 	}
+	// Slice 2 D1: faction-only color model. The legacy region.color
+	// middle step is gone; every region resolves through faction.color
+	// (Neutral is the per-user fallback faction). Anchors backfilled
+	// pre-D1 with explicit color in their jsonb keep the field on disk
+	// for round-tripping but the projection ignores it.
 	return {
 		regionId: region.region_id,
 		factionId: null,
-		color: region.color ?? NEUTRAL_REGION_COLOR
+		color: NEUTRAL_REGION_COLOR
 	};
 }
 
