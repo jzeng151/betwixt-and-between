@@ -13,7 +13,7 @@
 // `spawn_artifact`, `despawn_artifact`. Adding a kind requires extending
 // EVENT_KINDS + validateEventPayload + projection.ts's fold.
 
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { error } from '@sveltejs/kit';
 import { factions, mapAnchors, mapEvents, worldMaps } from './db/schema.js';
 import { assertSourceEventIdIsEvent } from './intervals/polymorphic-fk.js';
@@ -314,6 +314,9 @@ export async function countFactionDependents(
 			and(
 				eq(worldMaps.userId, userId),
 				eq(mapEvents.kind, 'transfer_region'),
+				// Slice 2 D3 (T7): undone events don't count as dependents —
+				// they no longer affect projection.
+				sql`${mapEvents.undoneAt} IS NULL`,
 				sql`${mapEvents.payloadJsonb} ->> 'new_faction_id' = ${factionId}`
 			)
 		);
@@ -669,6 +672,64 @@ export async function deleteMapEvent(
 	if (deleted.length === 0) error(404, 'Event not found');
 }
 
+/**
+ * Slice 2 D3 (T7) — undo the latest live event on a map.
+ *
+ * Pops by commit order ((created_at DESC, id DESC)), NOT by t_position.
+ * Command-stack semantics: "undo my most recent action" means the user's
+ * latest edit, even when that edit landed at a t_position earlier than
+ * later events.
+ *
+ * Soft-delete: sets undone_at = now(). The row stays in place as audit
+ * trail; projection + list endpoints filter on undone_at IS NULL. Redo
+ * is a client-side concern — the popped event is held in the client's
+ * in-memory stack and replayed via a fresh POST /events (which creates
+ * a brand-new row with a new id + new created_at; original t_position
+ * and payload preserved).
+ *
+ * Cross-user: ownership of the map is asserted via assertMapOwnership;
+ * attempts against another user's map surface as 404.
+ *
+ * Empty stack: 422 with "No events to undo".
+ */
+export async function undoLatestMapEvent(
+	db: Db,
+	userId: string,
+	worldMapId: string
+): Promise<typeof mapEvents.$inferSelect> {
+	await assertMapOwnership(db, userId, worldMapId);
+
+	// Find the latest live event in commit order.
+	const [latest] = await db
+		.select()
+		.from(mapEvents)
+		.where(
+			and(
+				eq(mapEvents.worldMapId, worldMapId),
+				sql`${mapEvents.undoneAt} IS NULL`
+			)
+		)
+		.orderBy(desc(mapEvents.createdAt), desc(mapEvents.id))
+		.limit(1);
+	if (!latest) error(422, 'No events to undo');
+
+	const [updated] = await db
+		.update(mapEvents)
+		.set({ undoneAt: new Date() })
+		.where(
+			and(
+				eq(mapEvents.id, latest.id),
+				eq(mapEvents.worldMapId, worldMapId),
+				sql`${mapEvents.undoneAt} IS NULL`
+			)
+		)
+		.returning();
+	// Race: another undo on the same map flipped undoneAt between the
+	// SELECT and the UPDATE. Re-throw 422 — caller can retry.
+	if (!updated) error(422, 'No events to undo');
+	return updated;
+}
+
 // ── Read paths (cursor pagination — Slice 2 D5) ─────────────────────────────
 //
 // Keyset pagination on the sort key the projection layer relies on:
@@ -812,13 +873,17 @@ export async function listMapEvents(
 	const cursorClause = cursor
 		? sql`(${mapEvents.tPosition}, ${mapEvents.createdAt}, ${mapEvents.id}) > (${cursor.t}, ${new Date(cursor.c)}, ${cursor.id})`
 		: undefined;
+	// Slice 2 D3 (T7): exclude soft-deleted (undone) events from the list.
+	// Append-only history is preserved at the storage level; the API
+	// surfaces only live rows.
+	const liveClause = sql`${mapEvents.undoneAt} IS NULL`;
 	const rows = await db
 		.select()
 		.from(mapEvents)
 		.where(
 			cursorClause
-				? and(eq(mapEvents.worldMapId, worldMapId), cursorClause)
-				: eq(mapEvents.worldMapId, worldMapId)
+				? and(eq(mapEvents.worldMapId, worldMapId), liveClause, cursorClause)
+				: and(eq(mapEvents.worldMapId, worldMapId), liveClause)
 		)
 		.orderBy(asc(mapEvents.tPosition), asc(mapEvents.createdAt), asc(mapEvents.id))
 		.limit(limit + 1);

@@ -556,6 +556,11 @@ export const mapEvents = pgTable('map_events', {
 	kind: text('kind').notNull(),
 	payloadJsonb: jsonb('payload_jsonb').notNull(),
 	sourceEventId: uuid('source_event_id').references(() => entities.id, { onDelete: 'set null' }),
+	// Slice 2 D3 (T7): soft-delete marker for undone events. NULL on live
+	// rows; non-NULL once undone. Projection + list endpoints filter on
+	// `undone_at IS NULL`. Append-only history posture preserved — undone
+	// rows are kept for audit, never resurrected (redo creates a fresh row).
+	undoneAt: timestamp('undone_at', { withTimezone: true }),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
 	index('map_events_world_map_id_t_position_idx').on(table.worldMapId, table.tPosition)

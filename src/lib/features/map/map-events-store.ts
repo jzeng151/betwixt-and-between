@@ -28,11 +28,23 @@ function createMapEventsStore() {
 	// See map-anchors-store.ts for the rationale. Codex P1 on PR #55.
 	let lastLoadedMapId: string | null = null;
 
+	// Slice 2 D3 (T7) — client-side redo stack. Server holds no redo
+	// state; an undone event lives here until it's redone or until a
+	// new event is authored (which clears the stack). Scoped to the
+	// currently-loaded map.
+	const redoStore = writable<MapEvent[]>([]);
+	let redoStackForMapId: string | null = null;
+
 	// Pages through /api/maps/[id]/events until next_cursor is null. See
 	// map-anchors-store.ts for the lastLoadedMapId rationale (Codex P1 on
 	// PR #55).
 	async function load(mapId: string): Promise<void> {
 		lastLoadedMapId = mapId;
+		// Switching maps invalidates the redo stack.
+		if (redoStackForMapId !== mapId) {
+			redoStackForMapId = mapId;
+			redoStore.set([]);
+		}
 		const collected: MapEvent[] = [];
 		let cursor: string | null = null;
 		do {
@@ -68,6 +80,8 @@ function createMapEventsStore() {
 		store.update((rows) =>
 			[...rows, created].sort((a, b) => a.tPosition - b.tPosition || a.id.localeCompare(b.id))
 		);
+		// New event authored — invalidate the redo stack (D3 contract).
+		if (redoStackForMapId === mapId) redoStore.set([]);
 		return created;
 	}
 
@@ -78,8 +92,66 @@ function createMapEventsStore() {
 		store.update((rows) => rows.filter((r) => r.id !== eventId));
 	}
 
+	// Slice 2 D3 (T7) — pop the latest live event from the server, push
+	// onto the redo stack. Surfaces 422 ("No events to undo") to callers
+	// unchanged so the UI can disable the undo button on empty stack.
+	async function undo(mapId: string): Promise<MapEvent | null> {
+		const res = await fetch(`/api/maps/${mapId}/events/undo`, { method: 'POST' });
+		if (res.status === 422) return null;
+		if (!res.ok) throw new Error(`Failed to undo: ${await errorMessage(res)}`);
+		const undone = (await res.json()) as MapEvent;
+		if (lastLoadedMapId !== mapId) return undone;
+		store.update((rows) => rows.filter((r) => r.id !== undone.id));
+		if (redoStackForMapId === mapId) {
+			redoStore.update((stack) => [...stack, undone]);
+		} else {
+			redoStackForMapId = mapId;
+			redoStore.set([undone]);
+		}
+		return undone;
+	}
+
+	// Re-POSTs the most recently undone event. Server has no redo state;
+	// this creates a fresh row (new id + created_at, same t_position +
+	// payload). Returns null if the redo stack is empty for this map.
+	async function redo(mapId: string): Promise<MapEvent | null> {
+		if (redoStackForMapId !== mapId) return null;
+		let popped: MapEvent | undefined;
+		redoStore.update((stack) => {
+			popped = stack[stack.length - 1];
+			return stack.slice(0, -1);
+		});
+		if (!popped) return null;
+		// `create` would clear the redo stack on success — we just popped
+		// from it, so the clear is a no-op. Use the raw POST so the
+		// behavior stays explicit.
+		const res = await fetch(`/api/maps/${mapId}/events`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				tPosition: popped.tPosition,
+				kind: popped.kind,
+				payloadJsonb: popped.payloadJsonb,
+				sourceEventId: popped.sourceEventId
+			})
+		});
+		if (!res.ok) {
+			// Restore the stack on failure so the user can retry.
+			redoStore.update((stack) => [...stack, popped!]);
+			throw new Error(`Failed to redo: ${await errorMessage(res)}`);
+		}
+		const created = (await res.json()) as MapEvent;
+		if (lastLoadedMapId !== mapId) return created;
+		store.update((rows) =>
+			[...rows, created].sort((a, b) => a.tPosition - b.tPosition || a.id.localeCompare(b.id))
+		);
+		return created;
+	}
+
 	function reset(): void {
 		lastLoadedMapId = null;
+		redoStackForMapId = null;
+		redoStore.set([]);
 		store.set([]);
 	}
 
@@ -88,6 +160,9 @@ function createMapEventsStore() {
 		load,
 		create,
 		delete: remove,
+		undo,
+		redo,
+		redoStack: { subscribe: redoStore.subscribe },
 		reset
 	};
 }

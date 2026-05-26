@@ -32,8 +32,11 @@ const uploadImageRoute = await import(
 const { POST: DUPLICATE_MAP } = await import(
 	'../../src/routes/api/maps/[id]/duplicate/+server.js'
 );
-const { GET: LIST_EVENTS } = await import(
+const { GET: LIST_EVENTS, POST: CREATE_EVENT } = await import(
 	'../../src/routes/api/maps/[id]/events/+server.js'
+);
+const { POST: UNDO_EVENT } = await import(
+	'../../src/routes/api/maps/[id]/events/undo/+server.js'
 );
 const { GET: LIST_ANCHORS } = await import(
 	'../../src/routes/api/maps/[id]/anchors/+server.js'
@@ -2012,4 +2015,185 @@ describe('Slice 2 D2 PR-A — anchor schema gains polygon + locationId (T4)', ()
 	// T4's "anchor matches map_regions" invariant test was deleted in T6
 	// (Slice 2 D2 PR-C): map_regions is gone, so there's nothing to
 	// cross-check against. Anchor JSON is the only source of truth now.
+});
+
+describe('Slice 2 D3 — undo endpoint (T7)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	async function seedEventsWithCreatedAt(
+		mapId: string,
+		specs: Array<{ tPosition: number; createdAt: Date }>
+	) {
+		const rows = specs.map((s) => ({
+			worldMapId: mapId,
+			tPosition: s.tPosition,
+			kind: 'transfer_region',
+			payloadJsonb: {
+				region_id: crypto.randomUUID(),
+				new_faction_id: crypto.randomUUID()
+			},
+			createdAt: s.createdAt
+		}));
+		return currentDb.insert(mapEvents).values(rows).returning();
+	}
+
+	it('pops by (created_at DESC, id DESC), not by t_position', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		// Event A: t=10, created earlier. Event B: t=1, created later.
+		// Command-stack semantics: B is "latest" and gets undone first.
+		const [eventA] = await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 10, createdAt: new Date('2026-01-01T00:00:00Z') }
+		]);
+		const [eventB] = await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 1, createdAt: new Date('2026-01-02T00:00:00Z') }
+		]);
+
+		const res1 = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		const popped1 = await readJson(res1);
+		expect(popped1.id).toBe(eventB.id);
+
+		const res2 = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		const popped2 = await readJson(res2);
+		expect(popped2.id).toBe(eventA.id);
+	});
+
+	it('soft-deletes (sets undone_at, does not delete the row)', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const [event] = await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 1, createdAt: new Date('2026-01-01T00:00:00Z') }
+		]);
+
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+
+		const [row] = await currentDb
+			.select()
+			.from(mapEvents)
+			.where(eq(mapEvents.id, event.id));
+		expect(row).toBeDefined();
+		expect(row.undoneAt).not.toBeNull();
+	});
+
+	it('list endpoint excludes undone events', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 1, createdAt: new Date('2026-01-01T00:00:00Z') },
+			{ tPosition: 2, createdAt: new Date('2026-01-02T00:00:00Z') }
+		]);
+
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+
+		const listRes = await LIST_EVENTS(
+			mkEvent({
+				url: new URL(`http://localhost/api/maps/${map.id}/events`),
+				params: { id: map.id }
+			})
+		);
+		const body = await readJson(listRes);
+		expect(body.rows).toHaveLength(1);
+		expect(body.rows[0].tPosition).toBe(1);
+	});
+
+	it('returns 422 on empty stack', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await expect(
+			UNDO_EVENT(mkEvent({ params: { id: map.id } }))
+		).rejects.toMatchObject({ status: 422 });
+	});
+
+	it('returns 422 after every event has been undone', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 1, createdAt: new Date('2026-01-01T00:00:00Z') }
+		]);
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		await expect(
+			UNDO_EVENT(mkEvent({ params: { id: map.id } }))
+		).rejects.toMatchObject({ status: 422 });
+	});
+
+	it('cross-user undo returns 404 (no existence leak)', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 1, createdAt: new Date('2026-01-01T00:00:00Z') }
+		]);
+
+		const userB = await seedTestUser(currentDb, { name: 'B', email: 'b@b.com' });
+		const prevUserId = userId;
+		userId = userB.id;
+		await expect(
+			UNDO_EVENT(mkEvent({ params: { id: map.id } }))
+		).rejects.toMatchObject({ status: 404 });
+		userId = prevUserId;
+	});
+
+	it('countFactionDependents excludes undone transfer_region events', async () => {
+		const { countFactionDependents } = await import('../../src/lib/server/world-map-v3.js');
+		const faction = await readJson(
+			await CREATE_FACTION(mkEvent({ body: { name: 'F', color: '#ff0000' } }))
+		);
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await currentDb.insert(mapEvents).values({
+			worldMapId: map.id,
+			tPosition: 1,
+			kind: 'transfer_region',
+			payloadJsonb: { region_id: crypto.randomUUID(), new_faction_id: faction.id }
+		});
+		expect(await countFactionDependents(currentDb, userId, faction.id)).toBe(1);
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		expect(await countFactionDependents(currentDb, userId, faction.id)).toBe(0);
+	});
+
+	it('redo via re-POST creates a new row with same t_position + payload', async () => {
+		// CREATE_EVENT runs validateEventPayload, which checks that
+		// region_id exists on the map and faction_id is the caller's.
+		// Seed real ones so the replay POST is well-formed.
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const region = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: map.id },
+					body: { polygon: [[0, 0], [0, 10], [10, 10]] }
+				})
+			)
+		);
+		const faction = await readJson(
+			await CREATE_FACTION(mkEvent({ body: { name: 'F', color: '#ff0000' } }))
+		);
+		const payload = { region_id: region.id, new_faction_id: faction.id };
+
+		const originalRes = await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: { tPosition: 5, kind: 'transfer_region', payloadJsonb: payload }
+			})
+		);
+		const original = await readJson(originalRes);
+
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+
+		const replayRes = await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: original.tPosition,
+					kind: original.kind,
+					payloadJsonb: original.payloadJsonb
+				}
+			})
+		);
+		const replay = await readJson(replayRes);
+		expect(replay.id).not.toBe(original.id);
+		expect(replay.tPosition).toBe(original.tPosition);
+		expect(replay.payloadJsonb).toEqual(original.payloadJsonb);
+		// Original row still present, still undone.
+		const [origRow] = await currentDb
+			.select()
+			.from(mapEvents)
+			.where(eq(mapEvents.id, original.id));
+		expect(origRow.undoneAt).not.toBeNull();
+	});
 });
