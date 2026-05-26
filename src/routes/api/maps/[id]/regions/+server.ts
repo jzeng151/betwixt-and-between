@@ -78,13 +78,17 @@ export const POST: RequestHandler = async (event) => {
 			if (typeof locationId === 'string' && map.locationId) {
 				await ensurePartOf(tx, userId, locationId, map.locationId);
 			}
-			// Slice 1b A3 + Slice 2 D1: fan out the new region into every
-			// anchor's state_jsonb.regions[] with faction_id = Neutral.
-			// transfer_region events can override later by setting a
-			// different faction_id on that anchor's entry.
+			// Slice 1b A3 + Slice 2 D1 + Slice 2 D2 PR-A: fan out the new
+			// region into every anchor's state_jsonb.regions[] with the
+			// geometry payload (polygon + locationId) and faction_id =
+			// Neutral. transfer_region events override faction_id later;
+			// boundary-morphing events (Slice 2 mechanical) override
+			// polygon later.
 			await fanOutRegionAdd(tx, event.params.id!, userId, {
 				id: row.id,
-				factionId: neutralFactionId
+				factionId: neutralFactionId,
+				polygon: row.polygon,
+				locationId: row.locationId
 			});
 			return row;
 		});

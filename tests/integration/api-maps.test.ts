@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { and, eq } from 'drizzle-orm';
-import { entities, relationships, mapAnchors, mapEvents, factions, worldMaps } from '../../src/lib/server/db/schema.js';
+import { entities, relationships, mapAnchors, mapEvents, mapRegions, factions, worldMaps } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 let userId: string;
@@ -1861,5 +1861,190 @@ describe('Slice 2 D1 — Neutral faction backfill (T3)', () => {
 		};
 		expect(state.regions).toHaveLength(1);
 		expect(state.regions[0].faction_id).toBe(neutral.id);
+	});
+});
+
+describe('Slice 2 D2 PR-A — anchor schema gains polygon + locationId (T4)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	it('POST /regions writes polygon + locationId into every anchor entry', async () => {
+		const polygon = [[0, 0], [0, 10], [10, 10]];
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		// Add a second anchor so fan-out covers > 1 row.
+		await currentDb.insert(mapAnchors).values({
+			worldMapId: map.id,
+			tPosition: 5,
+			stateJsonb: { regions: [], artifacts: [], chains: [] }
+		});
+
+		const region = await readJson(
+			await CREATE_REGION(mkEvent({ params: { id: map.id }, body: { polygon } }))
+		);
+
+		const anchors = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		expect(anchors).toHaveLength(2);
+		for (const a of anchors) {
+			const state = a.stateJsonb as {
+				regions: Array<{ region_id: string; polygon: number[][]; locationId: string | null }>;
+			};
+			const entry = state.regions.find((r) => r.region_id === region.id);
+			expect(entry).toBeDefined();
+			expect(entry!.polygon).toEqual(polygon);
+			expect(entry!.locationId).toBeNull();
+		}
+	});
+
+	it('PATCH polygon write-through updates anchor entry, preserves faction_id', async () => {
+		const polygon = [[0, 0], [0, 10], [10, 10]];
+		const newPolygon = [[1, 1], [1, 11], [11, 11]];
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		const region = await readJson(
+			await CREATE_REGION(mkEvent({ params: { id: map.id }, body: { polygon } }))
+		);
+
+		// Overlay a non-Neutral faction_id on the anchor entry to simulate
+		// transfer_region having promoted ownership.
+		const [anchorBefore] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const stateBefore = anchorBefore.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string; polygon: number[][] }>;
+		};
+		stateBefore.regions[0].faction_id = '550e8400-e29b-41d4-a716-446655440000';
+		await currentDb
+			.update(mapAnchors)
+			.set({ stateJsonb: stateBefore })
+			.where(eq(mapAnchors.id, anchorBefore.id));
+
+		await regionIdRoute.PATCH(
+			mkEvent({ params: { id: map.id, rid: region.id }, body: { polygon: newPolygon } })
+		);
+
+		const [anchorAfter] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const stateAfter = anchorAfter.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string; polygon: number[][] }>;
+		};
+		expect(stateAfter.regions[0].polygon).toEqual(newPolygon);
+		expect(stateAfter.regions[0].faction_id).toBe('550e8400-e29b-41d4-a716-446655440000');
+	});
+
+	it('PATCH locationId write-through propagates to anchor entry', async () => {
+		const polygon = [[0, 0], [0, 10], [10, 10]];
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		const region = await readJson(
+			await CREATE_REGION(mkEvent({ params: { id: map.id }, body: { polygon } }))
+		);
+
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Forest' })
+			.returning();
+		await regionIdRoute.PATCH(
+			mkEvent({ params: { id: map.id, rid: region.id }, body: { locationId: loc.id } })
+		);
+
+		const [anchor] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const state = anchor.stateJsonb as {
+			regions: Array<{ region_id: string; locationId: string | null }>;
+		};
+		expect(state.regions[0].locationId).toBe(loc.id);
+
+		// Then null it back.
+		await regionIdRoute.PATCH(
+			mkEvent({ params: { id: map.id, rid: region.id }, body: { locationId: null } })
+		);
+		const [anchorAfter] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const stateAfter = anchorAfter.stateJsonb as {
+			regions: Array<{ region_id: string; locationId: string | null }>;
+		};
+		expect(stateAfter.regions[0].locationId).toBeNull();
+	});
+
+	it('duplicate-map clone carries polygon + locationId on anchor entries', async () => {
+		const polygon = [[0, 0], [0, 10], [10, 10]];
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'L' })
+			.returning();
+		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Source' } }));
+		const source = await readJson(sourceRes);
+		await CREATE_REGION(
+			mkEvent({
+				params: { id: source.id },
+				body: { polygon, locationId: loc.id }
+			})
+		);
+
+		const cloneRes = await DUPLICATE_MAP(mkEvent({ params: { id: source.id } }));
+		const clone = await readJson(cloneRes);
+		const [anchor] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, clone.id));
+		const state = anchor.stateJsonb as {
+			regions: Array<{ region_id: string; polygon: number[][]; locationId: string | null }>;
+		};
+		expect(state.regions).toHaveLength(1);
+		expect(state.regions[0].polygon).toEqual(polygon);
+		expect(state.regions[0].locationId).toBe(loc.id);
+	});
+
+	it('invariant: every anchor entry on every map matches the map_regions row (T4 backfill verifier)', async () => {
+		// Seed two maps with two regions each. Anchor JSON must match
+		// map_regions on polygon + locationId.
+		for (const name of ['M1', 'M2']) {
+			const mapRes = await CREATE_MAP(mkEvent({ body: { name } }));
+			const map = await readJson(mapRes);
+			await CREATE_REGION(
+				mkEvent({ params: { id: map.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+			);
+			await CREATE_REGION(
+				mkEvent({ params: { id: map.id }, body: { polygon: [[20, 20], [20, 30], [30, 30]] } })
+			);
+		}
+
+		// Walk every anchor's regions[] and assert the polygon + locationId
+		// match the corresponding map_regions row.
+		const allAnchors = await currentDb.select().from(mapAnchors);
+		const allRegions = await currentDb.select().from(mapRegions);
+		const regionsById = new Map(allRegions.map((r) => [r.id, r]));
+		let entryCount = 0;
+		for (const a of allAnchors) {
+			const state = a.stateJsonb as {
+				regions?: Array<{
+					region_id: string;
+					polygon: number[][];
+					locationId: string | null;
+				}>;
+			};
+			for (const entry of state.regions ?? []) {
+				entryCount++;
+				const canonical = regionsById.get(entry.region_id);
+				expect(canonical).toBeDefined();
+				expect(entry.polygon).toEqual(canonical!.polygon);
+				expect(entry.locationId).toBe(canonical!.locationId);
+			}
+		}
+		expect(entryCount).toBeGreaterThanOrEqual(4); // 2 maps × 2 regions
 	});
 });

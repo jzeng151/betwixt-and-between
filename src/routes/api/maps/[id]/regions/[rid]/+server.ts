@@ -4,7 +4,10 @@ import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf, removeImpliedPartOf } from '$lib/server/location-hierarchy.js';
-import { fanOutRegionDelete } from '$lib/server/anchor-region-write-through.js';
+import {
+	fanOutRegionDelete,
+	fanOutRegionGeometryUpdate
+} from '$lib/server/anchor-region-write-through.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -105,8 +108,25 @@ export const PATCH: RequestHandler = async (event) => {
 					await ensurePartOf(tx, userId, updates.locationId, parentMap.locationId);
 				}
 			}
-			// Slice 2 D1: color write-through removed (column dropped).
-			// Polygon write-through lands in T4 (anchor schema gains polygon).
+			// Slice 2 D2 PR-A: write-through polygon and/or locationId
+			// changes to every anchor's state_jsonb.regions[]. faction_id
+			// and legacy `color` are preserved by the helper.
+			const polygonChanged = 'polygon' in updates;
+			const locationChangedInUpdates = 'locationId' in updates;
+			if (polygonChanged || locationChangedInUpdates) {
+				await fanOutRegionGeometryUpdate(
+					tx,
+					event.params.id!,
+					userId,
+					event.params.rid!,
+					{
+						polygon: polygonChanged ? (updates.polygon as number[][]) : undefined,
+						...(locationChangedInUpdates
+							? { locationId: updates.locationId as string | null }
+							: {})
+					}
+				);
+			}
 			return row;
 		});
 	} catch (err) {

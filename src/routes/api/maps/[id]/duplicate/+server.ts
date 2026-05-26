@@ -88,9 +88,13 @@ export const POST: RequestHandler = async (event) => {
 			// POST handler; postgres-js doesn't serialize JS Infinity reliably.
 			tPosition: sql`'-Infinity'::float8` as unknown as number,
 			stateJsonb: {
+				// Slice 2 D2 PR-A: anchor region entry carries polygon +
+				// locationId alongside region_id + faction_id.
 				regions: cloneRegions.map((r) => ({
 					region_id: r.id,
-					faction_id: neutralFactionId
+					faction_id: neutralFactionId,
+					polygon: r.polygon,
+					locationId: r.locationId
 				})),
 				artifacts: [],
 				chains: []
