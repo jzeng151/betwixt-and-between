@@ -11,6 +11,9 @@ export type Faction = {
 	name: string;
 	color: string;
 	styleJsonb: Record<string, unknown> | null;
+	// Slice 2 D1: true on the per-user Neutral faction. Server PATCH/DELETE
+	// reject mutations on is_system=true rows with 422; UI hides Delete.
+	isSystem: boolean;
 	createdAt: string;
 	updatedAt: string;
 };

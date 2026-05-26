@@ -51,7 +51,18 @@ export const NEUTRAL_REGION_COLOR = '#9ca3af';
 
 export type AnchorRegion = {
 	region_id: string;
+	// Added Slice 2 D2 (anchor becomes canonical for geometry). Optional
+	// here because backfill from map_regions lands in a follow-up PR (T4);
+	// projection skips regions with missing polygon at render. See design
+	// doc § "State_jsonb shape" (revised 2026-05-26 per codex challenge).
+	polygon?: number[][];
+	// Added Slice 2 D2. Logical link to entities.id of type='Location'.
+	// Lazy-GC at render: a deleted Location nulls out the link visually.
+	locationId?: string | null;
 	faction_id?: string | null;
+	// Legacy from Slice 1b. Phased out by Slice 2 D1 (faction-only color
+	// model); present in historical anchors backfilled from map_regions,
+	// ignored at render once D1 lands.
 	color?: string | null;
 };
 

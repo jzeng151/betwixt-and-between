@@ -575,6 +575,12 @@ export const factions = pgTable('factions', {
 	name: text('name').notNull(),
 	color: text('color').notNull(),
 	styleJsonb: jsonb('style_jsonb'),
+	// Slice 2 D1: marks the per-user "Neutral" faction. Server PATCH/DELETE
+	// reject mutations on isSystem=true rows. Exactly one per user is
+	// enforced by the partial unique index factions_user_one_system
+	// (drizzle/0013_factions_is_system.sql) — the schema-level integrity
+	// guarantee the design doc § Slice 2 D1 prescribes.
+	isSystem: boolean('is_system').notNull().default(false),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [

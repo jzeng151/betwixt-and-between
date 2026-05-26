@@ -117,6 +117,17 @@ export async function updateFaction(
 	}
 	if ('styleJsonb' in patch) updates.styleJsonb = patch.styleJsonb ?? null;
 
+	// Slice 2 D1: rename/recolor on Neutral is allowed (user owns it); the
+	// guard below only fires for callers that try to set is_system through
+	// PATCH (which would shadow the existing Neutral row). is_system is
+	// not in FactionInput so the existing TS shape already blocks this at
+	// the type level, but the runtime check defends against unchecked
+	// `as any` callers. Checked BEFORE the no-updatable-fields gate so a
+	// PATCH body of only { isSystem: true } returns 422, not 400.
+	if ('isSystem' in (patch as Record<string, unknown>)) {
+		error(422, 'is_system cannot be set via PATCH');
+	}
+
 	if (Object.keys(updates).length === 0) {
 		error(400, 'No updatable fields supplied');
 	}
@@ -144,10 +155,16 @@ export async function deleteFaction(
 ): Promise<void> {
 	assertUuid(factionId, 'faction id');
 	const [existing] = await db
-		.select({ id: factions.id })
+		.select({ id: factions.id, isSystem: factions.isSystem })
 		.from(factions)
 		.where(and(eq(factions.id, factionId), eq(factions.userId, userId)));
 	if (!existing) error(404, 'Faction not found');
+	// Slice 2 D1: the per-user Neutral faction is the fallback ownership
+	// target for un-faction-ed regions. Allowing delete would orphan every
+	// region that resolves through it. The partial unique index also
+	// prevents re-creation of a Neutral after deletion would be allowed
+	// here, but rejecting at the helper is the user-facing message.
+	if (existing.isSystem) error(422, 'Cannot delete the system Neutral faction');
 
 	await db.delete(factions).where(and(eq(factions.id, factionId), eq(factions.userId, userId)));
 }

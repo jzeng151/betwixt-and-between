@@ -38,9 +38,10 @@ const { GET: LIST_EVENTS } = await import(
 const { GET: LIST_ANCHORS } = await import(
 	'../../src/routes/api/maps/[id]/anchors/+server.js'
 );
-const { GET: LIST_FACTIONS } = await import(
+const { GET: LIST_FACTIONS, POST: CREATE_FACTION } = await import(
 	'../../src/routes/api/factions/+server.js'
 );
+const factionIdRoute = await import('../../src/routes/api/factions/[id]/+server.js');
 
 function mkEvent(
 	overrides: { url?: URL; params?: Record<string, string>; body?: unknown } = {}
@@ -1712,5 +1713,101 @@ describe('Slice 2 D5 — cursor pagination', () => {
 		const body3 = await readJson(res3);
 		expect(body3.rows).toHaveLength(2);
 		expect(body3.next_cursor).toBeNull();
+	});
+});
+
+describe('Slice 2 D1 — factions.is_system guards', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	async function makeFaction(opts: { isSystem?: boolean } = {}): Promise<{ id: string }> {
+		// CREATE_FACTION goes through the validated POST, which doesn't
+		// expose is_system. For the is_system=true row used by these tests
+		// we insert directly — that mirrors how the migration seeds the
+		// per-user Neutral on user creation (T3).
+		if (opts.isSystem) {
+			const [row] = await currentDb
+				.insert(factions)
+				.values({ userId, name: 'Neutral', color: '#9CA3AF', isSystem: true })
+				.returning();
+			return { id: row.id };
+		}
+		const res = await CREATE_FACTION(
+			mkEvent({ body: { name: 'Allies', color: '#2dd4bf' } })
+		);
+		return (await readJson(res)) as { id: string };
+	}
+
+	it('DELETE on is_system=true returns 422', async () => {
+		const sys = await makeFaction({ isSystem: true });
+		await expect(
+			factionIdRoute.DELETE(mkEvent({ params: { id: sys.id } }))
+		).rejects.toMatchObject({ status: 422 });
+		// Row still exists.
+		const remaining = await currentDb
+			.select({ id: factions.id })
+			.from(factions)
+			.where(eq(factions.id, sys.id));
+		expect(remaining).toHaveLength(1);
+	});
+
+	it('DELETE on is_system=false still works (no regression)', async () => {
+		const normal = await makeFaction();
+		const res = await factionIdRoute.DELETE(mkEvent({ params: { id: normal.id } }));
+		expect(res.status).toBe(204);
+	});
+
+	it('PATCH cannot set isSystem on a normal faction', async () => {
+		const normal = await makeFaction();
+		await expect(
+			factionIdRoute.PATCH(
+				mkEvent({ params: { id: normal.id }, body: { isSystem: true } })
+			)
+		).rejects.toMatchObject({ status: 422 });
+	});
+
+	it('PATCH name/color on a system faction is allowed (user owns it)', async () => {
+		const sys = await makeFaction({ isSystem: true });
+		const res = await factionIdRoute.PATCH(
+			mkEvent({
+				params: { id: sys.id },
+				body: { name: 'Independent', color: '#888888' }
+			})
+		);
+		expect(res.status).toBe(200);
+		const body = await readJson(res);
+		expect(body.name).toBe('Independent');
+		expect(body.isSystem).toBe(true);
+	});
+
+	it('partial unique index rejects a second is_system row for the same user', async () => {
+		await makeFaction({ isSystem: true });
+		await expect(
+			currentDb
+				.insert(factions)
+				.values({ userId, name: 'Neutral2', color: '#000000', isSystem: true })
+		).rejects.toThrow();
+	});
+
+	it('two different users can each have their own is_system row', async () => {
+		await makeFaction({ isSystem: true });
+		const userB = await seedTestUser(currentDb, { name: 'B', email: 'b@b.com' });
+		// Direct insert — partial unique is scoped per user_id, so this
+		// must succeed.
+		const [bRow] = await currentDb
+			.insert(factions)
+			.values({ userId: userB.id, name: 'Neutral', color: '#9CA3AF', isSystem: true })
+			.returning();
+		expect(bRow.isSystem).toBe(true);
+	});
+
+	it('CREATE_FACTION never produces an is_system row', async () => {
+		const created = await readJson(
+			await CREATE_FACTION(mkEvent({ body: { name: 'X', color: '#ff0000' } }))
+		);
+		expect(created.isSystem).toBe(false);
 	});
 });
