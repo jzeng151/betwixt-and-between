@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { worldMaps, mapRegions, entities } from '$lib/server/db/schema.js';
+import { worldMaps, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
@@ -48,49 +48,46 @@ export const POST: RequestHandler = async (event) => {
 		error(400, 'Polygon must not be self-intersecting');
 	}
 
+	const resolvedLocationId: string | null =
+		typeof locationId === 'string' ? locationId : null;
+
 	// Verify locationId belongs to user when supplied.
-	if (typeof locationId === 'string') {
+	if (resolvedLocationId !== null) {
 		const [loc] = await db
 			.select({ id: entities.id })
 			.from(entities)
-			.where(and(eq(entities.id, locationId), eq(entities.userId, userId)));
+			.where(and(eq(entities.id, resolvedLocationId), eq(entities.userId, userId)));
 		if (!loc) error(400, 'Location not found');
 	}
 
-	const values: typeof mapRegions.$inferInsert = {
-		mapId: event.params.id,
-		polygon
-	};
-	if (typeof locationId === 'string') values.locationId = locationId;
+	// Slice 2 D2 PR-C (T6): map_regions is dropped. Region identity is
+	// minted client-side as a UUID and lives only in anchor JSON. The
+	// transaction protects the part_of edge from a region "creation"
+	// that fails after the anchor write — if ensurePartOf rejects on
+	// cycle/single-parent, the anchor mutation rolls back.
+	const newRegionId = crypto.randomUUID();
 
-	// Insert + part_of upsert are wrapped in a single transaction so a cycle /
-	// single-parent / type failure in ensurePartOf rolls back the region row.
-	// Otherwise a retry creates a duplicate region while the implied edge is
-	// still missing.
-	let created;
+	let created: { id: string; mapId: string; locationId: string | null; polygon: number[][] };
 	try {
 		created = await db.transaction(async (tx) => {
 			// Slice 2 D1: ensure the user has a Neutral faction before the
-			// region's anchor entry needs to reference one. Idempotent —
-			// existing Neutral is returned, new one created if missing.
+			// region's anchor entry needs to reference one. Idempotent.
 			const neutralFactionId = await ensureNeutralFaction(tx, userId);
-			const [row] = await tx.insert(mapRegions).values(values).returning();
-			if (typeof locationId === 'string' && map.locationId) {
-				await ensurePartOf(tx, userId, locationId, map.locationId);
+			if (resolvedLocationId && map.locationId) {
+				await ensurePartOf(tx, userId, resolvedLocationId, map.locationId);
 			}
-			// Slice 1b A3 + Slice 2 D1 + Slice 2 D2 PR-A: fan out the new
-			// region into every anchor's state_jsonb.regions[] with the
-			// geometry payload (polygon + locationId) and faction_id =
-			// Neutral. transfer_region events override faction_id later;
-			// boundary-morphing events (Slice 2 mechanical) override
-			// polygon later.
 			await fanOutRegionAdd(tx, event.params.id!, userId, {
-				id: row.id,
+				id: newRegionId,
 				factionId: neutralFactionId,
-				polygon: row.polygon,
-				locationId: row.locationId
+				polygon,
+				locationId: resolvedLocationId
 			});
-			return row;
+			return {
+				id: newRegionId,
+				mapId: event.params.id!,
+				locationId: resolvedLocationId,
+				polygon
+			};
 		});
 	} catch (err) {
 		// SvelteKit HttpError thrown from ensurePartOf surfaces .status; preserve it.

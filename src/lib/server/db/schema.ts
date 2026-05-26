@@ -367,7 +367,7 @@ export const entityAliases = pgTable('entity_aliases', {
 //   - Vitest invariant test scanning every row
 //   - this schema comment
 // Nullable: a map can exist before being linked to a Location, and can outlive
-// a deleted Location via ON DELETE SET NULL (matches mapRegions.locationId).
+// a deleted Location via ON DELETE SET NULL.
 //
 // `location_inactive_at` records when SET NULL fired so the UI can surface
 // orphan maps for re-linking. NULL on healthy rows; non-NULL after a Location
@@ -499,24 +499,13 @@ export const mapPlacements = pgTable(
 	]
 );
 
-export const mapRegions = pgTable('map_regions', {
-	id: uuid('id').primaryKey().defaultRandom(),
-	mapId: uuid('map_id')
-		.notNull()
-		.references(() => worldMaps.id, { onDelete: 'cascade' }),
-	locationId: uuid('location_id')
-		.references(() => entities.id, { onDelete: 'set null' }),
-	polygon: jsonb('polygon').notNull().$type<number[][]>(),
-	// Slice 2 D1: color column dropped (drizzle/0014_d1_faction_only_color.sql).
-	// Visual color resolves through faction_id in anchor state_jsonb. The
-	// per-user Neutral faction (factions.is_system=true) is the fallback
-	// owner for un-faction-ed regions.
-	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
-}, (table) => [
-	index('map_regions_map_id_idx').on(table.mapId),
-	index('map_regions_location_id_idx').on(table.locationId)
-]);
+// Slice 2 D2 PR-C (T6): map_regions table dropped
+// (drizzle/0016_d2_drop_map_regions.sql). Region identity, geometry, and
+// location-link now live exclusively in map_anchors.state_jsonb.regions[];
+// the baseline anchor (t_position = -Infinity) is canonical. See
+// src/lib/server/world-map-v3.ts → readBaselineRegions /
+// readBaselineRegionsForUser for the read path, and
+// src/lib/server/anchor-region-write-through.ts for the write helpers.
 
 // =============================================================================
 // World Map v3 foundation — Slice 1a (2026-05-22)

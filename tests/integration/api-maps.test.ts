@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { and, eq } from 'drizzle-orm';
-import { entities, relationships, mapAnchors, mapEvents, mapRegions, factions, worldMaps } from '../../src/lib/server/db/schema.js';
+import { entities, relationships, mapAnchors, mapEvents, factions, worldMaps } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 let userId: string;
@@ -2009,42 +2009,7 @@ describe('Slice 2 D2 PR-A — anchor schema gains polygon + locationId (T4)', ()
 		expect(state.regions[0].locationId).toBe(loc.id);
 	});
 
-	it('invariant: every anchor entry on every map matches the map_regions row (T4 backfill verifier)', async () => {
-		// Seed two maps with two regions each. Anchor JSON must match
-		// map_regions on polygon + locationId.
-		for (const name of ['M1', 'M2']) {
-			const mapRes = await CREATE_MAP(mkEvent({ body: { name } }));
-			const map = await readJson(mapRes);
-			await CREATE_REGION(
-				mkEvent({ params: { id: map.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
-			);
-			await CREATE_REGION(
-				mkEvent({ params: { id: map.id }, body: { polygon: [[20, 20], [20, 30], [30, 30]] } })
-			);
-		}
-
-		// Walk every anchor's regions[] and assert the polygon + locationId
-		// match the corresponding map_regions row.
-		const allAnchors = await currentDb.select().from(mapAnchors);
-		const allRegions = await currentDb.select().from(mapRegions);
-		const regionsById = new Map(allRegions.map((r) => [r.id, r]));
-		let entryCount = 0;
-		for (const a of allAnchors) {
-			const state = a.stateJsonb as {
-				regions?: Array<{
-					region_id: string;
-					polygon: number[][];
-					locationId: string | null;
-				}>;
-			};
-			for (const entry of state.regions ?? []) {
-				entryCount++;
-				const canonical = regionsById.get(entry.region_id);
-				expect(canonical).toBeDefined();
-				expect(entry.polygon).toEqual(canonical!.polygon);
-				expect(entry.locationId).toBe(canonical!.locationId);
-			}
-		}
-		expect(entryCount).toBeGreaterThanOrEqual(4); // 2 maps × 2 regions
-	});
+	// T4's "anchor matches map_regions" invariant test was deleted in T6
+	// (Slice 2 D2 PR-C): map_regions is gone, so there's nothing to
+	// cross-check against. Anchor JSON is the only source of truth now.
 });

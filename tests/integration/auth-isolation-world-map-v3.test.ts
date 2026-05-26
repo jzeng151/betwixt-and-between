@@ -15,7 +15,6 @@ import {
 	factions,
 	mapAnchors,
 	mapEvents,
-	mapRegions,
 	worldMaps
 } from '../../src/lib/server/db/schema.js';
 
@@ -311,17 +310,14 @@ describe('auth isolation: World Map v3 endpoints', () => {
 			.insert(worldMaps)
 			.values({ userId: userB, name: 'B map' })
 			.returning();
-		const [bRegion] = await currentDb
-			.insert(mapRegions)
-			.values({
-				mapId: bMap.id,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		const bRegion = await seedRegionWithAnchorBackfill(currentDb, {
+			mapId: bMap.id,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 
 		await expect(
 			eventsRoute.POST(
@@ -348,17 +344,14 @@ describe('auth isolation: World Map v3 endpoints', () => {
 			.insert(worldMaps)
 			.values({ userId: userB, name: 'B map for anchor test' })
 			.returning();
-		const [bRegion] = await currentDb
-			.insert(mapRegions)
-			.values({
-				mapId: bMap.id,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		const bRegion = await seedRegionWithAnchorBackfill(currentDb, {
+			mapId: bMap.id,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 
 		await expect(
 			anchorsRoute.POST(
@@ -775,19 +768,16 @@ describe('auth isolation: World Map v3 endpoints', () => {
 
 	it("GET projection-context: user A's own faction list excludes cross-user regions even when faction has matching id pattern", async () => {
 		// Even if user B had a region in a map B owns, user A's projection-
-		// context for A's map must not list it. fetchProjectionContext joins
-		// mapRegions through worldMaps.user_id so cross-map ids stay scoped.
+		// context for A's map must not list it. fetchProjectionContext
+		// scopes through worldMaps.user_id so cross-map ids stay scoped.
 		const [bMap] = await currentDb
 			.insert(worldMaps)
 			.values({ userId: userB, name: 'B map' })
 			.returning();
-		const [bRegion] = await currentDb
-			.insert(mapRegions)
-			.values({
-				mapId: bMap.id,
-				polygon: [[0, 0], [1, 0], [1, 1]]
-			})
-			.returning();
+		const bRegion = await seedRegionWithAnchorBackfill(currentDb, {
+			mapId: bMap.id,
+			polygon: [[0, 0], [1, 0], [1, 1]]
+		});
 
 		const res = await projectionContextRoute.GET(
 			mkEvent(userA, { params: { id: aMapId } })

@@ -21,7 +21,6 @@ import {
 	factions,
 	mapAnchors,
 	mapEvents,
-	mapRegions,
 	worldMaps
 } from '../../src/lib/server/db/schema.js';
 import { fetchProjectionContext } from '../../src/lib/server/projection-context.js';
@@ -154,17 +153,14 @@ describe('projection cross-user lazy GC (Δ1a-C)', () => {
 			.insert(worldMaps)
 			.values({ userId: userB.id, name: 'Map B' })
 			.returning();
-		const [regionB] = await db
-			.insert(mapRegions)
-			.values({
-				mapId: mapB.id,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		const regionB = await seedRegionWithAnchorBackfill(db, {
+			mapId: mapB.id,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 
 		// An anchor on User A's map references a region that lives on User B's
 		// map. Should never happen via legit UI, but the renderer must defend

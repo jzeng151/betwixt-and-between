@@ -91,10 +91,11 @@ export async function seedActs(db: TestDb, userId?: string) {
 }
 
 /**
- * Slice 2 D2 PR-B: insert a region in BOTH map_regions and the baseline
- * anchor's state_jsonb.regions[]. Use this in tests that bypass the POST
- * /regions API but still need the validation paths (which now read from
- * anchor JSON) to see the region.
+ * Slice 2 D2 PR-C (T6): seed a region directly into the baseline anchor's
+ * state_jsonb.regions[]. Use this in tests that bypass the POST /regions
+ * API but still need the validation paths (which read from anchor JSON)
+ * to see the region. The map_regions table is gone; anchor JSON is the
+ * only source of truth.
  */
 export async function seedRegionWithAnchorBackfill(
 	db: TestDb,
@@ -105,20 +106,13 @@ export async function seedRegionWithAnchorBackfill(
 		factionId?: string | null;
 	}
 ): Promise<{ id: string }> {
-	const { mapRegions, mapAnchors } = await import('../../src/lib/server/db/schema.js');
+	const { mapAnchors } = await import('../../src/lib/server/db/schema.js');
 	const { sql } = await import('drizzle-orm');
 	const { eq } = await import('drizzle-orm');
-	const [region] = await db
-		.insert(mapRegions)
-		.values({
-			mapId: opts.mapId,
-			polygon: opts.polygon,
-			...(opts.locationId !== undefined ? { locationId: opts.locationId } : {})
-		})
-		.returning();
+	const regionId = crypto.randomUUID();
 
 	const entry = {
-		region_id: region.id,
+		region_id: regionId,
 		faction_id: opts.factionId ?? null,
 		polygon: opts.polygon,
 		locationId: opts.locationId ?? null
@@ -152,7 +146,7 @@ export async function seedRegionWithAnchorBackfill(
 		`);
 	}
 
-	return { id: region.id };
+	return { id: regionId };
 }
 
 /** Seed a test user row for auth-gated integration tests. Returns user fields for mkEvent. */

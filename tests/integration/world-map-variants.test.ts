@@ -18,7 +18,7 @@ import {
 	seedTestUser,
 	seedRegionWithAnchorBackfill
 } from '../helpers/test-db.js';
-import { entities, worldMaps, mapRegions } from '../../src/lib/server/db/schema.js';
+import { entities, worldMaps } from '../../src/lib/server/db/schema.js';
 import { recomputeAllIntervals } from '../../src/lib/server/intervals.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
