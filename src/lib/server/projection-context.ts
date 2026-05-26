@@ -13,12 +13,13 @@
 // entity_aliases (CLAUDE.md trust-boundary rules). Factions carry user_id
 // directly, so the scope is a plain equality predicate.
 
-import { and, eq } from 'drizzle-orm';
-import { factions, mapRegions, worldMaps } from './db/schema.js';
+import { eq } from 'drizzle-orm';
+import { factions } from './db/schema.js';
 import type {
 	AllowedFaction,
 	ProjectionContext
 } from '$lib/features/map/projection.js';
+import { readBaselineRegionsForUser } from './world-map-v3.js';
 
 // Loose-typed db param so this works for both the production postgres-js
 // driver and PGlite test instances; Drizzle's runtime API is identical
@@ -36,11 +37,11 @@ export async function fetchProjectionContext(
 		.from(factions)
 		.where(eq(factions.userId, userId));
 
-	const regionRows: Array<{ id: string }> = await db
-		.select({ id: mapRegions.id })
-		.from(mapRegions)
-		.innerJoin(worldMaps, eq(mapRegions.mapId, worldMaps.id))
-		.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.userId, userId)));
+	// Slice 2 D2 PR-B: allowedRegions now reads from baseline anchor JSON
+	// via readBaselineRegionsForUser (cross-user-scoped via JOIN through
+	// world_maps.user_id). Same set of region ids as the old map_regions
+	// query post-T4 backfill invariant.
+	const regionRows = await readBaselineRegionsForUser(db, userId, worldMapId);
 
 	const allowedFactions = new Map<string, AllowedFaction>();
 	for (const row of factionRows) {

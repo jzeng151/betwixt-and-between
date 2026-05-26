@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { worldMaps, mapRegions, mapAnchors } from '$lib/server/db/schema.js';
 import { and, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
-import { ensureNeutralFaction } from '$lib/server/world-map-v3.js';
+import { ensureNeutralFaction, readBaselineRegions } from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -58,12 +58,12 @@ export const POST: RequestHandler = async (event) => {
 			})
 			.returning();
 
-		const sourceRegions = await tx
-			.select()
-			.from(mapRegions)
-			.where(eq(mapRegions.mapId, source.id));
+		// Slice 2 D2 PR-B: source regions read from baseline anchor JSON
+		// instead of map_regions (same shape, same invariant T4 backfilled).
+		// Writes to map_regions remain for T5a — T6 drops both.
+		const sourceRegions = await readBaselineRegions(tx, source.id);
 
-		let cloneRegions: typeof sourceRegions = [];
+		let cloneRegions: Array<{ id: string; mapId: string; locationId: string | null; polygon: number[][] }> = [];
 		if (sourceRegions.length > 0) {
 			cloneRegions = await tx
 				.insert(mapRegions)

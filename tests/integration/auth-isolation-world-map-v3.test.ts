@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTestDb, seedTestUser } from '../helpers/test-db.js';
+import { createTestDb, seedTestUser, seedRegionWithAnchorBackfill } from '../helpers/test-db.js';
 import {
 	entities,
 	factions,
@@ -83,17 +83,18 @@ describe('auth isolation: World Map v3 endpoints', () => {
 			.returning();
 		aFactionId = faction.id;
 
-		const [region] = await currentDb
-			.insert(mapRegions)
-			.values({
-				mapId: aMapId,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		// Slice 2 D2 PR-B: validation reads from anchor JSON, so the
+		// region must be present there too. seedRegionWithAnchorBackfill
+		// inserts into map_regions and ensures the baseline anchor entry
+		// exists (creating the baseline anchor if absent).
+		const region = await seedRegionWithAnchorBackfill(currentDb, {
+			mapId: aMapId,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 		aRegionId = region.id;
 
 		const [anchor] = await currentDb

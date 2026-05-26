@@ -90,6 +90,71 @@ export async function seedActs(db: TestDb, userId?: string) {
 	return { act0: act0.id, act1: act1.id, act2: act2.id };
 }
 
+/**
+ * Slice 2 D2 PR-B: insert a region in BOTH map_regions and the baseline
+ * anchor's state_jsonb.regions[]. Use this in tests that bypass the POST
+ * /regions API but still need the validation paths (which now read from
+ * anchor JSON) to see the region.
+ */
+export async function seedRegionWithAnchorBackfill(
+	db: TestDb,
+	opts: {
+		mapId: string;
+		polygon: number[][];
+		locationId?: string | null;
+		factionId?: string | null;
+	}
+): Promise<{ id: string }> {
+	const { mapRegions, mapAnchors } = await import('../../src/lib/server/db/schema.js');
+	const { sql } = await import('drizzle-orm');
+	const { eq } = await import('drizzle-orm');
+	const [region] = await db
+		.insert(mapRegions)
+		.values({
+			mapId: opts.mapId,
+			polygon: opts.polygon,
+			...(opts.locationId !== undefined ? { locationId: opts.locationId } : {})
+		})
+		.returning();
+
+	const entry = {
+		region_id: region.id,
+		faction_id: opts.factionId ?? null,
+		polygon: opts.polygon,
+		locationId: opts.locationId ?? null
+	};
+	const entryJson = JSON.stringify(entry);
+
+	// Append the entry to the baseline (or any existing) anchor on this
+	// map. If no anchor exists yet, create the baseline anchor at
+	// '-Infinity'::float8 with the entry.
+	const existing = await db
+		.select({ id: mapAnchors.id })
+		.from(mapAnchors)
+		.where(eq(mapAnchors.worldMapId, opts.mapId))
+		.limit(1);
+	if (existing.length === 0) {
+		await db.insert(mapAnchors).values({
+			worldMapId: opts.mapId,
+			tPosition: sql`'-Infinity'::float8` as unknown as number,
+			stateJsonb: { regions: [entry], artifacts: [], chains: [] }
+		});
+	} else {
+		await db.execute(sql`
+			UPDATE map_anchors
+			SET state_jsonb = jsonb_set(
+				state_jsonb,
+				'{regions}',
+				COALESCE(state_jsonb->'regions', '[]'::jsonb) || ${entryJson}::jsonb,
+				true
+			)
+			WHERE world_map_id = ${opts.mapId}
+		`);
+	}
+
+	return { id: region.id };
+}
+
 /** Seed a test user row for auth-gated integration tests. Returns user fields for mkEvent. */
 export async function seedTestUser(
 	db: TestDb,

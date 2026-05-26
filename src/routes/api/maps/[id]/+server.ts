@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { worldMaps, mapRegions } from '$lib/server/db/schema.js';
+import { worldMaps } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import {
@@ -7,6 +7,7 @@ import {
 	assertWorldMapVariantBounds,
 	resolveWorldMapVariantBounds
 } from '$lib/server/world-maps.js';
+import { readBaselineRegions } from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -18,11 +19,12 @@ export const GET: RequestHandler = async (event) => {
 		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
 	if (!map) error(404, 'Map not found');
 
-	// mapRegions has no direct userId — scoped via worldMaps.userId already verified above.
-	const regions = await db
-		.select()
-		.from(mapRegions)
-		.where(eq(mapRegions.mapId, event.params.id));
+	// Slice 2 D2 PR-B: regions sourced from the baseline anchor's
+	// state_jsonb.regions[] instead of map_regions. Same shape (id, mapId,
+	// locationId, polygon) since T4's invariant keeps anchor JSON in sync.
+	// Cross-user defense already enforced by the worldMaps ownership check
+	// above.
+	const regions = await readBaselineRegions(db, event.params.id);
 
 	return json({ ...map, regions });
 };

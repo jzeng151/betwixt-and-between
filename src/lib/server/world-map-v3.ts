@@ -15,7 +15,7 @@
 
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { error } from '@sveltejs/kit';
-import { factions, mapAnchors, mapEvents, mapRegions, worldMaps } from './db/schema.js';
+import { factions, mapAnchors, mapEvents, worldMaps } from './db/schema.js';
 import { assertSourceEventIdIsEvent } from './intervals/polymorphic-fk.js';
 import type { Db } from './intervals.js';
 import {
@@ -59,6 +59,83 @@ function assertObjectBody(body: unknown): asserts body is Record<string, unknown
 }
 
 // ── Faction CRUD ────────────────────────────────────────────────────────────
+
+// ── Slice 2 D2 PR-B: region reads through anchor JSON ─────────────────────
+//
+// Helper for the 7 read sites that previously did
+// `db.select().from(mapRegions)`. Returns region shape identical to the old
+// map_regions row (id, mapId, locationId, polygon) so callers don't have
+// to know they're now reading from anchor JSON. createdAt/updatedAt are
+// dropped — clients don't use them and the anchor entries don't carry them.
+//
+// Source: the baseline anchor (tPosition = -Infinity) for each map. T4's
+// backfill + T4's fanOutRegionAdd keep this anchor's regions[] in sync
+// with the map_regions table; reads either source give identical
+// geometry. T6 drops map_regions; until then both are kept in sync by
+// the write paths.
+
+export type AnchorRegionRow = {
+	id: string;
+	mapId: string;
+	locationId: string | null;
+	polygon: number[][];
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyDbOrTx = any;
+
+export async function readBaselineRegions(
+	db: AnyDbOrTx,
+	worldMapId: string
+): Promise<AnchorRegionRow[]> {
+	const [anchor] = await db
+		.select({ stateJsonb: mapAnchors.stateJsonb })
+		.from(mapAnchors)
+		.where(eq(mapAnchors.worldMapId, worldMapId))
+		.orderBy(asc(mapAnchors.tPosition), asc(mapAnchors.createdAt), asc(mapAnchors.id))
+		.limit(1);
+	if (!anchor) return [];
+	const state = anchor.stateJsonb as AnchorState | null;
+	const regions = state?.regions ?? [];
+	return regions
+		.filter((r) => Array.isArray(r.polygon) && r.polygon.length >= 3)
+		.map((r) => ({
+			id: r.region_id,
+			mapId: worldMapId,
+			locationId: r.locationId ?? null,
+			polygon: r.polygon as number[][]
+		}));
+}
+
+/**
+ * Cross-user-safe variant: scopes through world_maps.user_id so callers
+ * that aren't already gated by an ownership assert can use this safely.
+ * Returns empty array on cross-user attempt (no existence leak).
+ */
+export async function readBaselineRegionsForUser(
+	db: AnyDbOrTx,
+	userId: string,
+	worldMapId: string
+): Promise<AnchorRegionRow[]> {
+	const [anchor] = await db
+		.select({ stateJsonb: mapAnchors.stateJsonb })
+		.from(mapAnchors)
+		.innerJoin(worldMaps, eq(mapAnchors.worldMapId, worldMaps.id))
+		.where(and(eq(mapAnchors.worldMapId, worldMapId), eq(worldMaps.userId, userId)))
+		.orderBy(asc(mapAnchors.tPosition), asc(mapAnchors.createdAt), asc(mapAnchors.id))
+		.limit(1);
+	if (!anchor) return [];
+	const state = anchor.stateJsonb as AnchorState | null;
+	const regions = state?.regions ?? [];
+	return regions
+		.filter((r) => Array.isArray(r.polygon) && r.polygon.length >= 3)
+		.map((r) => ({
+			id: r.region_id,
+			mapId: worldMapId,
+			locationId: r.locationId ?? null,
+			polygon: r.polygon as number[][]
+		}));
+}
 
 /**
  * Slice 2 D1: every user has a per-user "Neutral" faction (is_system=true).
@@ -325,11 +402,10 @@ async function validateAnchorStateOwnership(
 	}
 
 	// Region ownership: must belong to THIS map.
+	// Slice 2 D2 PR-B: existence check reads from baseline anchor JSON.
+	// Same answer as map_regions post-T4 invariant.
 	if (regionIds.size > 0) {
-		const rows = await db
-			.select({ id: mapRegions.id })
-			.from(mapRegions)
-			.where(and(inArray(mapRegions.id, [...regionIds]), eq(mapRegions.mapId, worldMapId)));
+		const rows = await readBaselineRegions(db, worldMapId);
 		const found = new Set(rows.map((r) => r.id));
 		for (const id of regionIds) {
 			if (!found.has(id)) error(400, `region_id ${id} not found on this map`);
@@ -505,11 +581,11 @@ async function validateEventPayload(
 		// lazy GC would drop it at render time, but the row would persist
 		// as a probing oracle. Reject at write — cross-user references
 		// must never reach the DB.
-		const [region] = await db
-			.select({ id: mapRegions.id })
-			.from(mapRegions)
-			.where(and(eq(mapRegions.id, p.region_id), eq(mapRegions.mapId, worldMapId)));
-		if (!region) error(400, 'region_id not found on this map');
+		// Slice 2 D2 PR-B: existence check reads from baseline anchor JSON.
+		const baselineRegions = await readBaselineRegions(db, worldMapId);
+		if (!baselineRegions.some((r) => r.id === p.region_id)) {
+			error(400, 'region_id not found on this map');
+		}
 		// Verify the faction is owned by this user. Same defense — faction
 		// ownership is by user_id, not map, so we scope through factions.user_id.
 		const [faction] = await db

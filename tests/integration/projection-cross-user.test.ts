@@ -16,7 +16,7 @@
  * surfaces as factionId=null with the neutral fallback color.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTestDb, seedTestUser } from '../helpers/test-db.js';
+import { createTestDb, seedTestUser, seedRegionWithAnchorBackfill } from '../helpers/test-db.js';
 import {
 	factions,
 	mapAnchors,
@@ -50,17 +50,16 @@ describe('projection cross-user lazy GC (Δ1a-C)', () => {
 			.insert(worldMaps)
 			.values({ userId: userA.id, name: 'Map A' })
 			.returning();
-		const [regionA] = await db
-			.insert(mapRegions)
-			.values({
-				mapId: mapA.id,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		// Slice 2 D2 PR-B: also backfill into baseline anchor JSON since
+		// validation + projection-context reads now consume that source.
+		const regionA = await seedRegionWithAnchorBackfill(db, {
+			mapId: mapA.id,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 		const [factionA] = await db
 			.insert(factions)
 			.values({ userId: userA.id, name: 'A-faction', color: '#aa0000' })

@@ -8,31 +8,25 @@ import {
 	fanOutRegionDelete,
 	fanOutRegionGeometryUpdate
 } from '$lib/server/anchor-region-write-through.js';
+import {
+	readBaselineRegionsForUser,
+	type AnchorRegionRow
+} from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 /**
- * mapRegions has no direct userId column — scoped via JOIN on
- * worldMaps.userId. Verify the parent map belongs to the user before any
- * operation. Cross-user access returns 404 (no existence leak).
+ * Slice 2 D2 PR-B: region ownership now reads from baseline anchor JSON
+ * via readBaselineRegionsForUser (which scopes through world_maps.user_id).
+ * Cross-user access returns 404 (no existence leak).
  */
 async function assertOwnedRegion(
 	db: App.Locals['db'],
 	mapId: string,
 	regionId: string,
 	userId: string
-) {
-	const [row] = await db
-		.select({ region: mapRegions })
-		.from(mapRegions)
-		.innerJoin(worldMaps, eq(worldMaps.id, mapRegions.mapId))
-		.where(
-			and(
-				eq(mapRegions.id, regionId),
-				eq(mapRegions.mapId, mapId),
-				eq(worldMaps.userId, userId)
-			)
-		);
-	return row?.region ?? null;
+): Promise<AnchorRegionRow | null> {
+	const rows = await readBaselineRegionsForUser(db, userId, mapId);
+	return rows.find((r) => r.id === regionId) ?? null;
 }
 
 export const PATCH: RequestHandler = async (event) => {
@@ -94,23 +88,10 @@ export const PATCH: RequestHandler = async (event) => {
 				.where(eq(mapRegions.id, event.params.rid))
 				.returning();
 
-			const locationChanged =
-				'locationId' in updates && updates.locationId !== region.locationId;
-			if (locationChanged) {
-				const [parentMap] = await tx
-					.select({ locationId: worldMaps.locationId })
-					.from(worldMaps)
-					.where(eq(worldMaps.id, event.params.id));
-				if (parentMap?.locationId && region.locationId) {
-					await removeImpliedPartOf(tx, userId, region.locationId, parentMap.locationId);
-				}
-				if (parentMap?.locationId && typeof updates.locationId === 'string') {
-					await ensurePartOf(tx, userId, updates.locationId, parentMap.locationId);
-				}
-			}
-			// Slice 2 D2 PR-A: write-through polygon and/or locationId
-			// changes to every anchor's state_jsonb.regions[]. faction_id
-			// and legacy `color` are preserved by the helper.
+			// Slice 2 D2 PR-A + PR-B: write-through polygon/locationId
+			// changes to every anchor's state_jsonb.regions[] FIRST so the
+			// cross-map sibling check below (removeImpliedPartOf) reads the
+			// post-update state, not the pre-update state.
 			const polygonChanged = 'polygon' in updates;
 			const locationChangedInUpdates = 'locationId' in updates;
 			if (polygonChanged || locationChangedInUpdates) {
@@ -126,6 +107,21 @@ export const PATCH: RequestHandler = async (event) => {
 							: {})
 					}
 				);
+			}
+
+			const locationChanged =
+				'locationId' in updates && updates.locationId !== region.locationId;
+			if (locationChanged) {
+				const [parentMap] = await tx
+					.select({ locationId: worldMaps.locationId })
+					.from(worldMaps)
+					.where(eq(worldMaps.id, event.params.id));
+				if (parentMap?.locationId && region.locationId) {
+					await removeImpliedPartOf(tx, userId, region.locationId, parentMap.locationId);
+				}
+				if (parentMap?.locationId && typeof updates.locationId === 'string') {
+					await ensurePartOf(tx, userId, updates.locationId, parentMap.locationId);
+				}
 			}
 			return row;
 		});
@@ -148,8 +144,18 @@ export const DELETE: RequestHandler = async (event) => {
 	// (cross-map sibling lookup) and the edge delete must see a consistent
 	// view: if a concurrent region INSERT lands between them outside a tx,
 	// we could wrongly drop an edge that should still hold.
+	//
+	// Slice 2 D2 PR-B: order matters. fanOutRegionDelete must run BEFORE
+	// removeImpliedPartOf because the latter now reads from anchor JSON
+	// (not map_regions). If fanOutRegionDelete ran after, the cross-map
+	// scan would still see this region's entry in baseline anchor and
+	// wrongly conclude the location is still drawn somewhere.
 	await db.transaction(async (tx) => {
 		await tx.delete(mapRegions).where(eq(mapRegions.id, event.params.rid));
+		// Slice 1b A3: remove this region from every anchor's
+		// state_jsonb.regions[]. Faction ownership of this region (if any)
+		// is dropped with it — the region no longer exists.
+		await fanOutRegionDelete(tx, event.params.id!, userId, event.params.rid!);
 		if (region.locationId) {
 			const [parentMap] = await tx
 				.select({ locationId: worldMaps.locationId })
@@ -159,10 +165,6 @@ export const DELETE: RequestHandler = async (event) => {
 				await removeImpliedPartOf(tx, userId, region.locationId, parentMap.locationId);
 			}
 		}
-		// Slice 1b A3: remove this region from every anchor's
-		// state_jsonb.regions[]. Faction ownership of this region (if any)
-		// is dropped with it — the region no longer exists.
-		await fanOutRegionDelete(tx, event.params.id!, userId, event.params.rid!);
 	});
 
 	return new Response(null, { status: 204 });

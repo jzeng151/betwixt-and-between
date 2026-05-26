@@ -12,7 +12,12 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
+import {
+	createTestDb,
+	seedActs,
+	seedTestUser,
+	seedRegionWithAnchorBackfill
+} from '../helpers/test-db.js';
 import { entities, worldMaps, mapRegions } from '../../src/lib/server/db/schema.js';
 import { recomputeAllIntervals } from '../../src/lib/server/intervals.js';
 
@@ -387,8 +392,9 @@ describe('/api/maps/[id]/duplicate', () => {
 		);
 		const map = await readJson(created);
 
-		// Add a region directly to the DB (bypasses the regions route for speed).
-		await currentDb.insert(mapRegions).values({
+		// Slice 2 D2 PR-B: bypass-the-API insert must also reach anchor JSON
+		// so the duplicate route's source-region read finds it.
+		await seedRegionWithAnchorBackfill(currentDb, {
 			mapId: map.id,
 			locationId: location,
 			polygon: [
