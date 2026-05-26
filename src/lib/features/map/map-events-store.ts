@@ -28,17 +28,27 @@ function createMapEventsStore() {
 	// See map-anchors-store.ts for the rationale. Codex P1 on PR #55.
 	let lastLoadedMapId: string | null = null;
 
-	async function load(mapId: string): Promise<{ truncated: boolean }> {
+	// Pages through /api/maps/[id]/events until next_cursor is null. See
+	// map-anchors-store.ts for the lastLoadedMapId rationale (Codex P1 on
+	// PR #55).
+	async function load(mapId: string): Promise<void> {
 		lastLoadedMapId = mapId;
-		const res = await fetch(`/api/maps/${mapId}/events`);
-		if (lastLoadedMapId !== mapId) return { truncated: false };
-		if (!res.ok) throw new Error(`Failed to load events: ${await errorMessage(res)}`);
-		const body = (await res.json()) as { rows: MapEvent[]; truncated: boolean };
-		if (lastLoadedMapId !== mapId) return { truncated: false };
-		store.set(body.rows);
-		if (body.truncated) console.warn('events list truncated at server cap');
-		// See map-anchors-store.ts for rationale (Codex P1 on PR #55).
-		return { truncated: body.truncated };
+		const collected: MapEvent[] = [];
+		let cursor: string | null = null;
+		do {
+			const url = cursor
+				? `/api/maps/${mapId}/events?after=${encodeURIComponent(cursor)}`
+				: `/api/maps/${mapId}/events`;
+			const res = await fetch(url);
+			if (lastLoadedMapId !== mapId) return;
+			if (!res.ok) throw new Error(`Failed to load events: ${await errorMessage(res)}`);
+			const body = (await res.json()) as { rows: MapEvent[]; next_cursor: string | null };
+			if (lastLoadedMapId !== mapId) return;
+			collected.push(...body.rows);
+			cursor = body.next_cursor;
+		} while (cursor != null);
+		if (lastLoadedMapId !== mapId) return;
+		store.set(collected);
 	}
 
 	// See map-anchors-store.ts for the rationale. Codex P1 on PR #55

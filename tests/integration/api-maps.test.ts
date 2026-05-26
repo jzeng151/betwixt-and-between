@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { and, eq } from 'drizzle-orm';
-import { entities, relationships, mapAnchors, worldMaps } from '../../src/lib/server/db/schema.js';
+import { entities, relationships, mapAnchors, mapEvents, factions, worldMaps } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 let userId: string;
@@ -31,6 +31,15 @@ const uploadImageRoute = await import(
 );
 const { POST: DUPLICATE_MAP } = await import(
 	'../../src/routes/api/maps/[id]/duplicate/+server.js'
+);
+const { GET: LIST_EVENTS } = await import(
+	'../../src/routes/api/maps/[id]/events/+server.js'
+);
+const { GET: LIST_ANCHORS } = await import(
+	'../../src/routes/api/maps/[id]/anchors/+server.js'
+);
+const { GET: LIST_FACTIONS } = await import(
+	'../../src/routes/api/factions/+server.js'
 );
 
 function mkEvent(
@@ -1477,5 +1486,231 @@ describe('Slice 1b — region write-through (G6)', () => {
 			const state = a.stateJsonb as { regions: Array<{ region_id: string }> };
 			expect(state.regions.map((r) => r.region_id)).toContain(region.id);
 		}
+	});
+});
+
+describe('Slice 2 D5 — cursor pagination', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	async function makeMapWith(eventCount: number): Promise<string> {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'P' } }));
+		const map = await readJson(mapRes);
+		if (eventCount === 0) return map.id;
+		// Direct DB insert is dramatically faster than POSTing N events.
+		// Slice 1b's POST /events runs the polymorphic-FK validator + the
+		// projection-readiness chain on every call. For pagination tests
+		// we only need ordered rows; the validation paths are covered
+		// elsewhere.
+		const rows = [];
+		for (let i = 0; i < eventCount; i++) {
+			rows.push({
+				worldMapId: map.id,
+				tPosition: i,
+				kind: 'transfer_region',
+				// payload references non-existent ids; projection skips
+				// unresolvable refs (lazy GC, design doc line 268). Fine
+				// for pagination ordering tests.
+				payloadJsonb: { region_id: crypto.randomUUID(), new_faction_id: crypto.randomUUID() }
+			});
+		}
+		await currentDb.insert(mapEvents).values(rows);
+		return map.id;
+	}
+
+	function listUrl(path: string, params: Record<string, string>): URL {
+		const u = new URL(`http://localhost${path}`);
+		for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
+		return u;
+	}
+
+	it('paginates events: 1500 rows + limit=500 → 3 pages, then next_cursor null', async () => {
+		const mapId = await makeMapWith(1500);
+		const collected: unknown[] = [];
+		let cursor: string | null = null;
+		let pages = 0;
+		do {
+			const params: Record<string, string> = { limit: '500' };
+			if (cursor) params.after = cursor;
+			const res = await LIST_EVENTS(
+				mkEvent({ url: listUrl(`/api/maps/${mapId}/events`, params), params: { id: mapId } })
+			);
+			const body = await readJson(res);
+			collected.push(...body.rows);
+			cursor = body.next_cursor;
+			pages++;
+			if (pages > 5) throw new Error('pagination loop did not terminate');
+		} while (cursor != null);
+		expect(pages).toBe(3); // 500 + 500 + 500 → last page non-full → null
+		expect(collected).toHaveLength(1500);
+		// Stable ordering: t_position ascending.
+		const positions = collected.map((r) => (r as { tPosition: number }).tPosition);
+		const sorted = [...positions].sort((a, b) => a - b);
+		expect(positions).toEqual(sorted);
+	});
+
+	it('returns next_cursor: null when result page is non-full', async () => {
+		const mapId = await makeMapWith(7);
+		const res = await LIST_EVENTS(
+			mkEvent({ url: listUrl(`/api/maps/${mapId}/events`, { limit: '10' }), params: { id: mapId } })
+		);
+		const body = await readJson(res);
+		expect(body.rows).toHaveLength(7);
+		expect(body.next_cursor).toBeNull();
+	});
+
+	it('returns next_cursor: null on empty list', async () => {
+		const mapId = await makeMapWith(0);
+		const res = await LIST_EVENTS(
+			mkEvent({ url: listUrl(`/api/maps/${mapId}/events`, {}), params: { id: mapId } })
+		);
+		const body = await readJson(res);
+		expect(body.rows).toEqual([]);
+		expect(body.next_cursor).toBeNull();
+	});
+
+	it('rejects malformed cursor with 400', async () => {
+		const mapId = await makeMapWith(5);
+		await expect(
+			LIST_EVENTS(
+				mkEvent({
+					url: listUrl(`/api/maps/${mapId}/events`, { after: 'not-a-real-cursor' }),
+					params: { id: mapId }
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('cursor does not leak across users (auth-isolation)', async () => {
+		const mapIdA = await makeMapWith(20);
+		// Get user A's cursor at the end of page 1.
+		const resA = await LIST_EVENTS(
+			mkEvent({
+				url: listUrl(`/api/maps/${mapIdA}/events`, { limit: '10' }),
+				params: { id: mapIdA }
+			})
+		);
+		const bodyA = await readJson(resA);
+		expect(bodyA.next_cursor).not.toBeNull();
+		const cursorFromUserA = bodyA.next_cursor as string;
+
+		// User B tries to use user A's cursor against their OWN map (different mapId).
+		// Even if the cursor decodes, ownership check blocks at the route level.
+		const userB = await seedTestUser(currentDb, { name: 'B', email: 'b@b.com' });
+		const prevUserId = userId;
+		userId = userB.id;
+		const mapIdB = await makeMapWith(5);
+		// User B requests A's map with A's cursor → 404 (ownership guard).
+		await expect(
+			LIST_EVENTS(
+				mkEvent({
+					url: listUrl(`/api/maps/${mapIdA}/events`, {
+						limit: '10',
+						after: cursorFromUserA
+					}),
+					params: { id: mapIdA }
+				})
+			)
+		).rejects.toMatchObject({ status: 404 });
+		// User B requests B's map with A's cursor → cursor is opaque but
+		// the rows it filters are B's rows; user A's data does not leak.
+		const resB = await LIST_EVENTS(
+			mkEvent({
+				url: listUrl(`/api/maps/${mapIdB}/events`, {
+					limit: '10',
+					after: cursorFromUserA
+				}),
+				params: { id: mapIdB }
+			})
+		);
+		const bodyB = await readJson(resB);
+		// User B's events come AFTER user A's cursor at (t=9), so user B
+		// only sees B's events with t_position > 9 — that's 0 events if
+		// B's seeded events are at t=0..4. The point is rows.length is
+		// scoped to B's map regardless of A's cursor.
+		for (const row of bodyB.rows) {
+			expect((row as { worldMapId: string }).worldMapId).toBe(mapIdB);
+		}
+		userId = prevUserId;
+	});
+
+	it('anchors paginate with the same scheme', async () => {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'A' } }));
+		const map = await readJson(mapRes);
+		// The baseline anchor at t=-Infinity is already there; add 14 more.
+		const anchorRows = [];
+		for (let i = 0; i < 14; i++) {
+			anchorRows.push({
+				worldMapId: map.id,
+				tPosition: i + 1,
+				stateJsonb: { regions: [], artifacts: [], chains: [] }
+			});
+		}
+		await currentDb.insert(mapAnchors).values(anchorRows);
+
+		const res1 = await LIST_ANCHORS(
+			mkEvent({
+				url: listUrl(`/api/maps/${map.id}/anchors`, { limit: '10' }),
+				params: { id: map.id }
+			})
+		);
+		const body1 = await readJson(res1);
+		expect(body1.rows).toHaveLength(10);
+		expect(body1.next_cursor).not.toBeNull();
+
+		const res2 = await LIST_ANCHORS(
+			mkEvent({
+				url: listUrl(`/api/maps/${map.id}/anchors`, {
+					limit: '10',
+					after: body1.next_cursor as string
+				}),
+				params: { id: map.id }
+			})
+		);
+		const body2 = await readJson(res2);
+		expect(body2.rows.length).toBeGreaterThan(0);
+		expect(body2.next_cursor).toBeNull();
+		// No duplicates across pages.
+		const ids1 = new Set(body1.rows.map((r: { id: string }) => r.id));
+		for (const r of body2.rows as Array<{ id: string }>) expect(ids1.has(r.id)).toBe(false);
+	});
+
+	it('factions paginate by createdAt', async () => {
+		const factionRows = [];
+		for (let i = 0; i < 12; i++) {
+			factionRows.push({
+				userId,
+				name: `F${i}`,
+				color: '#ff0000'
+			});
+		}
+		await currentDb.insert(factions).values(factionRows);
+
+		const res1 = await LIST_FACTIONS(
+			mkEvent({ url: listUrl('/api/factions', { limit: '5' }) })
+		);
+		const body1 = await readJson(res1);
+		expect(body1.rows).toHaveLength(5);
+		expect(body1.next_cursor).not.toBeNull();
+
+		const res2 = await LIST_FACTIONS(
+			mkEvent({
+				url: listUrl('/api/factions', { limit: '5', after: body1.next_cursor as string })
+			})
+		);
+		const body2 = await readJson(res2);
+		expect(body2.rows).toHaveLength(5);
+
+		const res3 = await LIST_FACTIONS(
+			mkEvent({
+				url: listUrl('/api/factions', { limit: '5', after: body2.next_cursor as string })
+			})
+		);
+		const body3 = await readJson(res3);
+		expect(body3.rows).toHaveLength(2);
+		expect(body3.next_cursor).toBeNull();
 	});
 });

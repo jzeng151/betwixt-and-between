@@ -11,7 +11,10 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	return json(await listFactions(db, userId));
+	const after = event.url.searchParams.get('after');
+	const limitRaw = event.url.searchParams.get('limit');
+	const limit = limitRaw != null ? Number(limitRaw) : null;
+	return json(await listFactions(db, userId, { after, limit }));
 };
 
 export const POST: RequestHandler = async (event) => {

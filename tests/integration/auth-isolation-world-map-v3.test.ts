@@ -122,7 +122,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 
 	it('user B GET /api/factions returns empty', async () => {
 		const res = await factionsRoute.GET(mkEvent(userB));
-		expect(await readJson(res)).toEqual({ rows: [], truncated: false });
+		expect(await readJson(res)).toEqual({ rows: [], next_cursor: null });
 	});
 
 	it('user B PATCH /api/factions/[id] returns 404', async () => {
@@ -281,9 +281,9 @@ describe('auth isolation: World Map v3 endpoints', () => {
 
 	it('user A can list their own factions', async () => {
 		const res = await factionsRoute.GET(mkEvent(userA));
-		const body = (await readJson(res)) as { rows: Array<{ id: string }>; truncated: boolean };
+		const body = (await readJson(res)) as { rows: Array<{ id: string }>; next_cursor: string | null };
 		expect(body.rows.map((r) => r.id)).toContain(aFactionId);
-		expect(body.truncated).toBe(false);
+		expect(body.next_cursor).toBeNull();
 	});
 
 	it('user A can POST + DELETE their own anchor', async () => {

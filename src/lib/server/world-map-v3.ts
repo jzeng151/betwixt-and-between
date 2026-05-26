@@ -537,71 +537,165 @@ export async function deleteMapEvent(
 	if (deleted.length === 0) error(404, 'Event not found');
 }
 
-// ── Read paths ──────────────────────────────────────────────────────────────
+// ── Read paths (cursor pagination — Slice 2 D5) ─────────────────────────────
 //
-// Hard cap on list responses. Slice 1b's authoring UX doesn't approach this
-// volume for a single map; the cap is a safety net for the moment a user
-// has authored hundreds of events and one GET would otherwise ship them all.
-// Slice 5+ may swap this for cursor pagination ordered by the same
-// (t_position, created_at, id) sort the projection layer relies on.
+// Keyset pagination on the sort key the projection layer relies on:
+//   anchors/events  → (t_position, created_at, id)
+//   factions        → (created_at, id)
 //
-// LIST_LIMIT + 1 fetches a sentinel row so the handler can flip `truncated`
-// to true without a second count query.
+// Cursor is opaque base64(JSON). Clients call list(after=cursor) until
+// next_cursor === null. The plan's "subsequent pages fetch on demand" is
+// over-engineering for an event-sourced projection that needs the complete
+// stream to fold correctly — clients call loadAll() which pages through
+// until exhausted. The API supports lazy on-demand pagination by future
+// callers without further changes.
+//
+// Limit defaults to DEFAULT_PAGE_SIZE; clamped to [1, MAX_PAGE_SIZE].
+// LIST_LIMIT is preserved as an alias of DEFAULT_PAGE_SIZE for back-compat
+// with any external callers; new code uses DEFAULT_PAGE_SIZE.
 
-export const LIST_LIMIT = 500;
+export const DEFAULT_PAGE_SIZE = 500;
+export const MAX_PAGE_SIZE = 1000;
+/** @deprecated use DEFAULT_PAGE_SIZE; kept for back-compat. */
+export const LIST_LIMIT = DEFAULT_PAGE_SIZE;
 
 export type ListResponse<T> = {
 	rows: T[];
-	truncated: boolean;
+	next_cursor: string | null;
 };
 
-function makeListResponse<T>(rows: T[]): ListResponse<T> {
-	const truncated = rows.length > LIST_LIMIT;
-	return {
-		rows: truncated ? rows.slice(0, LIST_LIMIT) : rows,
-		truncated
-	};
+type TPosCursor = { t: number; c: string; id: string };
+type CreatedAtCursor = { c: string; id: string };
+
+function encodeCursor(payload: TPosCursor | CreatedAtCursor): string {
+	return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 }
+
+function decodeTPosCursor(raw: string): TPosCursor {
+	try {
+		const decoded = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+		if (
+			typeof decoded?.t !== 'number' ||
+			typeof decoded?.c !== 'string' ||
+			typeof decoded?.id !== 'string'
+		) {
+			throw new Error('shape');
+		}
+		return decoded as TPosCursor;
+	} catch {
+		error(400, 'invalid cursor');
+	}
+}
+
+function decodeCreatedAtCursor(raw: string): CreatedAtCursor {
+	try {
+		const decoded = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+		if (typeof decoded?.c !== 'string' || typeof decoded?.id !== 'string') {
+			throw new Error('shape');
+		}
+		return decoded as CreatedAtCursor;
+	} catch {
+		error(400, 'invalid cursor');
+	}
+}
+
+function clampLimit(raw: number | null | undefined): number {
+	if (raw == null || !Number.isFinite(raw)) return DEFAULT_PAGE_SIZE;
+	const n = Math.floor(raw);
+	if (n < 1) return 1;
+	if (n > MAX_PAGE_SIZE) return MAX_PAGE_SIZE;
+	return n;
+}
+
+export type ListOptions = {
+	after?: string | null;
+	limit?: number | null;
+};
 
 export async function listFactions(
 	db: Db,
-	userId: string
+	userId: string,
+	opts: ListOptions = {}
 ): Promise<ListResponse<typeof factions.$inferSelect>> {
+	const limit = clampLimit(opts.limit);
+	const cursor = opts.after ? decodeCreatedAtCursor(opts.after) : null;
+	const cursorClause = cursor
+		? sql`(${factions.createdAt}, ${factions.id}) > (${new Date(cursor.c)}, ${cursor.id})`
+		: undefined;
 	const rows = await db
 		.select()
 		.from(factions)
-		.where(eq(factions.userId, userId))
-		.orderBy(asc(factions.createdAt))
-		.limit(LIST_LIMIT + 1);
-	return makeListResponse(rows);
+		.where(cursorClause ? and(eq(factions.userId, userId), cursorClause) : eq(factions.userId, userId))
+		.orderBy(asc(factions.createdAt), asc(factions.id))
+		.limit(limit + 1);
+	const hasMore = rows.length > limit;
+	const page = hasMore ? rows.slice(0, limit) : rows;
+	const last = page[page.length - 1];
+	const next_cursor =
+		hasMore && last ? encodeCursor({ c: last.createdAt.toISOString(), id: last.id }) : null;
+	return { rows: page, next_cursor };
 }
 
 export async function listMapAnchors(
 	db: Db,
 	userId: string,
-	worldMapId: string
+	worldMapId: string,
+	opts: ListOptions = {}
 ): Promise<ListResponse<typeof mapAnchors.$inferSelect>> {
 	await assertMapOwnership(db, userId, worldMapId);
+	const limit = clampLimit(opts.limit);
+	const cursor = opts.after ? decodeTPosCursor(opts.after) : null;
+	const cursorClause = cursor
+		? sql`(${mapAnchors.tPosition}, ${mapAnchors.createdAt}, ${mapAnchors.id}) > (${cursor.t}, ${new Date(cursor.c)}, ${cursor.id})`
+		: undefined;
 	const rows = await db
 		.select()
 		.from(mapAnchors)
-		.where(eq(mapAnchors.worldMapId, worldMapId))
+		.where(
+			cursorClause
+				? and(eq(mapAnchors.worldMapId, worldMapId), cursorClause)
+				: eq(mapAnchors.worldMapId, worldMapId)
+		)
 		.orderBy(asc(mapAnchors.tPosition), asc(mapAnchors.createdAt), asc(mapAnchors.id))
-		.limit(LIST_LIMIT + 1);
-	return makeListResponse(rows);
+		.limit(limit + 1);
+	const hasMore = rows.length > limit;
+	const page = hasMore ? rows.slice(0, limit) : rows;
+	const last = page[page.length - 1];
+	const next_cursor =
+		hasMore && last
+			? encodeCursor({ t: last.tPosition, c: last.createdAt.toISOString(), id: last.id })
+			: null;
+	return { rows: page, next_cursor };
 }
 
 export async function listMapEvents(
 	db: Db,
 	userId: string,
-	worldMapId: string
+	worldMapId: string,
+	opts: ListOptions = {}
 ): Promise<ListResponse<typeof mapEvents.$inferSelect>> {
 	await assertMapOwnership(db, userId, worldMapId);
+	const limit = clampLimit(opts.limit);
+	const cursor = opts.after ? decodeTPosCursor(opts.after) : null;
+	const cursorClause = cursor
+		? sql`(${mapEvents.tPosition}, ${mapEvents.createdAt}, ${mapEvents.id}) > (${cursor.t}, ${new Date(cursor.c)}, ${cursor.id})`
+		: undefined;
 	const rows = await db
 		.select()
 		.from(mapEvents)
-		.where(eq(mapEvents.worldMapId, worldMapId))
+		.where(
+			cursorClause
+				? and(eq(mapEvents.worldMapId, worldMapId), cursorClause)
+				: eq(mapEvents.worldMapId, worldMapId)
+		)
 		.orderBy(asc(mapEvents.tPosition), asc(mapEvents.createdAt), asc(mapEvents.id))
-		.limit(LIST_LIMIT + 1);
-	return makeListResponse(rows);
+		.limit(limit + 1);
+	const hasMore = rows.length > limit;
+	const page = hasMore ? rows.slice(0, limit) : rows;
+	const last = page[page.length - 1];
+	const next_cursor =
+		hasMore && last
+			? encodeCursor({ t: last.tPosition, c: last.createdAt.toISOString(), id: last.id })
+			: null;
+	return { rows: page, next_cursor };
 }

@@ -29,21 +29,29 @@ function createMapAnchorsStore() {
 	// store.set() if the target changed during the await.
 	let lastLoadedMapId: string | null = null;
 
-	async function load(mapId: string): Promise<{ truncated: boolean }> {
+	// Pages through /api/maps/[id]/anchors until next_cursor is null.
+	// Projection requires the complete ordered stream so loadAll-on-mount
+	// is the correct semantic. The lastLoadedMapId guard remains across
+	// every page fetch — if the user switches maps mid-pagination, we
+	// abandon the in-progress load (Codex P1 on PR #55).
+	async function load(mapId: string): Promise<void> {
 		lastLoadedMapId = mapId;
-		const res = await fetch(`/api/maps/${mapId}/anchors`);
-		if (lastLoadedMapId !== mapId) return { truncated: false };
-		if (!res.ok) throw new Error(`Failed to load anchors: ${await errorMessage(res)}`);
-		const body = (await res.json()) as { rows: MapAnchor[]; truncated: boolean };
-		if (lastLoadedMapId !== mapId) return { truncated: false };
-		store.set(body.rows);
-		if (body.truncated) console.warn('anchors list truncated at server cap');
-		// Surface truncated to the caller so projection readiness can stay
-		// false when the load returns capped data. Codex P1 on PR #55
-		// (commit e32c973): healthy flipped true on partial data,
-		// allowing snapshots that dropped ownership state for anchors
-		// past the 500-row cap.
-		return { truncated: body.truncated };
+		const collected: MapAnchor[] = [];
+		let cursor: string | null = null;
+		do {
+			const url = cursor
+				? `/api/maps/${mapId}/anchors?after=${encodeURIComponent(cursor)}`
+				: `/api/maps/${mapId}/anchors`;
+			const res = await fetch(url);
+			if (lastLoadedMapId !== mapId) return;
+			if (!res.ok) throw new Error(`Failed to load anchors: ${await errorMessage(res)}`);
+			const body = (await res.json()) as { rows: MapAnchor[]; next_cursor: string | null };
+			if (lastLoadedMapId !== mapId) return;
+			collected.push(...body.rows);
+			cursor = body.next_cursor;
+		} while (cursor != null);
+		if (lastLoadedMapId !== mapId) return;
+		store.set(collected);
 	}
 
 	// Codex P1 on PR #55 (commit be1f09c): mutation responses must also
