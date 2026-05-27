@@ -164,30 +164,29 @@ export async function ensureNeutralFaction(tx: AnyTx, userId: string): Promise<s
 		.from(factions)
 		.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
 	if (existing) return existing.id;
-	try {
-		const [row] = await tx
-			.insert(factions)
-			.values({
-				userId,
-				name: NEUTRAL_FACTION_NAME,
-				color: NEUTRAL_FACTION_COLOR,
-				isSystem: true
-			})
-			.returning({ id: factions.id });
-		return row.id;
-	} catch (err) {
-		// Race (codex review): two concurrent first-writes for a new user
-		// both see no Neutral row, both INSERT. The partial unique index
-		// factions_user_one_system rejects the second. Recover by
-		// re-SELECTing the row the winner just inserted.
-		if (!isUniqueViolation(err)) throw err;
-		const [winner] = await tx
-			.select({ id: factions.id })
-			.from(factions)
-			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
-		if (!winner) throw err;
-		return winner.id;
-	}
+	// codex PR review: try/catch on the INSERT doesn't recover inside a
+	// surrounding transaction — PG aborts the entire tx on the unique
+	// violation, so the catch-and-reselect still surfaces as 500. Use
+	// ON CONFLICT DO NOTHING which keeps the tx alive when the partial
+	// unique index factions_user_one_system rejects a concurrent second
+	// write. The INSERT returns the new row on the winning path or no
+	// rows on the losing path; the post-INSERT SELECT recovers either
+	// way without poisoning the transaction.
+	await tx
+		.insert(factions)
+		.values({
+			userId,
+			name: NEUTRAL_FACTION_NAME,
+			color: NEUTRAL_FACTION_COLOR,
+			isSystem: true
+		})
+		.onConflictDoNothing();
+	const [row] = await tx
+		.select({ id: factions.id })
+		.from(factions)
+		.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+	if (!row) error(500, 'ensureNeutralFaction: row missing after INSERT');
+	return row.id;
 }
 
 export type FactionInput = {
@@ -850,6 +849,20 @@ function decodeTPosValue(v: unknown): number | null {
 	return null;
 }
 
+/**
+ * codex PR review: postgres-js doesn't reliably serialize JS Infinity /
+ * -Infinity through the parameter binding path. The map-create handler
+ * uses an inline SQL literal for the baseline anchor's tPosition; the
+ * cursor pagination path needs the same treatment, otherwise following
+ * a cursor that ended on the baseline anchor (t = -Infinity) fails
+ * intermittently in production despite working in PGlite tests.
+ */
+function tPosLiteral(t: number) {
+	if (t === Number.NEGATIVE_INFINITY) return sql`'-Infinity'::float8`;
+	if (t === Number.POSITIVE_INFINITY) return sql`'Infinity'::float8`;
+	return sql`${t}::float8`;
+}
+
 function isValidCursorDate(c: string): boolean {
 	// codex review P1 #4: decodeTPosCursor / decodeCreatedAtCursor only
 	// checked `typeof c === 'string'`, then SQL builders called
@@ -873,7 +886,12 @@ function decodeTPosCursor(raw: string): TPosCursor {
 			t === null ||
 			typeof decoded?.c !== 'string' ||
 			typeof decoded?.id !== 'string' ||
-			!isValidCursorDate(decoded.c)
+			!isValidCursorDate(decoded.c) ||
+			// codex PR review: cursor.id is bound directly into UUID columns
+			// (map_anchors.id / map_events.id). Without a UUID shape check,
+			// "id":"not-a-uuid" passes decode and SQL casts then 500. Validate
+			// against UUID_RE so the invalid-cursor path always surfaces 400.
+			!UUID_RE.test(decoded.id)
 		) {
 			throw new Error('shape');
 		}
@@ -889,7 +907,8 @@ function decodeCreatedAtCursor(raw: string): CreatedAtCursor {
 		if (
 			typeof decoded?.c !== 'string' ||
 			typeof decoded?.id !== 'string' ||
-			!isValidCursorDate(decoded.c)
+			!isValidCursorDate(decoded.c) ||
+			!UUID_RE.test(decoded.id)
 		) {
 			throw new Error('shape');
 		}
@@ -946,7 +965,7 @@ export async function listMapAnchors(
 	const limit = clampLimit(opts.limit);
 	const cursor = opts.after ? decodeTPosCursor(opts.after) : null;
 	const cursorClause = cursor
-		? sql`(${mapAnchors.tPosition}, ${mapAnchors.createdAt}, ${mapAnchors.id}) > (${cursor.t}, ${new Date(cursor.c)}, ${cursor.id})`
+		? sql`(${mapAnchors.tPosition}, ${mapAnchors.createdAt}, ${mapAnchors.id}) > (${tPosLiteral(cursor.t)}, ${new Date(cursor.c)}, ${cursor.id})`
 		: undefined;
 	const rows = await db
 		.select()
@@ -978,7 +997,7 @@ export async function listMapEvents(
 	const limit = clampLimit(opts.limit);
 	const cursor = opts.after ? decodeTPosCursor(opts.after) : null;
 	const cursorClause = cursor
-		? sql`(${mapEvents.tPosition}, ${mapEvents.createdAt}, ${mapEvents.id}) > (${cursor.t}, ${new Date(cursor.c)}, ${cursor.id})`
+		? sql`(${mapEvents.tPosition}, ${mapEvents.createdAt}, ${mapEvents.id}) > (${tPosLiteral(cursor.t)}, ${new Date(cursor.c)}, ${cursor.id})`
 		: undefined;
 	// Slice 2 D3 (T7): exclude soft-deleted (undone) events from the list.
 	// Append-only history is preserved at the storage level; the API
