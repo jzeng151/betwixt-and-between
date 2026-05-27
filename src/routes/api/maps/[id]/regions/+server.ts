@@ -60,10 +60,23 @@ export const POST: RequestHandler = async (event) => {
 	// uppercase JSON value. Use the validated `loc.id` (PG-canonicalized)
 	// for all anchor JSON writes.
 	if (typeof locationId === 'string') {
+		// codex PR review iter 7: the prior validation accepted any user-
+		// owned entity. Post-T6 the anchor JSON locationId is a free-form
+		// string with no FK and no type discriminator; without an explicit
+		// type check, a client could persist a Character or Act id here,
+		// then delete that entity, leaving the canonical baseline with a
+		// stale UUID the Location-DELETE scrub (which only fires for
+		// type='Location') will never clear.
 		const [loc] = await db
 			.select({ id: entities.id })
 			.from(entities)
-			.where(and(eq(entities.id, locationId), eq(entities.userId, userId)));
+			.where(
+				and(
+					eq(entities.id, locationId),
+					eq(entities.userId, userId),
+					eq(entities.type, 'Location')
+				)
+			);
 		if (!loc) error(400, 'Location not found');
 		resolvedLocationId = loc.id;
 	}

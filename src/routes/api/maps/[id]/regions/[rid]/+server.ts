@@ -43,15 +43,22 @@ export const PATCH: RequestHandler = async (event) => {
 		patch.locationId = null;
 		locationIdInPatch = true;
 	} else if (typeof body.locationId === 'string') {
-		// Verify locationId belongs to user.
-		// codex PR review iter 4: anchor JSON stores locationId verbatim.
-		// Use the validated `loc.id` (PG-canonicalized lowercase) for the
-		// JSON write so later string-equality scans (entity lookups,
-		// Location-DELETE scrub) match.
+		// Verify locationId belongs to user AND is type='Location'.
+		// codex PR review iter 4: anchor JSON stores locationId verbatim;
+		// use `loc.id` (PG-canonical lowercase) so later string-equality
+		// scans match. codex PR review iter 7: type guard added — without
+		// it, a client could PATCH the region to a Character/Act id and
+		// the Location-DELETE scrub would never fire for the stale ref.
 		const [loc] = await db
 			.select({ id: entities.id })
 			.from(entities)
-			.where(and(eq(entities.id, body.locationId), eq(entities.userId, userId)));
+			.where(
+				and(
+					eq(entities.id, body.locationId),
+					eq(entities.userId, userId),
+					eq(entities.type, 'Location')
+				)
+			);
 		if (!loc) error(400, 'Location not found');
 		patch.locationId = loc.id;
 		locationIdInPatch = true;
