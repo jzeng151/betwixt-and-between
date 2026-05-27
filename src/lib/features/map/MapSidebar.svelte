@@ -14,6 +14,38 @@
 	import { onDestroy } from 'svelte';
 	import { factions as factionsStore, type Faction } from './factions-store.js';
 	import { MAP_PALETTE, DEFAULT_FACTION_COLOR } from './color-palette.js';
+	import { layerPrefs } from './layer-prefs-store.js';
+	import { LAYER_KEYS, LAYER_LABELS, type LayerKey } from './layers.js';
+
+	// Slice 3 E3 — Layers pane. Per-user-per-map visibility toggles for
+	// the WM3 layer stack (background/grid/terrain/regions/placements).
+	// Mounts above the factions section; the active map id flows in as
+	// a prop so toggling can PATCH the correct row.
+	let { activeMapId = null }: { activeMapId?: string | null } = $props();
+
+	function isVisible(key: LayerKey): boolean {
+		const v = $layerPrefs.prefs.get(key);
+		return v === undefined ? true : v;
+	}
+
+	let layersBusy = $state<Set<string>>(new Set());
+	let layersError = $state('');
+
+	async function toggleLayer(key: LayerKey): Promise<void> {
+		if (!activeMapId) return;
+		if (layersBusy.has(key)) return;
+		layersBusy = new Set([...layersBusy, key]);
+		layersError = '';
+		try {
+			await layerPrefs.toggle(activeMapId, key);
+		} catch (err) {
+			layersError = err instanceof Error ? err.message : String(err);
+		} finally {
+			const next = new Set(layersBusy);
+			next.delete(key);
+			layersBusy = next;
+		}
+	}
 
 	let factionList = $state<Faction[]>([]);
 	const unsub = factionsStore.subscribe((list) => {
@@ -99,7 +131,31 @@
 	}
 </script>
 
-<aside class="map-sidebar" aria-label="Factions">
+<aside class="map-sidebar" aria-label="Map controls">
+	{#if activeMapId}
+		<section class="layers-pane" aria-label="Layers">
+			<header class="sidebar-header">
+				<h3>Layers</h3>
+			</header>
+			<ul class="layer-list" role="list">
+				{#each LAYER_KEYS as key (key)}
+					<li class="layer-row">
+						<label>
+							<input
+								type="checkbox"
+								checked={isVisible(key)}
+								disabled={layersBusy.has(key)}
+								onchange={() => void toggleLayer(key)}
+							/>
+							<span class="layer-name">{LAYER_LABELS[key]}</span>
+						</label>
+					</li>
+				{/each}
+			</ul>
+			{#if layersError}<p class="error-msg">{layersError}</p>{/if}
+		</section>
+	{/if}
+
 	<header class="sidebar-header">
 		<h3>Factions</h3>
 		{#if !creating}
@@ -205,6 +261,38 @@
 {/if}
 
 <style>
+	/* Slice 3 E3 — Layers pane. Sits above factions in the sidebar. */
+	.layers-pane {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding-bottom: 6px;
+		border-bottom: 1px solid var(--color-border);
+		margin-bottom: 4px;
+	}
+	.layer-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.layer-row label {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		cursor: pointer;
+		padding: 2px 0;
+		color: var(--color-text);
+	}
+	.layer-row input[type='checkbox'] {
+		cursor: pointer;
+	}
+	.layer-row .layer-name {
+		font-size: 11px;
+	}
+
 	.map-sidebar {
 		position: absolute;
 		top: 48px;

@@ -15,7 +15,13 @@
 
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { error } from '@sveltejs/kit';
-import { factions, mapAnchors, mapEvents, worldMaps } from './db/schema.js';
+import {
+	factions,
+	mapAnchors,
+	mapEvents,
+	worldMaps,
+	worldMapLayerPrefs
+} from './db/schema.js';
 import { assertSourceEventIdIsEvent } from './intervals/polymorphic-fk.js';
 import type { Db } from './intervals.js';
 import {
@@ -1154,6 +1160,68 @@ export async function undoLatestMapEvent(
 	// Pathological contention — surface 422 rather than a 500 so the
 	// client can retry the user action.
 	error(422, 'No events to undo');
+}
+
+// ── Layer prefs (Slice 3 E1 — outside-voice A1 + B3) ────────────────────────
+//
+// world_map_layer_prefs is per-user-per-map visibility for the
+// background/grid/terrain/regions/placements layers. The table FK is
+// only on user.id and world_maps.id; the cross-user ownership
+// invariant (user_id must match world_maps.user_id) lives here, in
+// the upsert helper. Every write goes through this function; direct
+// DB inserts from anywhere else are a CLAUDE.md violation.
+//
+// Reads scope through assertMapOwnership upstream — listing prefs
+// for a map the caller doesn't own returns 404, same shape as
+// listing anchors/events.
+
+export async function listWorldMapLayerPrefs(
+	db: Db,
+	userId: string,
+	worldMapId: string
+): Promise<(typeof worldMapLayerPrefs.$inferSelect)[]> {
+	await assertMapOwnership(db, userId, worldMapId);
+	return await db
+		.select()
+		.from(worldMapLayerPrefs)
+		.where(
+			and(
+				eq(worldMapLayerPrefs.userId, userId),
+				eq(worldMapLayerPrefs.worldMapId, worldMapId)
+			)
+		);
+}
+
+export async function upsertWorldMapLayerPref(
+	db: Db,
+	userId: string,
+	worldMapId: string,
+	layerKey: string,
+	visible: 0 | 1
+): Promise<typeof worldMapLayerPrefs.$inferSelect> {
+	// Cross-user invariant — codex outside-voice #15. The schema accepts
+	// (userA, mapB-owned-by-userB) inserts; the helper rejects them via
+	// assertMapOwnership which 404s on non-owned maps.
+	await assertMapOwnership(db, userId, worldMapId);
+	if (typeof layerKey !== 'string' || layerKey.length === 0 || layerKey.length > 64) {
+		error(400, 'layerKey must be a non-empty string ≤ 64 chars');
+	}
+	if (visible !== 0 && visible !== 1) {
+		error(400, 'visible must be 0 or 1 (CLAUDE.md integer convention)');
+	}
+	const [row] = await db
+		.insert(worldMapLayerPrefs)
+		.values({ userId, worldMapId, layerKey, visible })
+		.onConflictDoUpdate({
+			target: [
+				worldMapLayerPrefs.userId,
+				worldMapLayerPrefs.worldMapId,
+				worldMapLayerPrefs.layerKey
+			],
+			set: { visible }
+		})
+		.returning();
+	return row;
 }
 
 // ── Read paths (cursor pagination — Slice 2 D5) ─────────────────────────────

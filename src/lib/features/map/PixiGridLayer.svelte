@@ -31,7 +31,12 @@
 		hexVertices,
 		type HexSize
 	} from './hex-grid.js';
+	import { layerVisibility } from './layer-prefs-store.js';
 	import type { WorldMap } from './types.js';
+
+	// Slice 3 E4 — layer toggle. Separate from world_maps.grid_visible
+	// (the latter is per-MAP config; this is per-USER preference).
+	const userVisible = layerVisibility('grid');
 
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
@@ -81,8 +86,10 @@
 
 		// Read map state via $effect so the layer redraws when grid_type
 		// or grid_visible toggles, or when dimensions/cell counts change.
+		// Effective visibility = world_maps.grid_visible (per-map config)
+		// AND user's layer toggle (per-user pref). Either flag off ⇒ hide.
 		const map = activeMap;
-		const visible = map?.gridVisible ?? false;
+		const visible = (map?.gridVisible ?? false) && $userVisible;
 		const w = map?.width ?? null;
 		const h = map?.height ?? null;
 

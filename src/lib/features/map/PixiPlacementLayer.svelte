@@ -21,12 +21,16 @@
 	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 	import { resolveStyle, GLOBAL_STYLE_DEFAULT } from '$lib/features/map/style-cascade.js';
+	import { layerVisibility } from '$lib/features/map/layer-prefs-store.js';
 
 	// Visual fallback gate: when the cascade returns GLOBAL_STYLE_DEFAULT's
 	// color (i.e. neither STYLE_DEFAULTS nor entity.data.style set one),
 	// fall through to the legacy getEntityTypeColor so existing entities
 	// without an explicit style still render in their per-type palette.
 	const GLOBAL_DEFAULT_COLOR = GLOBAL_STYLE_DEFAULT.color;
+
+	// Slice 3 E4 — layer toggle.
+	const visible = layerVisibility('placements');
 	import type { MapPlacement } from '$lib/types/map-placement.js';
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { WorldMap } from './types.js';
@@ -141,6 +145,8 @@
 			layer = new PIXI.Container();
 			viewport.addChild(layer);
 		}
+		// Slice 3 E4 — apply user visibility toggle.
+		layer.visible = $visible;
 
 		for (const child of layer.removeChildren()) {
 			child.destroy();

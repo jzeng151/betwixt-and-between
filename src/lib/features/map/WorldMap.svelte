@@ -31,6 +31,7 @@
 	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
 	import { mapAnchorsStore } from '$lib/features/map/map-anchors-store.js';
 	import { mapEventsStore } from '$lib/features/map/map-events-store.js';
+	import { layerPrefs } from '$lib/features/map/layer-prefs-store.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
 	import BrushPalette from '$lib/components/BrushPalette.svelte';
@@ -269,11 +270,18 @@
 		if (!id) {
 			mapAnchorsStore.reset();
 			mapEventsStore.reset();
+			layerPrefs.reset();
 			projectionCtxHealthy = false;
 			return;
 		}
 		let cancelled = false;
 		projectionCtxHealthy = false;
+		// Slice 3 E2 — layer prefs are independent of anchors/events; load
+		// in parallel. Failure is non-blocking (store returns defaults).
+		void layerPrefs.load(id).catch((err) => {
+			if (cancelled) return;
+			console.error('Failed to load layer prefs:', err);
+		});
 		void Promise.all([mapAnchorsStore.load(id), mapEventsStore.load(id)])
 			.then(() => {
 				if (cancelled) return;
@@ -1166,7 +1174,7 @@
 				DRAWING · ESC TO EXIT · DBL-CLICK OR SNAP TO CLOSE
 			</div>
 		{/if}
-		<MapSidebar />
+		<MapSidebar {activeMapId} />
 		{#if hasImage && activeMap?.locationId}
 			<!-- PlaceablesPalette: armed chip → PixiPlacementLayer's stage-
 			     level pointertap → handleCanvasClick → create placement. -->

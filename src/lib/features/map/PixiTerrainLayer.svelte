@@ -28,6 +28,10 @@
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
 	import { biomeStyle } from './biome-textures.js';
+	import { layerVisibility } from './layer-prefs-store.js';
+
+	// Slice 3 E4 — layer toggle.
+	const visible = layerVisibility('terrain');
 	import {
 		hexSizeForCanvas,
 		hexAxialToPixel,
@@ -78,6 +82,8 @@
 			// clamped index works either way.
 			viewport.addChildAt(layer, Math.min(3, viewport.children.length));
 		}
+		// Slice 3 E4 — apply user visibility toggle.
+		layer.visible = $visible;
 
 		if (graphics) {
 			try {
