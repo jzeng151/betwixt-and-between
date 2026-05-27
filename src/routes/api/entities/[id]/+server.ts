@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { entities } from '$lib/server/db/schema.js';
+import { entities, mapAnchors, worldMaps } from '$lib/server/db/schema.js';
 import { getUserId } from '$lib/server/auth-gate.js';
 import {
 	recomputeAllIntervals,
@@ -326,6 +326,42 @@ export const DELETE: RequestHandler = async (event) => {
 					}
 				}
 			}
+		}
+
+		// Slice 2 D2 PR-C hardening (codex review): for Location deletes,
+		// scrub the deleted locationId out of every anchor's
+		// state_jsonb.regions[]. Pre-T6 the DB-level
+		// `map_regions.location_id ON DELETE SET NULL` handled this. Post-
+		// T6 anchor JSON is a free-form string blob with no FK; deleting
+		// a Location without this scrub leaves stale ids in canonical
+		// state. Scoped via world_maps.user_id so a cross-user run of
+		// this helper can't touch foreign data.
+		if (entity.type === 'Location') {
+			await tx.execute(sql`
+				UPDATE ${mapAnchors}
+				SET state_jsonb = jsonb_set(
+					state_jsonb,
+					'{regions}',
+					COALESCE(
+						(
+							SELECT jsonb_agg(
+								CASE
+									WHEN r->>'locationId' = ${event.params.id}
+										THEN jsonb_set(r, '{locationId}', 'null'::jsonb)
+									ELSE r
+								END
+							)
+							FROM jsonb_array_elements(COALESCE(state_jsonb->'regions', '[]'::jsonb)) AS r
+						),
+						'[]'::jsonb
+					),
+					true
+				)
+				FROM ${worldMaps}
+				WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
+					AND ${worldMaps.userId} = ${userId}
+					AND state_jsonb->'regions' @> ${`[{"locationId":"${event.params.id}"}]`}::jsonb
+			`);
 		}
 
 		// FK CASCADE removes remaining scenes and any fully-contained intervals already deleted above.

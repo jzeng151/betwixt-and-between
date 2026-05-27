@@ -216,11 +216,19 @@
 			const ownedRegionCount = Array.from(renderedRegionMap.values()).filter(
 				(f) => f !== null
 			).length;
+			// codex review P1 #1: post-T4 anchor schema carries polygon +
+			// locationId. Post-T6 anchor JSON is canonical for region
+			// geometry — if a snapshot becomes the earliest anchor (e.g.,
+			// snapshotted at a t-position less than any other anchor's),
+			// readBaselineRegions returns whatever the snapshot stored.
+			// Snapshots that omit polygon would erase every region's
+			// geometry. Carry the full anchor entry shape.
 			const stateJsonb = {
 				regions: regions.map((r) => ({
 					region_id: r.id,
 					faction_id: renderedRegionMap.get(r.id) ?? null,
-					color: r.color
+					polygon: r.polygon,
+					locationId: r.locationId ?? null
 				})),
 				artifacts: [],
 				chains: []

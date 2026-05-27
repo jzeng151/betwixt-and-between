@@ -164,16 +164,30 @@ export async function ensureNeutralFaction(tx: AnyTx, userId: string): Promise<s
 		.from(factions)
 		.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
 	if (existing) return existing.id;
-	const [row] = await tx
-		.insert(factions)
-		.values({
-			userId,
-			name: NEUTRAL_FACTION_NAME,
-			color: NEUTRAL_FACTION_COLOR,
-			isSystem: true
-		})
-		.returning({ id: factions.id });
-	return row.id;
+	try {
+		const [row] = await tx
+			.insert(factions)
+			.values({
+				userId,
+				name: NEUTRAL_FACTION_NAME,
+				color: NEUTRAL_FACTION_COLOR,
+				isSystem: true
+			})
+			.returning({ id: factions.id });
+		return row.id;
+	} catch (err) {
+		// Race (codex review): two concurrent first-writes for a new user
+		// both see no Neutral row, both INSERT. The partial unique index
+		// factions_user_one_system rejects the second. Recover by
+		// re-SELECTing the row the winner just inserted.
+		if (!isUniqueViolation(err)) throw err;
+		const [winner] = await tx
+			.select({ id: factions.id })
+			.from(factions)
+			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+		if (!winner) throw err;
+		return winner.id;
+	}
 }
 
 export type FactionInput = {
@@ -500,6 +514,22 @@ export async function updateMapAnchor(
 	assertUuid(anchorId, 'anchor id');
 	assertObjectBody(patch);
 
+	// Slice 2 D2 PR-C hardening (codex review): the baseline anchor at
+	// t_position = -Infinity is canonical for region geometry post-T6.
+	// User-facing PATCH/DELETE on the baseline can erase or poison every
+	// region on the map. Fan-out helpers (fanOutRegionAdd /
+	// fanOutRegionGeometryUpdate / fanOutRegionDelete in
+	// anchor-region-write-through.ts) are the only authorized writers to
+	// baseline state. Reject any direct edit here.
+	const [existing] = await db
+		.select({ tPosition: mapAnchors.tPosition })
+		.from(mapAnchors)
+		.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)));
+	if (!existing) error(404, 'Anchor not found');
+	if (!Number.isFinite(existing.tPosition)) {
+		error(422, 'Cannot edit the baseline anchor — it tracks canonical region geometry');
+	}
+
 	const updates: Record<string, unknown> = {};
 	if ('tPosition' in patch) {
 		if (typeof patch.tPosition !== 'number' || !isFinite(patch.tPosition)) {
@@ -546,6 +576,18 @@ export async function deleteMapAnchor(
 ): Promise<void> {
 	await assertMapOwnership(db, userId, worldMapId);
 	assertUuid(anchorId, 'anchor id');
+	// Slice 2 D2 PR-C hardening (codex review): see updateMapAnchor's
+	// matching guard. Deleting the baseline anchor (t_position = -Infinity)
+	// removes the canonical region geometry post-T6; reject explicitly
+	// instead of silently dropping every region on the map.
+	const [existing] = await db
+		.select({ tPosition: mapAnchors.tPosition })
+		.from(mapAnchors)
+		.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)));
+	if (!existing) error(404, 'Anchor not found');
+	if (!Number.isFinite(existing.tPosition)) {
+		error(422, 'Cannot delete the baseline anchor — it tracks canonical region geometry');
+	}
 	const deleted = await db
 		.delete(mapAnchors)
 		.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
@@ -665,11 +707,24 @@ export async function deleteMapEvent(
 ): Promise<void> {
 	await assertMapOwnership(db, userId, worldMapId);
 	assertUuid(eventId, 'event id');
-	const deleted = await db
-		.delete(mapEvents)
-		.where(and(eq(mapEvents.id, eventId), eq(mapEvents.worldMapId, worldMapId)))
+	// codex review P2: D3 (T7) introduced undoneAt for audit-preserving
+	// soft-delete. Hard-delete via this endpoint defeats the invariant —
+	// callers can erase rows that the undo command stack assumes are
+	// still on disk. Convert this route to a soft-delete so the audit
+	// trail stays append-only. Already-undone events return 404
+	// (idempotent — caller sees the same result as "row missing").
+	const [updated] = await db
+		.update(mapEvents)
+		.set({ undoneAt: new Date() })
+		.where(
+			and(
+				eq(mapEvents.id, eventId),
+				eq(mapEvents.worldMapId, worldMapId),
+				sql`${mapEvents.undoneAt} IS NULL`
+			)
+		)
 		.returning();
-	if (deleted.length === 0) error(404, 'Event not found');
+	if (!updated) error(404, 'Event not found');
 }
 
 /**
@@ -699,35 +754,48 @@ export async function undoLatestMapEvent(
 ): Promise<typeof mapEvents.$inferSelect> {
 	await assertMapOwnership(db, userId, worldMapId);
 
-	// Find the latest live event in commit order.
-	const [latest] = await db
-		.select()
-		.from(mapEvents)
-		.where(
-			and(
-				eq(mapEvents.worldMapId, worldMapId),
-				sql`${mapEvents.undoneAt} IS NULL`
+	// Retry loop: two concurrent undo requests both SELECT the same latest
+	// event. One UPDATE wins (undoneAt=now); the other's UPDATE matches 0
+	// rows because the WHERE undoneAt IS NULL guard filters out the
+	// just-undone row. Without retry, the second caller gets 422 even
+	// though older live events exist — a double-click leaves the stack
+	// only half-undone. The loop re-SELECTs the next latest until either
+	// an UPDATE succeeds or the SELECT finds nothing.
+	//
+	// Cap the retries to keep this bounded under a runaway race; in
+	// practice the contention window is microseconds and a single retry
+	// resolves it.
+	for (let attempt = 0; attempt < 8; attempt++) {
+		const [latest] = await db
+			.select()
+			.from(mapEvents)
+			.where(
+				and(
+					eq(mapEvents.worldMapId, worldMapId),
+					sql`${mapEvents.undoneAt} IS NULL`
+				)
 			)
-		)
-		.orderBy(desc(mapEvents.createdAt), desc(mapEvents.id))
-		.limit(1);
-	if (!latest) error(422, 'No events to undo');
+			.orderBy(desc(mapEvents.createdAt), desc(mapEvents.id))
+			.limit(1);
+		if (!latest) error(422, 'No events to undo');
 
-	const [updated] = await db
-		.update(mapEvents)
-		.set({ undoneAt: new Date() })
-		.where(
-			and(
-				eq(mapEvents.id, latest.id),
-				eq(mapEvents.worldMapId, worldMapId),
-				sql`${mapEvents.undoneAt} IS NULL`
+		const [updated] = await db
+			.update(mapEvents)
+			.set({ undoneAt: new Date() })
+			.where(
+				and(
+					eq(mapEvents.id, latest.id),
+					eq(mapEvents.worldMapId, worldMapId),
+					sql`${mapEvents.undoneAt} IS NULL`
+				)
 			)
-		)
-		.returning();
-	// Race: another undo on the same map flipped undoneAt between the
-	// SELECT and the UPDATE. Re-throw 422 — caller can retry.
-	if (!updated) error(422, 'No events to undo');
-	return updated;
+			.returning();
+		if (updated) return updated;
+		// Lost the race; loop and try the next latest event.
+	}
+	// Pathological contention — surface 422 rather than a 500 so the
+	// client can retry the user action.
+	error(422, 'No events to undo');
 }
 
 // ── Read paths (cursor pagination — Slice 2 D5) ─────────────────────────────
@@ -760,21 +828,56 @@ export type ListResponse<T> = {
 type TPosCursor = { t: number; c: string; id: string };
 type CreatedAtCursor = { c: string; id: string };
 
-function encodeCursor(payload: TPosCursor | CreatedAtCursor): string {
-	return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+// Sentinel for non-finite tPosition values (codex review P1 #3).
+// JSON.stringify({ t: -Infinity }) serializes to {"t": null}, which then
+// fails the typeof decoded.t === 'number' check on decode — anchor
+// pagination broke on any page boundary that landed on the baseline
+// anchor (t = -Infinity). Encode non-finite values as string sentinels
+// and reverse on decode.
+const T_POS_NEG_INF = '__neg_inf__';
+const T_POS_POS_INF = '__pos_inf__';
+
+function encodeTPosValue(t: number): number | string {
+	if (t === Number.NEGATIVE_INFINITY) return T_POS_NEG_INF;
+	if (t === Number.POSITIVE_INFINITY) return T_POS_POS_INF;
+	return t;
+}
+
+function decodeTPosValue(v: unknown): number | null {
+	if (v === T_POS_NEG_INF) return Number.NEGATIVE_INFINITY;
+	if (v === T_POS_POS_INF) return Number.POSITIVE_INFINITY;
+	if (typeof v === 'number' && Number.isFinite(v)) return v;
+	return null;
+}
+
+function isValidCursorDate(c: string): boolean {
+	// codex review P1 #4: decodeTPosCursor / decodeCreatedAtCursor only
+	// checked `typeof c === 'string'`, then SQL builders called
+	// `new Date(cursor.c)`. A base64-valid cursor with "c":"not-a-date"
+	// produced Invalid Date → driver/DB 500 instead of a clean 400.
+	const ts = Date.parse(c);
+	return Number.isFinite(ts);
+}
+
+function encodeCursor(payload: { t?: number; c: string; id: string }): string {
+	const out: Record<string, unknown> = { c: payload.c, id: payload.id };
+	if ('t' in payload && payload.t !== undefined) out.t = encodeTPosValue(payload.t);
+	return Buffer.from(JSON.stringify(out), 'utf8').toString('base64url');
 }
 
 function decodeTPosCursor(raw: string): TPosCursor {
 	try {
 		const decoded = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+		const t = decodeTPosValue(decoded?.t);
 		if (
-			typeof decoded?.t !== 'number' ||
+			t === null ||
 			typeof decoded?.c !== 'string' ||
-			typeof decoded?.id !== 'string'
+			typeof decoded?.id !== 'string' ||
+			!isValidCursorDate(decoded.c)
 		) {
 			throw new Error('shape');
 		}
-		return decoded as TPosCursor;
+		return { t, c: decoded.c, id: decoded.id };
 	} catch {
 		error(400, 'invalid cursor');
 	}
@@ -783,7 +886,11 @@ function decodeTPosCursor(raw: string): TPosCursor {
 function decodeCreatedAtCursor(raw: string): CreatedAtCursor {
 	try {
 		const decoded = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
-		if (typeof decoded?.c !== 'string' || typeof decoded?.id !== 'string') {
+		if (
+			typeof decoded?.c !== 'string' ||
+			typeof decoded?.id !== 'string' ||
+			!isValidCursorDate(decoded.c)
+		) {
 			throw new Error('shape');
 		}
 		return decoded as CreatedAtCursor;

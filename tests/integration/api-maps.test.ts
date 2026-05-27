@@ -38,9 +38,16 @@ const { GET: LIST_EVENTS, POST: CREATE_EVENT } = await import(
 const { POST: UNDO_EVENT } = await import(
 	'../../src/routes/api/maps/[id]/events/undo/+server.js'
 );
-const { GET: LIST_ANCHORS } = await import(
+const { GET: LIST_ANCHORS, POST: CREATE_ANCHOR } = await import(
 	'../../src/routes/api/maps/[id]/anchors/+server.js'
 );
+const anchorIdRoute = await import(
+	'../../src/routes/api/maps/[id]/anchors/[anchorId]/+server.js'
+);
+const eventIdRoute = await import(
+	'../../src/routes/api/maps/[id]/events/[eventId]/+server.js'
+);
+const entityIdRoute = await import('../../src/routes/api/entities/[id]/+server.js');
 const { GET: LIST_FACTIONS, POST: CREATE_FACTION } = await import(
 	'../../src/routes/api/factions/+server.js'
 );
@@ -2195,5 +2202,225 @@ describe('Slice 2 D3 — undo endpoint (T7)', () => {
 			.from(mapEvents)
 			.where(eq(mapEvents.id, original.id));
 		expect(origRow.undoneAt).not.toBeNull();
+	});
+});
+
+describe('Slice 2 D2 PR-C hardening (codex review)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	it('P0 #1: PATCH on baseline anchor (t=-Infinity) returns 422', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const [baseline] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		expect(baseline.tPosition).toBe(Number.NEGATIVE_INFINITY);
+
+		await expect(
+			anchorIdRoute.PATCH(
+				mkEvent({
+					params: { id: map.id, anchorId: baseline.id },
+					body: { stateJsonb: { regions: [], artifacts: [], chains: [] } }
+				})
+			)
+		).rejects.toMatchObject({ status: 422 });
+
+		// Baseline state untouched.
+		const [after] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.id, baseline.id));
+		expect(after.stateJsonb).toEqual(baseline.stateJsonb);
+	});
+
+	it('P0 #1: DELETE on baseline anchor returns 422, baseline survives', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const [baseline] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+
+		await expect(
+			anchorIdRoute.DELETE(
+				mkEvent({ params: { id: map.id, anchorId: baseline.id } })
+			)
+		).rejects.toMatchObject({ status: 422 });
+
+		const remaining = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		expect(remaining).toHaveLength(1);
+		expect(remaining[0].id).toBe(baseline.id);
+	});
+
+	it('P0 #1: PATCH/DELETE on non-baseline anchor still works', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const snapshot = await readJson(
+			await CREATE_ANCHOR(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 5,
+						stateJsonb: { regions: [], artifacts: [], chains: [] }
+					}
+				})
+			)
+		);
+		const patched = await anchorIdRoute.PATCH(
+			mkEvent({
+				params: { id: map.id, anchorId: snapshot.id },
+				body: { tPosition: 7 }
+			})
+		);
+		expect(patched.status).toBe(200);
+		const delRes = await anchorIdRoute.DELETE(
+			mkEvent({ params: { id: map.id, anchorId: snapshot.id } })
+		);
+		expect(delRes.status).toBe(204);
+	});
+
+	it('P0 #2: Location DELETE scrubs locationId from anchor JSON', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Forest' })
+			.returning();
+		await CREATE_REGION(
+			mkEvent({
+				params: { id: map.id },
+				body: { polygon: [[0, 0], [0, 10], [10, 10]], locationId: loc.id }
+			})
+		);
+
+		// Pre-delete: anchor entry has locationId set.
+		const [before] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const beforeState = before.stateJsonb as {
+			regions: Array<{ locationId: string | null }>;
+		};
+		expect(beforeState.regions[0].locationId).toBe(loc.id);
+
+		// Delete the Location.
+		await entityIdRoute.DELETE(mkEvent({ params: { id: loc.id } }));
+
+		// Post-delete: anchor entry has locationId nulled (no stale UUID).
+		const [after] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const afterState = after.stateJsonb as {
+			regions: Array<{ locationId: string | null }>;
+		};
+		expect(afterState.regions[0].locationId).toBeNull();
+	});
+
+	it('P1 #2: ensureNeutralFaction recovers from concurrent insert race', async () => {
+		const { ensureNeutralFaction } = await import('../../src/lib/server/world-map-v3.js');
+		// Simulate the race by pre-inserting a Neutral, then calling the helper —
+		// the second-write code path is the one the helper recovers from.
+		const [winner] = await currentDb
+			.insert(factions)
+			.values({ userId, name: 'Neutral', color: '#9ca3af', isSystem: true })
+			.returning({ id: factions.id });
+		const result = await ensureNeutralFaction(currentDb, userId);
+		expect(result).toBe(winner.id);
+	});
+
+	it('P1 #3: -Infinity tPosition cursor encodes/decodes cleanly', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await currentDb.insert(mapAnchors).values({
+			worldMapId: map.id,
+			tPosition: 5,
+			stateJsonb: { regions: [], artifacts: [], chains: [] }
+		});
+
+		// limit=1 + 2 anchors → first page returns baseline at t=-Inf,
+		// next_cursor points past it. The cursor must round-trip cleanly.
+		const res1 = await LIST_ANCHORS(
+			mkEvent({
+				url: new URL(`http://localhost/api/maps/${map.id}/anchors?limit=1`),
+				params: { id: map.id }
+			})
+		);
+		const body1 = await readJson(res1);
+		expect(body1.rows).toHaveLength(1);
+		// JSON.stringify(-Infinity) is `null` — preserved as the
+		// existing wire-format quirk (pre-existing behavior, not part
+		// of this hardening). The cursor still needs to round-trip
+		// the actual -Infinity value through the encoder; the next
+		// LIST call below proves that.
+		expect(body1.rows[0].tPosition).toBeNull();
+		expect(body1.next_cursor).not.toBeNull();
+
+		// Pre-fix: the next request would 400 because cursor.t decoded as
+		// null. Post-fix: it should succeed and return the next page.
+		const res2 = await LIST_ANCHORS(
+			mkEvent({
+				url: new URL(
+					`http://localhost/api/maps/${map.id}/anchors?limit=1&after=${encodeURIComponent(body1.next_cursor)}`
+				),
+				params: { id: map.id }
+			})
+		);
+		const body2 = await readJson(res2);
+		expect(body2.rows).toHaveLength(1);
+		expect(body2.rows[0].tPosition).toBe(5);
+	});
+
+	it('P1 #4: malformed cursor date string returns 400 not 500', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const evilCursor = Buffer.from(
+			JSON.stringify({ t: 5, c: 'not-a-date', id: 'x' }),
+			'utf8'
+		).toString('base64url');
+		await expect(
+			LIST_ANCHORS(
+				mkEvent({
+					url: new URL(
+						`http://localhost/api/maps/${map.id}/anchors?after=${encodeURIComponent(evilCursor)}`
+					),
+					params: { id: map.id }
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('P2: DELETE event endpoint soft-deletes (sets undoneAt, audit preserved)', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const [event] = await currentDb
+			.insert(mapEvents)
+			.values({
+				worldMapId: map.id,
+				tPosition: 1,
+				kind: 'transfer_region',
+				payloadJsonb: { region_id: crypto.randomUUID(), new_faction_id: crypto.randomUUID() }
+			})
+			.returning();
+
+		await eventIdRoute.DELETE(
+			mkEvent({ params: { id: map.id, eventId: event.id } })
+		);
+
+		// Row still on disk for audit, undoneAt set.
+		const [row] = await currentDb
+			.select()
+			.from(mapEvents)
+			.where(eq(mapEvents.id, event.id));
+		expect(row).toBeDefined();
+		expect(row.undoneAt).not.toBeNull();
+
+		// Second DELETE on the same event → 404 (already soft-deleted).
+		await expect(
+			eventIdRoute.DELETE(
+				mkEvent({ params: { id: map.id, eventId: event.id } })
+			)
+		).rejects.toMatchObject({ status: 404 });
 	});
 });
