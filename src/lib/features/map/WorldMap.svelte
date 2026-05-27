@@ -22,6 +22,8 @@
 	import MapStage from '$lib/features/map/MapStage.svelte';
 	import PixiStage from '$lib/features/map/PixiStage.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
+	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
+	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import RegionLayer from '$lib/features/map/RegionLayer.svelte';
 	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
@@ -68,6 +70,23 @@
 	let activeMapId = $state<string | null>(null);
 	let showRegionForm = $state(false);
 	let pendingPolygon: number[][] | null = $state(null);
+	// Slice 2 D4 prep (T8): Pixi polygon-draw state. `pixiDrawingActive`
+	// drives the PixiPolygonDraw overlay; `pixiDrawSeed` is the right-click
+	// origin point that seeds the first vertex (Variant D, Cartographer's
+	// tool). Both reset on commit / cancel / map switch.
+	let pixiDrawingActive = $state(false);
+	let pixiDrawSeed = $state<{ x: number; y: number } | null>(null);
+	// codex PR review iter 7: reset polygon-draw state when the user
+	// switches maps via the toolbar. Without this, vertices placed on
+	// map A linger after switchMap → committing on map B saves the
+	// stale polygon against the newly active map.
+	$effect(() => {
+		// Read activeMapId so the effect tracks it; the read is the
+		// dependency, the body unconditionally clears.
+		void activeMapId;
+		pixiDrawingActive = false;
+		pixiDrawSeed = null;
+	});
 	let regionFormLocationId = $state<string | null>(null);
 	let regionFormColor = $state('#e8a838');
 	let regionFormSceneIds = $state<Set<string>>(new Set());
@@ -264,20 +283,14 @@
 		let cancelled = false;
 		projectionCtxHealthy = false;
 		void Promise.all([mapAnchorsStore.load(id), mapEventsStore.load(id)])
-			.then(([anchorsResult, eventsResult]) => {
+			.then(() => {
 				if (cancelled) return;
-				// Codex P1 on PR #55 (commit e32c973): truncated:true means
-				// the server capped at LIST_LIMIT (500 rows). Treating
-				// that as "healthy" would let Pixi snapshots persist
-				// state that drops ownership for anchors/events past the
-				// cap. Keep healthy at false so writes stay blocked;
-				// cursor pagination is the Slice 5+ fix.
-				if (anchorsResult.truncated || eventsResult.truncated) {
-					console.error(
-						'Anchors or events list truncated at server cap (500). Projection incomplete; Pixi ownership writes disabled until pagination ships (Slice 5+).'
-					);
-					return;
-				}
+				// Slice 2 D5: stores now page through completely via cursor
+				// pagination. The Slice 1b 500-row truncated guard is no
+				// longer needed; loadAll exhausts the stream before
+				// resolving. If a future regression ships truncated
+				// results, the projection will be wrong silently — guard
+				// against that at the server invariant level, not here.
 				projectionCtxHealthy = true;
 			})
 			.catch((err) => {
@@ -391,6 +404,24 @@
 	function handlePolygonCreated(latLngs: number[][]) {
 		pendingPolygon = latLngs;
 		showRegionForm = true;
+	}
+
+	// Slice 2 D4 prep (T8): Pixi polygon-draw entry + commit/cancel.
+	function startPixiDraw(stageX: number, stageY: number) {
+		pixiDrawSeed = { x: stageX, y: stageY };
+		pixiDrawingActive = true;
+	}
+	function handlePixiPolygonCommit(polygon: number[][]) {
+		pixiDrawingActive = false;
+		pixiDrawSeed = null;
+		// Same downstream path as leaflet-draw: open RegionFormModal so the
+		// user picks a Location (D1 dropped color, so the modal's color
+		// picker is legacy — the server ignores it).
+		handlePolygonCreated(polygon);
+	}
+	function cancelPixiDraw() {
+		pixiDrawingActive = false;
+		pixiDrawSeed = null;
 	}
 
 	function handleCanvasClick(fx: number, fy: number) {
@@ -618,7 +649,9 @@
 		creatingRegionLocation = false;
 		regionNewLocationName = '';
 		regionNewLocationError = '';
-		drawnItems.clearLayers();
+		// drawnItems is the leaflet-draw layer — only present under
+		// ?renderer=leaflet. Skip under Pixi (T8).
+		drawnItems?.clearLayers?.();
 	}
 
 	// ── Actions ────────────────────────────────────────────────────────────
@@ -1071,17 +1104,43 @@
 						{renderedState}
 						mapId={activeMapId}
 						{dataLoading}
+						isInScope={$isInScope}
+						onDrawHere={startPixiDraw}
+					/>
+					<PixiPlacementLayer
+						{activeMap}
+						playhead={$playhead}
+						placements={$placementsStore}
+						entities={$entities}
+						isInScope={$isInScope}
+						armedPlaceableId={pixiDrawingActive ? null : armedPlaceableId}
+						onOpenEntity={(id) => windowStore.open('entity-detail', id)}
+						onDeletePlacement={(id) => void deletePlacement(id)}
+						onCanvasClick={handleCanvasClick}
+					/>
+					<PixiPolygonDraw
+						bind:active={pixiDrawingActive}
+						seedPoint={pixiDrawSeed}
+						onCommit={handlePixiPolygonCommit}
+						onCancel={cancelPixiDraw}
 					/>
 				{/snippet}
 			</PixiStage>
+			{#if pixiDrawingActive}
+				<!-- Slice 2 D4 prep (T8): drawing-mode status overlay.
+				     9px Inter uppercase tracked, matches Variant A/D status
+				     text spec from docs/plans/world-map-v3-slice-2-plan.md. -->
+				<div class="pixi-draw-status" role="status">
+					DRAWING · ESC TO EXIT · DBL-CLICK OR SNAP TO CLOSE
+				</div>
+			{/if}
 			<MapSidebar />
 		{/if}
-		{#if hasImage && activeMap?.locationId && renderer === 'leaflet'}
-			<!-- Codex P2 on PR #55: placement creation/rendering is wired only
-			     through Leaflet (MapStage's onCanvasClick + PlacementLayer's
-			     L.marker). Showing the palette under ?renderer=pixi let users
-			     arm a placeable that no canvas click would ever consume.
-			     Pixi-side placements are deferred to Slice 2. -->
+		{#if hasImage && activeMap?.locationId}
+			<!-- Slice 2 D4 prep (T9): PlaceablesPalette wires up under both
+			     renderers. Leaflet path: MapStage.onCanvasClick → handleCanvasClick.
+			     Pixi path: PixiPlacementLayer's stage-level pointertap → same
+			     handleCanvasClick. The palette no longer depends on renderer. -->
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
 				<div class="placement-error" role="alert">
@@ -1446,6 +1505,23 @@
 		cursor: pointer;
 	}
 
+	.pixi-draw-status {
+		/* Slice 2 D4 prep (T8): top-left status text while drawing mode is
+		   active. 9px Inter uppercase tracked, matches Variant A/D spec.
+		   pointer-events: none so the canvas under the text still gets
+		   pointer events for vertex placement. */
+		position: absolute;
+		top: 12px;
+		left: 12px;
+		z-index: 1100;
+		font-size: 9px;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--color-text-muted, #6b7280);
+		pointer-events: none;
+		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+	}
 	.hint-overlay {
 		position: absolute;
 		/* bottom-center: the hint shows only on an empty new map ($mapRegions

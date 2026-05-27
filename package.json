@@ -1,7 +1,7 @@
 {
   "name": "betwixt-and-between",
   "private": true,
-  "version": "0.7.7.0",
+  "version": "0.7.8.0",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -13,7 +13,6 @@
     "cf:typegen": "wrangler types",
     "prepare": "svelte-kit sync || echo ''",
     "postinstall": "patch-package",
-    "verify:patches": "tsx scripts/verify-patches.ts",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "db:push": "drizzle-kit push",
@@ -72,7 +71,6 @@
     "leaflet-draw": "^1.0.4",
     "lucide-svelte": "^1.0.1",
     "pixi.js": "8.18.1",
-    "postgres": "^3.4.9",
-    "svelte-pixi": "8.0.1"
+    "postgres": "^3.4.9"
   }
 }

@@ -139,35 +139,40 @@ export async function removeImpliedPartOf(
 ): Promise<void> {
 	if (!fromId || !toId) return;
 
-	type SelectableDB = {
-		select: (...args: unknown[]) => {
-			from: (...args: unknown[]) => {
-				innerJoin?: (...args: unknown[]) => {
-					where: (...args: unknown[]) => Promise<Array<Record<string, unknown>>>;
-				};
-				where: (...args: unknown[]) => Promise<Array<Record<string, unknown>>>;
-			};
-		};
+	type ExecutableDB = {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		execute: (q: unknown) => Promise<{ rows?: any[] } | any[]>;
 		delete: (...args: unknown[]) => {
 			where: (...args: unknown[]) => Promise<unknown>;
 		};
 	};
 
-	const { mapRegions, worldMaps } = await import('./db/schema.js');
-	const stillLinked = (await (db as SelectableDB)
-		.select({ id: mapRegions.id })
-		.from(mapRegions)
-		.innerJoin!(worldMaps, eq(worldMaps.id, mapRegions.mapId))
-		.where(
-			and(
-				eq(worldMaps.userId, userId),
-				eq(worldMaps.locationId, toId),
-				eq(mapRegions.locationId, fromId)
-			)
-		)) as Array<{ id: string }>;
-	if (stillLinked.length > 0) return;
+	// Slice 2 D2 PR-B: cross-map sibling check now reads from anchor JSON
+	// rather than map_regions. The baseline anchor (t_position = -Infinity)
+	// is the canonical snapshot whose regions[] match map_regions content
+	// post-T4 backfill. fanOutRegionGeometryUpdate keeps the locationId
+	// field in sync across all anchors on a PATCH, so reading from baseline
+	// alone is sound.
+	const { sql } = await import('drizzle-orm');
+	const result = await (db as ExecutableDB).execute(sql`
+		SELECT 1
+		FROM map_anchors ma
+		INNER JOIN world_maps wm ON wm.id = ma.world_map_id
+		CROSS JOIN LATERAL jsonb_array_elements(
+			COALESCE(ma.state_jsonb->'regions', '[]'::jsonb)
+		) AS r
+		WHERE wm.user_id = ${userId}
+			AND wm.location_id = ${toId}
+			AND r->>'locationId' = ${fromId}
+			AND ma.t_position = '-Infinity'::float8
+		LIMIT 1
+	`);
+	// drizzle-orm's execute returns either an array (postgres-js) or
+	// { rows } (pglite). Normalize both shapes.
+	const rows = Array.isArray(result) ? result : ((result as { rows?: unknown[] }).rows ?? []);
+	if (rows.length > 0) return;
 
-	await (db as SelectableDB)
+	await (db as ExecutableDB)
 		.delete(relationships)
 		.where(
 			and(

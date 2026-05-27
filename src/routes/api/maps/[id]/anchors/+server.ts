@@ -7,7 +7,10 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	return json(await listMapAnchors(db, userId, event.params.id));
+	const after = event.url.searchParams.get('after');
+	const limitRaw = event.url.searchParams.get('limit');
+	const limit = limitRaw != null ? Number(limitRaw) : null;
+	return json(await listMapAnchors(db, userId, event.params.id, { after, limit }));
 };
 
 export const POST: RequestHandler = async (event) => {

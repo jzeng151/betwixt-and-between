@@ -1,10 +1,11 @@
 import { json, error } from '@sveltejs/kit';
-import { worldMaps, mapRegions, entities } from '$lib/server/db/schema.js';
+import { worldMaps, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf } from '$lib/server/location-hierarchy.js';
 import { fanOutRegionAdd } from '$lib/server/anchor-region-write-through.js';
+import { ensureNeutralFaction } from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
@@ -19,7 +20,10 @@ export const POST: RequestHandler = async (event) => {
 	if (!map) error(404, 'Map not found');
 
 	const body = await event.request.json();
-	const { locationId, polygon, color } = body;
+	// Slice 2 D1: color is no longer accepted — visual color resolves
+	// through faction_id (defaults to Neutral). The body shape narrows
+	// to { locationId?, polygon }.
+	const { locationId, polygon } = body;
 
 	if (!Array.isArray(polygon) || polygon.length < 3) {
 		error(400, 'Polygon must have at least 3 vertices');
@@ -44,42 +48,67 @@ export const POST: RequestHandler = async (event) => {
 		error(400, 'Polygon must not be self-intersecting');
 	}
 
+	let resolvedLocationId: string | null = null;
+
 	// Verify locationId belongs to user when supplied.
+	// codex PR review iter 4: anchor JSON stores locationId as a plain
+	// string (no PG uuid normalization). If the client posts an uppercase
+	// UUID, PG accepts it on the entity validation query but the JSON
+	// value retains the casing. Later string-equality scans — entity
+	// lookups via Map(id→entity), the Location-DELETE jsonb scrub, etc —
+	// compare against the DB-canonical lowercase form and miss the
+	// uppercase JSON value. Use the validated `loc.id` (PG-canonicalized)
+	// for all anchor JSON writes.
 	if (typeof locationId === 'string') {
+		// codex PR review iter 7: the prior validation accepted any user-
+		// owned entity. Post-T6 the anchor JSON locationId is a free-form
+		// string with no FK and no type discriminator; without an explicit
+		// type check, a client could persist a Character or Act id here,
+		// then delete that entity, leaving the canonical baseline with a
+		// stale UUID the Location-DELETE scrub (which only fires for
+		// type='Location') will never clear.
 		const [loc] = await db
 			.select({ id: entities.id })
 			.from(entities)
-			.where(and(eq(entities.id, locationId), eq(entities.userId, userId)));
+			.where(
+				and(
+					eq(entities.id, locationId),
+					eq(entities.userId, userId),
+					eq(entities.type, 'Location')
+				)
+			);
 		if (!loc) error(400, 'Location not found');
+		resolvedLocationId = loc.id;
 	}
 
-	const values: typeof mapRegions.$inferInsert = {
-		mapId: event.params.id,
-		polygon
-	};
-	if (typeof locationId === 'string') values.locationId = locationId;
-	if (typeof color === 'string') values.color = color;
+	// Slice 2 D2 PR-C (T6): map_regions is dropped. Region identity is
+	// minted client-side as a UUID and lives only in anchor JSON. The
+	// transaction protects the part_of edge from a region "creation"
+	// that fails after the anchor write — if ensurePartOf rejects on
+	// cycle/single-parent, the anchor mutation rolls back.
+	const newRegionId = crypto.randomUUID();
 
-	// Insert + part_of upsert are wrapped in a single transaction so a cycle /
-	// single-parent / type failure in ensurePartOf rolls back the region row.
-	// Otherwise a retry creates a duplicate region while the implied edge is
-	// still missing.
-	let created;
+	let created: { id: string; mapId: string; locationId: string | null; polygon: number[][] };
 	try {
 		created = await db.transaction(async (tx) => {
-			const [row] = await tx.insert(mapRegions).values(values).returning();
-			if (typeof locationId === 'string' && map.locationId) {
-				await ensurePartOf(tx, userId, locationId, map.locationId);
+			// Slice 2 D1: ensure the user has a Neutral faction before the
+			// region's anchor entry needs to reference one. Idempotent.
+			const neutralFactionId = await ensureNeutralFaction(tx, userId);
+			if (resolvedLocationId && map.locationId) {
+				await ensurePartOf(tx, userId, resolvedLocationId, map.locationId);
 			}
-			// Slice 1b A3: fan out the new region into every anchor's
-			// state_jsonb.regions[] so the Pixi renderer (which reads
-			// projected anchor state) sees the same geometry the Leaflet
-			// renderer reads directly from map_regions.
 			await fanOutRegionAdd(tx, event.params.id!, userId, {
-				id: row.id,
-				color: row.color
+				id: newRegionId,
+				factionId: neutralFactionId,
+				polygon,
+				locationId: resolvedLocationId
 			});
-			return row;
+			return {
+				id: newRegionId,
+				mapId: event.params.id!,
+				locationId: resolvedLocationId,
+				polygon
+			};
 		});
 	} catch (err) {
 		// SvelteKit HttpError thrown from ensurePartOf surfaces .status; preserve it.

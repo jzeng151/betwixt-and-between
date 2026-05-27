@@ -1,15 +1,19 @@
 /**
  * Multi-tenant isolation: maps + regions (T8b S6).
  *
- * Maps have a direct userId column. Map regions are scoped via JOIN on
- * worldMaps.userId (no direct userId column). Cross-user access on either
- * surface returns 404 / empty / 400.
+ * Maps have a direct userId column. Map regions live in anchor JSON
+ * (Slice 2 D2 PR-C) and are scoped via JOIN on worldMaps.userId. Cross-
+ * user access on either surface returns 404 / empty / 400.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { createTestDb, seedTestUser } from '../helpers/test-db.js';
-import { worldMaps, mapRegions } from '../../src/lib/server/db/schema.js';
+import {
+	createTestDb,
+	seedTestUser,
+	seedRegionWithAnchorBackfill
+} from '../helpers/test-db.js';
+import { worldMaps, mapAnchors } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 
@@ -35,6 +39,18 @@ async function readJson(res: Response): Promise<any> {
 	return JSON.parse(await res.text());
 }
 
+async function regionInAnchor(mapId: string, regionId: string): Promise<boolean> {
+	const rows = await currentDb
+		.select()
+		.from(mapAnchors)
+		.where(eq(mapAnchors.worldMapId, mapId));
+	for (const a of rows) {
+		const state = a.stateJsonb as { regions?: Array<{ region_id: string }> };
+		if ((state.regions ?? []).some((r) => r.region_id === regionId)) return true;
+	}
+	return false;
+}
+
 describe('auth isolation: /api/maps', () => {
 	let userA: string;
 	let userB: string;
@@ -50,17 +66,14 @@ describe('auth isolation: /api/maps', () => {
 			.values({ userId: userA, name: 'A map' })
 			.returning();
 		aMapId = m.id;
-		const [r] = await currentDb
-			.insert(mapRegions)
-			.values({
-				mapId: aMapId,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		const r = await seedRegionWithAnchorBackfill(currentDb, {
+			mapId: aMapId,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 		aRegionId = r.id;
 	});
 
@@ -115,13 +128,14 @@ describe('auth isolation: /api/maps', () => {
 			regionIdRoute.PATCH(
 				mkEvent(userB, {
 					params: { id: aMapId, rid: aRegionId },
-					body: { color: '#ff0000' }
+					// Slice 2 D1: color is gone; use locationId=null as a
+					// harmless PATCH body to exercise the cross-user 404 path.
+					body: { locationId: null }
 				})
 			)
 		).rejects.toMatchObject({ status: 404 });
 
-		const [row] = await currentDb.select().from(mapRegions).where(eq(mapRegions.id, aRegionId));
-		expect(row.color).toBeNull();
+		expect(await regionInAnchor(aMapId, aRegionId)).toBe(true);
 	});
 
 	it('user B DELETE region returns 404, region survives', async () => {
@@ -131,7 +145,6 @@ describe('auth isolation: /api/maps', () => {
 			)
 		).rejects.toMatchObject({ status: 404 });
 
-		const [row] = await currentDb.select().from(mapRegions).where(eq(mapRegions.id, aRegionId));
-		expect(row).toBeDefined();
+		expect(await regionInAnchor(aMapId, aRegionId)).toBe(true);
 	});
 });

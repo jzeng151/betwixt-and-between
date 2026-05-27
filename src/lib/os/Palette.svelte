@@ -15,16 +15,28 @@
   interface Props {
     characters: Entity[];
     events: Entity[];
+    locations: Entity[];
     /** Set of entity ids that already have ≥1 interval on the timeline. */
     placedEntityIds: Set<string>;
     colorFor: (entity: Entity, idx: number) => string;
     /** Create handler — parent creates the event with a default name and
      *  opens the editor. Returns when the create round-trip completes. */
     onCreateEvent: () => Promise<void>;
+    /** Create handler for a new Location. Same contract as onCreateEvent. */
+    onCreateLocation: () => Promise<void>;
     /** Called when the user clicks (not drags) a character chip. */
     onSelect?: (id: string) => void;
   }
-  let { characters, events, placedEntityIds, colorFor, onCreateEvent, onSelect }: Props = $props();
+  let {
+    characters,
+    events,
+    locations,
+    placedEntityIds,
+    colorFor,
+    onCreateEvent,
+    onCreateLocation,
+    onSelect
+  }: Props = $props();
 
   function setDragData(e: DragEvent, id: string) {
     // Custom MIME so V1 Timeline's text/plain drop handlers ignore our drags.
@@ -46,6 +58,7 @@
 
   const filteredCharacters = $derived(filterByQuery(characters, q));
   const filteredEvents = $derived(filterByQuery(events, q));
+  const filteredLocations = $derived(filterByQuery(locations, q));
 
   let charactersCollapsed = $state(false);
 
@@ -57,6 +70,17 @@
       await onCreateEvent();
     } finally {
       savingEvent = false;
+    }
+  }
+
+  let savingLocation = $state(false);
+  async function addLocationClick() {
+    if (savingLocation) return;
+    savingLocation = true;
+    try {
+      await onCreateLocation();
+    } finally {
+      savingLocation = false;
     }
   }
 </script>
@@ -141,6 +165,42 @@
     {#if events.length === 0}
       <div class="palette-empty">No events yet.</div>
     {:else if filteredEvents.length === 0}
+      <div class="palette-empty">No matches.</div>
+    {/if}
+  </section>
+
+  <section class="palette-section" style="--type-color: {getEntityTypeColor('Location')}">
+    <header class="palette-label">
+      <span class="palette-label-text"><span class="palette-stripe" aria-hidden="true"></span>Locations</span>
+      <button
+        class="palette-add-btn"
+        aria-label="Add location"
+        title="Add location"
+        disabled={savingLocation}
+        onclick={addLocationClick}
+      >+</button>
+    </header>
+    {#each filteredLocations as { entity: loc, idx } (loc.id)}
+      <div
+        class="palette-item"
+        class:placed={placedEntityIds.has(loc.id)}
+        data-entity-id={loc.id}
+        draggable="true"
+        role="button"
+        tabindex="0"
+        aria-label="Drag {loc.name} onto timeline"
+        ondragstart={(e) => setDragData(e, loc.id)}
+        onclick={() => onSelect?.(loc.id)}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect?.(loc.id); }}
+      >
+        <span class="palette-dot" style="background: {colorFor(loc, idx)}" aria-hidden="true"></span>
+        <span class="palette-name">{loc.name}</span>
+        <span class="palette-grip" aria-hidden="true">⋮⋮</span>
+      </div>
+    {/each}
+    {#if locations.length === 0}
+      <div class="palette-empty">No locations yet.</div>
+    {:else if filteredLocations.length === 0}
       <div class="palette-empty">No matches.</div>
     {/if}
   </section>

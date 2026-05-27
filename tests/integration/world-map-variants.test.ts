@@ -12,8 +12,13 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
-import { entities, worldMaps, mapRegions } from '../../src/lib/server/db/schema.js';
+import {
+	createTestDb,
+	seedActs,
+	seedTestUser,
+	seedRegionWithAnchorBackfill
+} from '../helpers/test-db.js';
+import { entities, worldMaps } from '../../src/lib/server/db/schema.js';
 import { recomputeAllIntervals } from '../../src/lib/server/intervals.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
@@ -387,16 +392,16 @@ describe('/api/maps/[id]/duplicate', () => {
 		);
 		const map = await readJson(created);
 
-		// Add a region directly to the DB (bypasses the regions route for speed).
-		await currentDb.insert(mapRegions).values({
+		// Slice 2 D2 PR-B: bypass-the-API insert must also reach anchor JSON
+		// so the duplicate route's source-region read finds it.
+		await seedRegionWithAnchorBackfill(currentDb, {
 			mapId: map.id,
 			locationId: location,
 			polygon: [
 				[0, 0],
 				[1, 0],
 				[1, 1]
-			],
-			color: '#abcdef'
+			]
 		});
 
 		const dupRes = await dupRoute.POST(
@@ -418,9 +423,9 @@ describe('/api/maps/[id]/duplicate', () => {
 		expect(clone.endPosition).toBeNull();
 
 		// Regions cloned with new ids + new mapId.
+		// Slice 2 D1: color field removed from map_regions.
 		expect(clone.regions).toHaveLength(1);
 		expect(clone.regions[0].mapId).toBe(clone.id);
-		expect(clone.regions[0].color).toBe('#abcdef');
 		expect(clone.regions[0].polygon).toEqual([
 			[0, 0],
 			[1, 0],

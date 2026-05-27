@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { and, eq } from 'drizzle-orm';
-import { entities, relationships, mapAnchors, worldMaps } from '../../src/lib/server/db/schema.js';
+import { entities, relationships, mapAnchors, mapEvents, factions, worldMaps } from '../../src/lib/server/db/schema.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 let userId: string;
@@ -32,6 +32,26 @@ const uploadImageRoute = await import(
 const { POST: DUPLICATE_MAP } = await import(
 	'../../src/routes/api/maps/[id]/duplicate/+server.js'
 );
+const { GET: LIST_EVENTS, POST: CREATE_EVENT } = await import(
+	'../../src/routes/api/maps/[id]/events/+server.js'
+);
+const { POST: UNDO_EVENT } = await import(
+	'../../src/routes/api/maps/[id]/events/undo/+server.js'
+);
+const { GET: LIST_ANCHORS, POST: CREATE_ANCHOR } = await import(
+	'../../src/routes/api/maps/[id]/anchors/+server.js'
+);
+const anchorIdRoute = await import(
+	'../../src/routes/api/maps/[id]/anchors/[anchorId]/+server.js'
+);
+const eventIdRoute = await import(
+	'../../src/routes/api/maps/[id]/events/[eventId]/+server.js'
+);
+const entityIdRoute = await import('../../src/routes/api/entities/[id]/+server.js');
+const { GET: LIST_FACTIONS, POST: CREATE_FACTION } = await import(
+	'../../src/routes/api/factions/+server.js'
+);
+const factionIdRoute = await import('../../src/routes/api/factions/[id]/+server.js');
 
 function mkEvent(
 	overrides: { url?: URL; params?: Record<string, string>; body?: unknown } = {}
@@ -254,13 +274,13 @@ describe('/api/maps/[id]/regions', () => {
 		const res = await CREATE_REGION(
 			mkEvent({
 				params: { id: map.id },
-				body: { polygon, color: '#ff0000' }
+				body: { polygon }
 			})
 		);
 		expect(res.status).toBe(201);
 		const body = await readJson(res);
 		expect(body.polygon).toEqual(polygon);
-		expect(body.color).toBe('#ff0000');
+		// Slice 2 D1: color field removed from map_regions.
 		expect(body.mapId).toBe(map.id);
 		expect(body.locationId).toBeNull();
 	});
@@ -348,18 +368,9 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 		return { map, region };
 	}
 
-	it('PATCH updates region color', async () => {
-		const { map, region } = await setupMapWithRegion();
-		const res = await regionIdRoute.PATCH(
-			mkEvent({
-				params: { id: map.id, rid: region.id },
-				body: { color: '#00ff00' }
-			})
-		);
-		expect(res.status).toBe(200);
-		const body = await readJson(res);
-		expect(body.color).toBe('#00ff00');
-	});
+	// Slice 2 D1: color removed from map_regions; PATCH color is no longer
+	// a supported operation. Test deleted intentionally — the field is gone,
+	// not just renamed. Visual color now derives from faction_id.
 
 	it('PATCH updates polygon', async () => {
 		const { map, region } = await setupMapWithRegion();
@@ -398,7 +409,7 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 						id: map.id,
 						rid: '00000000-0000-0000-0000-000000000000'
 					},
-					body: { color: '#000' }
+					body: { locationId: null }
 				})
 			)
 		).rejects.toMatchObject({ status: 404 });
@@ -443,7 +454,9 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 		expect(body.locationId).toBeNull();
 	});
 
-	it('PATCH sets color to null', async () => {
+	// Slice 2 D1: color column removed. Test below kept disabled as a
+	// historical marker; restore as a faction_id test if useful.
+	it.skip('PATCH sets color to null (obsolete: color removed in Slice 2 D1)', async () => {
 		const { map, region } = await setupMapWithRegion();
 		// First set a color
 		await regionIdRoute.PATCH(
@@ -1199,8 +1212,7 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 					params: { id: source.id },
 					body: {
 						locationId: locA.id,
-						polygon: [[0, 0], [0, 10], [10, 10]],
-						color: '#ff0000'
+						polygon: [[0, 0], [0, 10], [10, 10]]
 					}
 				})
 			)
@@ -1211,8 +1223,7 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 					params: { id: source.id },
 					body: {
 						locationId: locB.id,
-						polygon: [[20, 20], [20, 30], [30, 30]],
-						color: '#00ff00'
+						polygon: [[20, 20], [20, 30], [30, 30]]
 					}
 				})
 			)
@@ -1237,7 +1248,7 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		expect(anchors[0].tPosition).toBe(Number.NEGATIVE_INFINITY);
 
 		const state = anchors[0].stateJsonb as {
-			regions: { region_id: string; faction_id: string | null; color: string }[];
+			regions: { region_id: string; faction_id: string | null }[];
 			artifacts: unknown[];
 			chains: unknown[];
 		};
@@ -1250,10 +1261,11 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		for (const ref of state.regions) {
 			expect(sourceRegionIds.has(ref.region_id)).toBe(false);
 		}
-		// Colors preserved per region.
+		// Slice 2 D1: faction_id is set to the user's Neutral faction
+		// (created by the migration / signup hook / ensureNeutralFaction).
+		// Color field no longer present.
 		for (const ref of state.regions) {
-			expect(['#ff0000', '#00ff00']).toContain(ref.color);
-			expect(ref.faction_id).toBeNull();
+			expect(ref.faction_id).toBeTruthy();
 		}
 		expect(state.artifacts).toEqual([]);
 		expect(state.chains).toEqual([]);
@@ -1334,8 +1346,7 @@ describe('Slice 1b — region write-through (G6)', () => {
 			mkEvent({
 				params: { id: map.id },
 				body: {
-					polygon: [[0, 0], [0, 10], [10, 10]],
-					color: '#ff0000'
+					polygon: [[0, 0], [0, 10], [10, 10]]
 				}
 			})
 		);
@@ -1343,86 +1354,19 @@ describe('Slice 1b — region write-through (G6)', () => {
 
 		const after = await readAnchor(map.id);
 		const afterState = after.stateJsonb as {
-			regions: Array<{ region_id: string; faction_id: string | null; color: string }>;
+			regions: Array<{ region_id: string; faction_id: string | null }>;
 		};
 		expect(afterState.regions).toHaveLength(1);
-		expect(afterState.regions[0]).toEqual({
-			region_id: region.id,
-			faction_id: null,
-			color: '#ff0000'
-		});
+		// Slice 2 D1: faction_id is the user's Neutral faction. Color field
+		// is no longer written by the POST flow.
+		expect(afterState.regions[0].region_id).toBe(region.id);
+		expect(afterState.regions[0].faction_id).toBeTruthy();
 	});
 
-	it('PATCH /api/maps/[id]/regions/[rid] updates the color in anchor state', async () => {
-		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
-		const map = await readJson(mapRes);
-		const region = await readJson(
-			await CREATE_REGION(
-				mkEvent({
-					params: { id: map.id },
-					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#ff0000' }
-				})
-			)
-		);
-		await regionIdRoute.PATCH(
-			mkEvent({
-				params: { id: map.id, rid: region.id },
-				body: { color: '#00ff00' }
-			})
-		);
-
-		const after = await readAnchor(map.id);
-		const afterState = after.stateJsonb as {
-			regions: Array<{ region_id: string; color: string }>;
-		};
-		expect(afterState.regions[0].color).toBe('#00ff00');
-	});
-
-	it('PATCH preserves faction_id in anchor state (faction overlay survives a color edit)', async () => {
-		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
-		const map = await readJson(mapRes);
-		const region = await readJson(
-			await CREATE_REGION(
-				mkEvent({
-					params: { id: map.id },
-					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#ff0000' }
-				})
-			)
-		);
-
-		// Simulate transfer_region having folded faction ownership into the
-		// baseline anchor's state_jsonb.regions[] (e.g. via a Slice 2 anchor-
-		// edit UX that promotes an event into a snapshot). Then PATCH the
-		// region's color and assert faction_id survives.
-		const [anchorBefore] = await currentDb
-			.select()
-			.from(mapAnchors)
-			.where(eq(mapAnchors.worldMapId, map.id));
-		const stateBefore = anchorBefore.stateJsonb as {
-			regions: Array<{ region_id: string; faction_id: string | null; color: string }>;
-		};
-		stateBefore.regions[0].faction_id = '550e8400-e29b-41d4-a716-446655440000';
-		await currentDb
-			.update(mapAnchors)
-			.set({ stateJsonb: stateBefore })
-			.where(eq(mapAnchors.id, anchorBefore.id));
-
-		await regionIdRoute.PATCH(
-			mkEvent({
-				params: { id: map.id, rid: region.id },
-				body: { color: '#00ff00' }
-			})
-		);
-
-		const after = await readAnchor(map.id);
-		const afterState = after.stateJsonb as {
-			regions: Array<{ region_id: string; faction_id: string | null; color: string }>;
-		};
-		expect(afterState.regions[0].color).toBe('#00ff00');
-		expect(afterState.regions[0].faction_id).toBe(
-			'550e8400-e29b-41d4-a716-446655440000'
-		);
-	});
+	// Slice 2 D1: "PATCH updates color in anchor state" and "PATCH preserves
+	// faction_id during color edit" were tests against the now-removed
+	// color column. Tests deleted intentionally; faction-overlay survival
+	// during polygon edits is covered by T4 anchor-schema work.
 
 	it('DELETE /api/maps/[id]/regions/[rid] removes the region from anchor state', async () => {
 		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
@@ -1431,7 +1375,7 @@ describe('Slice 1b — region write-through (G6)', () => {
 			await CREATE_REGION(
 				mkEvent({
 					params: { id: map.id },
-					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#ff0000' }
+					body: { polygon: [[0, 0], [0, 10], [10, 10]] }
 				})
 			)
 		);
@@ -1463,7 +1407,7 @@ describe('Slice 1b — region write-through (G6)', () => {
 			await CREATE_REGION(
 				mkEvent({
 					params: { id: map.id },
-					body: { polygon: [[0, 0], [0, 10], [10, 10]], color: '#abcdef' }
+					body: { polygon: [[0, 0], [0, 10], [10, 10]] }
 				})
 			)
 		);
@@ -1477,5 +1421,1006 @@ describe('Slice 1b — region write-through (G6)', () => {
 			const state = a.stateJsonb as { regions: Array<{ region_id: string }> };
 			expect(state.regions.map((r) => r.region_id)).toContain(region.id);
 		}
+	});
+});
+
+describe('Slice 2 D5 — cursor pagination', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	async function makeMapWith(eventCount: number): Promise<string> {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'P' } }));
+		const map = await readJson(mapRes);
+		if (eventCount === 0) return map.id;
+		// Direct DB insert is dramatically faster than POSTing N events.
+		// Slice 1b's POST /events runs the polymorphic-FK validator + the
+		// projection-readiness chain on every call. For pagination tests
+		// we only need ordered rows; the validation paths are covered
+		// elsewhere.
+		const rows = [];
+		for (let i = 0; i < eventCount; i++) {
+			rows.push({
+				worldMapId: map.id,
+				tPosition: i,
+				kind: 'transfer_region',
+				// payload references non-existent ids; projection skips
+				// unresolvable refs (lazy GC, design doc line 268). Fine
+				// for pagination ordering tests.
+				payloadJsonb: { region_id: crypto.randomUUID(), new_faction_id: crypto.randomUUID() }
+			});
+		}
+		await currentDb.insert(mapEvents).values(rows);
+		return map.id;
+	}
+
+	function listUrl(path: string, params: Record<string, string>): URL {
+		const u = new URL(`http://localhost${path}`);
+		for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
+		return u;
+	}
+
+	it('paginates events: 1500 rows + limit=500 → 3 pages, then next_cursor null', async () => {
+		const mapId = await makeMapWith(1500);
+		const collected: unknown[] = [];
+		let cursor: string | null = null;
+		let pages = 0;
+		do {
+			const params: Record<string, string> = { limit: '500' };
+			if (cursor) params.after = cursor;
+			const res = await LIST_EVENTS(
+				mkEvent({ url: listUrl(`/api/maps/${mapId}/events`, params), params: { id: mapId } })
+			);
+			const body = await readJson(res);
+			collected.push(...body.rows);
+			cursor = body.next_cursor;
+			pages++;
+			if (pages > 5) throw new Error('pagination loop did not terminate');
+		} while (cursor != null);
+		expect(pages).toBe(3); // 500 + 500 + 500 → last page non-full → null
+		expect(collected).toHaveLength(1500);
+		// Stable ordering: t_position ascending.
+		const positions = collected.map((r) => (r as { tPosition: number }).tPosition);
+		const sorted = [...positions].sort((a, b) => a - b);
+		expect(positions).toEqual(sorted);
+	});
+
+	it('returns next_cursor: null when result page is non-full', async () => {
+		const mapId = await makeMapWith(7);
+		const res = await LIST_EVENTS(
+			mkEvent({ url: listUrl(`/api/maps/${mapId}/events`, { limit: '10' }), params: { id: mapId } })
+		);
+		const body = await readJson(res);
+		expect(body.rows).toHaveLength(7);
+		expect(body.next_cursor).toBeNull();
+	});
+
+	it('returns next_cursor: null on empty list', async () => {
+		const mapId = await makeMapWith(0);
+		const res = await LIST_EVENTS(
+			mkEvent({ url: listUrl(`/api/maps/${mapId}/events`, {}), params: { id: mapId } })
+		);
+		const body = await readJson(res);
+		expect(body.rows).toEqual([]);
+		expect(body.next_cursor).toBeNull();
+	});
+
+	it('rejects malformed cursor with 400', async () => {
+		const mapId = await makeMapWith(5);
+		await expect(
+			LIST_EVENTS(
+				mkEvent({
+					url: listUrl(`/api/maps/${mapId}/events`, { after: 'not-a-real-cursor' }),
+					params: { id: mapId }
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('cursor does not leak across users (auth-isolation)', async () => {
+		const mapIdA = await makeMapWith(20);
+		// Get user A's cursor at the end of page 1.
+		const resA = await LIST_EVENTS(
+			mkEvent({
+				url: listUrl(`/api/maps/${mapIdA}/events`, { limit: '10' }),
+				params: { id: mapIdA }
+			})
+		);
+		const bodyA = await readJson(resA);
+		expect(bodyA.next_cursor).not.toBeNull();
+		const cursorFromUserA = bodyA.next_cursor as string;
+
+		// User B tries to use user A's cursor against their OWN map (different mapId).
+		// Even if the cursor decodes, ownership check blocks at the route level.
+		const userB = await seedTestUser(currentDb, { name: 'B', email: 'b@b.com' });
+		const prevUserId = userId;
+		userId = userB.id;
+		const mapIdB = await makeMapWith(5);
+		// User B requests A's map with A's cursor → 404 (ownership guard).
+		await expect(
+			LIST_EVENTS(
+				mkEvent({
+					url: listUrl(`/api/maps/${mapIdA}/events`, {
+						limit: '10',
+						after: cursorFromUserA
+					}),
+					params: { id: mapIdA }
+				})
+			)
+		).rejects.toMatchObject({ status: 404 });
+		// User B requests B's map with A's cursor → cursor is opaque but
+		// the rows it filters are B's rows; user A's data does not leak.
+		const resB = await LIST_EVENTS(
+			mkEvent({
+				url: listUrl(`/api/maps/${mapIdB}/events`, {
+					limit: '10',
+					after: cursorFromUserA
+				}),
+				params: { id: mapIdB }
+			})
+		);
+		const bodyB = await readJson(resB);
+		// User B's events come AFTER user A's cursor at (t=9), so user B
+		// only sees B's events with t_position > 9 — that's 0 events if
+		// B's seeded events are at t=0..4. The point is rows.length is
+		// scoped to B's map regardless of A's cursor.
+		for (const row of bodyB.rows) {
+			expect((row as { worldMapId: string }).worldMapId).toBe(mapIdB);
+		}
+		userId = prevUserId;
+	});
+
+	it('anchors paginate with the same scheme', async () => {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'A' } }));
+		const map = await readJson(mapRes);
+		// The baseline anchor at t=-Infinity is already there; add 14 more.
+		const anchorRows = [];
+		for (let i = 0; i < 14; i++) {
+			anchorRows.push({
+				worldMapId: map.id,
+				tPosition: i + 1,
+				stateJsonb: { regions: [], artifacts: [], chains: [] }
+			});
+		}
+		await currentDb.insert(mapAnchors).values(anchorRows);
+
+		const res1 = await LIST_ANCHORS(
+			mkEvent({
+				url: listUrl(`/api/maps/${map.id}/anchors`, { limit: '10' }),
+				params: { id: map.id }
+			})
+		);
+		const body1 = await readJson(res1);
+		expect(body1.rows).toHaveLength(10);
+		expect(body1.next_cursor).not.toBeNull();
+
+		const res2 = await LIST_ANCHORS(
+			mkEvent({
+				url: listUrl(`/api/maps/${map.id}/anchors`, {
+					limit: '10',
+					after: body1.next_cursor as string
+				}),
+				params: { id: map.id }
+			})
+		);
+		const body2 = await readJson(res2);
+		expect(body2.rows.length).toBeGreaterThan(0);
+		expect(body2.next_cursor).toBeNull();
+		// No duplicates across pages.
+		const ids1 = new Set(body1.rows.map((r: { id: string }) => r.id));
+		for (const r of body2.rows as Array<{ id: string }>) expect(ids1.has(r.id)).toBe(false);
+	});
+
+	it('factions paginate by createdAt', async () => {
+		const factionRows = [];
+		for (let i = 0; i < 12; i++) {
+			factionRows.push({
+				userId,
+				name: `F${i}`,
+				color: '#ff0000'
+			});
+		}
+		await currentDb.insert(factions).values(factionRows);
+
+		const res1 = await LIST_FACTIONS(
+			mkEvent({ url: listUrl('/api/factions', { limit: '5' }) })
+		);
+		const body1 = await readJson(res1);
+		expect(body1.rows).toHaveLength(5);
+		expect(body1.next_cursor).not.toBeNull();
+
+		const res2 = await LIST_FACTIONS(
+			mkEvent({
+				url: listUrl('/api/factions', { limit: '5', after: body1.next_cursor as string })
+			})
+		);
+		const body2 = await readJson(res2);
+		expect(body2.rows).toHaveLength(5);
+
+		const res3 = await LIST_FACTIONS(
+			mkEvent({
+				url: listUrl('/api/factions', { limit: '5', after: body2.next_cursor as string })
+			})
+		);
+		const body3 = await readJson(res3);
+		expect(body3.rows).toHaveLength(2);
+		expect(body3.next_cursor).toBeNull();
+	});
+});
+
+describe('Slice 2 D1 — factions.is_system guards', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	async function makeFaction(opts: { isSystem?: boolean } = {}): Promise<{ id: string }> {
+		// CREATE_FACTION goes through the validated POST, which doesn't
+		// expose is_system. For the is_system=true row used by these tests
+		// we insert directly — that mirrors how the migration seeds the
+		// per-user Neutral on user creation (T3).
+		if (opts.isSystem) {
+			const [row] = await currentDb
+				.insert(factions)
+				.values({ userId, name: 'Neutral', color: '#9CA3AF', isSystem: true })
+				.returning();
+			return { id: row.id };
+		}
+		const res = await CREATE_FACTION(
+			mkEvent({ body: { name: 'Allies', color: '#2dd4bf' } })
+		);
+		return (await readJson(res)) as { id: string };
+	}
+
+	it('DELETE on is_system=true returns 422', async () => {
+		const sys = await makeFaction({ isSystem: true });
+		await expect(
+			factionIdRoute.DELETE(mkEvent({ params: { id: sys.id } }))
+		).rejects.toMatchObject({ status: 422 });
+		// Row still exists.
+		const remaining = await currentDb
+			.select({ id: factions.id })
+			.from(factions)
+			.where(eq(factions.id, sys.id));
+		expect(remaining).toHaveLength(1);
+	});
+
+	it('DELETE on is_system=false still works (no regression)', async () => {
+		const normal = await makeFaction();
+		const res = await factionIdRoute.DELETE(mkEvent({ params: { id: normal.id } }));
+		expect(res.status).toBe(204);
+	});
+
+	it('PATCH cannot set isSystem on a normal faction', async () => {
+		const normal = await makeFaction();
+		await expect(
+			factionIdRoute.PATCH(
+				mkEvent({ params: { id: normal.id }, body: { isSystem: true } })
+			)
+		).rejects.toMatchObject({ status: 422 });
+	});
+
+	it('PATCH name/color on a system faction is allowed (user owns it)', async () => {
+		const sys = await makeFaction({ isSystem: true });
+		const res = await factionIdRoute.PATCH(
+			mkEvent({
+				params: { id: sys.id },
+				body: { name: 'Independent', color: '#888888' }
+			})
+		);
+		expect(res.status).toBe(200);
+		const body = await readJson(res);
+		expect(body.name).toBe('Independent');
+		expect(body.isSystem).toBe(true);
+	});
+
+	it('partial unique index rejects a second is_system row for the same user', async () => {
+		await makeFaction({ isSystem: true });
+		await expect(
+			currentDb
+				.insert(factions)
+				.values({ userId, name: 'Neutral2', color: '#000000', isSystem: true })
+		).rejects.toThrow();
+	});
+
+	it('two different users can each have their own is_system row', async () => {
+		await makeFaction({ isSystem: true });
+		const userB = await seedTestUser(currentDb, { name: 'B', email: 'b@b.com' });
+		// Direct insert — partial unique is scoped per user_id, so this
+		// must succeed.
+		const [bRow] = await currentDb
+			.insert(factions)
+			.values({ userId: userB.id, name: 'Neutral', color: '#9CA3AF', isSystem: true })
+			.returning();
+		expect(bRow.isSystem).toBe(true);
+	});
+
+	it('CREATE_FACTION never produces an is_system row', async () => {
+		const created = await readJson(
+			await CREATE_FACTION(mkEvent({ body: { name: 'X', color: '#ff0000' } }))
+		);
+		expect(created.isSystem).toBe(false);
+	});
+});
+
+describe('Slice 2 D1 — Neutral faction backfill (T3)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	it('first region POST creates a Neutral faction for the user', async () => {
+		// Before any region is created, no factions exist for this user.
+		const before = await currentDb
+			.select()
+			.from(factions)
+			.where(eq(factions.userId, userId));
+		expect(before).toHaveLength(0);
+
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		await CREATE_REGION(
+			mkEvent({
+				params: { id: map.id },
+				body: { polygon: [[0, 0], [0, 10], [10, 10]] }
+			})
+		);
+
+		const after = await currentDb
+			.select()
+			.from(factions)
+			.where(eq(factions.userId, userId));
+		expect(after).toHaveLength(1);
+		expect(after[0].isSystem).toBe(true);
+		expect(after[0].name).toBe('Neutral');
+		expect(after[0].color).toBe('#9ca3af');
+	});
+
+	it('subsequent region POSTs do not create a second Neutral (idempotent)', async () => {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		await CREATE_REGION(
+			mkEvent({ params: { id: map.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+		);
+		await CREATE_REGION(
+			mkEvent({ params: { id: map.id }, body: { polygon: [[20, 20], [20, 30], [30, 30]] } })
+		);
+
+		const all = await currentDb
+			.select()
+			.from(factions)
+			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+		expect(all).toHaveLength(1);
+	});
+
+	it('anchor regions[] entries point at the user Neutral faction id', async () => {
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		await CREATE_REGION(
+			mkEvent({ params: { id: map.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+		);
+
+		const [neutral] = await currentDb
+			.select({ id: factions.id })
+			.from(factions)
+			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+
+		const [anchor] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const state = anchor.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string }>;
+		};
+		expect(state.regions).toHaveLength(1);
+		expect(state.regions[0].faction_id).toBe(neutral.id);
+	});
+
+	it('two users get distinct Neutral factions (per-user partitioning)', async () => {
+		const mapA = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'A' } })));
+		await CREATE_REGION(
+			mkEvent({ params: { id: mapA.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+		);
+		const userB = await seedTestUser(currentDb, { name: 'B', email: 'b@b.com' });
+		const prevUserId = userId;
+		userId = userB.id;
+		const mapB = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'B' } })));
+		await CREATE_REGION(
+			mkEvent({ params: { id: mapB.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+		);
+		userId = prevUserId;
+
+		const aNeutral = await currentDb
+			.select({ id: factions.id })
+			.from(factions)
+			.where(and(eq(factions.userId, prevUserId), eq(factions.isSystem, true)));
+		const bNeutral = await currentDb
+			.select({ id: factions.id })
+			.from(factions)
+			.where(and(eq(factions.userId, userB.id), eq(factions.isSystem, true)));
+		expect(aNeutral).toHaveLength(1);
+		expect(bNeutral).toHaveLength(1);
+		expect(aNeutral[0].id).not.toBe(bNeutral[0].id);
+	});
+
+	it('duplicate map uses Neutral as faction_id on cloned regions', async () => {
+		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Source' } }));
+		const source = await readJson(sourceRes);
+		await CREATE_REGION(
+			mkEvent({ params: { id: source.id }, body: { polygon: [[0, 0], [0, 10], [10, 10]] } })
+		);
+
+		const cloneRes = await DUPLICATE_MAP(mkEvent({ params: { id: source.id } }));
+		const clone = await readJson(cloneRes);
+
+		const [neutral] = await currentDb
+			.select({ id: factions.id })
+			.from(factions)
+			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+
+		const [anchor] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, clone.id));
+		const state = anchor.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string }>;
+		};
+		expect(state.regions).toHaveLength(1);
+		expect(state.regions[0].faction_id).toBe(neutral.id);
+	});
+});
+
+describe('Slice 2 D2 PR-A — anchor schema gains polygon + locationId (T4)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	it('POST /regions writes polygon + locationId into every anchor entry', async () => {
+		const polygon = [[0, 0], [0, 10], [10, 10]];
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		// Add a second anchor so fan-out covers > 1 row.
+		await currentDb.insert(mapAnchors).values({
+			worldMapId: map.id,
+			tPosition: 5,
+			stateJsonb: { regions: [], artifacts: [], chains: [] }
+		});
+
+		const region = await readJson(
+			await CREATE_REGION(mkEvent({ params: { id: map.id }, body: { polygon } }))
+		);
+
+		const anchors = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		expect(anchors).toHaveLength(2);
+		for (const a of anchors) {
+			const state = a.stateJsonb as {
+				regions: Array<{ region_id: string; polygon: number[][]; locationId: string | null }>;
+			};
+			const entry = state.regions.find((r) => r.region_id === region.id);
+			expect(entry).toBeDefined();
+			expect(entry!.polygon).toEqual(polygon);
+			expect(entry!.locationId).toBeNull();
+		}
+	});
+
+	it('PATCH polygon write-through updates anchor entry, preserves faction_id', async () => {
+		const polygon = [[0, 0], [0, 10], [10, 10]];
+		const newPolygon = [[1, 1], [1, 11], [11, 11]];
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		const region = await readJson(
+			await CREATE_REGION(mkEvent({ params: { id: map.id }, body: { polygon } }))
+		);
+
+		// Overlay a non-Neutral faction_id on the anchor entry to simulate
+		// transfer_region having promoted ownership.
+		const [anchorBefore] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const stateBefore = anchorBefore.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string; polygon: number[][] }>;
+		};
+		stateBefore.regions[0].faction_id = '550e8400-e29b-41d4-a716-446655440000';
+		await currentDb
+			.update(mapAnchors)
+			.set({ stateJsonb: stateBefore })
+			.where(eq(mapAnchors.id, anchorBefore.id));
+
+		await regionIdRoute.PATCH(
+			mkEvent({ params: { id: map.id, rid: region.id }, body: { polygon: newPolygon } })
+		);
+
+		const [anchorAfter] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const stateAfter = anchorAfter.stateJsonb as {
+			regions: Array<{ region_id: string; faction_id: string; polygon: number[][] }>;
+		};
+		expect(stateAfter.regions[0].polygon).toEqual(newPolygon);
+		expect(stateAfter.regions[0].faction_id).toBe('550e8400-e29b-41d4-a716-446655440000');
+	});
+
+	it('PATCH locationId write-through propagates to anchor entry', async () => {
+		const polygon = [[0, 0], [0, 10], [10, 10]];
+		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
+		const map = await readJson(mapRes);
+		const region = await readJson(
+			await CREATE_REGION(mkEvent({ params: { id: map.id }, body: { polygon } }))
+		);
+
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Forest' })
+			.returning();
+		await regionIdRoute.PATCH(
+			mkEvent({ params: { id: map.id, rid: region.id }, body: { locationId: loc.id } })
+		);
+
+		const [anchor] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const state = anchor.stateJsonb as {
+			regions: Array<{ region_id: string; locationId: string | null }>;
+		};
+		expect(state.regions[0].locationId).toBe(loc.id);
+
+		// Then null it back.
+		await regionIdRoute.PATCH(
+			mkEvent({ params: { id: map.id, rid: region.id }, body: { locationId: null } })
+		);
+		const [anchorAfter] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const stateAfter = anchorAfter.stateJsonb as {
+			regions: Array<{ region_id: string; locationId: string | null }>;
+		};
+		expect(stateAfter.regions[0].locationId).toBeNull();
+	});
+
+	it('duplicate-map clone carries polygon + locationId on anchor entries', async () => {
+		const polygon = [[0, 0], [0, 10], [10, 10]];
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'L' })
+			.returning();
+		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Source' } }));
+		const source = await readJson(sourceRes);
+		await CREATE_REGION(
+			mkEvent({
+				params: { id: source.id },
+				body: { polygon, locationId: loc.id }
+			})
+		);
+
+		const cloneRes = await DUPLICATE_MAP(mkEvent({ params: { id: source.id } }));
+		const clone = await readJson(cloneRes);
+		const [anchor] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, clone.id));
+		const state = anchor.stateJsonb as {
+			regions: Array<{ region_id: string; polygon: number[][]; locationId: string | null }>;
+		};
+		expect(state.regions).toHaveLength(1);
+		expect(state.regions[0].polygon).toEqual(polygon);
+		expect(state.regions[0].locationId).toBe(loc.id);
+	});
+
+	// T4's "anchor matches map_regions" invariant test was deleted in T6
+	// (Slice 2 D2 PR-C): map_regions is gone, so there's nothing to
+	// cross-check against. Anchor JSON is the only source of truth now.
+});
+
+describe('Slice 2 D3 — undo endpoint (T7)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	async function seedEventsWithCreatedAt(
+		mapId: string,
+		specs: Array<{ tPosition: number; createdAt: Date }>
+	) {
+		const rows = specs.map((s) => ({
+			worldMapId: mapId,
+			tPosition: s.tPosition,
+			kind: 'transfer_region',
+			payloadJsonb: {
+				region_id: crypto.randomUUID(),
+				new_faction_id: crypto.randomUUID()
+			},
+			createdAt: s.createdAt
+		}));
+		return currentDb.insert(mapEvents).values(rows).returning();
+	}
+
+	it('pops by (created_at DESC, id DESC), not by t_position', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		// Event A: t=10, created earlier. Event B: t=1, created later.
+		// Command-stack semantics: B is "latest" and gets undone first.
+		const [eventA] = await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 10, createdAt: new Date('2026-01-01T00:00:00Z') }
+		]);
+		const [eventB] = await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 1, createdAt: new Date('2026-01-02T00:00:00Z') }
+		]);
+
+		const res1 = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		const popped1 = await readJson(res1);
+		expect(popped1.id).toBe(eventB.id);
+
+		const res2 = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		const popped2 = await readJson(res2);
+		expect(popped2.id).toBe(eventA.id);
+	});
+
+	it('soft-deletes (sets undone_at, does not delete the row)', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const [event] = await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 1, createdAt: new Date('2026-01-01T00:00:00Z') }
+		]);
+
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+
+		const [row] = await currentDb
+			.select()
+			.from(mapEvents)
+			.where(eq(mapEvents.id, event.id));
+		expect(row).toBeDefined();
+		expect(row.undoneAt).not.toBeNull();
+	});
+
+	it('list endpoint excludes undone events', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 1, createdAt: new Date('2026-01-01T00:00:00Z') },
+			{ tPosition: 2, createdAt: new Date('2026-01-02T00:00:00Z') }
+		]);
+
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+
+		const listRes = await LIST_EVENTS(
+			mkEvent({
+				url: new URL(`http://localhost/api/maps/${map.id}/events`),
+				params: { id: map.id }
+			})
+		);
+		const body = await readJson(listRes);
+		expect(body.rows).toHaveLength(1);
+		expect(body.rows[0].tPosition).toBe(1);
+	});
+
+	it('returns 422 on empty stack', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await expect(
+			UNDO_EVENT(mkEvent({ params: { id: map.id } }))
+		).rejects.toMatchObject({ status: 422 });
+	});
+
+	it('returns 422 after every event has been undone', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 1, createdAt: new Date('2026-01-01T00:00:00Z') }
+		]);
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		await expect(
+			UNDO_EVENT(mkEvent({ params: { id: map.id } }))
+		).rejects.toMatchObject({ status: 422 });
+	});
+
+	it('cross-user undo returns 404 (no existence leak)', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await seedEventsWithCreatedAt(map.id, [
+			{ tPosition: 1, createdAt: new Date('2026-01-01T00:00:00Z') }
+		]);
+
+		const userB = await seedTestUser(currentDb, { name: 'B', email: 'b@b.com' });
+		const prevUserId = userId;
+		userId = userB.id;
+		await expect(
+			UNDO_EVENT(mkEvent({ params: { id: map.id } }))
+		).rejects.toMatchObject({ status: 404 });
+		userId = prevUserId;
+	});
+
+	it('countFactionDependents excludes undone transfer_region events', async () => {
+		const { countFactionDependents } = await import('../../src/lib/server/world-map-v3.js');
+		const faction = await readJson(
+			await CREATE_FACTION(mkEvent({ body: { name: 'F', color: '#ff0000' } }))
+		);
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await currentDb.insert(mapEvents).values({
+			worldMapId: map.id,
+			tPosition: 1,
+			kind: 'transfer_region',
+			payloadJsonb: { region_id: crypto.randomUUID(), new_faction_id: faction.id }
+		});
+		expect(await countFactionDependents(currentDb, userId, faction.id)).toBe(1);
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		expect(await countFactionDependents(currentDb, userId, faction.id)).toBe(0);
+	});
+
+	it('redo via re-POST creates a new row with same t_position + payload', async () => {
+		// CREATE_EVENT runs validateEventPayload, which checks that
+		// region_id exists on the map and faction_id is the caller's.
+		// Seed real ones so the replay POST is well-formed.
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const region = await readJson(
+			await CREATE_REGION(
+				mkEvent({
+					params: { id: map.id },
+					body: { polygon: [[0, 0], [0, 10], [10, 10]] }
+				})
+			)
+		);
+		const faction = await readJson(
+			await CREATE_FACTION(mkEvent({ body: { name: 'F', color: '#ff0000' } }))
+		);
+		const payload = { region_id: region.id, new_faction_id: faction.id };
+
+		const originalRes = await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: { tPosition: 5, kind: 'transfer_region', payloadJsonb: payload }
+			})
+		);
+		const original = await readJson(originalRes);
+
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+
+		const replayRes = await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: original.tPosition,
+					kind: original.kind,
+					payloadJsonb: original.payloadJsonb
+				}
+			})
+		);
+		const replay = await readJson(replayRes);
+		expect(replay.id).not.toBe(original.id);
+		expect(replay.tPosition).toBe(original.tPosition);
+		expect(replay.payloadJsonb).toEqual(original.payloadJsonb);
+		// Original row still present, still undone.
+		const [origRow] = await currentDb
+			.select()
+			.from(mapEvents)
+			.where(eq(mapEvents.id, original.id));
+		expect(origRow.undoneAt).not.toBeNull();
+	});
+});
+
+describe('Slice 2 D2 PR-C hardening (codex review)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		const _user = await seedTestUser(currentDb);
+		userId = _user.id;
+	});
+
+	it('P0 #1: PATCH on baseline anchor (t=-Infinity) returns 422', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const [baseline] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		expect(baseline.tPosition).toBe(Number.NEGATIVE_INFINITY);
+
+		await expect(
+			anchorIdRoute.PATCH(
+				mkEvent({
+					params: { id: map.id, anchorId: baseline.id },
+					body: { stateJsonb: { regions: [], artifacts: [], chains: [] } }
+				})
+			)
+		).rejects.toMatchObject({ status: 422 });
+
+		// Baseline state untouched.
+		const [after] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.id, baseline.id));
+		expect(after.stateJsonb).toEqual(baseline.stateJsonb);
+	});
+
+	it('P0 #1: DELETE on baseline anchor returns 422, baseline survives', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const [baseline] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+
+		await expect(
+			anchorIdRoute.DELETE(
+				mkEvent({ params: { id: map.id, anchorId: baseline.id } })
+			)
+		).rejects.toMatchObject({ status: 422 });
+
+		const remaining = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		expect(remaining).toHaveLength(1);
+		expect(remaining[0].id).toBe(baseline.id);
+	});
+
+	it('P0 #1: PATCH/DELETE on non-baseline anchor still works', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const snapshot = await readJson(
+			await CREATE_ANCHOR(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 5,
+						stateJsonb: { regions: [], artifacts: [], chains: [] }
+					}
+				})
+			)
+		);
+		const patched = await anchorIdRoute.PATCH(
+			mkEvent({
+				params: { id: map.id, anchorId: snapshot.id },
+				body: { tPosition: 7 }
+			})
+		);
+		expect(patched.status).toBe(200);
+		const delRes = await anchorIdRoute.DELETE(
+			mkEvent({ params: { id: map.id, anchorId: snapshot.id } })
+		);
+		expect(delRes.status).toBe(204);
+	});
+
+	it('P0 #2: Location DELETE scrubs locationId from anchor JSON', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const [loc] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Forest' })
+			.returning();
+		await CREATE_REGION(
+			mkEvent({
+				params: { id: map.id },
+				body: { polygon: [[0, 0], [0, 10], [10, 10]], locationId: loc.id }
+			})
+		);
+
+		// Pre-delete: anchor entry has locationId set.
+		const [before] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const beforeState = before.stateJsonb as {
+			regions: Array<{ locationId: string | null }>;
+		};
+		expect(beforeState.regions[0].locationId).toBe(loc.id);
+
+		// Delete the Location.
+		await entityIdRoute.DELETE(mkEvent({ params: { id: loc.id } }));
+
+		// Post-delete: anchor entry has locationId nulled (no stale UUID).
+		const [after] = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const afterState = after.stateJsonb as {
+			regions: Array<{ locationId: string | null }>;
+		};
+		expect(afterState.regions[0].locationId).toBeNull();
+	});
+
+	it('P1 #2: ensureNeutralFaction recovers from concurrent insert race', async () => {
+		const { ensureNeutralFaction } = await import('../../src/lib/server/world-map-v3.js');
+		// Simulate the race by pre-inserting a Neutral, then calling the helper —
+		// the second-write code path is the one the helper recovers from.
+		const [winner] = await currentDb
+			.insert(factions)
+			.values({ userId, name: 'Neutral', color: '#9ca3af', isSystem: true })
+			.returning({ id: factions.id });
+		const result = await ensureNeutralFaction(currentDb, userId);
+		expect(result).toBe(winner.id);
+	});
+
+	it('P1 #3: -Infinity tPosition cursor encodes/decodes cleanly', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		await currentDb.insert(mapAnchors).values({
+			worldMapId: map.id,
+			tPosition: 5,
+			stateJsonb: { regions: [], artifacts: [], chains: [] }
+		});
+
+		// limit=1 + 2 anchors → first page returns baseline at t=-Inf,
+		// next_cursor points past it. The cursor must round-trip cleanly.
+		const res1 = await LIST_ANCHORS(
+			mkEvent({
+				url: new URL(`http://localhost/api/maps/${map.id}/anchors?limit=1`),
+				params: { id: map.id }
+			})
+		);
+		const body1 = await readJson(res1);
+		expect(body1.rows).toHaveLength(1);
+		// JSON.stringify(-Infinity) is `null` — preserved as the
+		// existing wire-format quirk (pre-existing behavior, not part
+		// of this hardening). The cursor still needs to round-trip
+		// the actual -Infinity value through the encoder; the next
+		// LIST call below proves that.
+		expect(body1.rows[0].tPosition).toBeNull();
+		expect(body1.next_cursor).not.toBeNull();
+
+		// Pre-fix: the next request would 400 because cursor.t decoded as
+		// null. Post-fix: it should succeed and return the next page.
+		const res2 = await LIST_ANCHORS(
+			mkEvent({
+				url: new URL(
+					`http://localhost/api/maps/${map.id}/anchors?limit=1&after=${encodeURIComponent(body1.next_cursor)}`
+				),
+				params: { id: map.id }
+			})
+		);
+		const body2 = await readJson(res2);
+		expect(body2.rows).toHaveLength(1);
+		expect(body2.rows[0].tPosition).toBe(5);
+	});
+
+	it('P1 #4: malformed cursor date string returns 400 not 500', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const evilCursor = Buffer.from(
+			JSON.stringify({ t: 5, c: 'not-a-date', id: 'x' }),
+			'utf8'
+		).toString('base64url');
+		await expect(
+			LIST_ANCHORS(
+				mkEvent({
+					url: new URL(
+						`http://localhost/api/maps/${map.id}/anchors?after=${encodeURIComponent(evilCursor)}`
+					),
+					params: { id: map.id }
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('P2: DELETE event endpoint soft-deletes (sets undoneAt, audit preserved)', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const [event] = await currentDb
+			.insert(mapEvents)
+			.values({
+				worldMapId: map.id,
+				tPosition: 1,
+				kind: 'transfer_region',
+				payloadJsonb: { region_id: crypto.randomUUID(), new_faction_id: crypto.randomUUID() }
+			})
+			.returning();
+
+		await eventIdRoute.DELETE(
+			mkEvent({ params: { id: map.id, eventId: event.id } })
+		);
+
+		// Row still on disk for audit, undoneAt set.
+		const [row] = await currentDb
+			.select()
+			.from(mapEvents)
+			.where(eq(mapEvents.id, event.id));
+		expect(row).toBeDefined();
+		expect(row.undoneAt).not.toBeNull();
+
+		// Second DELETE on the same event → 404 (already soft-deleted).
+		await expect(
+			eventIdRoute.DELETE(
+				mkEvent({ params: { id: map.id, eventId: event.id } })
+			)
+		).rejects.toMatchObject({ status: 404 });
 	});
 });

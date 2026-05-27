@@ -9,13 +9,12 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTestDb, seedTestUser } from '../helpers/test-db.js';
+import { createTestDb, seedTestUser, seedRegionWithAnchorBackfill } from '../helpers/test-db.js';
 import {
 	entities,
 	factions,
 	mapAnchors,
 	mapEvents,
-	mapRegions,
 	worldMaps
 } from '../../src/lib/server/db/schema.js';
 
@@ -83,17 +82,18 @@ describe('auth isolation: World Map v3 endpoints', () => {
 			.returning();
 		aFactionId = faction.id;
 
-		const [region] = await currentDb
-			.insert(mapRegions)
-			.values({
-				mapId: aMapId,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		// Slice 2 D2 PR-B: validation reads from anchor JSON, so the
+		// region must be present there too. seedRegionWithAnchorBackfill
+		// inserts into map_regions and ensures the baseline anchor entry
+		// exists (creating the baseline anchor if absent).
+		const region = await seedRegionWithAnchorBackfill(currentDb, {
+			mapId: aMapId,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 		aRegionId = region.id;
 
 		const [anchor] = await currentDb
@@ -122,7 +122,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 
 	it('user B GET /api/factions returns empty', async () => {
 		const res = await factionsRoute.GET(mkEvent(userB));
-		expect(await readJson(res)).toEqual({ rows: [], truncated: false });
+		expect(await readJson(res)).toEqual({ rows: [], next_cursor: null });
 	});
 
 	it('user B PATCH /api/factions/[id] returns 404', async () => {
@@ -281,9 +281,9 @@ describe('auth isolation: World Map v3 endpoints', () => {
 
 	it('user A can list their own factions', async () => {
 		const res = await factionsRoute.GET(mkEvent(userA));
-		const body = (await readJson(res)) as { rows: Array<{ id: string }>; truncated: boolean };
+		const body = (await readJson(res)) as { rows: Array<{ id: string }>; next_cursor: string | null };
 		expect(body.rows.map((r) => r.id)).toContain(aFactionId);
-		expect(body.truncated).toBe(false);
+		expect(body.next_cursor).toBeNull();
 	});
 
 	it('user A can POST + DELETE their own anchor', async () => {
@@ -310,17 +310,14 @@ describe('auth isolation: World Map v3 endpoints', () => {
 			.insert(worldMaps)
 			.values({ userId: userB, name: 'B map' })
 			.returning();
-		const [bRegion] = await currentDb
-			.insert(mapRegions)
-			.values({
-				mapId: bMap.id,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		const bRegion = await seedRegionWithAnchorBackfill(currentDb, {
+			mapId: bMap.id,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 
 		await expect(
 			eventsRoute.POST(
@@ -347,17 +344,14 @@ describe('auth isolation: World Map v3 endpoints', () => {
 			.insert(worldMaps)
 			.values({ userId: userB, name: 'B map for anchor test' })
 			.returning();
-		const [bRegion] = await currentDb
-			.insert(mapRegions)
-			.values({
-				mapId: bMap.id,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		const bRegion = await seedRegionWithAnchorBackfill(currentDb, {
+			mapId: bMap.id,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 
 		await expect(
 			anchorsRoute.POST(
@@ -774,19 +768,16 @@ describe('auth isolation: World Map v3 endpoints', () => {
 
 	it("GET projection-context: user A's own faction list excludes cross-user regions even when faction has matching id pattern", async () => {
 		// Even if user B had a region in a map B owns, user A's projection-
-		// context for A's map must not list it. fetchProjectionContext joins
-		// mapRegions through worldMaps.user_id so cross-map ids stay scoped.
+		// context for A's map must not list it. fetchProjectionContext
+		// scopes through worldMaps.user_id so cross-map ids stay scoped.
 		const [bMap] = await currentDb
 			.insert(worldMaps)
 			.values({ userId: userB, name: 'B map' })
 			.returning();
-		const [bRegion] = await currentDb
-			.insert(mapRegions)
-			.values({
-				mapId: bMap.id,
-				polygon: [[0, 0], [1, 0], [1, 1]]
-			})
-			.returning();
+		const bRegion = await seedRegionWithAnchorBackfill(currentDb, {
+			mapId: bMap.id,
+			polygon: [[0, 0], [1, 0], [1, 1]]
+		});
 
 		const res = await projectionContextRoute.GET(
 			mkEvent(userA, { params: { id: aMapId } })

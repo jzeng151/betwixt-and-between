@@ -13,9 +13,9 @@
 // `spawn_artifact`, `despawn_artifact`. Adding a kind requires extending
 // EVENT_KINDS + validateEventPayload + projection.ts's fold.
 
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { error } from '@sveltejs/kit';
-import { factions, mapAnchors, mapEvents, mapRegions, worldMaps } from './db/schema.js';
+import { factions, mapAnchors, mapEvents, worldMaps } from './db/schema.js';
 import { assertSourceEventIdIsEvent } from './intervals/polymorphic-fk.js';
 import type { Db } from './intervals.js';
 import {
@@ -59,6 +59,135 @@ function assertObjectBody(body: unknown): asserts body is Record<string, unknown
 }
 
 // ── Faction CRUD ────────────────────────────────────────────────────────────
+
+// ── Slice 2 D2 PR-B: region reads through anchor JSON ─────────────────────
+//
+// Helper for the 7 read sites that previously did
+// `db.select().from(mapRegions)`. Returns region shape identical to the old
+// map_regions row (id, mapId, locationId, polygon) so callers don't have
+// to know they're now reading from anchor JSON. createdAt/updatedAt are
+// dropped — clients don't use them and the anchor entries don't carry them.
+//
+// Source: the baseline anchor (tPosition = -Infinity) for each map. T4's
+// backfill + T4's fanOutRegionAdd keep this anchor's regions[] in sync
+// with the map_regions table; reads either source give identical
+// geometry. T6 drops map_regions; until then both are kept in sync by
+// the write paths.
+
+export type AnchorRegionRow = {
+	id: string;
+	mapId: string;
+	locationId: string | null;
+	polygon: number[][];
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyDbOrTx = any;
+
+export async function readBaselineRegions(
+	db: AnyDbOrTx,
+	worldMapId: string
+): Promise<AnchorRegionRow[]> {
+	const [anchor] = await db
+		.select({ stateJsonb: mapAnchors.stateJsonb })
+		.from(mapAnchors)
+		.where(eq(mapAnchors.worldMapId, worldMapId))
+		.orderBy(asc(mapAnchors.tPosition), asc(mapAnchors.createdAt), asc(mapAnchors.id))
+		.limit(1);
+	if (!anchor) return [];
+	const state = anchor.stateJsonb as AnchorState | null;
+	const regions = state?.regions ?? [];
+	return regions
+		.filter((r) => Array.isArray(r.polygon) && r.polygon.length >= 3)
+		.map((r) => ({
+			id: r.region_id,
+			mapId: worldMapId,
+			locationId: r.locationId ?? null,
+			polygon: r.polygon as number[][]
+		}));
+}
+
+/**
+ * Cross-user-safe variant: scopes through world_maps.user_id so callers
+ * that aren't already gated by an ownership assert can use this safely.
+ * Returns empty array on cross-user attempt (no existence leak).
+ */
+export async function readBaselineRegionsForUser(
+	db: AnyDbOrTx,
+	userId: string,
+	worldMapId: string
+): Promise<AnchorRegionRow[]> {
+	const [anchor] = await db
+		.select({ stateJsonb: mapAnchors.stateJsonb })
+		.from(mapAnchors)
+		.innerJoin(worldMaps, eq(mapAnchors.worldMapId, worldMaps.id))
+		.where(and(eq(mapAnchors.worldMapId, worldMapId), eq(worldMaps.userId, userId)))
+		.orderBy(asc(mapAnchors.tPosition), asc(mapAnchors.createdAt), asc(mapAnchors.id))
+		.limit(1);
+	if (!anchor) return [];
+	const state = anchor.stateJsonb as AnchorState | null;
+	const regions = state?.regions ?? [];
+	return regions
+		.filter((r) => Array.isArray(r.polygon) && r.polygon.length >= 3)
+		.map((r) => ({
+			id: r.region_id,
+			mapId: worldMapId,
+			locationId: r.locationId ?? null,
+			polygon: r.polygon as number[][]
+		}));
+}
+
+/**
+ * Slice 2 D1: every user has a per-user "Neutral" faction (is_system=true).
+ * The migration drizzle/0014_d1_faction_only_color.sql backfills existing
+ * users. New users get Neutral lazily on their first faction-or-region
+ * write via this helper — the plan's better-auth signup-hook approach
+ * works too but threading the request-scoped db through better-auth's
+ * hook system is more plumbing than this lazy-create pattern. The result
+ * is the same: by the time any region-write needs a Neutral faction_id,
+ * one exists.
+ *
+ * Idempotent. The partial unique index factions_user_one_system enforces
+ * "at most one is_system row per user" at the storage layer; this helper
+ * checks-then-inserts but a concurrent race that lost the insert would
+ * either still see the existing row on retry OR the unique index would
+ * have rejected the duplicate. Both outcomes leave us with one row.
+ */
+export const NEUTRAL_FACTION_COLOR = '#9ca3af';
+export const NEUTRAL_FACTION_NAME = 'Neutral';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyTx = any;
+export async function ensureNeutralFaction(tx: AnyTx, userId: string): Promise<string> {
+	const [existing] = await tx
+		.select({ id: factions.id })
+		.from(factions)
+		.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+	if (existing) return existing.id;
+	// codex PR review: try/catch on the INSERT doesn't recover inside a
+	// surrounding transaction — PG aborts the entire tx on the unique
+	// violation, so the catch-and-reselect still surfaces as 500. Use
+	// ON CONFLICT DO NOTHING which keeps the tx alive when the partial
+	// unique index factions_user_one_system rejects a concurrent second
+	// write. The INSERT returns the new row on the winning path or no
+	// rows on the losing path; the post-INSERT SELECT recovers either
+	// way without poisoning the transaction.
+	await tx
+		.insert(factions)
+		.values({
+			userId,
+			name: NEUTRAL_FACTION_NAME,
+			color: NEUTRAL_FACTION_COLOR,
+			isSystem: true
+		})
+		.onConflictDoNothing();
+	const [row] = await tx
+		.select({ id: factions.id })
+		.from(factions)
+		.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+	if (!row) error(500, 'ensureNeutralFaction: row missing after INSERT');
+	return row.id;
+}
 
 export type FactionInput = {
 	name: string;
@@ -117,6 +246,17 @@ export async function updateFaction(
 	}
 	if ('styleJsonb' in patch) updates.styleJsonb = patch.styleJsonb ?? null;
 
+	// Slice 2 D1: rename/recolor on Neutral is allowed (user owns it); the
+	// guard below only fires for callers that try to set is_system through
+	// PATCH (which would shadow the existing Neutral row). is_system is
+	// not in FactionInput so the existing TS shape already blocks this at
+	// the type level, but the runtime check defends against unchecked
+	// `as any` callers. Checked BEFORE the no-updatable-fields gate so a
+	// PATCH body of only { isSystem: true } returns 422, not 400.
+	if ('isSystem' in (patch as Record<string, unknown>)) {
+		error(422, 'is_system cannot be set via PATCH');
+	}
+
 	if (Object.keys(updates).length === 0) {
 		error(400, 'No updatable fields supplied');
 	}
@@ -144,10 +284,16 @@ export async function deleteFaction(
 ): Promise<void> {
 	assertUuid(factionId, 'faction id');
 	const [existing] = await db
-		.select({ id: factions.id })
+		.select({ id: factions.id, isSystem: factions.isSystem })
 		.from(factions)
 		.where(and(eq(factions.id, factionId), eq(factions.userId, userId)));
 	if (!existing) error(404, 'Faction not found');
+	// Slice 2 D1: the per-user Neutral faction is the fallback ownership
+	// target for un-faction-ed regions. Allowing delete would orphan every
+	// region that resolves through it. The partial unique index also
+	// prevents re-creation of a Neutral after deletion would be allowed
+	// here, but rejecting at the helper is the user-facing message.
+	if (existing.isSystem) error(422, 'Cannot delete the system Neutral faction');
 
 	await db.delete(factions).where(and(eq(factions.id, factionId), eq(factions.userId, userId)));
 }
@@ -181,6 +327,9 @@ export async function countFactionDependents(
 			and(
 				eq(worldMaps.userId, userId),
 				eq(mapEvents.kind, 'transfer_region'),
+				// Slice 2 D3 (T7): undone events don't count as dependents —
+				// they no longer affect projection.
+				sql`${mapEvents.undoneAt} IS NULL`,
 				sql`${mapEvents.payloadJsonb} ->> 'new_faction_id' = ${factionId}`
 			)
 		);
@@ -269,11 +418,10 @@ async function validateAnchorStateOwnership(
 	}
 
 	// Region ownership: must belong to THIS map.
+	// Slice 2 D2 PR-B: existence check reads from baseline anchor JSON.
+	// Same answer as map_regions post-T4 invariant.
 	if (regionIds.size > 0) {
-		const rows = await db
-			.select({ id: mapRegions.id })
-			.from(mapRegions)
-			.where(and(inArray(mapRegions.id, [...regionIds]), eq(mapRegions.mapId, worldMapId)));
+		const rows = await readBaselineRegions(db, worldMapId);
 		const found = new Set(rows.map((r) => r.id));
 		for (const id of regionIds) {
 			if (!found.has(id)) error(400, `region_id ${id} not found on this map`);
@@ -365,6 +513,22 @@ export async function updateMapAnchor(
 	assertUuid(anchorId, 'anchor id');
 	assertObjectBody(patch);
 
+	// Slice 2 D2 PR-C hardening (codex review): the baseline anchor at
+	// t_position = -Infinity is canonical for region geometry post-T6.
+	// User-facing PATCH/DELETE on the baseline can erase or poison every
+	// region on the map. Fan-out helpers (fanOutRegionAdd /
+	// fanOutRegionGeometryUpdate / fanOutRegionDelete in
+	// anchor-region-write-through.ts) are the only authorized writers to
+	// baseline state. Reject any direct edit here.
+	const [existing] = await db
+		.select({ tPosition: mapAnchors.tPosition })
+		.from(mapAnchors)
+		.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)));
+	if (!existing) error(404, 'Anchor not found');
+	if (!Number.isFinite(existing.tPosition)) {
+		error(422, 'Cannot edit the baseline anchor — it tracks canonical region geometry');
+	}
+
 	const updates: Record<string, unknown> = {};
 	if ('tPosition' in patch) {
 		if (typeof patch.tPosition !== 'number' || !isFinite(patch.tPosition)) {
@@ -411,6 +575,18 @@ export async function deleteMapAnchor(
 ): Promise<void> {
 	await assertMapOwnership(db, userId, worldMapId);
 	assertUuid(anchorId, 'anchor id');
+	// Slice 2 D2 PR-C hardening (codex review): see updateMapAnchor's
+	// matching guard. Deleting the baseline anchor (t_position = -Infinity)
+	// removes the canonical region geometry post-T6; reject explicitly
+	// instead of silently dropping every region on the map.
+	const [existing] = await db
+		.select({ tPosition: mapAnchors.tPosition })
+		.from(mapAnchors)
+		.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)));
+	if (!existing) error(404, 'Anchor not found');
+	if (!Number.isFinite(existing.tPosition)) {
+		error(422, 'Cannot delete the baseline anchor — it tracks canonical region geometry');
+	}
 	const deleted = await db
 		.delete(mapAnchors)
 		.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
@@ -449,11 +625,11 @@ async function validateEventPayload(
 		// lazy GC would drop it at render time, but the row would persist
 		// as a probing oracle. Reject at write — cross-user references
 		// must never reach the DB.
-		const [region] = await db
-			.select({ id: mapRegions.id })
-			.from(mapRegions)
-			.where(and(eq(mapRegions.id, p.region_id), eq(mapRegions.mapId, worldMapId)));
-		if (!region) error(400, 'region_id not found on this map');
+		// Slice 2 D2 PR-B: existence check reads from baseline anchor JSON.
+		const baselineRegions = await readBaselineRegions(db, worldMapId);
+		if (!baselineRegions.some((r) => r.id === p.region_id)) {
+			error(400, 'region_id not found on this map');
+		}
 		// Verify the faction is owned by this user. Same defense — faction
 		// ownership is by user_id, not map, so we scope through factions.user_id.
 		const [faction] = await db
@@ -530,78 +706,367 @@ export async function deleteMapEvent(
 ): Promise<void> {
 	await assertMapOwnership(db, userId, worldMapId);
 	assertUuid(eventId, 'event id');
-	const deleted = await db
-		.delete(mapEvents)
-		.where(and(eq(mapEvents.id, eventId), eq(mapEvents.worldMapId, worldMapId)))
+	// codex review P2: D3 (T7) introduced undoneAt for audit-preserving
+	// soft-delete. Hard-delete via this endpoint defeats the invariant —
+	// callers can erase rows that the undo command stack assumes are
+	// still on disk. Convert this route to a soft-delete so the audit
+	// trail stays append-only. Already-undone events return 404
+	// (idempotent — caller sees the same result as "row missing").
+	const [updated] = await db
+		.update(mapEvents)
+		.set({ undoneAt: new Date() })
+		.where(
+			and(
+				eq(mapEvents.id, eventId),
+				eq(mapEvents.worldMapId, worldMapId),
+				sql`${mapEvents.undoneAt} IS NULL`
+			)
+		)
 		.returning();
-	if (deleted.length === 0) error(404, 'Event not found');
+	if (!updated) error(404, 'Event not found');
 }
 
-// ── Read paths ──────────────────────────────────────────────────────────────
-//
-// Hard cap on list responses. Slice 1b's authoring UX doesn't approach this
-// volume for a single map; the cap is a safety net for the moment a user
-// has authored hundreds of events and one GET would otherwise ship them all.
-// Slice 5+ may swap this for cursor pagination ordered by the same
-// (t_position, created_at, id) sort the projection layer relies on.
-//
-// LIST_LIMIT + 1 fetches a sentinel row so the handler can flip `truncated`
-// to true without a second count query.
+/**
+ * Slice 2 D3 (T7) — undo the latest live event on a map.
+ *
+ * Pops by commit order ((created_at DESC, id DESC)), NOT by t_position.
+ * Command-stack semantics: "undo my most recent action" means the user's
+ * latest edit, even when that edit landed at a t_position earlier than
+ * later events.
+ *
+ * Soft-delete: sets undone_at = now(). The row stays in place as audit
+ * trail; projection + list endpoints filter on undone_at IS NULL. Redo
+ * is a client-side concern — the popped event is held in the client's
+ * in-memory stack and replayed via a fresh POST /events (which creates
+ * a brand-new row with a new id + new created_at; original t_position
+ * and payload preserved).
+ *
+ * Cross-user: ownership of the map is asserted via assertMapOwnership;
+ * attempts against another user's map surface as 404.
+ *
+ * Empty stack: 422 with "No events to undo".
+ */
+export async function undoLatestMapEvent(
+	db: Db,
+	userId: string,
+	worldMapId: string
+): Promise<typeof mapEvents.$inferSelect> {
+	await assertMapOwnership(db, userId, worldMapId);
 
-export const LIST_LIMIT = 500;
+	// Retry loop: two concurrent undo requests both SELECT the same latest
+	// event. One UPDATE wins (undoneAt=now); the other's UPDATE matches 0
+	// rows because the WHERE undoneAt IS NULL guard filters out the
+	// just-undone row. Without retry, the second caller gets 422 even
+	// though older live events exist — a double-click leaves the stack
+	// only half-undone. The loop re-SELECTs the next latest until either
+	// an UPDATE succeeds or the SELECT finds nothing.
+	//
+	// Cap the retries to keep this bounded under a runaway race; in
+	// practice the contention window is microseconds and a single retry
+	// resolves it.
+	for (let attempt = 0; attempt < 8; attempt++) {
+		const [latest] = await db
+			.select()
+			.from(mapEvents)
+			.where(
+				and(
+					eq(mapEvents.worldMapId, worldMapId),
+					sql`${mapEvents.undoneAt} IS NULL`
+				)
+			)
+			.orderBy(desc(mapEvents.createdAt), desc(mapEvents.id))
+			.limit(1);
+		if (!latest) error(422, 'No events to undo');
+
+		const [updated] = await db
+			.update(mapEvents)
+			.set({ undoneAt: new Date() })
+			.where(
+				and(
+					eq(mapEvents.id, latest.id),
+					eq(mapEvents.worldMapId, worldMapId),
+					sql`${mapEvents.undoneAt} IS NULL`
+				)
+			)
+			.returning();
+		if (updated) return updated;
+		// Lost the race; loop and try the next latest event.
+	}
+	// Pathological contention — surface 422 rather than a 500 so the
+	// client can retry the user action.
+	error(422, 'No events to undo');
+}
+
+// ── Read paths (cursor pagination — Slice 2 D5) ─────────────────────────────
+//
+// Keyset pagination on the sort key the projection layer relies on:
+//   anchors/events  → (t_position, created_at, id)
+//   factions        → (created_at, id)
+//
+// Cursor is opaque base64(JSON). Clients call list(after=cursor) until
+// next_cursor === null. The plan's "subsequent pages fetch on demand" is
+// over-engineering for an event-sourced projection that needs the complete
+// stream to fold correctly — clients call loadAll() which pages through
+// until exhausted. The API supports lazy on-demand pagination by future
+// callers without further changes.
+//
+// Limit defaults to DEFAULT_PAGE_SIZE; clamped to [1, MAX_PAGE_SIZE].
+// LIST_LIMIT is preserved as an alias of DEFAULT_PAGE_SIZE for back-compat
+// with any external callers; new code uses DEFAULT_PAGE_SIZE.
+
+export const DEFAULT_PAGE_SIZE = 500;
+export const MAX_PAGE_SIZE = 1000;
+/** @deprecated use DEFAULT_PAGE_SIZE; kept for back-compat. */
+export const LIST_LIMIT = DEFAULT_PAGE_SIZE;
 
 export type ListResponse<T> = {
 	rows: T[];
-	truncated: boolean;
+	next_cursor: string | null;
 };
 
-function makeListResponse<T>(rows: T[]): ListResponse<T> {
-	const truncated = rows.length > LIST_LIMIT;
-	return {
-		rows: truncated ? rows.slice(0, LIST_LIMIT) : rows,
-		truncated
-	};
+type TPosCursor = { t: number; c: string; id: string };
+type CreatedAtCursor = { c: string; id: string };
+
+// Sentinel for non-finite tPosition values (codex review P1 #3).
+// JSON.stringify({ t: -Infinity }) serializes to {"t": null}, which then
+// fails the typeof decoded.t === 'number' check on decode — anchor
+// pagination broke on any page boundary that landed on the baseline
+// anchor (t = -Infinity). Encode non-finite values as string sentinels
+// and reverse on decode.
+const T_POS_NEG_INF = '__neg_inf__';
+const T_POS_POS_INF = '__pos_inf__';
+
+function encodeTPosValue(t: number): number | string {
+	if (t === Number.NEGATIVE_INFINITY) return T_POS_NEG_INF;
+	if (t === Number.POSITIVE_INFINITY) return T_POS_POS_INF;
+	return t;
 }
+
+function decodeTPosValue(v: unknown): number | null {
+	if (v === T_POS_NEG_INF) return Number.NEGATIVE_INFINITY;
+	if (v === T_POS_POS_INF) return Number.POSITIVE_INFINITY;
+	if (typeof v === 'number' && Number.isFinite(v)) return v;
+	return null;
+}
+
+/**
+ * codex PR review: postgres-js doesn't reliably serialize JS Infinity /
+ * -Infinity through the parameter binding path. The map-create handler
+ * uses an inline SQL literal for the baseline anchor's tPosition; the
+ * cursor pagination path needs the same treatment, otherwise following
+ * a cursor that ended on the baseline anchor (t = -Infinity) fails
+ * intermittently in production despite working in PGlite tests.
+ */
+function tPosLiteral(t: number) {
+	if (t === Number.NEGATIVE_INFINITY) return sql`'-Infinity'::float8`;
+	if (t === Number.POSITIVE_INFINITY) return sql`'Infinity'::float8`;
+	return sql`${t}::float8`;
+}
+
+/**
+ * codex PR review (iter 7): the previous cursor-precision fix put a
+ * microsecond-precise text string into cursor.c, but the SQL clause
+ * then wrapped it in `new Date(cursor.c)` which truncates back to
+ * millisecond. Bind the cursor's text directly with an explicit
+ * ::timestamptz cast so PG parses all 6 microsecond digits.
+ */
+function tsLiteral(c: string) {
+	return sql`${c}::timestamptz`;
+}
+
+function isValidCursorDate(c: string): boolean {
+	// codex review P1 #4: decodeTPosCursor / decodeCreatedAtCursor only
+	// checked `typeof c === 'string'`, then SQL builders called
+	// `new Date(cursor.c)`. A base64-valid cursor with "c":"not-a-date"
+	// produced Invalid Date → driver/DB 500 instead of a clean 400.
+	const ts = Date.parse(c);
+	return Number.isFinite(ts);
+}
+
+function encodeCursor(payload: { t?: number; c: string; id: string }): string {
+	const out: Record<string, unknown> = { c: payload.c, id: payload.id };
+	if ('t' in payload && payload.t !== undefined) out.t = encodeTPosValue(payload.t);
+	return Buffer.from(JSON.stringify(out), 'utf8').toString('base64url');
+}
+
+function decodeTPosCursor(raw: string): TPosCursor {
+	try {
+		const decoded = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+		const t = decodeTPosValue(decoded?.t);
+		if (
+			t === null ||
+			typeof decoded?.c !== 'string' ||
+			typeof decoded?.id !== 'string' ||
+			!isValidCursorDate(decoded.c) ||
+			// codex PR review: cursor.id is bound directly into UUID columns
+			// (map_anchors.id / map_events.id). Without a UUID shape check,
+			// "id":"not-a-uuid" passes decode and SQL casts then 500. Validate
+			// against UUID_RE so the invalid-cursor path always surfaces 400.
+			!UUID_RE.test(decoded.id)
+		) {
+			throw new Error('shape');
+		}
+		return { t, c: decoded.c, id: decoded.id };
+	} catch {
+		error(400, 'invalid cursor');
+	}
+}
+
+function decodeCreatedAtCursor(raw: string): CreatedAtCursor {
+	try {
+		const decoded = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+		if (
+			typeof decoded?.c !== 'string' ||
+			typeof decoded?.id !== 'string' ||
+			!isValidCursorDate(decoded.c) ||
+			!UUID_RE.test(decoded.id)
+		) {
+			throw new Error('shape');
+		}
+		return decoded as CreatedAtCursor;
+	} catch {
+		error(400, 'invalid cursor');
+	}
+}
+
+/**
+ * codex PR review (iter 4): JS Date is millisecond-precision but PG
+ * timestamptz with `defaultNow()` stores microseconds. `last.createdAt.
+ * toISOString()` truncates microseconds; the next page's keyset
+ * comparison then includes the boundary row again (sub-ms tiebreak
+ * fails). At `limit=1` this loops indefinitely; at larger limits it
+ * duplicates the boundary row. Re-fetch the boundary row's
+ * `created_at` as a microsecond-precise text string for the cursor.
+ *
+ * One extra round-trip per page that has `next_cursor != null` —
+ * acceptable for an authoring-time write rate.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function microPreciseCreatedAt(db: any, table: any, id: string): Promise<string> {
+	const result = await db.execute(sql`
+		SELECT to_char(${table.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS c
+		FROM ${table}
+		WHERE ${table.id} = ${id}::uuid
+		LIMIT 1
+	`);
+	// Drizzle's execute returns shape depends on driver. Handle both
+	// node-postgres ({ rows: [...] }) and pg-bridge (array).
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const row = ((result as any).rows ?? (result as any))?.[0];
+	return (row?.c as string | undefined) ?? new Date().toISOString();
+}
+
+function clampLimit(raw: number | null | undefined): number {
+	if (raw == null || !Number.isFinite(raw)) return DEFAULT_PAGE_SIZE;
+	const n = Math.floor(raw);
+	if (n < 1) return 1;
+	if (n > MAX_PAGE_SIZE) return MAX_PAGE_SIZE;
+	return n;
+}
+
+export type ListOptions = {
+	after?: string | null;
+	limit?: number | null;
+};
 
 export async function listFactions(
 	db: Db,
-	userId: string
+	userId: string,
+	opts: ListOptions = {}
 ): Promise<ListResponse<typeof factions.$inferSelect>> {
+	const limit = clampLimit(opts.limit);
+	const cursor = opts.after ? decodeCreatedAtCursor(opts.after) : null;
+	const cursorClause = cursor
+		? sql`(${factions.createdAt}, ${factions.id}) > (${tsLiteral(cursor.c)}, ${cursor.id})`
+		: undefined;
 	const rows = await db
 		.select()
 		.from(factions)
-		.where(eq(factions.userId, userId))
-		.orderBy(asc(factions.createdAt))
-		.limit(LIST_LIMIT + 1);
-	return makeListResponse(rows);
+		.where(cursorClause ? and(eq(factions.userId, userId), cursorClause) : eq(factions.userId, userId))
+		.orderBy(asc(factions.createdAt), asc(factions.id))
+		.limit(limit + 1);
+	const hasMore = rows.length > limit;
+	const page = hasMore ? rows.slice(0, limit) : rows;
+	const last = page[page.length - 1];
+	const next_cursor =
+		hasMore && last
+			? encodeCursor({ c: await microPreciseCreatedAt(db, factions, last.id), id: last.id })
+			: null;
+	return { rows: page, next_cursor };
 }
 
 export async function listMapAnchors(
 	db: Db,
 	userId: string,
-	worldMapId: string
+	worldMapId: string,
+	opts: ListOptions = {}
 ): Promise<ListResponse<typeof mapAnchors.$inferSelect>> {
 	await assertMapOwnership(db, userId, worldMapId);
+	const limit = clampLimit(opts.limit);
+	const cursor = opts.after ? decodeTPosCursor(opts.after) : null;
+	const cursorClause = cursor
+		? sql`(${mapAnchors.tPosition}, ${mapAnchors.createdAt}, ${mapAnchors.id}) > (${tPosLiteral(cursor.t)}, ${tsLiteral(cursor.c)}, ${cursor.id})`
+		: undefined;
 	const rows = await db
 		.select()
 		.from(mapAnchors)
-		.where(eq(mapAnchors.worldMapId, worldMapId))
+		.where(
+			cursorClause
+				? and(eq(mapAnchors.worldMapId, worldMapId), cursorClause)
+				: eq(mapAnchors.worldMapId, worldMapId)
+		)
 		.orderBy(asc(mapAnchors.tPosition), asc(mapAnchors.createdAt), asc(mapAnchors.id))
-		.limit(LIST_LIMIT + 1);
-	return makeListResponse(rows);
+		.limit(limit + 1);
+	const hasMore = rows.length > limit;
+	const page = hasMore ? rows.slice(0, limit) : rows;
+	const last = page[page.length - 1];
+	const next_cursor =
+		hasMore && last
+			? encodeCursor({
+					t: last.tPosition,
+					c: await microPreciseCreatedAt(db, mapAnchors, last.id),
+					id: last.id
+				})
+			: null;
+	return { rows: page, next_cursor };
 }
 
 export async function listMapEvents(
 	db: Db,
 	userId: string,
-	worldMapId: string
+	worldMapId: string,
+	opts: ListOptions = {}
 ): Promise<ListResponse<typeof mapEvents.$inferSelect>> {
 	await assertMapOwnership(db, userId, worldMapId);
+	const limit = clampLimit(opts.limit);
+	const cursor = opts.after ? decodeTPosCursor(opts.after) : null;
+	const cursorClause = cursor
+		? sql`(${mapEvents.tPosition}, ${mapEvents.createdAt}, ${mapEvents.id}) > (${tPosLiteral(cursor.t)}, ${tsLiteral(cursor.c)}, ${cursor.id})`
+		: undefined;
+	// Slice 2 D3 (T7): exclude soft-deleted (undone) events from the list.
+	// Append-only history is preserved at the storage level; the API
+	// surfaces only live rows.
+	const liveClause = sql`${mapEvents.undoneAt} IS NULL`;
 	const rows = await db
 		.select()
 		.from(mapEvents)
-		.where(eq(mapEvents.worldMapId, worldMapId))
+		.where(
+			cursorClause
+				? and(eq(mapEvents.worldMapId, worldMapId), liveClause, cursorClause)
+				: and(eq(mapEvents.worldMapId, worldMapId), liveClause)
+		)
 		.orderBy(asc(mapEvents.tPosition), asc(mapEvents.createdAt), asc(mapEvents.id))
-		.limit(LIST_LIMIT + 1);
-	return makeListResponse(rows);
+		.limit(limit + 1);
+	const hasMore = rows.length > limit;
+	const page = hasMore ? rows.slice(0, limit) : rows;
+	const last = page[page.length - 1];
+	const next_cursor =
+		hasMore && last
+			? encodeCursor({
+					t: last.tPosition,
+					c: await microPreciseCreatedAt(db, mapEvents, last.id),
+					id: last.id
+				})
+			: null;
+	return { rows: page, next_cursor };
 }

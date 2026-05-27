@@ -25,10 +25,13 @@
 // on different regions serialize at the row level via MVCC; concurrent
 // fan-outs on the SAME region produce a deterministic last-writer-wins.
 //
-// transfer_region overrides (faction_id !== null in an anchor entry) are
-// preserved on color UPDATE — the SQL only rewrites the `color` field,
-// leaving `faction_id` untouched. On DELETE the entire entry is removed
-// (region no longer exists, so its faction ownership history is moot).
+// Slice 2 D1: fanOutRegionAdd writes faction_id (defaulting to the user's
+// Neutral faction) instead of color. fanOutRegionColorUpdate was deleted.
+//
+// Slice 2 D2 PR-A: fanOutRegionAdd now also writes polygon + locationId.
+// Anchor jsonb is canonical for geometry; the legacy reads from
+// map_regions stay during D2 but anchor JSON is the leading source.
+// fanOutRegionPolygonUpdate keeps the two in sync on PATCH.
 
 import { and, eq, sql } from 'drizzle-orm';
 import { mapAnchors, worldMaps } from './db/schema.js';
@@ -42,6 +45,12 @@ type Tx = any;
  * an anchor's array (idempotency / retry safety), it's replaced rather
  * than duplicated.
  *
+ * factionId is the user's Neutral faction id by default (set in the POST
+ * handler via ensureNeutralFaction). transfer_region events override this
+ * on later anchors. polygon + locationId mirror the canonical map_regions
+ * row during D2; future T5/T6 work moves the canonical source into anchor
+ * jsonb and drops map_regions.
+ *
  * Single atomic UPDATE per anchor — PG handles concurrent updates via
  * MVCC. Cross-user scoped via the worldMaps.userId predicate so a stray
  * call from an unscoped handler can't touch another user's anchors.
@@ -50,12 +59,13 @@ export async function fanOutRegionAdd(
 	tx: Tx,
 	mapId: string,
 	userId: string,
-	region: { id: string; color: string | null }
+	region: { id: string; factionId: string; polygon: number[][]; locationId: string | null }
 ): Promise<void> {
 	const entry = JSON.stringify({
 		region_id: region.id,
-		faction_id: null,
-		color: region.color
+		faction_id: region.factionId,
+		polygon: region.polygon,
+		locationId: region.locationId
 	});
 	// Build the new regions array in SQL: filter out any existing entry
 	// with this region_id (idempotency), then append the new entry. The
@@ -84,25 +94,31 @@ export async function fanOutRegionAdd(
 }
 
 /**
- * Rewrite the `color` field of the matching region entry in every anchor's
- * `state_jsonb.regions[]`. Preserves `faction_id` (ownership overlay is a
- * separate layer added by transfer_region events; only the baseline color
- * is geometry-author-controlled).
+ * Slice 2 D2 PR-A: rewrite polygon and/or locationId for the matching
+ * region entry across every anchor's state_jsonb.regions[]. Preserves
+ * faction_id (overlay layer) and the legacy `color` field (round-trip).
+ * Anchors without a matching region_id no-op via the jsonb_agg + CASE
+ * pattern.
  *
- * Anchors without a matching region_id are untouched — `jsonb_agg` over
- * the same array with an in-place rewrite via CASE produces the original
- * array for non-matching rows, so the UPDATE is a no-op there.
+ * Pass null for a field to skip its update; pass a value to overwrite.
+ * At least one of polygon / locationId must be supplied (callers should
+ * not invoke with both null).
  */
-export async function fanOutRegionColorUpdate(
+export async function fanOutRegionGeometryUpdate(
 	tx: Tx,
 	mapId: string,
 	userId: string,
 	regionId: string,
-	color: string | null
+	patch: { polygon?: number[][]; locationId?: string | null }
 ): Promise<void> {
-	// color = null serializes to JSON null literal; PG jsonb_build_object
-	// handles both null and string values correctly.
-	const colorJson = color === null ? 'null' : JSON.stringify(color);
+	const polygonJson =
+		patch.polygon !== undefined ? JSON.stringify(patch.polygon) : null;
+	const locationIdJson =
+		'locationId' in patch
+			? patch.locationId === null
+				? 'null'
+				: JSON.stringify(patch.locationId)
+			: null;
 	await tx.execute(sql`
 		UPDATE ${mapAnchors}
 		SET state_jsonb = jsonb_set(
@@ -113,7 +129,18 @@ export async function fanOutRegionColorUpdate(
 					SELECT jsonb_agg(
 						CASE
 							WHEN r->>'region_id' = ${regionId}
-								THEN jsonb_set(r, '{color}', ${colorJson}::jsonb, true)
+								THEN
+									CASE
+										WHEN ${polygonJson}::text IS NOT NULL
+											THEN jsonb_set(r, '{polygon}', ${polygonJson}::jsonb, true)
+										ELSE r
+									END
+									||
+									CASE
+										WHEN ${locationIdJson}::text IS NOT NULL
+											THEN jsonb_build_object('locationId', ${locationIdJson}::jsonb)
+										ELSE '{}'::jsonb
+									END
 							ELSE r
 						END
 					)

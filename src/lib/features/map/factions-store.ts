@@ -11,6 +11,9 @@ export type Faction = {
 	name: string;
 	color: string;
 	styleJsonb: Record<string, unknown> | null;
+	// Slice 2 D1: true on the per-user Neutral faction. Server PATCH/DELETE
+	// reject mutations on is_system=true rows with 422; UI hides Delete.
+	isSystem: boolean;
 	createdAt: string;
 	updatedAt: string;
 };
@@ -24,12 +27,23 @@ export type FactionInput = {
 function createFactionStore() {
 	const store = writable<Faction[]>([]);
 
+	// Pages through /api/factions until next_cursor is null. Single-user
+	// dogfooding scale tops out in the low hundreds; pagination is a
+	// future-proofing fix for the Slice 1b 500-row cap (Slice 2 D5).
 	async function load(): Promise<void> {
-		const res = await fetch('/api/factions');
-		if (!res.ok) throw new Error(`Failed to load factions: ${await errorMessage(res)}`);
-		const body = (await res.json()) as { rows: Faction[]; truncated: boolean };
-		store.set(body.rows);
-		if (body.truncated) console.warn('factions list truncated at server cap');
+		const collected: Faction[] = [];
+		let cursor: string | null = null;
+		do {
+			const url = cursor
+				? `/api/factions?after=${encodeURIComponent(cursor)}`
+				: '/api/factions';
+			const res = await fetch(url);
+			if (!res.ok) throw new Error(`Failed to load factions: ${await errorMessage(res)}`);
+			const body = (await res.json()) as { rows: Faction[]; next_cursor: string | null };
+			collected.push(...body.rows);
+			cursor = body.next_cursor;
+		} while (cursor != null);
+		store.set(collected);
 	}
 
 	async function create(input: FactionInput): Promise<Faction> {

@@ -92,6 +92,41 @@
       "when": 1779660000000,
       "tag": "0012_world_map_v3_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1779768000000,
+      "tag": "0013_factions_is_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1779768300000,
+      "tag": "0014_d1_faction_only_color",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1779768600000,
+      "tag": "0015_d2_anchor_polygon_locationid_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1779831000000,
+      "tag": "0016_d2_drop_map_regions",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1779852000000,
+      "tag": "0017_map_events_undone_at",
+      "breakpoints": true
     }
   ]
 }

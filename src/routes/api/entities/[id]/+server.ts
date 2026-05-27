@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { entities } from '$lib/server/db/schema.js';
+import { entities, mapAnchors, worldMaps } from '$lib/server/db/schema.js';
 import { getUserId } from '$lib/server/auth-gate.js';
 import {
 	recomputeAllIntervals,
@@ -326,6 +326,49 @@ export const DELETE: RequestHandler = async (event) => {
 					}
 				}
 			}
+		}
+
+		// Slice 2 D2 PR-C hardening (codex review): for Location deletes,
+		// scrub the deleted locationId out of every anchor's
+		// state_jsonb.regions[]. Pre-T6 the DB-level
+		// `map_regions.location_id ON DELETE SET NULL` handled this. Post-
+		// T6 anchor JSON is a free-form string blob with no FK; deleting
+		// a Location without this scrub leaves stale ids in canonical
+		// state. Scoped via world_maps.user_id so a cross-user run of
+		// this helper can't touch foreign data.
+		if (entity.type === 'Location') {
+			// codex PR review iter 9: region writes now store the DB-canonical
+			// lowercase loc.id in anchor JSON (iter-4 fix). If the DELETE
+			// route param is uppercase, PG's uuid type accepts it for the
+			// entity lookup but string-equality against the lowercase JSON
+			// value misses. Use the SELECTed entity.id (PG-canonical) so the
+			// scrub matches the writer's canonicalization.
+			const canonicalId = entity.id;
+			await tx.execute(sql`
+				UPDATE ${mapAnchors}
+				SET state_jsonb = jsonb_set(
+					state_jsonb,
+					'{regions}',
+					COALESCE(
+						(
+							SELECT jsonb_agg(
+								CASE
+									WHEN r->>'locationId' = ${canonicalId}
+										THEN jsonb_set(r, '{locationId}', 'null'::jsonb)
+									ELSE r
+								END
+							)
+							FROM jsonb_array_elements(COALESCE(state_jsonb->'regions', '[]'::jsonb)) AS r
+						),
+						'[]'::jsonb
+					),
+					true
+				)
+				FROM ${worldMaps}
+				WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
+					AND ${worldMaps.userId} = ${userId}
+					AND state_jsonb->'regions' @> ${`[{"locationId":"${canonicalId}"}]`}::jsonb
+			`);
 		}
 
 		// FK CASCADE removes remaining scenes and any fully-contained intervals already deleted above.

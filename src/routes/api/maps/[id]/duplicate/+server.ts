@@ -1,7 +1,8 @@
 import { json, error } from '@sveltejs/kit';
-import { worldMaps, mapRegions, mapAnchors } from '$lib/server/db/schema.js';
+import { worldMaps, mapAnchors } from '$lib/server/db/schema.js';
 import { and, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { ensureNeutralFaction, readBaselineRegions } from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -21,14 +22,15 @@ import type { RequestHandler } from './$types';
  *
  * The name is suffixed with " (copy)" so the clone is visually distinct in
  * the map switcher. Regions are deep-copied (polygon arrays cloned via
- * JSON.parse/stringify; locationId/color preserved).
+ * JSON.parse/stringify; locationId preserved). Slice 2 D2 PR-C (T6):
+ * regions live only in anchor JSON now; cloned regions get fresh UUIDs
+ * minted in JS and are written directly into the new map's baseline
+ * anchor.
  *
  * Slice 1b A1: the clone gets one baseline anchor at t_position=-Infinity
- * built from the CLONED region ids (so anchor state_jsonb.regions[].region_id
- * resolves under projection's lazy GC). Source's non-baseline anchors
+ * built from the CLONED region ids. Source's non-baseline anchors
  * (user-authored snapshots tied to source.region.id values) are NOT cloned —
- * their region_id refs would be stale post-clone. If duplicate-with-faction-
- * history becomes a real workflow, add explicit region-id translation then.
+ * their region_id refs would be stale post-clone.
  */
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
@@ -40,9 +42,6 @@ export const POST: RequestHandler = async (event) => {
 		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
 	if (!source) error(404, 'Map not found');
 
-	// Clone + region copy run in a single transaction so a mid-request failure
-	// (FK violation on the region insert, transient DB error) rolls back the
-	// clone row instead of leaving an orphan map with no regions.
 	const result = await db.transaction(async (tx) => {
 		const [clone] = await tx
 			.insert(worldMaps)
@@ -57,25 +56,25 @@ export const POST: RequestHandler = async (event) => {
 			})
 			.returning();
 
-		const sourceRegions = await tx
-			.select()
-			.from(mapRegions)
-			.where(eq(mapRegions.mapId, source.id));
+		// Slice 2 D2 PR-B/PR-C: source regions read from baseline anchor JSON.
+		const sourceRegions = await readBaselineRegions(tx, source.id);
 
-		let cloneRegions: typeof sourceRegions = [];
-		if (sourceRegions.length > 0) {
-			cloneRegions = await tx
-				.insert(mapRegions)
-				.values(
-					sourceRegions.map((r) => ({
-						mapId: clone.id,
-						locationId: r.locationId,
-						polygon: JSON.parse(JSON.stringify(r.polygon)),
-						color: r.color
-					}))
-				)
-				.returning();
-		}
+		const cloneRegions: Array<{
+			id: string;
+			mapId: string;
+			locationId: string | null;
+			polygon: number[][];
+		}> = sourceRegions.map((r) => ({
+			id: crypto.randomUUID(),
+			mapId: clone.id,
+			locationId: r.locationId,
+			polygon: JSON.parse(JSON.stringify(r.polygon))
+		}));
+
+		// Slice 2 D1: anchor regions[] carry faction_id (defaulting to the
+		// user's Neutral faction) instead of color. ensureNeutralFaction is
+		// idempotent.
+		const neutralFactionId = await ensureNeutralFaction(tx, userId);
 
 		await tx.insert(mapAnchors).values({
 			worldMapId: clone.id,
@@ -85,8 +84,9 @@ export const POST: RequestHandler = async (event) => {
 			stateJsonb: {
 				regions: cloneRegions.map((r) => ({
 					region_id: r.id,
-					faction_id: null,
-					color: r.color
+					faction_id: neutralFactionId,
+					polygon: r.polygon,
+					locationId: r.locationId
 				})),
 				artifacts: [],
 				chains: []

@@ -14,6 +14,7 @@
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { MapRegion, WorldMap } from './types.js';
 	import { buildRegionPopup } from './region-popup.js';
+	import { NEUTRAL_REGION_COLOR } from './projection.js';
 
 	type LeafletNS = typeof import('leaflet');
 
@@ -55,10 +56,20 @@
 
 			const latLngs = region.polygon.map(([lat, lng]) => L.latLng(lat, lng));
 
+			// codex PR review iter 4: post-D1 (T3) the GET /api/maps/[id]
+			// response no longer carries `region.color` — the baseline color
+			// field was dropped along with the column. Falling back to
+			// `borderColor` (the theme's accent border, often a non-gray) was
+			// the wrong visual default; substitute the per-user Neutral gray
+			// instead so out-of-scope regions still read as neutral on the
+			// Leaflet path. (Faction-color resolution remains Pixi-only until
+			// the renderer is unified — T13 deletes Leaflet anyway, so a full
+			// projection wiring here would be wasted scope.)
+			const outOfScopeColor = region.color || NEUTRAL_REGION_COLOR;
 			const layer = L.polygon(latLngs, {
-				color: isActive ? accentColor : (region.color || borderColor),
+				color: isActive ? accentColor : outOfScopeColor,
 				weight: isActive ? 2 : 1,
-				fillColor: isActive ? accentColor : (region.color || borderColor),
+				fillColor: isActive ? accentColor : outOfScopeColor,
 				fillOpacity: isActive ? 0.13 : 0.08,
 				opacity: isActive ? 1 : 0.3,
 				className: isActive ? 'region-active' : 'region-inactive'

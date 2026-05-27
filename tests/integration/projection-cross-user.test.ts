@@ -16,12 +16,11 @@
  * surfaces as factionId=null with the neutral fallback color.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTestDb, seedTestUser } from '../helpers/test-db.js';
+import { createTestDb, seedTestUser, seedRegionWithAnchorBackfill } from '../helpers/test-db.js';
 import {
 	factions,
 	mapAnchors,
 	mapEvents,
-	mapRegions,
 	worldMaps
 } from '../../src/lib/server/db/schema.js';
 import { fetchProjectionContext } from '../../src/lib/server/projection-context.js';
@@ -50,17 +49,16 @@ describe('projection cross-user lazy GC (Δ1a-C)', () => {
 			.insert(worldMaps)
 			.values({ userId: userA.id, name: 'Map A' })
 			.returning();
-		const [regionA] = await db
-			.insert(mapRegions)
-			.values({
-				mapId: mapA.id,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		// Slice 2 D2 PR-B: also backfill into baseline anchor JSON since
+		// validation + projection-context reads now consume that source.
+		const regionA = await seedRegionWithAnchorBackfill(db, {
+			mapId: mapA.id,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 		const [factionA] = await db
 			.insert(factions)
 			.values({ userId: userA.id, name: 'A-faction', color: '#aa0000' })
@@ -155,17 +153,14 @@ describe('projection cross-user lazy GC (Δ1a-C)', () => {
 			.insert(worldMaps)
 			.values({ userId: userB.id, name: 'Map B' })
 			.returning();
-		const [regionB] = await db
-			.insert(mapRegions)
-			.values({
-				mapId: mapB.id,
-				polygon: [
-					[0, 0],
-					[1, 0],
-					[1, 1]
-				]
-			})
-			.returning();
+		const regionB = await seedRegionWithAnchorBackfill(db, {
+			mapId: mapB.id,
+			polygon: [
+				[0, 0],
+				[1, 0],
+				[1, 1]
+			]
+		});
 
 		// An anchor on User A's map references a region that lives on User B's
 		// map. Should never happen via legit UI, but the renderer must defend

@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.8.0] - 2026-05-27
+
+### Added
+- **Undo any map edit on the timeline.** New `POST /api/maps/[id]/events/undo` pops the latest live event in commit order (created_at DESC, id DESC — your last action, not the latest timeline position). Soft-delete via a new `undone_at` column keeps the row on disk for audit. Client-side redo stack in `mapEventsStore` replays the popped event via the existing `POST /events` endpoint, so a new row lands with a fresh id + created_at but the original t_position and payload. Authoring a new event clears the redo stack.
+- **Pixi-native polygon-draw tool (`PixiPolygonDraw.svelte`).** Right-click an empty canvas area under `?renderer=pixi` → "Draw region here" enters drawing mode with the click point as the first vertex. Left-click adds a vertex, double-click commits, snap-close within 8px of the first vertex (≥3 vertices) also commits. Backspace pops the last vertex, Esc cancels, Enter commits. Self-intersecting segments render in rust-red and block commit until the polygon is simple. Status overlay top-left ("DRAWING · ESC TO EXIT · DBL-CLICK OR SNAP TO CLOSE"). Replaces leaflet-draw for the Pixi path.
+- **Pixi-native placement marker layer (`PixiPlacementLayer.svelte`).** Pins render as colored circles (entity-type color, 8px). Hover for tooltip with entity name + type. Click → context menu with "Open <Type>" / "Delete placement". Stage-level click capture wires the click-to-place flow when a `PlaceablesPalette` chip is armed. Out-of-scope pins (placeable's intervals don't cover the playhead) fade to 30% alpha.
+- **Scope-dim treatment extended to Pixi regions.** Regions linked to Locations whose intervals don't cover the playhead render at lower opacity (0.08 fill, 0.3 stroke alpha), matching the existing Leaflet behavior.
+- **Locations join the timeline Palette.** New section alongside Characters and Events with the same chip + `+ Add` button affordance. Dragging a Location chip onto an Act creates an interval, just like Characters and Events. Useful for "Location X is active during these acts" annotations.
+- **Per-user "Neutral" faction is the fallback for un-faction-ed regions.** D1 (T3) drops `map_regions.color` and replaces the color-per-region model with a faction-per-region model. Every user has exactly one `factions.is_system=true` row (enforced by a partial unique index); regions without explicit faction ownership resolve through Neutral. The schema-level guarantee is the design doc § Slice 2 D1 prescription. PATCH/DELETE handlers reject mutations on system rows with 422.
+- **Cursor pagination on factions/anchors/events** (D5). `GET /api/maps/[id]/events?after=<cursor>&limit=N` returns `{rows, next_cursor}`. Cursor is a base64-JSON keyset on `(t_position, created_at, id)` for anchors/events and `(created_at, id)` for factions. Default page size 500, max 1000.
+
+### Changed
+- **Anchor JSON is now canonical for region geometry** (D2 PR-C, T6). The `map_regions` table is dropped (migration 0016). Region identity, polygon, faction overlay, and location-link all live in `map_anchors.state_jsonb.regions[]`. The baseline anchor (t_position = -Infinity) is the authoritative store; the per-map fan-out helpers in `anchor-region-write-through.ts` are the only authorized writers.
+- **Anchor schema gains polygon + locationId** (D2 PR-A, T4). Migration 0015 backfills both fields from `map_regions` into every anchor's regions[] array; T5a rewrote every read site (location-hierarchy, projection-context, world-map-v3, duplicate, regions GET/PATCH/DELETE, maps GET) to consume anchor JSON instead of `map_regions`.
+- **Baseline anchor is now protected from accidental corruption** (codex review hardening). `PATCH /api/maps/[id]/anchors/[anchorId]` and `DELETE` reject the baseline (t_position = -Infinity) with 422 — the baseline is canonical, and user-facing edits would erase or poison the only copy of region geometry. Non-baseline anchors still PATCH/DELETE normally.
+- **Deleting a Location now scrubs locationId from anchor JSON.** Pre-T6 the DB-level `map_regions.location_id ON DELETE SET NULL` cascade handled it; post-T6 the cascade lives in `DELETE /api/entities/[id]` as a `jsonb_set` UPDATE scoped via `world_maps.user_id`. No more stale UUIDs in canonical state.
+- **`DELETE /api/maps/[id]/events/[eventId]` is now a soft-delete.** Sets `undone_at = now()` instead of hard-deleting; T7's audit trail invariant stays intact regardless of which endpoint removes the event.
+- **Undo + Neutral creation hardened against concurrent writes.** `undoLatestMapEvent` wraps SELECT+UPDATE in a bounded retry loop so a double-click pops two events rather than the second call getting a misleading 422. `ensureNeutralFaction` catches 23505 unique-violation and re-SELECTs, so two concurrent first-writes for a new user both return the Neutral row instead of one 500-ing.
+- **Pixi snapshot writes the full anchor entry shape.** `snapshotWorldState` previously wrote only `{region_id, faction_id, color}`; now includes `polygon` + `locationId` so snapshots can't erase geometry when they become the earliest anchor.
+
+### Fixed
+- **Anchor pagination cursors round-trip `-Infinity`.** Previously `JSON.stringify({t: -Infinity})` serialized as `{"t": null}`, which the decoder rejected — `/anchors?limit=1` on any map with baseline + another anchor returned a `next_cursor` the server itself refused. Encoder now maps non-finite tPosition values to sentinel strings (`__neg_inf__` / `__pos_inf__`); decoder reverses.
+- **Malformed cursor date strings return clean 400.** Decoders only typechecked `c` as string; SQL builders then called `new Date(cursor.c)`. A valid base64 cursor with `"c":"not-a-date"` produced Invalid Date → driver/DB 500. Both decoders now validate via `Date.parse` + `Number.isFinite`.
+- **Pixi polygon-draw double-vertex bug fixed.** Initial implementation registered the click handler on both `pointerdown` AND `pointertap`, doubling every click. Backspace correctly clears a single seed vertex now.
+- **Pixi placement scope-filter re-runs on playhead changes.** Inline filtering inside the render `$effect` lost the playhead dependency on the `placementsAtPlayhead` branch; now materialized via `$derived.by` for explicit dependency tracking.
+
+### Removed
+- **`map_regions` table** (migration 0016). Anchor JSON is the only source of truth for region identity, geometry, faction overlay, and location-link.
+- **`svelte-pixi` dependency** and its WebGL-context-leak patch. `PixiStage.svelte` owns the `PIXI.Application` lifecycle imperatively (Slice 1b PR 2 already abandoned the `<Application>` wrapper).
+
+### Infrastructure
+- **5 migrations:** 0013 (factions.is_system column + partial unique index), 0014 (drop map_regions.color + backfill Neutral factions), 0015 (anchor regions[] gain polygon + locationId), 0016 (drop map_regions table), 0017 (map_events.undone_at column).
+- **Projection determinism fixture** (`tests/integration/projection-fixture.test.ts` + `tests/fixtures/world-map-v3-projection-golden.json`). 20 playhead values × hand-built fixture (4 regions, 3 factions, 2 anchors, 9 events covering same-T commit order, cross-user defense, foreign-faction lazy-GC, unknown event kind) deep-equal against a golden JSON. Regenerate with `UPDATE_GOLDEN=1`.
+- **Playwright E2E for renderer toggle + snapshot anchor.** `tests/e2e/renderer-toggle.spec.ts` (toggles 20×, asserts no WebGL context-exhaustion warnings). `tests/e2e/snapshot-anchor.spec.ts` (right-click → "Snapshot world state here" creates a map_anchors row at t=0).
+
+### Tests
+- **Slice 2 D1 (T3)** — Neutral faction backfill: signup race, idempotency, anchor regions[] entries point at user's Neutral, two users get distinct Neutrals, duplicate-map clones use Neutral.
+- **Slice 2 D1 (T2)** — factions.is_system guards: DELETE/PATCH reject system row with 422, partial unique index rejects second system row per user, CREATE never produces a system row.
+- **Slice 2 D2 PR-A (T4)** — anchor schema gains polygon + locationId: POST writes polygon to every anchor, PATCH polygon preserves faction_id overlay, PATCH locationId propagates, duplicate clone carries polygon + locationId.
+- **Slice 2 D3 (T7)** — undo endpoint: pops by (created_at DESC, id DESC), soft-delete sets undone_at, list endpoint excludes undone, 422 on empty stack, 404 cross-user, countFactionDependents excludes undone events, redo via re-POST creates new row with same t_position + payload.
+- **Slice 2 D2 PR-C hardening (codex review)** — baseline anchor PATCH/DELETE return 422, non-baseline edits still work, Location DELETE scrubs locationId from anchor JSON, ensureNeutralFaction recovers from concurrent insert race, -Infinity tPosition cursor round-trips, malformed cursor date returns 400, DELETE event endpoint soft-deletes.
+- **D5 cursor pagination** — 1500 events paginate through 3 pages, anchor pagination, faction pagination by createdAt, malformed cursor rejected, cross-user cursor isolation.
+- **Polygon-validation parity** (9 cases) — client `isSelfIntersecting` and server `isSelfIntersecting` agree on triangle, square, bowtie, degenerate, concave-pentagon, vertex-3 cross. `firstSelfIntersection` locates the offending edge pair.
+
 ## [0.7.7.0] - 2026-05-24
 
 ### Added

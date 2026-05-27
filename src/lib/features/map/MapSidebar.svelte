@@ -149,13 +149,21 @@
 			<li class="faction-row">
 				<span class="faction-stripe" style="background: {faction.color}" aria-hidden="true"></span>
 				<span class="faction-name" title={faction.name}>{faction.name}</span>
-				<button
-					type="button"
-					class="btn-icon btn-danger"
-					aria-label="Delete {faction.name}"
-					title="Delete"
-					onclick={() => void startDelete(faction)}
-				>×</button>
+				{#if faction.isSystem}
+					<!-- Slice 2 D1: system Neutral faction is the fallback ownership
+					     target for un-faction-ed regions. Delete would orphan every
+					     region resolving through it. UI hides the affordance; server
+					     also returns 422 on DELETE attempts (defense in depth). -->
+					<span class="system-badge" title="System faction — cannot be deleted">SYSTEM</span>
+				{:else}
+					<button
+						type="button"
+						class="btn-icon btn-danger"
+						aria-label="Delete {faction.name}"
+						title="Delete"
+						onclick={() => void startDelete(faction)}
+					>×</button>
+				{/if}
 			</li>
 		{/each}
 		{#if factionList.length === 0 && !creating}
@@ -293,6 +301,18 @@
 		color: var(--color-text-muted);
 		font-style: italic;
 		padding: 4px 2px;
+	}
+	.system-badge {
+		font-family: var(--font-ui, 'Inter', sans-serif);
+		font-size: 9px;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		color: var(--color-text-muted);
+		padding: 2px 6px;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		text-transform: uppercase;
+		cursor: help;
 	}
 
 	.form-actions,

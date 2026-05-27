@@ -1,38 +1,32 @@
 import { json, error } from '@sveltejs/kit';
-import { mapRegions, worldMaps, entities } from '$lib/server/db/schema.js';
+import { worldMaps, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf, removeImpliedPartOf } from '$lib/server/location-hierarchy.js';
 import {
-	fanOutRegionColorUpdate,
-	fanOutRegionDelete
+	fanOutRegionDelete,
+	fanOutRegionGeometryUpdate
 } from '$lib/server/anchor-region-write-through.js';
+import {
+	readBaselineRegionsForUser,
+	type AnchorRegionRow
+} from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 /**
- * mapRegions has no direct userId column — scoped via JOIN on
- * worldMaps.userId. Verify the parent map belongs to the user before any
- * operation. Cross-user access returns 404 (no existence leak).
+ * Slice 2 D2 PR-B/PR-C: region ownership reads from baseline anchor JSON
+ * via readBaselineRegionsForUser (which scopes through world_maps.user_id).
+ * Cross-user access returns 404 (no existence leak).
  */
 async function assertOwnedRegion(
 	db: App.Locals['db'],
 	mapId: string,
 	regionId: string,
 	userId: string
-) {
-	const [row] = await db
-		.select({ region: mapRegions })
-		.from(mapRegions)
-		.innerJoin(worldMaps, eq(worldMaps.id, mapRegions.mapId))
-		.where(
-			and(
-				eq(mapRegions.id, regionId),
-				eq(mapRegions.mapId, mapId),
-				eq(worldMaps.userId, userId)
-			)
-		);
-	return row?.region ?? null;
+): Promise<AnchorRegionRow | null> {
+	const rows = await readBaselineRegionsForUser(db, userId, mapId);
+	return rows.find((r) => r.id === regionId) ?? null;
 }
 
 export const PATCH: RequestHandler = async (event) => {
@@ -42,21 +36,36 @@ export const PATCH: RequestHandler = async (event) => {
 	if (!region) error(404, 'Region not found');
 
 	const body = await event.request.json();
-	const updates: Record<string, unknown> = {};
+	const patch: { polygon?: number[][]; locationId?: string | null } = {};
+	let locationIdInPatch = false;
 
-	if (body.locationId === null) updates.locationId = null;
-	else if (typeof body.locationId === 'string') {
-		// Verify locationId belongs to user.
+	if (body.locationId === null) {
+		patch.locationId = null;
+		locationIdInPatch = true;
+	} else if (typeof body.locationId === 'string') {
+		// Verify locationId belongs to user AND is type='Location'.
+		// codex PR review iter 4: anchor JSON stores locationId verbatim;
+		// use `loc.id` (PG-canonical lowercase) so later string-equality
+		// scans match. codex PR review iter 7: type guard added — without
+		// it, a client could PATCH the region to a Character/Act id and
+		// the Location-DELETE scrub would never fire for the stale ref.
 		const [loc] = await db
 			.select({ id: entities.id })
 			.from(entities)
-			.where(and(eq(entities.id, body.locationId), eq(entities.userId, userId)));
+			.where(
+				and(
+					eq(entities.id, body.locationId),
+					eq(entities.userId, userId),
+					eq(entities.type, 'Location')
+				)
+			);
 		if (!loc) error(400, 'Location not found');
-		updates.locationId = body.locationId;
+		patch.locationId = loc.id;
+		locationIdInPatch = true;
 	}
 
-	if (typeof body.color === 'string') updates.color = body.color;
-	if (body.color === null) updates.color = null;
+	// Slice 2 D1: color is no longer a region field — drop silently if
+	// included so legacy callers degrade rather than 400.
 
 	if (Array.isArray(body.polygon)) {
 		if (body.polygon.length < 3) error(400, 'Polygon must have at least 3 vertices');
@@ -75,26 +84,34 @@ export const PATCH: RequestHandler = async (event) => {
 			error(400, 'Each polygon vertex must be [number, number]');
 		}
 		if (isSelfIntersecting(body.polygon)) error(400, 'Polygon must not be self-intersecting');
-		updates.polygon = body.polygon;
+		patch.polygon = body.polygon;
 	}
 
-	if (Object.keys(updates).length === 0) error(400, 'No valid fields to update');
+	if (patch.polygon === undefined && !locationIdInPatch) {
+		error(400, 'No valid fields to update');
+	}
 
-	// Region UPDATE + part_of remove/upsert are atomic. Otherwise a partial
-	// failure (ensurePartOf rejects on cycle/single-parent) leaves the region
-	// pointing at the new location with the old implied edge gone and no new
-	// one in place.
-	let updated;
+	// Anchor write + part_of remove/upsert are atomic. Otherwise a partial
+	// failure (ensurePartOf rejects on cycle/single-parent) leaves the
+	// anchor pointing at the new location with the old implied edge gone.
+	let updated: AnchorRegionRow;
 	try {
 		updated = await db.transaction(async (tx) => {
-			const [row] = await tx
-				.update(mapRegions)
-				.set(updates)
-				.where(eq(mapRegions.id, event.params.rid))
-				.returning();
+			// Slice 2 D2 PR-C (T6): write to anchor first so removeImpliedPartOf
+			// sees the post-update state.
+			await fanOutRegionGeometryUpdate(
+				tx,
+				event.params.id!,
+				userId,
+				event.params.rid!,
+				{
+					polygon: patch.polygon,
+					...(locationIdInPatch ? { locationId: patch.locationId ?? null } : {})
+				}
+			);
 
 			const locationChanged =
-				'locationId' in updates && updates.locationId !== region.locationId;
+				locationIdInPatch && (patch.locationId ?? null) !== region.locationId;
 			if (locationChanged) {
 				const [parentMap] = await tx
 					.select({ locationId: worldMaps.locationId })
@@ -103,26 +120,17 @@ export const PATCH: RequestHandler = async (event) => {
 				if (parentMap?.locationId && region.locationId) {
 					await removeImpliedPartOf(tx, userId, region.locationId, parentMap.locationId);
 				}
-				if (parentMap?.locationId && typeof updates.locationId === 'string') {
-					await ensurePartOf(tx, userId, updates.locationId, parentMap.locationId);
+				if (parentMap?.locationId && typeof patch.locationId === 'string') {
+					await ensurePartOf(tx, userId, patch.locationId, parentMap.locationId);
 				}
 			}
-			// Slice 1b A3: write-through color changes to every anchor's
-			// state_jsonb.regions[] entry for this region. faction_id is
-			// preserved (faction ownership is a separate layer, not a
-			// geometry concern). locationId is NOT in anchor state — no
-			// write-through needed for that field.
-			if ('color' in updates) {
-				const newColor = updates.color === null ? null : (updates.color as string);
-				await fanOutRegionColorUpdate(
-					tx,
-					event.params.id!,
-					userId,
-					event.params.rid!,
-					newColor
-				);
-			}
-			return row;
+
+			return {
+				id: region.id,
+				mapId: region.mapId,
+				locationId: locationIdInPatch ? patch.locationId ?? null : region.locationId,
+				polygon: patch.polygon ?? region.polygon
+			};
 		});
 	} catch (err) {
 		const status = (err as { status?: number }).status;
@@ -139,12 +147,12 @@ export const DELETE: RequestHandler = async (event) => {
 	const region = await assertOwnedRegion(db, event.params.id, event.params.rid, userId);
 	if (!region) error(404, 'Region not found');
 
-	// Region DELETE + implied edge cleanup are atomic. The orphan check
-	// (cross-map sibling lookup) and the edge delete must see a consistent
-	// view: if a concurrent region INSERT lands between them outside a tx,
-	// we could wrongly drop an edge that should still hold.
+	// Anchor DELETE + implied edge cleanup are atomic. Order: anchor delete
+	// must run BEFORE removeImpliedPartOf because the latter reads anchor
+	// JSON — if we removed the edge first and the anchor delete failed,
+	// we'd have a stranded region whose implied edge was already gone.
 	await db.transaction(async (tx) => {
-		await tx.delete(mapRegions).where(eq(mapRegions.id, event.params.rid));
+		await fanOutRegionDelete(tx, event.params.id!, userId, event.params.rid!);
 		if (region.locationId) {
 			const [parentMap] = await tx
 				.select({ locationId: worldMaps.locationId })
@@ -154,10 +162,6 @@ export const DELETE: RequestHandler = async (event) => {
 				await removeImpliedPartOf(tx, userId, region.locationId, parentMap.locationId);
 			}
 		}
-		// Slice 1b A3: remove this region from every anchor's
-		// state_jsonb.regions[]. Faction ownership of this region (if any)
-		// is dropped with it — the region no longer exists.
-		await fanOutRegionDelete(tx, event.params.id!, userId, event.params.rid!);
 	});
 
 	return new Response(null, { status: 204 });

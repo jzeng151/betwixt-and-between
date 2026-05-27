@@ -42,7 +42,9 @@
 		regions,
 		renderedState,
 		mapId,
-		dataLoading = false
+		dataLoading = false,
+		isInScope = null,
+		onDrawHere
 	}: {
 		regions: MapRegion[];
 		renderedState: RenderedState | null;
@@ -53,6 +55,16 @@
 		// is incomplete and a snapshot persists silently-wrong null
 		// faction_ids. Gate menu + function on this signal.
 		dataLoading?: boolean;
+		// T9 follow-up: out-of-scope regions render dimmed (matches
+		// Leaflet's RegionLayer treatment — regions whose locationId is
+		// not in the playhead-derived scope go to lower opacity). When
+		// null (no scope filter wired) all regions render in-scope.
+		isInScope?: ((entityId: string) => boolean) | null;
+		// Slice 2 D4 prep (T8): the snapshot menu adds a "Draw region here"
+		// entry that calls back into the parent with the right-click's
+		// image-pixel coords. The parent flips PixiPolygonDraw into active
+		// mode seeded with that point.
+		onDrawHere?: (x: number, y: number) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -82,7 +94,10 @@
 	// right-clicks (Δ1b-E).
 	type MenuState =
 		| { kind: 'region'; x: number; y: number; regionId: string }
-		| { kind: 'snapshot'; x: number; y: number };
+		// Slice 2 D4 prep (T8): snapshot menu also captures stage-local
+		// (image-pixel) coords so "Draw region here" can seed the first
+		// vertex of the polygon at the right-click location.
+		| { kind: 'snapshot'; x: number; y: number; stageX: number; stageY: number };
 	let menu = $state<MenuState | null>(null);
 	let actionError = $state<string | null>(null);
 	let actionInfo = $state<string | null>(null);
@@ -163,7 +178,11 @@
 
 	function openSnapshotMenu(e: FederatedPointerEvent) {
 		const { x, y } = clientXY(e);
-		menu = { kind: 'snapshot', x, y };
+		// e.global is the stage-local coordinate (image-pixel space) — used
+		// by "Draw region here" to seed the polygon's first vertex.
+		const stageX = (e.global?.x ?? 0) as number;
+		const stageY = (e.global?.y ?? 0) as number;
+		menu = { kind: 'snapshot', x, y, stageX, stageY };
 	}
 
 	async function snapshotWorldState() {
@@ -197,11 +216,19 @@
 			const ownedRegionCount = Array.from(renderedRegionMap.values()).filter(
 				(f) => f !== null
 			).length;
+			// codex review P1 #1: post-T4 anchor schema carries polygon +
+			// locationId. Post-T6 anchor JSON is canonical for region
+			// geometry — if a snapshot becomes the earliest anchor (e.g.,
+			// snapshotted at a t-position less than any other anchor's),
+			// readBaselineRegions returns whatever the snapshot stored.
+			// Snapshots that omit polygon would erase every region's
+			// geometry. Carry the full anchor entry shape.
 			const stateJsonb = {
 				regions: regions.map((r) => ({
 					region_id: r.id,
 					faction_id: renderedRegionMap.get(r.id) ?? null,
-					color: r.color
+					polygon: r.polygon,
+					locationId: r.locationId ?? null
 				})),
 				artifacts: [],
 				chains: []
@@ -277,7 +304,20 @@
 					}
 				];
 			}
+			const stageX = menu.stageX;
+			const stageY = menu.stageY;
 			return [
+				// Slice 2 D4 prep (T8): "Draw region here" appears alongside
+				// the snapshot affordance; both share the right-click gesture
+				// on the canvas (Variant D — Cartographer's tool).
+				{
+					label: 'Draw region here',
+					icon: '✎',
+					disabled: !onDrawHere,
+					onSelect: () => {
+						onDrawHere?.(stageX, stageY);
+					}
+				},
 				{
 					label: 'Snapshot world state here',
 					icon: '📌',
@@ -366,10 +406,21 @@
 			}
 			if (flat.length < 6) continue;
 
+			// T9 follow-up: scope-based dimming. In scope when the region's
+			// linked location is in the playhead's interval cone (matches
+			// Leaflet RegionLayer). Region without a locationId is treated
+			// as in-scope (geometry only, not tied to a location).
+			const inScope = isInScope && region.locationId
+				? isInScope(region.locationId)
+				: true;
+			const fillAlpha = inScope ? 0.35 : 0.08;
+			const strokeWidth = inScope ? 2 : 1;
+			const strokeAlpha = inScope ? 1 : 0.3;
+
 			const g: PixiGraphics = new PIXI.Graphics();
 			g.poly(flat)
-				.fill({ color: fill, alpha: 0.35 })
-				.stroke({ color: fill, width: 2 });
+				.fill({ color: fill, alpha: fillAlpha })
+				.stroke({ color: fill, width: strokeWidth, alpha: strokeAlpha });
 			g.eventMode = 'static';
 			g.cursor = 'pointer';
 			// 'rightclick' fires on pointerup with right button; matches

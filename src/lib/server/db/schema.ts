@@ -367,7 +367,7 @@ export const entityAliases = pgTable('entity_aliases', {
 //   - Vitest invariant test scanning every row
 //   - this schema comment
 // Nullable: a map can exist before being linked to a Location, and can outlive
-// a deleted Location via ON DELETE SET NULL (matches mapRegions.locationId).
+// a deleted Location via ON DELETE SET NULL.
 //
 // `location_inactive_at` records when SET NULL fired so the UI can surface
 // orphan maps for re-linking. NULL on healthy rows; non-NULL after a Location
@@ -499,21 +499,13 @@ export const mapPlacements = pgTable(
 	]
 );
 
-export const mapRegions = pgTable('map_regions', {
-	id: uuid('id').primaryKey().defaultRandom(),
-	mapId: uuid('map_id')
-		.notNull()
-		.references(() => worldMaps.id, { onDelete: 'cascade' }),
-	locationId: uuid('location_id')
-		.references(() => entities.id, { onDelete: 'set null' }),
-	polygon: jsonb('polygon').notNull().$type<number[][]>(),
-	color: text('color'),
-	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
-}, (table) => [
-	index('map_regions_map_id_idx').on(table.mapId),
-	index('map_regions_location_id_idx').on(table.locationId)
-]);
+// Slice 2 D2 PR-C (T6): map_regions table dropped
+// (drizzle/0016_d2_drop_map_regions.sql). Region identity, geometry, and
+// location-link now live exclusively in map_anchors.state_jsonb.regions[];
+// the baseline anchor (t_position = -Infinity) is canonical. See
+// src/lib/server/world-map-v3.ts → readBaselineRegions /
+// readBaselineRegionsForUser for the read path, and
+// src/lib/server/anchor-region-write-through.ts for the write helpers.
 
 // =============================================================================
 // World Map v3 foundation — Slice 1a (2026-05-22)
@@ -564,6 +556,11 @@ export const mapEvents = pgTable('map_events', {
 	kind: text('kind').notNull(),
 	payloadJsonb: jsonb('payload_jsonb').notNull(),
 	sourceEventId: uuid('source_event_id').references(() => entities.id, { onDelete: 'set null' }),
+	// Slice 2 D3 (T7): soft-delete marker for undone events. NULL on live
+	// rows; non-NULL once undone. Projection + list endpoints filter on
+	// `undone_at IS NULL`. Append-only history posture preserved — undone
+	// rows are kept for audit, never resurrected (redo creates a fresh row).
+	undoneAt: timestamp('undone_at', { withTimezone: true }),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
 	index('map_events_world_map_id_t_position_idx').on(table.worldMapId, table.tPosition)
@@ -575,8 +572,25 @@ export const factions = pgTable('factions', {
 	name: text('name').notNull(),
 	color: text('color').notNull(),
 	styleJsonb: jsonb('style_jsonb'),
+	// Slice 2 D1: marks the per-user "Neutral" faction. Server PATCH/DELETE
+	// reject mutations on isSystem=true rows. Exactly one per user is
+	// enforced by the partial unique index factions_user_one_system
+	// (drizzle/0013_factions_is_system.sql) — the schema-level integrity
+	// guarantee the design doc § Slice 2 D1 prescribes.
+	isSystem: boolean('is_system').notNull().default(false),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
-	index('factions_user_id_idx').on(table.userId)
+	index('factions_user_id_idx').on(table.userId),
+	// Slice 2 D1: exactly one is_system=true row per user. The partial
+	// unique index also lives in drizzle/0013_factions_is_system.sql for
+	// migration-built DBs; declared here as well so `npm run db:push`
+	// (schema-based DB creation) gets the constraint without depending
+	// on the migration journal. codex PR review iter 9: ensureNeutralFaction
+	// uses ON CONFLICT DO NOTHING — without the partial unique, concurrent
+	// first-writes on a freshly-pushed schema have no conflict to ignore
+	// and silently create duplicate Neutral rows.
+	uniqueIndex('factions_user_one_system')
+		.on(table.userId)
+		.where(sql`is_system = true`)
 ]);
