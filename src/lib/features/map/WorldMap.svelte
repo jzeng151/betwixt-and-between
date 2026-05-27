@@ -21,6 +21,8 @@
 	import MapToolbar from '$lib/features/map/MapToolbar.svelte';
 	import PixiStage from '$lib/features/map/PixiStage.svelte';
 	import PixiBackgroundLayer from '$lib/features/map/PixiBackgroundLayer.svelte';
+	import PixiGridLayer from '$lib/features/map/PixiGridLayer.svelte';
+	import PixiTerrainLayer from '$lib/features/map/PixiTerrainLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
@@ -1013,6 +1015,8 @@
 		<PixiStage {activeMap}>
 			{#snippet children()}
 				<PixiBackgroundLayer {activeMap} />
+				<PixiGridLayer {activeMap} />
+				<PixiTerrainLayer {activeMap} cells={renderedState?.cells ?? []} />
 				<PixiRegionLayer
 					regions={scopedRegions}
 					{renderedState}
