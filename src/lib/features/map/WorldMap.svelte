@@ -23,6 +23,7 @@
 	import PixiStage from '$lib/features/map/PixiStage.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
+	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import RegionLayer from '$lib/features/map/RegionLayer.svelte';
 	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
@@ -1094,6 +1095,16 @@
 						{dataLoading}
 						onDrawHere={startPixiDraw}
 					/>
+					<PixiPlacementLayer
+						{activeMap}
+						playhead={$playhead}
+						placements={$placementsStore}
+						entities={$entities}
+						armedPlaceableId={pixiDrawingActive ? null : armedPlaceableId}
+						onOpenEntity={(id) => windowStore.open('entity-detail', id)}
+						onDeletePlacement={(id) => void deletePlacement(id)}
+						onCanvasClick={handleCanvasClick}
+					/>
 					<PixiPolygonDraw
 						bind:active={pixiDrawingActive}
 						seedPoint={pixiDrawSeed}
@@ -1112,12 +1123,11 @@
 			{/if}
 			<MapSidebar />
 		{/if}
-		{#if hasImage && activeMap?.locationId && renderer === 'leaflet'}
-			<!-- Codex P2 on PR #55: placement creation/rendering is wired only
-			     through Leaflet (MapStage's onCanvasClick + PlacementLayer's
-			     L.marker). Showing the palette under ?renderer=pixi let users
-			     arm a placeable that no canvas click would ever consume.
-			     Pixi-side placements are deferred to Slice 2. -->
+		{#if hasImage && activeMap?.locationId}
+			<!-- Slice 2 D4 prep (T9): PlaceablesPalette wires up under both
+			     renderers. Leaflet path: MapStage.onCanvasClick → handleCanvasClick.
+			     Pixi path: PixiPlacementLayer's stage-level pointertap → same
+			     handleCanvasClick. The palette no longer depends on renderer. -->
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
 				<div class="placement-error" role="alert">
