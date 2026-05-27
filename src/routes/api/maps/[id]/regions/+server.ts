@@ -48,16 +48,24 @@ export const POST: RequestHandler = async (event) => {
 		error(400, 'Polygon must not be self-intersecting');
 	}
 
-	const resolvedLocationId: string | null =
-		typeof locationId === 'string' ? locationId : null;
+	let resolvedLocationId: string | null = null;
 
 	// Verify locationId belongs to user when supplied.
-	if (resolvedLocationId !== null) {
+	// codex PR review iter 4: anchor JSON stores locationId as a plain
+	// string (no PG uuid normalization). If the client posts an uppercase
+	// UUID, PG accepts it on the entity validation query but the JSON
+	// value retains the casing. Later string-equality scans — entity
+	// lookups via Map(id→entity), the Location-DELETE jsonb scrub, etc —
+	// compare against the DB-canonical lowercase form and miss the
+	// uppercase JSON value. Use the validated `loc.id` (PG-canonicalized)
+	// for all anchor JSON writes.
+	if (typeof locationId === 'string') {
 		const [loc] = await db
 			.select({ id: entities.id })
 			.from(entities)
-			.where(and(eq(entities.id, resolvedLocationId), eq(entities.userId, userId)));
+			.where(and(eq(entities.id, locationId), eq(entities.userId, userId)));
 		if (!loc) error(400, 'Location not found');
+		resolvedLocationId = loc.id;
 	}
 
 	// Slice 2 D2 PR-C (T6): map_regions is dropped. Region identity is

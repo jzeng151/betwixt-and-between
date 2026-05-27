@@ -44,12 +44,16 @@ export const PATCH: RequestHandler = async (event) => {
 		locationIdInPatch = true;
 	} else if (typeof body.locationId === 'string') {
 		// Verify locationId belongs to user.
+		// codex PR review iter 4: anchor JSON stores locationId verbatim.
+		// Use the validated `loc.id` (PG-canonicalized lowercase) for the
+		// JSON write so later string-equality scans (entity lookups,
+		// Location-DELETE scrub) match.
 		const [loc] = await db
 			.select({ id: entities.id })
 			.from(entities)
 			.where(and(eq(entities.id, body.locationId), eq(entities.userId, userId)));
 		if (!loc) error(400, 'Location not found');
-		patch.locationId = body.locationId;
+		patch.locationId = loc.id;
 		locationIdInPatch = true;
 	}
 
