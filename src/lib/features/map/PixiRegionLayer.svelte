@@ -44,7 +44,10 @@
 		mapId,
 		dataLoading = false,
 		isInScope = null,
-		onDrawHere
+		onDrawHere,
+		onEditRegion,
+		onDeleteRegion,
+		onDrillIntoLocation
 	}: {
 		regions: MapRegion[];
 		renderedState: RenderedState | null;
@@ -65,6 +68,13 @@
 		// image-pixel coords. The parent flips PixiPolygonDraw into active
 		// mode seeded with that point.
 		onDrawHere?: (x: number, y: number) => void;
+		// T13 parity (Codex iter PR#57): the deleted Leaflet popup wired
+		// Edit / Delete / Drill / Create-map for regions. Restore them on
+		// the Pixi right-click menu so users still have access to those
+		// actions after the renderer flag is gone.
+		onEditRegion?: (regionId: string) => void;
+		onDeleteRegion?: (regionId: string) => void;
+		onDrillIntoLocation?: (locationId: string) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -338,14 +348,46 @@
 				}
 			];
 		}
-		if (factionList.length === 0) {
-			return [
-				{
-					label: 'No factions yet — create one first',
-					disabled: true,
-					onSelect: () => {}
+		// T13 parity: Edit / Delete / Drill always appear (independent of
+		// faction list state). They were the Leaflet popup's bread-and-butter
+		// actions; PR#57 review caught that PixiRegionLayer's previous menu
+		// only handled ownership. Drill is disabled when the region has no
+		// linked Location.
+		const region = regions.find((r) => r.id === regionId);
+		const linkedLocationId = region?.locationId ?? null;
+		const items: MenuItem[] = [];
+		if (onEditRegion) {
+			items.push({
+				label: 'Edit region',
+				icon: '✎',
+				onSelect: () => onEditRegion!(regionId)
+			});
+		}
+		if (onDrillIntoLocation) {
+			items.push({
+				label: linkedLocationId ? 'Drill into location' : 'Drill into location (no link)',
+				icon: '↳',
+				disabled: !linkedLocationId,
+				onSelect: () => {
+					if (linkedLocationId) onDrillIntoLocation!(linkedLocationId);
 				}
-			];
+			});
+		}
+		if (onDeleteRegion) {
+			items.push({
+				label: 'Delete region',
+				icon: '🗑',
+				onSelect: () => onDeleteRegion!(regionId)
+			});
+		}
+
+		if (factionList.length === 0) {
+			items.push({
+				label: 'No factions yet — create one first',
+				disabled: true,
+				onSelect: () => {}
+			});
+			return items;
 		}
 		// Current owner of this region at the active playhead, per the most
 		// recent projectState pass. Disable the item that points back to the
@@ -354,8 +396,8 @@
 		const currentFactionId = renderedState?.regions.find(
 			(r) => r.regionId === regionId
 		)?.factionId ?? null;
-		return factionList.map(
-			(f): MenuItem => ({
+		for (const f of factionList) {
+			items.push({
 				label:
 					f.id === currentFactionId
 						? `${f.name} (current owner)`
@@ -365,8 +407,9 @@
 				onSelect: () => {
 					void changeOwner(regionId, f.id);
 				}
-			})
-		);
+			});
+		}
+		return items;
 	});
 
 	$effect(() => {

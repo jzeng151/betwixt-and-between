@@ -20,6 +20,7 @@
 	import MapBreadcrumb from '$lib/features/map/MapBreadcrumb.svelte';
 	import MapToolbar from '$lib/features/map/MapToolbar.svelte';
 	import PixiStage from '$lib/features/map/PixiStage.svelte';
+	import PixiBackgroundLayer from '$lib/features/map/PixiBackgroundLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
@@ -1011,6 +1012,7 @@
 		{/if}
 		<PixiStage {activeMap}>
 			{#snippet children()}
+				<PixiBackgroundLayer {activeMap} />
 				<PixiRegionLayer
 					regions={scopedRegions}
 					{renderedState}
@@ -1018,6 +1020,9 @@
 					{dataLoading}
 					isInScope={$isInScope}
 					onDrawHere={startPixiDraw}
+					onEditRegion={(id) => startEditRegion(id)}
+					onDeleteRegion={(id) => void handleDeleteRegion(id)}
+					onDrillIntoLocation={(locId) => drillIntoLocation(locId)}
 				/>
 				<PixiPlacementLayer
 					{activeMap}
