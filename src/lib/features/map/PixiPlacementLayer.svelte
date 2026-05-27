@@ -231,6 +231,16 @@
 		stageClickHandler = (e: FederatedPointerEvent) => {
 			if (e.button !== 0) return;
 			if (!onCanvasClick) return;
+			// codex PR review: empty-stage clicks only. PixiRegionLayer's
+			// region polygons are interactive (cursor=pointer); clicking
+			// one of them currently fires pointertap on the stage too, so
+			// an armed placeable drops a marker UNDER the polygon. Leaflet's
+			// path explicitly skips `.leaflet-interactive` targets — the
+			// Pixi equivalent is "only act when the tap target is the stage
+			// itself, not a descendant Graphics". e.target points at the
+			// originating display object; bail when it's anything but the
+			// stage root.
+			if (e.target !== e.currentTarget) return;
 			const fx = e.global.x / w;
 			const fy = e.global.y / h;
 			// Clamp to [0,1]. Out-of-bounds clicks (Pixi sometimes fires
