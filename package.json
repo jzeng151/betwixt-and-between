@@ -13,7 +13,6 @@
     "cf:typegen": "wrangler types",
     "prepare": "svelte-kit sync || echo ''",
     "postinstall": "patch-package",
-    "verify:patches": "tsx scripts/verify-patches.ts",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "db:push": "drizzle-kit push",
