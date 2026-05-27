@@ -8,6 +8,7 @@ import {
 } from '$lib/server/intervals.js';
 import { intervals as intervalsTable } from '$lib/server/db/schema.js';
 import { and, eq, gt, gte, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { validateStyleInData } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -49,7 +50,13 @@ export const PATCH: RequestHandler = async (event) => {
 	// — do not set it here. data is jsonb on pg; pass the object directly.
 	const updates: Record<string, unknown> = {};
 	if (name !== undefined) updates.name = name.trim();
-	if (data !== undefined) updates.data = data;
+	if (data !== undefined) {
+		// Slice 3 T24 — validate data.style against the cascade whitelist.
+		// data itself stays free-form (per-entity-type field schema varies);
+		// the style sub-key is the closed-enum part the renderer trusts.
+		validateStyleInData(data, 'entity.data');
+		updates.data = data;
+	}
 
 	// parentId change for Scenes: delegate to moveSceneToAct. Wrap the whole
 	// "structural change + recompute cascade" in a single transaction per the

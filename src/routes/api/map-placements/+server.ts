@@ -23,6 +23,7 @@ import {
 	resolvePlacementBounds
 } from '$lib/server/map-placements.js';
 import { isUuid } from '$lib/server/validation.js';
+import { validateStyleInData } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -86,6 +87,10 @@ export const POST: RequestHandler = async (event) => {
 	if (x < 0 || x > 1 || y < 0 || y > 1) {
 		error(400, 'x and y must be fractions in [0, 1] of the source-image dimensions');
 	}
+
+	// Slice 3 T24 — style whitelist. If the client sends data.style, every
+	// key + value must conform to ResolvedStyle's contract.
+	validateStyleInData(data, 'placement.data');
 
 	const normalizedStartActId = startActId ?? null;
 	const normalizedEndActId = endActId ?? null;

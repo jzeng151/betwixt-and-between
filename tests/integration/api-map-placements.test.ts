@@ -462,3 +462,117 @@ describe('POST/PATCH invalid bounds surface as 400 (Codex #1)', () => {
 		).rejects.toMatchObject({ status: 400 });
 	});
 });
+
+// Slice 3 PR D
+describe('Slice 3 D4 — drag-drop source_asset_id round-trip', () => {
+	it('stores data.source_asset_id on a placement created via drag-drop', async () => {
+		// The drop handler in WorldMap.svelte calls placementsStore.create
+		// with data: { source_asset_id: asset.id }. This test exercises the
+		// server-side acceptance of that payload shape.
+		const loc = await seedLocation();
+		const ch = await seedCharacter();
+		const map = await seedMap('M', loc.id);
+		const res = await CREATE_PLACEMENT(
+			mkEvent({
+				body: {
+					placeableId: ch.id,
+					locationId: loc.id,
+					mapId: map.id,
+					x: 0.5,
+					y: 0.5,
+					data: { source_asset_id: ch.id }
+				}
+			})
+		);
+		expect(res.status).toBe(201);
+		const body = await readJson(res);
+		expect(body.data).toEqual({ source_asset_id: ch.id });
+	});
+
+	it('round-trips source_asset_id even when it points at a different entity', async () => {
+		// Slice 4 will care about whether placeable_id and source_asset_id
+		// differ (sync-from-template uses source_asset_id). For Slice 3
+		// the field is opaque; this test just pins persistence.
+		const loc = await seedLocation();
+		const a = await seedCharacter('A');
+		const b = await seedCharacter('B');
+		const map = await seedMap('M', loc.id);
+		const res = await CREATE_PLACEMENT(
+			mkEvent({
+				body: {
+					placeableId: a.id,
+					locationId: loc.id,
+					mapId: map.id,
+					x: 0.5,
+					y: 0.5,
+					data: { source_asset_id: b.id }
+				}
+			})
+		);
+		expect(res.status).toBe(201);
+		const body = await readJson(res);
+		expect(body.placeableId).toBe(a.id);
+		expect(body.data.source_asset_id).toBe(b.id);
+	});
+});
+
+describe('Slice 3 T24 — style whitelist on placement endpoints', () => {
+	it('accepts placement with valid data.style', async () => {
+		const loc = await seedLocation();
+		const ch = await seedCharacter();
+		const map = await seedMap('M', loc.id);
+		const res = await CREATE_PLACEMENT(
+			mkEvent({
+				body: {
+					placeableId: ch.id,
+					locationId: loc.id,
+					mapId: map.id,
+					x: 0.5,
+					y: 0.5,
+					data: { style: { color: '#ff0000', scale: 1.5 } }
+				}
+			})
+		);
+		expect(res.status).toBe(201);
+	});
+
+	it('rejects placement with bad color in data.style', async () => {
+		const loc = await seedLocation();
+		const ch = await seedCharacter();
+		const map = await seedMap('M', loc.id);
+		await expect(
+			CREATE_PLACEMENT(
+				mkEvent({
+					body: {
+						placeableId: ch.id,
+						locationId: loc.id,
+						mapId: map.id,
+						x: 0.5,
+						y: 0.5,
+						data: { style: { color: 'not-hex' } }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('rejects placement with unknown style key', async () => {
+		const loc = await seedLocation();
+		const ch = await seedCharacter();
+		const map = await seedMap('M', loc.id);
+		await expect(
+			CREATE_PLACEMENT(
+				mkEvent({
+					body: {
+						placeableId: ch.id,
+						locationId: loc.id,
+						mapId: map.id,
+						x: 0.5,
+						y: 0.5,
+						data: { style: { color: '#ff0000', glow: true } }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+});

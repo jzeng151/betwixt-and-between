@@ -34,6 +34,8 @@
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
 	import BrushPalette from '$lib/components/BrushPalette.svelte';
+	import AssetLibrary from '$lib/components/AssetLibrary.svelte';
+	import { ASSET_DRAG_MIME } from '$lib/components/asset-drag.js';
 	import PixiBrushLayer from '$lib/features/map/PixiBrushLayer.svelte';
 	import type { BiomeKind } from '$lib/features/map/projection.js';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
@@ -419,19 +421,72 @@
 		void createPlacementAt(placeableId, fx, fy);
 	}
 
-	async function createPlacementAt(placeableId: string, x: number, y: number) {
+	async function createPlacementAt(
+		placeableId: string,
+		x: number,
+		y: number,
+		options: { sourceAssetId?: string } = {}
+	) {
 		placementError = '';
 		try {
+			// Slice 3 T17 — source_asset_id stored in placement.data.
+			// Click-to-place path (PlaceablesPalette) leaves it undefined;
+			// drag-drop path (AssetLibrary) passes it through. Slice 4's
+			// sync-from-template button reads this field to look up the
+			// asset entity.
+			const data = options.sourceAssetId
+				? { source_asset_id: options.sourceAssetId }
+				: undefined;
 			await placementsStore.create({
 				placeableId,
 				locationId: activeMap?.locationId ?? null,
 				mapId: activeMap?.id ?? null,
 				x,
-				y
+				y,
+				...(data ? { data } : {})
 			});
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
 		}
+	}
+
+	// Slice 3 T8' — drop handler for AssetLibrary drags. Pixi canvas
+	// lives inside PixiStage's pixi-stage div; we wrap the stage with
+	// listeners. dragover must preventDefault so the drop event fires.
+	function handleAssetDragOver(e: DragEvent): void {
+		if (!e.dataTransfer) return;
+		// Accept only our custom MIME type. Files / text / images get
+		// the "no drop" cursor — the user can't accidentally place from
+		// an OS file drag.
+		if (!Array.from(e.dataTransfer.types).includes(ASSET_DRAG_MIME)) return;
+		// Block the drop if the active map can't host a placement (no
+		// linked Location → no anchor for the placement to bind to).
+		if (!activeMap?.locationId) {
+			e.dataTransfer.dropEffect = 'none';
+			return;
+		}
+		e.preventDefault();
+		e.dataTransfer.dropEffect = 'copy';
+	}
+
+	function handleAssetDrop(e: DragEvent): void {
+		if (!e.dataTransfer) return;
+		const assetId = e.dataTransfer.getData(ASSET_DRAG_MIME);
+		if (!assetId) return;
+		if (!activeMap?.width || !activeMap?.height || !activeMap?.locationId) return;
+		e.preventDefault();
+		// Drop coords are in screen-pixel space (clientX/Y). Translate to
+		// canvas-local pixels, then to fractional [0, 1] coords. The
+		// target div fills the canvas area so its boundingClientRect is
+		// the right reference.
+		const target = e.currentTarget as HTMLElement;
+		const rect = target.getBoundingClientRect();
+		// Guard against zero-area target (unmounted between dragover and drop).
+		if (rect.width <= 0 || rect.height <= 0) return;
+		const fx = (e.clientX - rect.left) / rect.width;
+		const fy = (e.clientY - rect.top) / rect.height;
+		if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
+		void createPlacementAt(assetId, fx, fy, { sourceAssetId: assetId });
 	}
 
 	async function deletePlacement(id: string) {
@@ -1035,6 +1090,16 @@
 				<button type="button" onclick={() => (toolbarNewLocationError = '')}>✕</button>
 			</div>
 		{/if}
+		<!-- Slice 3 T8' drop target. Wraps PixiStage so AssetLibrary drags
+		     can drop onto the canvas. dragover preventDefault enables drop;
+		     ASSET_DRAG_MIME filter rejects accidental file drops. -->
+		<div
+			class="pixi-drop-target"
+			role="region"
+			aria-label="Map canvas drop zone"
+			ondragover={handleAssetDragOver}
+			ondrop={handleAssetDrop}
+		>
 		<PixiStage {activeMap}>
 			{#snippet children()}
 				<PixiBackgroundLayer {activeMap} />
@@ -1093,6 +1158,7 @@
 				/>
 			{/snippet}
 		</PixiStage>
+		</div>
 		{#if pixiDrawingActive}
 			<!-- T8 drawing-mode status overlay. 9px Inter uppercase tracked
 			     per Variant A/D from docs/plans/world-map-v3-slice-2-plan.md. -->
@@ -1105,6 +1171,9 @@
 			<!-- PlaceablesPalette: armed chip → PixiPlacementLayer's stage-
 			     level pointertap → handleCanvasClick → create placement. -->
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
+			<!-- Slice 3 T8' asset library — drag source for placements.
+			     Drop target lives on the pixi-drop-target wrapper above. -->
+			<AssetLibrary />
 			<!-- Slice 3 T5 brush palette. Mounts under the canvas alongside
 			     PlaceablesPalette. Toggling brush ON disarms any placement
 			     chip (cross-exclusion in $effect above). -->
@@ -1727,6 +1796,16 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+	}
+	/* Slice 3 T8' drop target wraps the Pixi canvas. Must have a real box
+	   so getBoundingClientRect() in the drop handler returns the canvas
+	   area for pixel → fractional conversion. Inherits the same flex
+	   behavior PixiStage had as a direct child. */
+	.pixi-drop-target {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
 	}
 	.placement-error button {
 		background: transparent;

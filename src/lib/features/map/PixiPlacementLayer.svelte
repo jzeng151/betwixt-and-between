@@ -20,6 +20,13 @@
 	} from './pixi-context.js';
 	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
+	import { resolveStyle, GLOBAL_STYLE_DEFAULT } from '$lib/features/map/style-cascade.js';
+
+	// Visual fallback gate: when the cascade returns GLOBAL_STYLE_DEFAULT's
+	// color (i.e. neither STYLE_DEFAULTS nor entity.data.style set one),
+	// fall through to the legacy getEntityTypeColor so existing entities
+	// without an explicit style still render in their per-type palette.
+	const GLOBAL_DEFAULT_COLOR = GLOBAL_STYLE_DEFAULT.color;
 	import type { MapPlacement } from '$lib/types/map-placement.js';
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { WorldMap } from './types.js';
@@ -149,7 +156,20 @@
 			if (!placeable) continue;
 			const cx = placement.x * mapW;
 			const cy = placement.y * mapH;
-			const fill = parseHex(getEntityTypeColor(placeable.type));
+
+			// Slice 3 T9 + B6 — style cascade resolved per-placement at
+			// render. GLOBAL ⊕ STYLE_DEFAULTS[type] ⊕ entity.data.style.
+			// Color falls through getEntityTypeColor as a baseline if
+			// neither STYLE_DEFAULTS nor an instance override set one
+			// — getEntityTypeColor returns the legacy per-type palette
+			// so visuals don't regress for entities without explicit
+			// styles. resolveStyle's color is preferred; the legacy is
+			// the fallback for type defaults the new const doesn't list.
+			const resolved = resolveStyle(placeable);
+			const fillColor =
+				resolved.color === GLOBAL_DEFAULT_COLOR
+					? parseHex(getEntityTypeColor(placeable.type))
+					: parseHex(resolved.color);
 
 			// T9 follow-up: scope-based dim. The placeable entity is in
 			// scope when its intervals contain the playhead (or playhead is
@@ -157,12 +177,17 @@
 			// scope"). Out-of-scope placements stay visible but fade so
 			// the canvas isn't visually noisy with off-scene markers.
 			const inScope = isInScope ? isInScope(placeable.id) : true;
-			const fillAlpha = inScope ? 1 : 0.3;
-			const strokeAlpha = inScope ? 0.6 : 0.2;
+			// Compose scope dim with per-instance opacity. resolved.opacity
+			// is the cascade's full chain; scope is the temporal dim.
+			const fillAlpha = (inScope ? 1 : 0.3) * resolved.opacity;
+			const strokeAlpha = (inScope ? 0.6 : 0.2) * resolved.opacity;
+
+			// Sprite radius scales with cascade.scale. Base radius 8.
+			const radius = 8 * resolved.scale;
 
 			const g: PixiGraphics = new PIXI.Graphics();
-			g.circle(cx, cy, 8)
-				.fill({ color: fill, alpha: fillAlpha })
+			g.circle(cx, cy, radius)
+				.fill({ color: fillColor, alpha: fillAlpha })
 				.stroke({ color: 0x000000, width: 1.5, alpha: strokeAlpha });
 			g.eventMode = 'static';
 			g.cursor = 'pointer';
