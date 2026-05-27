@@ -18,6 +18,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { eq, sql, and } from 'drizzle-orm';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import {
+	user,
 	worldMaps,
 	mapAnchors,
 	mapEvents,
@@ -193,6 +194,53 @@ describe('Slice 3 PR A — 0020 map_events.command_id', () => {
 		expect(row.commandId).toBeNull();
 	});
 
+	it('NULL and non-NULL command_id rows coexist on the same map (legacy + chunked)', async () => {
+		// Pins the documented contract: NULL command_id = standalone
+		// event (legacy paths: transfer_region, manual anchors). Non-NULL =
+		// grouped event (chunked brush stroke). Both must coexist.
+		await db.insert(mapEvents).values({
+			worldMapId: mapId,
+			tPosition: 1.0,
+			kind: 'transfer_region',
+			payloadJsonb: { region_id: '00000000-0000-0000-0000-000000000001', new_faction_id: null }
+		});
+		const strokeId = '22222222-2222-2222-2222-222222222222';
+		await db.insert(mapEvents).values({
+			worldMapId: mapId,
+			tPosition: 1.5,
+			kind: 'paint_cells',
+			payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'forest' }] },
+			commandId: strokeId
+		});
+		const rows = await db
+			.select({ commandId: mapEvents.commandId, kind: mapEvents.kind })
+			.from(mapEvents)
+			.where(eq(mapEvents.worldMapId, mapId));
+		expect(rows.length).toBe(2);
+		const nullCmd = rows.find((r) => r.commandId === null);
+		const groupedCmd = rows.find((r) => r.commandId === strokeId);
+		expect(nullCmd?.kind).toBe('transfer_region');
+		expect(groupedCmd?.kind).toBe('paint_cells');
+	});
+
+	it('map_events_command_id_idx is a partial index (WHERE command_id IS NOT NULL)', async () => {
+		// Locks the partial-index contract from 0020. If a future
+		// migration drops the WHERE clause, the index would cover
+		// every NULL-command_id row (the much-larger legacy-event
+		// population), defeating the design intent. Asserting on
+		// pg_indexes catches that regression.
+		const result = await db.execute(sql`
+			SELECT indexdef
+			FROM pg_indexes
+			WHERE indexname = 'map_events_command_id_idx'
+		`);
+		const rows = Array.isArray(result.rows)
+			? result.rows
+			: ((result as unknown) as { rows: Array<{ indexdef: string }> }).rows ?? [];
+		expect(rows.length).toBe(1);
+		expect(rows[0].indexdef).toMatch(/WHERE \(?command_id IS NOT NULL\)?/i);
+	});
+
 	it('events sharing a command_id can be inserted (chunked stroke)', async () => {
 		const commandId = '11111111-1111-1111-1111-111111111111';
 		await db.insert(mapEvents).values({
@@ -296,7 +344,10 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 			layerKey: 'placements'
 		});
 		const [before] = await db
-			.select({ updatedAt: worldMapLayerPrefs.updatedAt })
+			.select({
+				createdAt: worldMapLayerPrefs.createdAt,
+				updatedAt: worldMapLayerPrefs.updatedAt
+			})
 			.from(worldMapLayerPrefs)
 			.where(
 				and(
@@ -318,7 +369,11 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 				)
 			);
 		const [after] = await db
-			.select({ updatedAt: worldMapLayerPrefs.updatedAt, visible: worldMapLayerPrefs.visible })
+			.select({
+				createdAt: worldMapLayerPrefs.createdAt,
+				updatedAt: worldMapLayerPrefs.updatedAt,
+				visible: worldMapLayerPrefs.visible
+			})
 			.from(worldMapLayerPrefs)
 			.where(
 				and(
@@ -329,6 +384,53 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 			);
 		expect(after.visible).toBe(0);
 		expect(after.updatedAt.getTime()).toBeGreaterThan(before.updatedAt.getTime());
+		// Trigger contract: only updated_at moves, created_at is frozen.
+		expect(after.createdAt.getTime()).toBe(before.createdAt.getTime());
+	});
+
+	it('cross-user invariant: pref.user_id must match world_maps.user_id (app-layer)', async () => {
+		// Schema permits (userA, mapB-owned-by-userB) inserts — the
+		// invariant lives at the server-side write helper (PR D) per
+		// outside-voice B3. This test documents the contract NOW: a
+		// scan finds zero rows where pref.user_id mismatches the map
+		// owner. PR D's write helper must keep this green; any direct
+		// SQL or future endpoint that writes layer_prefs without going
+		// through the helper will trip it.
+		//
+		// CLAUDE.md cross-user invariant ("A missing JOIN is a cross-user
+		// data leak") applies. Same pattern as the entity_aliases
+		// invariant test that scans for unowned rows.
+		await db.insert(worldMapLayerPrefs).values({
+			userId: userA,
+			worldMapId: mapA,
+			layerKey: 'terrain'
+		});
+		// Build the mismatch set: layer_prefs rows whose user_id is
+		// not the same as the parent world_map's user_id.
+		const mismatches = await db.execute(sql`
+			SELECT lp.user_id AS pref_user, wm.user_id AS map_user, lp.layer_key
+			FROM world_map_layer_prefs lp
+			JOIN world_maps wm ON wm.id = lp.world_map_id
+			WHERE lp.user_id IS DISTINCT FROM wm.user_id
+		`);
+		const rows = Array.isArray(mismatches.rows)
+			? mismatches.rows
+			: ((mismatches as unknown) as { rows: unknown[] }).rows ?? [];
+		expect(rows.length).toBe(0);
+	});
+
+	it('cascade delete: removing a user deletes their layer_prefs', async () => {
+		await db.insert(worldMapLayerPrefs).values({
+			userId: userA,
+			worldMapId: mapA,
+			layerKey: 'background'
+		});
+		await db.delete(user).where(eq(user.id, userA));
+		const rows = await db
+			.select()
+			.from(worldMapLayerPrefs)
+			.where(eq(worldMapLayerPrefs.userId, userA));
+		expect(rows.length).toBe(0);
 	});
 
 	it('cascade delete: removing a world_map deletes its layer_prefs', async () => {
@@ -355,6 +457,39 @@ describe('Slice 3 PR A — 0022 anchor cells backfill', () => {
 		db = await createTestDb();
 		userId = (await seedTestUser(db)).id;
 		mapId = await seedMap(db, userId);
+	});
+
+	it('invariant: every map_anchors row has cells in state_jsonb (post-merge contract)', async () => {
+		// Codex P2 from /review outside voice: the 0022 backfill only
+		// repairs HISTORICAL rows. Anchors created by writers after
+		// migration but before PR B's writer updates would lack cells.
+		// Since Slice 3 ships as one merge (PR A + PR B + ... together),
+		// this invariant must hold at merge time. PR B's writer changes
+		// (createMap / duplicateMap / snapshotAnchor) must include
+		// cells: [] in state_jsonb.
+		//
+		// This test scans the WHOLE map_anchors table. Today it passes
+		// because: (a) the 0022 backfill repaired all baseline anchors;
+		// (b) any test-created anchors include cells in their seed data
+		// (we updated the test factories to write cells). The invariant
+		// breaks the day a writer regresses.
+		//
+		// Seed one anchor that includes cells (the modern shape) so the
+		// invariant has a row to scan over.
+		await db.insert(mapAnchors).values({
+			worldMapId: mapId,
+			tPosition: 7.0,
+			stateJsonb: { regions: [], artifacts: [], chains: [], cells: [] }
+		});
+		const result = await db.execute(sql`
+			SELECT COUNT(*) AS cnt
+			FROM map_anchors
+			WHERE NOT (state_jsonb ? 'cells')
+		`);
+		const rows = Array.isArray(result.rows)
+			? result.rows
+			: ((result as unknown) as { rows: Array<{ cnt: string | number }> }).rows ?? [];
+		expect(Number(rows[0].cnt)).toBe(0);
 	});
 
 	it('0022 backfill writes cells: [] into pre-Slice-3 anchor shape', async () => {

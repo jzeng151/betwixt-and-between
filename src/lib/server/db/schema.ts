@@ -46,6 +46,15 @@ export type EntityType = (typeof EntityType)[number];
 export const PlaceableEntityType = ['Character', 'Artifact', 'Item'] as const;
 export type PlaceableEntityType = (typeof PlaceableEntityType)[number];
 
+// Slice 3 T1' — grid types accepted by world_maps.grid_type. CHECK constraint
+// in drizzle/0018_world_maps_grid.sql restricts to these two values; the
+// `text('grid_type', { enum: GridType })` annotation on worldMaps below gives
+// Drizzle the same constraint at the TS layer. Matches the EntityType /
+// PlaceableEntityType pattern so client + server code import one source of
+// truth instead of typing string literals.
+export const GridType = ['square', 'hex'] as const;
+export type GridType = (typeof GridType)[number];
+
 // ── Auth tables (Better-Auth) ──────────────────────────────────────────────
 
 export const user = pgTable('user', {
@@ -424,7 +433,7 @@ export const worldMaps = pgTable('world_maps', {
 	//   • gridScaleUnit/Value: display metadata, not used in projection.
 	//   • gridVisible: false for existing rows (two-pass default in
 	//     0018 per outside-voice B9a); true for new rows.
-	gridType: text('grid_type').notNull().default('square'),
+	gridType: text('grid_type', { enum: GridType }).notNull().default('square'),
 	gridCellsX: integer('grid_cells_x').notNull().default(32),
 	gridCellsY: integer('grid_cells_y').notNull().default(24),
 	gridScaleUnit: text('grid_scale_unit').notNull().default('m'),
