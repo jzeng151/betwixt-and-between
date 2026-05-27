@@ -1,0 +1,502 @@
+[
+  {
+    "t": -1,
+    "state": {
+      "tPosition": -1,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 0,
+    "state": {
+      "tPosition": 0,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 0.5,
+    "state": {
+      "tPosition": 0.5,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 1,
+    "state": {
+      "tPosition": 1,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 2,
+    "state": {
+      "tPosition": 2,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 3,
+    "state": {
+      "tPosition": 3,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 4,
+    "state": {
+      "tPosition": 4,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 4.999,
+    "state": {
+      "tPosition": 4.999,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 5,
+    "state": {
+      "tPosition": 5,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 5.5,
+    "state": {
+      "tPosition": 5.5,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 6,
+    "state": {
+      "tPosition": 6,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 7,
+    "state": {
+      "tPosition": 7,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 8,
+    "state": {
+      "tPosition": 8,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 8.5,
+    "state": {
+      "tPosition": 8.5,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 9,
+    "state": {
+      "tPosition": 9,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 9.999,
+    "state": {
+      "tPosition": 9.999,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 10,
+    "state": {
+      "tPosition": 10,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 11,
+    "state": {
+      "tPosition": 11,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 12,
+    "state": {
+      "tPosition": 12,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": "33333333-3333-3333-3333-333333333333",
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  },
+  {
+    "t": 13,
+    "state": {
+      "tPosition": 13,
+      "regions": [
+        {
+          "regionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "factionId": "22222222-2222-2222-2222-222222222222",
+          "color": "#0000bb"
+        },
+        {
+          "regionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "factionId": null,
+          "color": "#9ca3af"
+        },
+        {
+          "regionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          "factionId": "11111111-1111-1111-1111-111111111111",
+          "color": "#aa0000"
+        }
+      ],
+      "artifacts": [],
+      "chains": []
+    }
+  }
+]
