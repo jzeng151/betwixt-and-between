@@ -89,7 +89,11 @@ export const POST: RequestHandler = async (event) => {
 					locationId: r.locationId
 				})),
 				artifacts: [],
-				chains: []
+				chains: [],
+				// Slice 3: cells start empty on duplicate; the source map's
+				// cells are NOT cloned (each map authors its own terrain).
+				// Keeps the PR A cells-in-state_jsonb invariant green.
+				cells: []
 			}
 		});
 

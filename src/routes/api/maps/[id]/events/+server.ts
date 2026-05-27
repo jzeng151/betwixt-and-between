@@ -22,7 +22,10 @@ export const POST: RequestHandler = async (event) => {
 		tPosition: body.tPosition,
 		kind: body.kind,
 		payloadJsonb: body.payloadJsonb,
-		sourceEventId: body.sourceEventId ?? null
+		sourceEventId: body.sourceEventId ?? null,
+		// Slice 3 B5 — commandId groups chunked-stroke events under one undo
+		// command. Null/undefined for standalone events (legacy behavior).
+		commandId: body.commandId ?? null
 	});
 	return json(created, { status: 201 });
 };

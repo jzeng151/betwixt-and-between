@@ -107,7 +107,11 @@ export const POST: RequestHandler = async (event) => {
 				// did. Cast through `unknown` because Drizzle's typed-column
 				// .values() expects `number` here, not `SQL`.
 				tPosition: sql`'-Infinity'::float8` as unknown as number,
-				stateJsonb: { regions: [], artifacts: [], chains: [] }
+				// Slice 3 invariant (PR A test world-map-v3-slice-3-schema.test.ts):
+				// every map_anchors.state_jsonb must include the cells key. Pre-
+				// Slice-3 anchors were backfilled by drizzle/0022; new writers
+				// must keep the contract green or the invariant scan fails.
+				stateJsonb: { regions: [], artifacts: [], chains: [], cells: [] }
 			});
 			return row;
 		});

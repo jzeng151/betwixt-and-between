@@ -110,16 +110,28 @@ function createMapEventsStore() {
 		const res = await fetch(`/api/maps/${mapId}/events/undo`, { method: 'POST' });
 		if (res.status === 422) return null;
 		if (!res.ok) throw new Error(`Failed to undo: ${await errorMessage(res)}`);
-		const undone = (await res.json()) as MapEvent;
-		if (lastLoadedMapId !== mapId) return undone;
-		store.update((rows) => rows.filter((r) => r.id !== undone.id));
+		// Slice 3 B5: server now returns an array. Length 1 for standalone
+		// events (legacy); length N for chunked brush strokes that share a
+		// command_id. All N rows are filtered from local state in one pass.
+		const undone = (await res.json()) as MapEvent[];
+		if (undone.length === 0) return null;
+		const undoneIds = new Set(undone.map((e) => e.id));
+		// Latest popped event (commit DESC) is what callers historically
+		// got back — preserve that for return-shape compatibility.
+		const latest = undone[0];
+		if (lastLoadedMapId !== mapId) return latest;
+		store.update((rows) => rows.filter((r) => !undoneIds.has(r.id)));
+		// Push each undone row onto the redo stack individually. Grouped
+		// redo (replaying the whole stroke with a fresh command_id) lands
+		// with the brush UX in PR C; for now redo pops one event at a
+		// time and the user sees the chunks come back individually.
 		if (redoStackForMapId === mapId) {
-			redoStore.update((stack) => [...stack, undone]);
+			redoStore.update((stack) => [...stack, ...undone]);
 		} else {
 			redoStackForMapId = mapId;
-			redoStore.set([undone]);
+			redoStore.set([...undone]);
 		}
-		return undone;
+		return latest;
 	}
 
 	// Re-POSTs the most recently undone event. Server has no redo state;

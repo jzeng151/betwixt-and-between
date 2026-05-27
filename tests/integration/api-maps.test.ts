@@ -1160,7 +1160,10 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		expect(anchors[0].stateJsonb).toEqual({
 			regions: [],
 			artifacts: [],
-			chains: []
+			chains: [],
+			// Slice 3 invariant: baseline anchors include cells: [] so
+			// projection.ts can read state_jsonb.cells unconditionally.
+			cells: []
 		});
 	});
 
@@ -1287,7 +1290,9 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		expect(anchors[0].stateJsonb).toEqual({
 			regions: [],
 			artifacts: [],
-			chains: []
+			chains: [],
+			// Slice 3 invariant: duplicate writers include cells: [].
+			cells: []
 		});
 	});
 
@@ -2059,13 +2064,19 @@ describe('Slice 2 D3 — undo endpoint (T7)', () => {
 			{ tPosition: 1, createdAt: new Date('2026-01-02T00:00:00Z') }
 		]);
 
+		// Slice 3 B5: undo response is an array (length 1 for standalone
+		// events; length N for chunked strokes sharing command_id). These
+		// events are standalone, so each pop returns a one-element array.
 		const res1 = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
 		const popped1 = await readJson(res1);
-		expect(popped1.id).toBe(eventB.id);
+		expect(Array.isArray(popped1)).toBe(true);
+		expect(popped1).toHaveLength(1);
+		expect(popped1[0].id).toBe(eventB.id);
 
 		const res2 = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
 		const popped2 = await readJson(res2);
-		expect(popped2.id).toBe(eventA.id);
+		expect(popped2).toHaveLength(1);
+		expect(popped2[0].id).toBe(eventA.id);
 	});
 
 	it('soft-deletes (sets undone_at, does not delete the row)', async () => {

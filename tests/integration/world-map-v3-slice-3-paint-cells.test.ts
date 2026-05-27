@@ -1,0 +1,565 @@
+/**
+ * Slice 3 PR B server-side tests for paint_cells.
+ *
+ * Covers:
+ *   B.1 — projection.ts paint_cells fold (last-write-wins on (x,y); same-T
+ *         ordering preserved).
+ *   B.2 — validateEventPayload: biome enum, cell bounds against
+ *         world_maps.grid_cells_*, 256-cell cap, commandId UUID format,
+ *         command_complete boolean.
+ *   B.4 — undoLatestMapEvent groups by command_id (chunked-stroke undo
+ *         soft-deletes all rows sharing a commandId atomically).
+ *   B.5 — auto-anchor fires at K=20 non-undone paint_cells events with
+ *         stroke-boundary deferral (command_complete=false suppresses).
+ *
+ * Calls handler functions directly with mock RequestEvent — same shape
+ * as tests/integration/api-maps.test.ts.
+ */
+
+import { describe, it, expect, beforeEach } from 'vitest';
+import { and, eq, asc, sql } from 'drizzle-orm';
+import { createTestDb, seedTestUser } from '../helpers/test-db.js';
+import { mapAnchors, mapEvents, worldMaps } from '../../src/lib/server/db/schema.js';
+import { projectState, type ProjectionContext } from '../../src/lib/features/map/projection.js';
+
+let currentDb: Awaited<ReturnType<typeof createTestDb>>;
+let userId: string;
+
+const { POST: CREATE_MAP } = await import('../../src/routes/api/maps/+server.js');
+const { POST: CREATE_EVENT } = await import(
+	'../../src/routes/api/maps/[id]/events/+server.js'
+);
+const { POST: UNDO_EVENT } = await import(
+	'../../src/routes/api/maps/[id]/events/undo/+server.js'
+);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mkEvent(overrides: { params?: Record<string, string>; body?: unknown } = {}): any {
+	return {
+		url: new URL('http://localhost/'),
+		params: overrides.params ?? {},
+		request: { json: async () => overrides.body },
+		locals: {
+			db: currentDb,
+			user: { id: userId, name: 'Test User', email: 'test@test.com', emailVerified: true },
+			session: {
+				id: crypto.randomUUID(),
+				userId,
+				expiresAt: new Date(Date.now() + 86400000),
+				token: 'test-token'
+			}
+		}
+	};
+}
+
+async function readJson(res: Response): Promise<unknown> {
+	return JSON.parse(await res.text());
+}
+
+async function seedMap(name = 'M'): Promise<{ id: string }> {
+	const res = await CREATE_MAP(mkEvent({ body: { name } }));
+	return (await readJson(res)) as { id: string };
+}
+
+const emptyCtx: ProjectionContext = {
+	allowedFactions: new Map(),
+	allowedRegions: new Set()
+};
+
+describe('Slice 3 B.1 — projection paint_cells fold', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		userId = (await seedTestUser(currentDb)).id;
+	});
+
+	it('folds cells from anchor and event in last-write-wins order', () => {
+		const anchor = {
+			id: 'a1',
+			tPosition: 0,
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+			stateJsonb: {
+				regions: [],
+				artifacts: [],
+				chains: [],
+				cells: [{ x: 0, y: 0, biome: 'plains' as const }]
+			}
+		};
+		const event = {
+			id: 'e1',
+			tPosition: 1,
+			kind: 'paint_cells',
+			createdAt: new Date('2026-01-01T00:00:01Z'),
+			payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'forest' }] }
+		};
+		const state = projectState(2, [anchor], [event], emptyCtx);
+		expect(state.cells).toEqual([{ x: 0, y: 0, biome: 'forest' }]);
+	});
+
+	it('events at exactly anchor.t are excluded from the cells fold (same-T rule)', () => {
+		const anchor = {
+			id: 'a1',
+			tPosition: 5,
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+			stateJsonb: {
+				regions: [],
+				artifacts: [],
+				chains: [],
+				cells: [{ x: 1, y: 1, biome: 'plains' as const }]
+			}
+		};
+		const eventAtAnchorT = {
+			id: 'e1',
+			tPosition: 5,
+			kind: 'paint_cells',
+			createdAt: new Date('2026-01-01T00:00:01Z'),
+			payloadJsonb: { cells: [{ x: 1, y: 1, biome: 'water' }] }
+		};
+		const state = projectState(5, [anchor], [eventAtAnchorT], emptyCtx);
+		// Anchor's plains wins — the event at T is pre-anchor per CMT-5.
+		expect(state.cells).toEqual([{ x: 1, y: 1, biome: 'plains' }]);
+	});
+
+	it('two events on same (x,y) — later (createdAt) wins', () => {
+		const earlier = {
+			id: 'e1',
+			tPosition: 1,
+			kind: 'paint_cells',
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+			payloadJsonb: { cells: [{ x: 2, y: 2, biome: 'desert' }] }
+		};
+		const later = {
+			id: 'e2',
+			tPosition: 1,
+			kind: 'paint_cells',
+			createdAt: new Date('2026-01-01T00:00:01Z'),
+			payloadJsonb: { cells: [{ x: 2, y: 2, biome: 'snow' }] }
+		};
+		const state = projectState(2, [], [later, earlier], emptyCtx);
+		expect(state.cells).toEqual([{ x: 2, y: 2, biome: 'snow' }]);
+	});
+
+	it('unknown biome silently dropped (lazy GC) at render', () => {
+		const event = {
+			id: 'e1',
+			tPosition: 1,
+			kind: 'paint_cells',
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+			payloadJsonb: { cells: [{ x: 3, y: 3, biome: 'magma' }] }
+		};
+		const state = projectState(2, [], [event], emptyCtx);
+		expect(state.cells).toEqual([]);
+	});
+
+	it('eraser-painted unset is emitted as a stored cell (renderer treats as transparent)', () => {
+		const event = {
+			id: 'e1',
+			tPosition: 1,
+			kind: 'paint_cells',
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+			payloadJsonb: { cells: [{ x: 4, y: 4, biome: 'unset' }] }
+		};
+		const state = projectState(2, [], [event], emptyCtx);
+		expect(state.cells).toEqual([{ x: 4, y: 4, biome: 'unset' }]);
+	});
+});
+
+describe('Slice 3 B.2 — paint_cells server validator', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		userId = (await seedTestUser(currentDb)).id;
+	});
+
+	it('accepts a happy-path single-cell paint event', async () => {
+		const map = await seedMap();
+		const res = await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'forest' }] }
+				}
+			})
+		);
+		expect(res.status).toBe(201);
+	});
+
+	it('rejects unknown biome with 400', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'lava' }] }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('rejects out-of-bounds x with 400 (defaults: grid_cells_x=32)', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: 32, y: 0, biome: 'plains' }] }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('rejects out-of-bounds y with 400 (defaults: grid_cells_y=24)', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: 0, y: 24, biome: 'plains' }] }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('rejects negative x with 400', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: -1, y: 0, biome: 'plains' }] }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('rejects empty cells array with 400', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: { tPosition: 1, kind: 'paint_cells', payloadJsonb: { cells: [] } }
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('rejects > 256 cells with 400 (A3 cap)', async () => {
+		const map = await seedMap();
+		const cells = Array.from({ length: 257 }, (_, i) => ({
+			x: i % 32,
+			y: Math.floor(i / 32) % 24,
+			biome: 'plains' as const
+		}));
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: { tPosition: 1, kind: 'paint_cells', payloadJsonb: { cells } }
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('accepts exactly 256 cells (cap edge)', async () => {
+		const map = await seedMap();
+		const cells = Array.from({ length: 256 }, (_, i) => ({
+			x: i % 32,
+			y: Math.floor(i / 32) % 24,
+			biome: 'plains' as const
+		}));
+		const res = await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: { tPosition: 1, kind: 'paint_cells', payloadJsonb: { cells } }
+			})
+		);
+		expect(res.status).toBe(201);
+	});
+
+	it('rejects malformed commandId (not a UUID) with 400', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'plains' }] },
+						commandId: 'not-a-uuid'
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('rejects non-boolean command_complete with 400', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1,
+						kind: 'paint_cells',
+						payloadJsonb: {
+							cells: [{ x: 0, y: 0, biome: 'plains' }],
+							command_complete: 'yes'
+						}
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+});
+
+describe('Slice 3 B.4 — chunked-stroke undo grouping', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		userId = (await seedTestUser(currentDb)).id;
+	});
+
+	it('undo on a standalone paint_cells event returns one-element array', async () => {
+		const map = await seedMap();
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'forest' }] }
+				}
+			})
+		);
+		const res = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		const popped = (await readJson(res)) as unknown[];
+		expect(Array.isArray(popped)).toBe(true);
+		expect(popped).toHaveLength(1);
+	});
+
+	it('undo on a chunked stroke pops all sibling rows atomically', async () => {
+		const map = await seedMap();
+		const strokeId = crypto.randomUUID();
+		// Three chunks sharing the same commandId. Only the last sets
+		// command_complete so the auto-anchor doesn't fire mid-stroke.
+		for (let i = 0; i < 3; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: {
+							cells: [{ x: i, y: 0, biome: 'forest' }],
+							command_complete: i === 2
+						},
+						commandId: strokeId
+					}
+				})
+			);
+		}
+		const res = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		const popped = (await readJson(res)) as Array<{ id: string; commandId: string }>;
+		expect(popped).toHaveLength(3);
+		for (const row of popped) {
+			expect(row.commandId).toBe(strokeId);
+		}
+		// All three soft-deleted; none remain live.
+		const live = await currentDb
+			.select({ id: mapEvents.id })
+			.from(mapEvents)
+			.where(
+				and(eq(mapEvents.worldMapId, map.id), sql`${mapEvents.undoneAt} IS NULL`)
+			);
+		expect(live).toHaveLength(0);
+	});
+
+	it('NULL command_id rows do not get pulled in by a sibling group undo', async () => {
+		const map = await seedMap();
+		// One standalone event (NULL command_id), one grouped event with
+		// command_id, both paint_cells. Undo pops the latest first; that's
+		// the grouped one. The standalone must remain live.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'plains' }] }
+				}
+			})
+		);
+		const strokeId = crypto.randomUUID();
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 2,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 1, y: 1, biome: 'snow' }], command_complete: true },
+					commandId: strokeId
+				}
+			})
+		);
+		const res = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		const popped = (await readJson(res)) as Array<{ commandId: string | null }>;
+		expect(popped).toHaveLength(1);
+		expect(popped[0].commandId).toBe(strokeId);
+		const live = await currentDb
+			.select({ id: mapEvents.id, commandId: mapEvents.commandId })
+			.from(mapEvents)
+			.where(
+				and(eq(mapEvents.worldMapId, map.id), sql`${mapEvents.undoneAt} IS NULL`)
+			);
+		expect(live).toHaveLength(1);
+		expect(live[0].commandId).toBeNull();
+	});
+});
+
+describe('Slice 3 B.5 — auto-anchor tight rules', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		userId = (await seedTestUser(currentDb)).id;
+	});
+
+	it('does NOT fire at 19 paint_cells events', async () => {
+		const map = await seedMap();
+		for (let i = 0; i < 19; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: 'plains' }] }
+					}
+				})
+			);
+		}
+		const anchors = await currentDb
+			.select({ isSynthetic: mapAnchors.isSynthetic })
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const synthetic = anchors.filter((a) => a.isSynthetic);
+		expect(synthetic).toHaveLength(0);
+	});
+
+	it('fires at 20 paint_cells events when the 20th is stroke-complete', async () => {
+		const map = await seedMap();
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: 'plains' }] }
+					}
+				})
+			);
+		}
+		const anchors = await currentDb
+			.select({
+				isSynthetic: mapAnchors.isSynthetic,
+				tPosition: mapAnchors.tPosition,
+				stateJsonb: mapAnchors.stateJsonb
+			})
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id))
+			.orderBy(asc(mapAnchors.createdAt));
+		const synthetic = anchors.filter((a) => a.isSynthetic);
+		expect(synthetic).toHaveLength(1);
+		// Snapshot includes all 20 cells.
+		const state = synthetic[0].stateJsonb as { cells: Array<{ x: number; biome: string }> };
+		expect(state.cells).toHaveLength(20);
+	});
+
+	it('deferred mid-stroke: 20 chunks with command_complete=false suppress until last chunk', async () => {
+		const map = await seedMap();
+		const strokeId = crypto.randomUUID();
+		// 20 chunks, none marked complete except the last. Auto-anchor must
+		// only fire after the last chunk lands.
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: {
+							cells: [{ x: i, y: 0, biome: 'plains' }],
+							command_complete: i === 19
+						},
+						commandId: strokeId
+					}
+				})
+			);
+		}
+		const synthetic = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(
+				and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true))
+			);
+		expect(synthetic).toHaveLength(1);
+	});
+
+	it('undone paint_cells events do NOT count toward the K=20 trigger', async () => {
+		const map = await seedMap();
+		// Land 15 events; undo 5 of them; land 10 more. Total non-undone = 20
+		// (15 - 5 + 10). Auto-anchor must fire (count crosses K AFTER undo
+		// since undone rows are excluded).
+		for (let i = 0; i < 15; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: 'plains' }] }
+					}
+				})
+			);
+		}
+		for (let i = 0; i < 5; i++) {
+			await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+		}
+		// Live count now 10. Add 10 more.
+		for (let i = 0; i < 10; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 10 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 1, biome: 'forest' }] }
+					}
+				})
+			);
+		}
+		const synthetic = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(
+				and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true))
+			);
+		expect(synthetic).toHaveLength(1);
+	});
+});
