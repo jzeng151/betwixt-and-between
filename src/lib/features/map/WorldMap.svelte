@@ -76,6 +76,17 @@
 	// tool). Both reset on commit / cancel / map switch.
 	let pixiDrawingActive = $state(false);
 	let pixiDrawSeed = $state<{ x: number; y: number } | null>(null);
+	// codex PR review iter 7: reset polygon-draw state when the user
+	// switches maps via the toolbar. Without this, vertices placed on
+	// map A linger after switchMap → committing on map B saves the
+	// stale polygon against the newly active map.
+	$effect(() => {
+		// Read activeMapId so the effect tracks it; the read is the
+		// dependency, the body unconditionally clears.
+		void activeMapId;
+		pixiDrawingActive = false;
+		pixiDrawSeed = null;
+	});
 	let regionFormLocationId = $state<string | null>(null);
 	let regionFormColor = $state('#e8a838');
 	let regionFormSceneIds = $state<Set<string>>(new Set());
