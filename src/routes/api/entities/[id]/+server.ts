@@ -337,6 +337,13 @@ export const DELETE: RequestHandler = async (event) => {
 		// state. Scoped via world_maps.user_id so a cross-user run of
 		// this helper can't touch foreign data.
 		if (entity.type === 'Location') {
+			// codex PR review iter 9: region writes now store the DB-canonical
+			// lowercase loc.id in anchor JSON (iter-4 fix). If the DELETE
+			// route param is uppercase, PG's uuid type accepts it for the
+			// entity lookup but string-equality against the lowercase JSON
+			// value misses. Use the SELECTed entity.id (PG-canonical) so the
+			// scrub matches the writer's canonicalization.
+			const canonicalId = entity.id;
 			await tx.execute(sql`
 				UPDATE ${mapAnchors}
 				SET state_jsonb = jsonb_set(
@@ -346,7 +353,7 @@ export const DELETE: RequestHandler = async (event) => {
 						(
 							SELECT jsonb_agg(
 								CASE
-									WHEN r->>'locationId' = ${event.params.id}
+									WHEN r->>'locationId' = ${canonicalId}
 										THEN jsonb_set(r, '{locationId}', 'null'::jsonb)
 									ELSE r
 								END
@@ -360,7 +367,7 @@ export const DELETE: RequestHandler = async (event) => {
 				FROM ${worldMaps}
 				WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
 					AND ${worldMaps.userId} = ${userId}
-					AND state_jsonb->'regions' @> ${`[{"locationId":"${event.params.id}"}]`}::jsonb
+					AND state_jsonb->'regions' @> ${`[{"locationId":"${canonicalId}"}]`}::jsonb
 			`);
 		}
 
