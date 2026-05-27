@@ -581,5 +581,16 @@ export const factions = pgTable('factions', {
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
-	index('factions_user_id_idx').on(table.userId)
+	index('factions_user_id_idx').on(table.userId),
+	// Slice 2 D1: exactly one is_system=true row per user. The partial
+	// unique index also lives in drizzle/0013_factions_is_system.sql for
+	// migration-built DBs; declared here as well so `npm run db:push`
+	// (schema-based DB creation) gets the constraint without depending
+	// on the migration journal. codex PR review iter 9: ensureNeutralFaction
+	// uses ON CONFLICT DO NOTHING — without the partial unique, concurrent
+	// first-writes on a freshly-pushed schema have no conflict to ignore
+	// and silently create duplicate Neutral rows.
+	uniqueIndex('factions_user_one_system')
+		.on(table.userId)
+		.where(sql`is_system = true`)
 ]);
