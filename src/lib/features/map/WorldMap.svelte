@@ -1022,7 +1022,19 @@
 					onDrawHere={startPixiDraw}
 					onEditRegion={(id) => startEditRegion(id)}
 					onDeleteRegion={(id) => void handleDeleteRegion(id)}
-					onDrillIntoLocation={(locId) => drillIntoLocation(locId)}
+					onDrillIntoLocation={(locId) => {
+						// codex PR#57 iter3 P2: drillIntoLocation returns false
+						// when the linked Location has no map variant yet. The
+						// deleted Leaflet popup used that signal to open
+						// CreateMapOfferModal. Surface the same offer here.
+						const drilled = drillIntoLocation(locId);
+						if (!drilled) {
+							const loc = $entities.find((e) => e.id === locId);
+							if (loc)
+								createMapOffer = { childId: locId, childName: loc.name };
+						}
+					}}
+					onOpenLocation={(locId) => windowStore.open('entity-detail', locId)}
 				/>
 				<PixiPlacementLayer
 					{activeMap}

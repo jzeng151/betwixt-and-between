@@ -143,21 +143,30 @@
 		}
 	});
 
-	// Stage event wiring. Listeners attach when `active` flips true and
+	// Viewport event wiring. Listeners attach when `active` flips true and
 	// detach on false / unmount.
 	$effect(() => {
 		const app = stageCtx.app;
-		if (!app || !PIXI) return;
+		const viewport = stageCtx.viewport;
+		if (!app || !PIXI || !viewport) return;
 		if (!active) return;
 
+		// T13 parity (codex PR#57 iter3 + pixi-viewport): translate
+		// screen-pixel e.global to viewport-local (world) coords so
+		// vertices land at the correct image-pixel position regardless
+		// of pan/zoom state. World coords align 1:1 with image pixels at
+		// zoom=1; under zoom they diverge and screen coords would
+		// misposition the vertex.
 		stagePointerDown = (e: FederatedPointerEvent) => {
 			// Only left-click adds vertices. Right-click is reserved for the
 			// region/snapshot context menu (handled by PixiRegionLayer).
 			if (e.button !== 0) return;
-			addVertex(e.global.x, e.global.y);
+			const local = e.getLocalPosition(viewport);
+			addVertex(local.x, local.y);
 		};
 		stagePointerMove = (e: FederatedPointerEvent) => {
-			cursor = { x: e.global.x, y: e.global.y };
+			const local = e.getLocalPosition(viewport);
+			cursor = { x: local.x, y: local.y };
 		};
 		stageDblClick = (_e: FederatedPointerEvent) => {
 			commit();
@@ -175,23 +184,22 @@
 			}
 		};
 
-		app.stage.eventMode = 'static';
-		app.stage.hitArea = app.screen;
+		viewport.eventMode = 'static';
 		// Register the click handler on `pointertap` only — it fires once
 		// per click (pointerdown + pointerup at the same spot, not on drag)
 		// and won't double-up the way ('pointerdown' + 'pointertap') would.
-		app.stage.on('pointertap', stagePointerDown);
-		app.stage.on('pointermove', stagePointerMove);
-		app.stage.on('dblclick', stageDblClick);
+		viewport.on('pointertap', stagePointerDown);
+		viewport.on('pointermove', stagePointerMove);
+		viewport.on('dblclick', stageDblClick);
 		window.addEventListener('keydown', windowKeyDown);
 
 		return () => {
 			try {
-				if (stagePointerDown) app.stage.off('pointertap', stagePointerDown);
-				if (stagePointerMove) app.stage.off('pointermove', stagePointerMove);
-				if (stageDblClick) app.stage.off('dblclick', stageDblClick);
+				if (stagePointerDown) viewport.off('pointertap', stagePointerDown);
+				if (stagePointerMove) viewport.off('pointermove', stagePointerMove);
+				if (stageDblClick) viewport.off('dblclick', stageDblClick);
 			} catch (_) {
-				/* stage may be torn down */
+				/* viewport may be torn down */
 			}
 			if (windowKeyDown) window.removeEventListener('keydown', windowKeyDown);
 			stagePointerDown = null;
@@ -213,12 +221,12 @@
 
 		if (!layer) {
 			layer = new PIXI.Container();
-			// Place above all sibling layers — Pixi z-order is insertion
-			// order, and PixiRegionLayer adds its container earlier. The
-			// stage's children list isn't ordered explicitly by us, but
-			// addChild appends, so the draw layer naturally lands on top
-			// when this component mounts after the region layer.
-			app.stage.addChild(layer);
+			// Place above all sibling layers in the viewport. Pixi z-order
+			// is insertion order; the polygon-draw layer mounts after the
+			// region + placement layers, so addChild appends it on top.
+			const viewport = stageCtx.viewport;
+			if (!viewport) return;
+			viewport.addChild(layer);
 		}
 
 		for (const child of layer.removeChildren()) {
@@ -278,13 +286,13 @@
 	}
 
 	onDestroy(() => {
-		const app = stageCtx.app;
+		const viewport = stageCtx.viewport;
 		try {
-			if (app && stagePointerDown) app.stage.off('pointertap', stagePointerDown);
-			if (app && stagePointerMove) app.stage.off('pointermove', stagePointerMove);
-			if (app && stageDblClick) app.stage.off('dblclick', stageDblClick);
+			if (viewport && stagePointerDown) viewport.off('pointertap', stagePointerDown);
+			if (viewport && stagePointerMove) viewport.off('pointermove', stagePointerMove);
+			if (viewport && stageDblClick) viewport.off('dblclick', stageDblClick);
 		} catch (_) {
-			/* stage may have been destroyed */
+			/* viewport may have been destroyed */
 		}
 		if (windowKeyDown) window.removeEventListener('keydown', windowKeyDown);
 		if (layer) {

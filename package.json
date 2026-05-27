@@ -66,6 +66,7 @@
     "@neondatabase/serverless": "^1.1.0",
     "better-auth": "^1.6.9",
     "lucide-svelte": "^1.0.1",
+    "pixi-viewport": "^6.0.3",
     "pixi.js": "8.18.1",
     "postgres": "^3.4.9"
   }

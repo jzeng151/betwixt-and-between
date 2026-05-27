@@ -126,12 +126,13 @@
 
 	$effect(() => {
 		const app = stageCtx.app;
-		if (!app || !PIXI) return;
+		const viewport = stageCtx.viewport;
+		if (!app || !PIXI || !viewport) return;
 		if (!activeMap?.width || !activeMap?.height) return;
 
 		if (!layer) {
 			layer = new PIXI.Container();
-			app.stage.addChild(layer);
+			viewport.addChild(layer);
 		}
 
 		for (const child of layer.removeChildren()) {
@@ -223,7 +224,8 @@
 	let stageClickHandler: ((e: FederatedPointerEvent) => void) | null = null;
 	$effect(() => {
 		const app = stageCtx.app;
-		if (!app) return;
+		const viewport = stageCtx.viewport;
+		if (!app || !viewport) return;
 		if (!armedPlaceableId || !activeMap?.width || !activeMap?.height) return;
 		const w = activeMap.width;
 		const h = activeMap.height;
@@ -231,34 +233,33 @@
 		stageClickHandler = (e: FederatedPointerEvent) => {
 			if (e.button !== 0) return;
 			if (!onCanvasClick) return;
-			// codex PR review: empty-stage clicks only. PixiRegionLayer's
-			// region polygons are interactive (cursor=pointer); clicking
-			// one of them currently fires pointertap on the stage too, so
-			// an armed placeable drops a marker UNDER the polygon. Leaflet's
-			// path explicitly skips `.leaflet-interactive` targets — the
-			// Pixi equivalent is "only act when the tap target is the stage
-			// itself, not a descendant Graphics". e.target points at the
-			// originating display object; bail when it's anything but the
-			// stage root.
+			// Empty-viewport clicks only. PixiRegionLayer's region polygons
+			// are interactive; clicking one fires pointertap on the viewport
+			// too, so an armed placeable would drop a marker UNDER the
+			// polygon. Bail when the tap target is anything but the
+			// viewport root itself (descendant Graphics → don't fire).
 			if (e.target !== e.currentTarget) return;
-			const fx = e.global.x / w;
-			const fy = e.global.y / h;
-			// Clamp to [0,1]. Out-of-bounds clicks (Pixi sometimes fires
-			// pointertap with coords just past the canvas edge on subpixel
-			// hit-area boundaries) would otherwise persist as
-			// off-map placements.
+			// T13 parity (codex PR#57 iter3 + pixi-viewport): translate
+			// screen-pixel e.global to viewport-local (world) coords. World
+			// coords align 1:1 with image pixels at zoom=1; under zoom they
+			// diverge, so dividing by activeMap.width gives the correct
+			// fractional position regardless of pan/zoom state.
+			const local = e.getLocalPosition(viewport);
+			const fx = local.x / w;
+			const fy = local.y / h;
+			// Clamp to [0,1]. Out-of-bounds clicks (e.g., panned past
+			// edge) shouldn't persist as off-map placements.
 			if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
 			onCanvasClick(fx, fy);
 		};
-		app.stage.eventMode = 'static';
-		app.stage.hitArea = app.screen;
-		app.stage.on('pointertap', stageClickHandler);
+		viewport.eventMode = 'static';
+		viewport.on('pointertap', stageClickHandler);
 
 		return () => {
 			try {
-				if (stageClickHandler) app.stage.off('pointertap', stageClickHandler);
+				if (stageClickHandler) viewport.off('pointertap', stageClickHandler);
 			} catch (_) {
-				/* stage destroyed */
+				/* viewport destroyed */
 			}
 			stageClickHandler = null;
 		};

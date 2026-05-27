@@ -48,12 +48,14 @@
 
 	$effect(() => {
 		const app = stageCtx.app;
-		if (!app || !PIXI) return;
+		const viewport = stageCtx.viewport;
+		if (!app || !PIXI || !viewport) return;
 
-		// Lazy-create the layer and ensure it sits at the bottom of the stage.
+		// Lazy-create the layer and ensure it sits at the bottom of the
+		// viewport (so regions / placements / polygon-draw render on top).
 		if (!layer) {
 			layer = new PIXI.Container();
-			app.stage.addChildAt(layer, 0);
+			viewport.addChildAt(layer, 0);
 		}
 
 		const url = activeMap?.baseImageUrl ?? null;

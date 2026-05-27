@@ -47,7 +47,8 @@
 		onDrawHere,
 		onEditRegion,
 		onDeleteRegion,
-		onDrillIntoLocation
+		onDrillIntoLocation,
+		onOpenLocation
 	}: {
 		regions: MapRegion[];
 		renderedState: RenderedState | null;
@@ -75,6 +76,9 @@
 		onEditRegion?: (regionId: string) => void;
 		onDeleteRegion?: (regionId: string) => void;
 		onDrillIntoLocation?: (locationId: string) => void;
+		// codex PR#57 iter3 P2: Leaflet popup made the Location name
+		// clickable → opened entity-detail. Restore as a menu item.
+		onOpenLocation?: (locationId: string) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -188,11 +192,15 @@
 
 	function openSnapshotMenu(e: FederatedPointerEvent) {
 		const { x, y } = clientXY(e);
-		// e.global is the stage-local coordinate (image-pixel space) — used
-		// by "Draw region here" to seed the polygon's first vertex.
-		const stageX = (e.global?.x ?? 0) as number;
-		const stageY = (e.global?.y ?? 0) as number;
-		menu = { kind: 'snapshot', x, y, stageX, stageY };
+		// T13 parity (codex PR#57 iter3 + pixi-viewport): with the viewport
+		// in place between app.stage and our layer, e.global is canvas-
+		// pixel screen coords while polygons live in world coords. Convert
+		// to world via getLocalPosition(viewport) so "Draw region here"
+		// seeds the polygon's first vertex in the correct space — survives
+		// pan/zoom.
+		const vp = stageCtx.viewport;
+		const local = vp ? e.getLocalPosition(vp) : { x: e.global?.x ?? 0, y: e.global?.y ?? 0 };
+		menu = { kind: 'snapshot', x, y, stageX: local.x, stageY: local.y };
 	}
 
 	async function snapshotWorldState() {
@@ -363,6 +371,13 @@
 				onSelect: () => onEditRegion!(regionId)
 			});
 		}
+		if (onOpenLocation && linkedLocationId) {
+			items.push({
+				label: 'Open linked location',
+				icon: '↗',
+				onSelect: () => onOpenLocation!(linkedLocationId)
+			});
+		}
 		if (onDrillIntoLocation) {
 			items.push({
 				label: linkedLocationId ? 'Drill into location' : 'Drill into location (no link)',
@@ -414,21 +429,24 @@
 
 	$effect(() => {
 		const app = stageCtx.app;
-		if (!app || !PIXI) return;
+		const viewport = stageCtx.viewport;
+		if (!app || !PIXI || !viewport) return;
 
 		if (!layer) {
 			layer = new PIXI.Container();
-			app.stage.addChild(layer);
-			// Stage-level right-click → "Snapshot world state here" menu.
-			// Stage must be event-aware ('static') so events bubble from
-			// children up to it. Regions' rightclick handlers call
-			// stopPropagation so this fires only on EMPTY-area clicks.
-			app.stage.eventMode = 'static';
-			app.stage.hitArea = app.screen;
+			viewport.addChild(layer);
+			// Viewport-level right-click → "Snapshot world state here" menu.
+			// pixi-viewport is itself event-aware so events bubble up from
+			// children. Regions' rightclick handlers call stopPropagation so
+			// this fires only on EMPTY-area clicks. Listener moved from
+			// app.stage to viewport in T13 parity (codex PR#57 iter3) so
+			// the snapshot menu's seed coords are viewport-local (world)
+			// rather than screen-space — survives pan/zoom correctly.
+			viewport.eventMode = 'static';
 			stageRightClickHandler = (e: FederatedPointerEvent) => {
 				openSnapshotMenu(e);
 			};
-			app.stage.on('rightclick', stageRightClickHandler);
+			viewport.on('rightclick', stageRightClickHandler);
 		}
 
 		// Clear previous draws + listeners. removeChildren returns the
@@ -490,11 +508,11 @@
 		// regionsMatchMap-style gates remount us; without .off() the
 		// stage accumulates a fresh listener per remount.
 		const app = stageCtx.app;
-		if (app && stageRightClickHandler) {
+		if (stageCtx.viewport && stageRightClickHandler) {
 			try {
-				app.stage.off('rightclick', stageRightClickHandler);
+				stageCtx.viewport.off('rightclick', stageRightClickHandler);
 			} catch (_) {
-				/* stage may have been destroyed already */
+				/* viewport may have been destroyed already */
 			}
 			stageRightClickHandler = null;
 		}
