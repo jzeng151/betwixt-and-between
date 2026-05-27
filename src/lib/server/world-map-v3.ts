@@ -863,6 +863,17 @@ function tPosLiteral(t: number) {
 	return sql`${t}::float8`;
 }
 
+/**
+ * codex PR review (iter 7): the previous cursor-precision fix put a
+ * microsecond-precise text string into cursor.c, but the SQL clause
+ * then wrapped it in `new Date(cursor.c)` which truncates back to
+ * millisecond. Bind the cursor's text directly with an explicit
+ * ::timestamptz cast so PG parses all 6 microsecond digits.
+ */
+function tsLiteral(c: string) {
+	return sql`${c}::timestamptz`;
+}
+
 function isValidCursorDate(c: string): boolean {
 	// codex review P1 #4: decodeTPosCursor / decodeCreatedAtCursor only
 	// checked `typeof c === 'string'`, then SQL builders called
@@ -966,7 +977,7 @@ export async function listFactions(
 	const limit = clampLimit(opts.limit);
 	const cursor = opts.after ? decodeCreatedAtCursor(opts.after) : null;
 	const cursorClause = cursor
-		? sql`(${factions.createdAt}, ${factions.id}) > (${new Date(cursor.c)}, ${cursor.id})`
+		? sql`(${factions.createdAt}, ${factions.id}) > (${tsLiteral(cursor.c)}, ${cursor.id})`
 		: undefined;
 	const rows = await db
 		.select()
@@ -994,7 +1005,7 @@ export async function listMapAnchors(
 	const limit = clampLimit(opts.limit);
 	const cursor = opts.after ? decodeTPosCursor(opts.after) : null;
 	const cursorClause = cursor
-		? sql`(${mapAnchors.tPosition}, ${mapAnchors.createdAt}, ${mapAnchors.id}) > (${tPosLiteral(cursor.t)}, ${new Date(cursor.c)}, ${cursor.id})`
+		? sql`(${mapAnchors.tPosition}, ${mapAnchors.createdAt}, ${mapAnchors.id}) > (${tPosLiteral(cursor.t)}, ${tsLiteral(cursor.c)}, ${cursor.id})`
 		: undefined;
 	const rows = await db
 		.select()
@@ -1030,7 +1041,7 @@ export async function listMapEvents(
 	const limit = clampLimit(opts.limit);
 	const cursor = opts.after ? decodeTPosCursor(opts.after) : null;
 	const cursorClause = cursor
-		? sql`(${mapEvents.tPosition}, ${mapEvents.createdAt}, ${mapEvents.id}) > (${tPosLiteral(cursor.t)}, ${new Date(cursor.c)}, ${cursor.id})`
+		? sql`(${mapEvents.tPosition}, ${mapEvents.createdAt}, ${mapEvents.id}) > (${tPosLiteral(cursor.t)}, ${tsLiteral(cursor.c)}, ${cursor.id})`
 		: undefined;
 	// Slice 2 D3 (T7): exclude soft-deleted (undone) events from the list.
 	// Append-only history is preserved at the storage level; the API
