@@ -19,44 +19,24 @@
 	import RegionFormModal from '$lib/features/map/RegionFormModal.svelte';
 	import MapBreadcrumb from '$lib/features/map/MapBreadcrumb.svelte';
 	import MapToolbar from '$lib/features/map/MapToolbar.svelte';
-	import MapStage from '$lib/features/map/MapStage.svelte';
 	import PixiStage from '$lib/features/map/PixiStage.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
-	import RegionLayer from '$lib/features/map/RegionLayer.svelte';
-	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
-	import RendererToggle from '$lib/features/map/RendererToggle.svelte';
-	import { currentRenderer } from '$lib/features/map/renderer-flag.js';
 	import { projectState, type ProjectionContext, type RenderedState } from '$lib/features/map/projection.js';
 	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
 	import { mapAnchorsStore } from '$lib/features/map/map-anchors-store.js';
 	import { mapEventsStore } from '$lib/features/map/map-events-store.js';
-	import type { PopupCallbacks } from '$lib/features/map/leaflet-controller.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
 
-	type LeafletNS = typeof import('leaflet');
-
 	let { entityId = $bindable<string | undefined>(undefined) }: { entityId?: string } = $props();
 
-	// MapStage owns the canvas + Leaflet lifecycle and exposes these via
-	// $bindable. Sibling RegionLayer / PlacementLayer render onto the
-	// live handles once they're non-null.
-	let leafletMap: any = $state(null);
-	let L: LeafletNS | null = $state(null);
-	let drawnItems: any = $state(null);
-	// pixiApp handle deferred to commit 4 — when PixiRegionLayer arrives it
-	// reads PIXI.Application via svelte-pixi's `getApp()` context from
-	// inside the <Application> subtree, so no top-level bind needed here.
-	// Initial attempt with `bind:pixiApp` triggered Svelte's
-	// `props_invalid_value` ($state(null) read as undefined inside the
-	// bind expression for reasons I couldn't pin down remotely).
-	// Step 4 — armed placeable id (chip selected in PlaceablesPalette). When
-	// non-null, the next click on the Leaflet canvas creates a placement at the
-	// clicked fractional coords for this entity.
+	// armed placeable id (chip selected in PlaceablesPalette). When non-null,
+	// the next click on the Pixi canvas creates a placement at the clicked
+	// fractional coords for this entity.
 	let armedPlaceableId = $state<string | null>(null);
 	// Disarm if the palette goes away (active map loses its Location anchor or
 	// switches to one without an image). Prevents a stale arm from creating a
@@ -108,10 +88,8 @@
 	let variantFormError = $state('');
 	let duplicating = $state(false);
 
-	// Computed — $worldMaps / $mapRegions / $entities / $isInScope are Svelte store subscriptions
-	// Strangler-fig renderer flag (Slice 1b). `?renderer=pixi` swaps MapStage
-	// for PixiStage; default is leaflet. See src/lib/features/map/renderer-flag.ts.
-	let renderer = $derived(currentRenderer());
+	// Computed — $worldMaps / $mapRegions / $entities / $isInScope are Svelte store subscriptions.
+	// T13 removed the strangler-fig renderer flag. Pixi is the only renderer.
 	let activeMap = $derived($worldMaps.find((m) => m.id === activeMapId) ?? null);
 	let locations = $derived($entities.filter((e) => e.type === 'Location'));
 	let hasMaps = $derived($worldMaps.length > 0);
@@ -175,20 +153,6 @@
 			}
 			regionFormSceneIds = sceneIds;
 		});
-	// $state so MapStage's resolveCssColors callback propagates the resolved
-	// values into the RegionLayer prop on the next render. Original was a
-	// plain `let` because the closure was inside the same component; across
-	// component boundaries we need reactive tracking.
-	let accentColor = $state('#e8a838');
-	let borderColor = $state('#555');
-
-	function resolveCssColors() {
-		const root = document.documentElement;
-		const style = getComputedStyle(root);
-		accentColor = style.getPropertyValue('--color-accent').trim() || '#e8a838';
-		borderColor = style.getPropertyValue('--color-border').trim() || '#555';
-	}
-
 	// ── Store loads ───────────────────────────────────────────────────────
 
 	// Codex P2 on PR #55 (commit 4ccb183): factionsStore is loaded once on
@@ -364,7 +328,7 @@
 	let pixiAutoScrubAppliedFor = $state<string | null>(null);
 
 	$effect(() => {
-		if (renderer !== 'pixi') return;
+		// T13: Pixi is the only renderer now; the renderer-flag gate is gone.
 		if (!activeMapId) return;
 		if (pixiAutoScrubAppliedFor === activeMapId) return;
 		if (dataLoading) return;
@@ -393,20 +357,16 @@
 	});
 
 	// ── Stage callbacks ──────────────────────────────────────────────────
-	//
-	// MapStage owns leafletMap + L lifecycle and emits two events back:
-	// onPolygonCreated when leaflet-draw finishes a polygon, and
-	// onCanvasClick when a non-interactive click lands while a placeable
-	// chip is armed. The popup-button delegate (edit / delete / drill /
-	// open-entity / delete-placement) wiring lives in MapStage too; the
-	// orchestrator just supplies the callback bag.
+	// Pixi polygon-draw entry + commit/cancel + click-to-place. The Pixi
+	// stack (PixiPolygonDraw + PixiPlacementLayer + PixiRegionLayer) emits
+	// these events back into the orchestrator; T13 deleted the parallel
+	// Leaflet flow.
 
 	function handlePolygonCreated(latLngs: number[][]) {
 		pendingPolygon = latLngs;
 		showRegionForm = true;
 	}
 
-	// Slice 2 D4 prep (T8): Pixi polygon-draw entry + commit/cancel.
 	function startPixiDraw(stageX: number, stageY: number) {
 		pixiDrawSeed = { x: stageX, y: stageY };
 		pixiDrawingActive = true;
@@ -414,9 +374,9 @@
 	function handlePixiPolygonCommit(polygon: number[][]) {
 		pixiDrawingActive = false;
 		pixiDrawSeed = null;
-		// Same downstream path as leaflet-draw: open RegionFormModal so the
-		// user picks a Location (D1 dropped color, so the modal's color
-		// picker is legacy — the server ignores it).
+		// Open RegionFormModal so the user picks a Location. D1 dropped
+		// the color field server-side; the modal's color picker is legacy
+		// and ignored on save.
 		handlePolygonCreated(polygon);
 	}
 	function cancelPixiDraw() {
@@ -432,16 +392,6 @@
 		armedPlaceableId = null;
 		void createPlacementAt(placeableId, fx, fy);
 	}
-
-	const popupCallbacks: PopupCallbacks = {
-		onEditRegion: (regionId) => startEditRegion(regionId),
-		onDeleteRegion: (regionId) => void handleDeleteRegion(regionId),
-		onDrillIntoLocation: (locId) => drillIntoLocation(locId),
-		onCreateMapOffer: (offer) => (createMapOffer = offer),
-		onOpenEntity: (id) => windowStore.open('entity-detail', id),
-		onDeletePlacement: (id) => void deletePlacement(id),
-		getChildEntityName: (id) => $entities.find((x) => x.id === id)?.name ?? null
-	};
 
 	async function createPlacementAt(placeableId: string, x: number, y: number) {
 		placementError = '';
@@ -649,9 +599,9 @@
 		creatingRegionLocation = false;
 		regionNewLocationName = '';
 		regionNewLocationError = '';
-		// drawnItems is the leaflet-draw layer — only present under
-		// ?renderer=leaflet. Skip under Pixi (T8).
-		drawnItems?.clearLayers?.();
+		// T13: drawnItems was the leaflet-draw layer handle; Pixi
+		// polygon-draw resets its own vertices via PixiPolygonDraw's
+		// active=false effect, so nothing to clear here.
 	}
 
 	// ── Actions ────────────────────────────────────────────────────────────
@@ -1020,7 +970,6 @@
 		class="map-wrapper"
 		class:has-breadcrumb={breadcrumbAncestors.length > 0 && activeMap}
 	>
-		<RendererToggle current={renderer} />
 		{#if breadcrumbAncestors.length > 0 && activeMap}
 			<MapBreadcrumb
 				ancestors={breadcrumbAncestors}
@@ -1060,87 +1009,46 @@
 				<button type="button" onclick={() => (toolbarNewLocationError = '')}>✕</button>
 			</div>
 		{/if}
-		{#if renderer === 'leaflet'}
-			<MapStage
-				{activeMap}
-				{hasImage}
-				{armedPlaceableId}
-				{accentColor}
-				{popupCallbacks}
-				onPolygonCreated={handlePolygonCreated}
-				onCanvasClick={handleCanvasClick}
-				{resolveCssColors}
-				bind:leafletMap
-				bind:L
-				bind:drawnItems
-			/>
-			{#if leafletMap && L}
-				<RegionLayer
-					{leafletMap}
-					{L}
-					regions={$mapRegions}
-					entities={$entities}
-					worldMaps={$worldMaps}
-					{activeMap}
-					playhead={$playhead}
+		<PixiStage {activeMap}>
+			{#snippet children()}
+				<PixiRegionLayer
+					regions={scopedRegions}
+					{renderedState}
+					mapId={activeMapId}
+					{dataLoading}
 					isInScope={$isInScope}
-					{accentColor}
-					{borderColor}
+					onDrawHere={startPixiDraw}
 				/>
-				<PlacementLayer
-					{leafletMap}
-					{L}
+				<PixiPlacementLayer
 					{activeMap}
 					playhead={$playhead}
 					placements={$placementsStore}
 					entities={$entities}
+					isInScope={$isInScope}
+					armedPlaceableId={pixiDrawingActive ? null : armedPlaceableId}
+					onOpenEntity={(id) => windowStore.open('entity-detail', id)}
+					onDeletePlacement={(id) => void deletePlacement(id)}
+					onCanvasClick={handleCanvasClick}
 				/>
-			{/if}
-		{:else}
-			<PixiStage {activeMap}>
-				{#snippet children()}
-					<PixiRegionLayer
-						regions={scopedRegions}
-						{renderedState}
-						mapId={activeMapId}
-						{dataLoading}
-						isInScope={$isInScope}
-						onDrawHere={startPixiDraw}
-					/>
-					<PixiPlacementLayer
-						{activeMap}
-						playhead={$playhead}
-						placements={$placementsStore}
-						entities={$entities}
-						isInScope={$isInScope}
-						armedPlaceableId={pixiDrawingActive ? null : armedPlaceableId}
-						onOpenEntity={(id) => windowStore.open('entity-detail', id)}
-						onDeletePlacement={(id) => void deletePlacement(id)}
-						onCanvasClick={handleCanvasClick}
-					/>
-					<PixiPolygonDraw
-						bind:active={pixiDrawingActive}
-						seedPoint={pixiDrawSeed}
-						onCommit={handlePixiPolygonCommit}
-						onCancel={cancelPixiDraw}
-					/>
-				{/snippet}
-			</PixiStage>
-			{#if pixiDrawingActive}
-				<!-- Slice 2 D4 prep (T8): drawing-mode status overlay.
-				     9px Inter uppercase tracked, matches Variant A/D status
-				     text spec from docs/plans/world-map-v3-slice-2-plan.md. -->
-				<div class="pixi-draw-status" role="status">
-					DRAWING · ESC TO EXIT · DBL-CLICK OR SNAP TO CLOSE
-				</div>
-			{/if}
-			<MapSidebar />
+				<PixiPolygonDraw
+					bind:active={pixiDrawingActive}
+					seedPoint={pixiDrawSeed}
+					onCommit={handlePixiPolygonCommit}
+					onCancel={cancelPixiDraw}
+				/>
+			{/snippet}
+		</PixiStage>
+		{#if pixiDrawingActive}
+			<!-- T8 drawing-mode status overlay. 9px Inter uppercase tracked
+			     per Variant A/D from docs/plans/world-map-v3-slice-2-plan.md. -->
+			<div class="pixi-draw-status" role="status">
+				DRAWING · ESC TO EXIT · DBL-CLICK OR SNAP TO CLOSE
+			</div>
 		{/if}
+		<MapSidebar />
 		{#if hasImage && activeMap?.locationId}
-			<!-- Slice 2 D4 prep (T9): PlaceablesPalette wires up under both
-			     renderers. Leaflet path: MapStage.onCanvasClick → handleCanvasClick.
-			     Pixi path: PixiPlacementLayer's stage-level pointertap → same
-			     handleCanvasClick. The palette no longer depends on renderer. -->
+			<!-- PlaceablesPalette: armed chip → PixiPlacementLayer's stage-
+			     level pointertap → handleCanvasClick → create placement. -->
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
 				<div class="placement-error" role="alert">
@@ -1406,15 +1314,6 @@
 		width: 120px;
 		outline: none;
 		border-bottom: 1px solid var(--color-accent);
-	}
-
-	/* .map-canvas lives inside MapStage (which owns the bind:this on the
-	   Leaflet container div). The wrapper still relies on flex children
-	   filling remaining space; MapStage's element matches via :global. */
-	:global(.map-canvas) {
-		flex: 1;
-		width: 100%;
-		min-height: 0;
 	}
 
 	:global(.btn-icon) {
@@ -1750,45 +1649,10 @@
 		font-style: italic;
 	}
 
-	/* Step 4 — placement marker + popup styles. Scoped :global because the
-	   markup is owned by Leaflet (divIcon HTML / bindPopup HTML). */
-	:global(.map-canvas.armed) { cursor: crosshair; }
-	:global(.placement-marker) { background: transparent; border: none; }
-	:global(.placement-pin) {
-		display: block;
-		width: 14px;
-		height: 14px;
-		border-radius: 50%;
-		border: 2px solid var(--color-bg, #1a1a1a);
-		box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
-	}
-	:global(.placement-popup) {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		min-width: 140px;
-	}
-	:global(.placement-popup-name) { font-weight: 600; }
-	:global(.placement-popup-type) {
-		font-size: 11px;
-		color: var(--color-text-muted, #6b7280);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-	:global(.placement-popup button) {
-		font-size: 12px;
-		padding: 3px 8px;
-		border-radius: 4px;
-		border: 1px solid var(--color-border, #333);
-		background: var(--color-bg, #1a1a1a);
-		color: var(--color-text, #ddd);
-		cursor: pointer;
-	}
-	:global(.placement-popup button.danger) {
-		border-color: #b91c1c;
-		color: #fca5a5;
-	}
-
+	/* T13 removed the Leaflet placement-marker / placement-popup styles —
+	   Pixi placements live in Pixi.Graphics (PixiPlacementLayer) and use
+	   the ContextMenu component for click popups. Only .placement-error
+	   (the error toast) remains. */
 	.placement-error {
 		padding: 6px 10px;
 		font-size: 12px;

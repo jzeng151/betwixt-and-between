@@ -1,7 +1,7 @@
 /**
  * Δ1b-E — right-click "Snapshot world state here" E2E (T11).
  *
- * Under ?renderer=pixi, right-clicking an empty area of the canvas
+ * Right-clicking an empty area of the canvas (Pixi is the only renderer
  * opens a ContextMenu with "Snapshot world state here" (Slice 1b PR 2
  * commit 6). Clicking the item POSTs a new map_anchor row at the
  * current playhead with the rendered region/faction state snapshotted.
@@ -63,8 +63,8 @@ test('right-click → Snapshot world state here creates a new anchor', async ({
 	).rows;
 	expect(before).toHaveLength(1);
 
-	// Open the world-map app under Pixi.
-	await page.goto(`/app?renderer=pixi`);
+	// Open the world-map app. T13 made Pixi the only renderer.
+	await page.goto(`/app`);
 	await page.click('button[title="World Map"]');
 	const win = page.locator('.window[aria-label="World Map"]');
 	await expect(win).toBeVisible();
