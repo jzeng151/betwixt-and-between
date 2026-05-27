@@ -71,6 +71,7 @@
 
 	const characters = $derived($entities.filter((e) => e.type === 'Character'));
 	const events = $derived($entities.filter((e) => e.type === 'Event'));
+	const locations = $derived($entities.filter((e) => e.type === 'Location'));
 
 	// entityId → all its intervals, ordered by start_position
 	const intervalsByEntityId = $derived(
@@ -87,9 +88,15 @@
 		})()
 	);
 
-	// Rows: characters + events that have at least one interval
+	// Rows: characters + events + locations that have at least one interval.
+	// Locations only appear once dragged onto the timeline; they don't carry
+	// temporal presence by default (a Location is spatial — Acts of intervals
+	// are an authoring convenience for "Location X is active during these
+	// acts").
 	const rowEntities = $derived(
-		[...characters, ...events].filter((e) => (intervalsByEntityId.get(e.id)?.length ?? 0) > 0)
+		[...characters, ...events, ...locations].filter(
+			(e) => (intervalsByEntityId.get(e.id)?.length ?? 0) > 0
+		)
 	);
 
 	// Set of entity ids with ≥1 interval — Palette greys out placed items so
@@ -421,12 +428,21 @@
 		<Palette
 			{characters}
 			{events}
+			{locations}
 			{placedEntityIds}
 			{colorFor}
 			onCreateEvent={async () => {
 				const created = await entities.createEntity(
 					'Event',
 					`Event ${events.length + 1}`
+				);
+				pendingEditMode.add(created.id);
+				selectFromTimeline(created.id);
+			}}
+			onCreateLocation={async () => {
+				const created = await entities.createEntity(
+					'Location',
+					`Location ${locations.length + 1}`
 				);
 				pendingEditMode.add(created.id);
 				selectFromTimeline(created.id);
