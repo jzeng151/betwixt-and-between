@@ -28,6 +28,8 @@
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
 	import { firstSelfIntersection, isSelfIntersecting } from './polygon-validation.js';
+	import { snapPointToGrid } from './grid-snap.js';
+	import type { WorldMap } from './types.js';
 
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
@@ -37,6 +39,7 @@
 	let {
 		active = $bindable(false),
 		seedPoint = null,
+		activeMap = null,
 		onCommit,
 		onCancel
 	}: {
@@ -45,6 +48,9 @@
 		// "Draw region here" from the context menu. When set, the polygon
 		// starts with this vertex already placed.
 		seedPoint?: { x: number; y: number } | null;
+		// Slice 3 T11 — read world_maps.grid_* to enable Shift-held snap.
+		// Null when no active map (snap is a no-op).
+		activeMap?: WorldMap | null;
 		onCommit: (polygon: number[][]) => void;
 		onCancel?: () => void;
 	} = $props();
@@ -67,6 +73,10 @@
 	// Vertices stored as [y, x] (lat, lng) — committed payload format.
 	let vertices = $state<number[][]>([]);
 	let cursor = $state<{ x: number; y: number } | null>(null);
+	// Slice 3 T11 — snap engagement signal. True when the most recent
+	// pointer event held Shift AND a snap actually moved the point.
+	// Drives the visual badge on the cursor preview vertex.
+	let snapEngaged = $state(false);
 	// Track which `active` session we've already consumed the seed for.
 	// Without this, the seed-point effect re-seeds the first vertex any
 	// time `vertices` becomes empty (e.g. user presses Backspace on a
@@ -128,6 +138,43 @@
 		vertices = vertices.slice(0, -1);
 	}
 
+	/**
+	 * Slice 3 T11 — Shift-held snap to grid intersection (square) or hex
+	 * vertex. Input is viewport-local pixel coords (the image space).
+	 * Converts to fractional via the active map dimensions, snaps in
+	 * fractional space (grid-snap.ts), converts back to pixel.
+	 *
+	 * When shift is held but the active map has no width/height yet, snap
+	 * is a no-op (no canvas dimensions = no grid to snap to). When shift
+	 * is not held, returns the input unchanged so the call site doesn't
+	 * branch.
+	 */
+	function maybeSnap(
+		x: number,
+		y: number,
+		shiftHeld: boolean
+	): { x: number; y: number } {
+		if (!shiftHeld || !activeMap || !activeMap.width || !activeMap.height) {
+			snapEngaged = false;
+			return { x, y };
+		}
+		const frac = { x: x / activeMap.width, y: y / activeMap.height };
+		const snapped = snapPointToGrid(frac, {
+			gridType: activeMap.gridType,
+			gridCellsX: activeMap.gridCellsX,
+			gridCellsY: activeMap.gridCellsY,
+			canvasWidth: activeMap.width,
+			canvasHeight: activeMap.height
+		});
+		const sx = snapped.x * activeMap.width;
+		const sy = snapped.y * activeMap.height;
+		// Engaged when snap actually moved the point by > 1px in either
+		// axis. Without this guard, holding Shift on an already-snapped
+		// vertex would still light the visual cue.
+		snapEngaged = Math.abs(sx - x) > 1 || Math.abs(sy - y) > 1;
+		return { x: sx, y: sy };
+	}
+
 	// Seed the first vertex when the parent supplies one (right-click flow).
 	// Consume the seed exactly once per `active` session so Backspace can
 	// fully clear the polygon without the seed re-appearing.
@@ -162,11 +209,13 @@
 			// region/snapshot context menu (handled by PixiRegionLayer).
 			if (e.button !== 0) return;
 			const local = e.getLocalPosition(viewport);
-			addVertex(local.x, local.y);
+			const point = maybeSnap(local.x, local.y, e.shiftKey);
+			addVertex(point.x, point.y);
 		};
 		stagePointerMove = (e: FederatedPointerEvent) => {
 			const local = e.getLocalPosition(viewport);
-			cursor = { x: local.x, y: local.y };
+			const point = maybeSnap(local.x, local.y, e.shiftKey);
+			cursor = { x: point.x, y: point.y };
 		};
 		stageDblClick = (_e: FederatedPointerEvent) => {
 			commit();
@@ -270,6 +319,19 @@
 				.fill({ color: VERTEX_FILL, alpha: 1 })
 				.stroke({ color: VERTEX_RIM, width: 1.5 });
 			layer.addChild(g);
+		}
+
+		// Slice 3 T11 — snap-engaged cue at the cursor. Subtle amber ring
+		// (no fill, slightly larger than vertex radius) so the user can
+		// tell at a glance "Shift just moved my cursor to a gridline."
+		if (snapEngaged && cur) {
+			const ring: PixiGraphics = new PIXI.Graphics();
+			ring.circle(cur.x, cur.y, 7).stroke({
+				color: VERTEX_FILL,
+				width: 1.5,
+				alpha: 0.8
+			});
+			layer.addChild(ring);
 		}
 	});
 

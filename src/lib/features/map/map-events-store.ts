@@ -21,6 +21,10 @@ export type EventInput = {
 	kind: EventKind;
 	payloadJsonb: unknown;
 	sourceEventId?: string | null;
+	// Slice 3 B5 — groups chunked paint_cells events under one undo
+	// command. Pass a UUIDv4 shared across all chunks of a brush stroke;
+	// omit for standalone events.
+	commandId?: string | null;
 };
 
 // codex PR review: server orders ties by (tPosition, createdAt, id) — see

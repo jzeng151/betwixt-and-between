@@ -33,6 +33,9 @@
 	import { mapEventsStore } from '$lib/features/map/map-events-store.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
+	import BrushPalette from '$lib/components/BrushPalette.svelte';
+	import PixiBrushLayer from '$lib/features/map/PixiBrushLayer.svelte';
+	import type { BiomeKind } from '$lib/features/map/projection.js';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
 
 	let { entityId = $bindable<string | undefined>(undefined) }: { entityId?: string } = $props();
@@ -46,6 +49,26 @@
 	// placement with locationId=null after the palette unmounts.
 	$effect(() => {
 		if (!activeMap?.locationId || !hasImage) armedPlaceableId = null;
+	});
+
+	// Slice 3 T5 — brush authoring state. When `brushActive` is true,
+	// PixiBrushLayer captures pointer events and paints cells. Mutually
+	// exclusive with armedPlaceableId (you can't be placing and painting
+	// at the same time — both take the canvas pointer).
+	let brushActive = $state(false);
+	let brushBiome = $state<BiomeKind>('plains');
+	let brushSize = $state<1 | 3 | 5>(1);
+	$effect(() => {
+		// Disable brush if the active map can't host paint (no image,
+		// no canvas dimensions). Auto-unarm so the user doesn't get
+		// stuck in a no-op brush state.
+		if (!activeMap || !activeMap.width || !activeMap.height) brushActive = false;
+	});
+	$effect(() => {
+		// Cross-exclusion: arming a placement disables the brush, and
+		// vice versa. Paint-and-place at the same time would conflict
+		// on the pointer.
+		if (brushActive && armedPlaceableId !== null) armedPlaceableId = null;
 	});
 	let placementError = $state('');
 
@@ -1054,8 +1077,19 @@
 				<PixiPolygonDraw
 					bind:active={pixiDrawingActive}
 					seedPoint={pixiDrawSeed}
+					{activeMap}
 					onCommit={handlePixiPolygonCommit}
 					onCancel={cancelPixiDraw}
+				/>
+				<!-- Slice 3 T5 — brush layer. Active only when the user enters
+				     brush mode via BrushPalette. Captures pointer events on
+				     the viewport when active. Inactive: zero overhead, no
+				     listeners attached. -->
+				<PixiBrushLayer
+					bind:active={brushActive}
+					{activeMap}
+					biome={brushBiome}
+					size={brushSize}
 				/>
 			{/snippet}
 		</PixiStage>
@@ -1071,6 +1105,17 @@
 			<!-- PlaceablesPalette: armed chip → PixiPlacementLayer's stage-
 			     level pointertap → handleCanvasClick → create placement. -->
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
+			<!-- Slice 3 T5 brush palette. Mounts under the canvas alongside
+			     PlaceablesPalette. Toggling brush ON disarms any placement
+			     chip (cross-exclusion in $effect above). -->
+			<BrushPalette
+				active={brushActive}
+				biome={brushBiome}
+				size={brushSize}
+				onSetActive={(a) => (brushActive = a)}
+				onSetBiome={(b) => (brushBiome = b)}
+				onSetSize={(s) => (brushSize = s)}
+			/>
 			{#if placementError}
 				<div class="placement-error" role="alert">
 					{placementError}

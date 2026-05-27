@@ -1094,35 +1094,61 @@ export async function undoLatestMapEvent(
 			.returning();
 		if (!updated) continue; // Lost the race; loop.
 
+		let all: (typeof mapEvents.$inferSelect)[];
 		if (updated.commandId === null) {
-			return [updated];
+			all = [updated];
+		} else {
+			// Grouped soft-delete. Any sibling chunk already-undone is left
+			// alone (idempotent if a concurrent undo grabbed half the group).
+			// Order DESC so the client can replay in original write order
+			// when reversing.
+			const siblings = await db
+				.update(mapEvents)
+				.set({ undoneAt: new Date() })
+				.where(
+					and(
+						eq(mapEvents.worldMapId, worldMapId),
+						eq(mapEvents.commandId, updated.commandId),
+						sql`${mapEvents.undoneAt} IS NULL`
+					)
+				)
+				.returning();
+			// `updated` is already soft-deleted; siblings is everything ELSE
+			// in the group that was still live. Combine and sort DESC so the
+			// caller gets a consistent commit-order ordering.
+			all = [updated, ...siblings];
+			all.sort((a, b) => {
+				const am = a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(String(a.createdAt));
+				const bm = b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(String(b.createdAt));
+				if (am !== bm) return bm - am;
+				return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+			});
 		}
 
-		// Grouped soft-delete. Any sibling chunk already-undone is left
-		// alone (idempotent if a concurrent undo grabbed half the group).
-		// Order DESC so the client can replay in original write order
-		// when reversing.
-		const siblings = await db
-			.update(mapEvents)
-			.set({ undoneAt: new Date() })
-			.where(
-				and(
-					eq(mapEvents.worldMapId, worldMapId),
-					eq(mapEvents.commandId, updated.commandId),
-					sql`${mapEvents.undoneAt} IS NULL`
-				)
-			)
-			.returning();
-		// `updated` is already soft-deleted; siblings is everything ELSE
-		// in the group that was still live. Combine and sort DESC so the
-		// caller gets a consistent commit-order ordering.
-		const all = [updated, ...siblings];
-		all.sort((a, b) => {
-			const am = a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(String(a.createdAt));
-			const bm = b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(String(b.createdAt));
-			if (am !== bm) return bm - am;
-			return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
-		});
+		// Slice 3 outside-voice A9 — synthetic anchor invalidation.
+		// Synthetic anchors snapshot rolling cell state. When their
+		// summarized events get undone, the snapshot becomes stale (the
+		// undone events' effects would still be in the snapshot's cells).
+		// Hard-delete any synthetic anchor with created_at >= the EARLIEST
+		// undone event's created_at — those snapshots are now wrong. The
+		// auto-anchor path will re-fire when K=20 paint_cells events
+		// accumulate again. User-authored anchors are never touched here.
+		const earliestUndoneAt = all.reduce((acc, e) => {
+			const t = e.createdAt instanceof Date ? e.createdAt : new Date(String(e.createdAt));
+			return acc === null || t.getTime() < acc.getTime() ? t : acc;
+		}, null as Date | null);
+		if (earliestUndoneAt) {
+			await db
+				.delete(mapAnchors)
+				.where(
+					and(
+						eq(mapAnchors.worldMapId, worldMapId),
+						eq(mapAnchors.isSynthetic, true),
+						sql`${mapAnchors.createdAt} >= ${earliestUndoneAt}`
+					)
+				);
+		}
+
 		return all;
 	}
 	// Pathological contention — surface 422 rather than a 500 so the

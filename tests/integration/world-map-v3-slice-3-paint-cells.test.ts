@@ -521,6 +521,82 @@ describe('Slice 3 B.5 — auto-anchor tight rules', () => {
 		expect(synthetic).toHaveLength(1);
 	});
 
+	it('undo invalidates synthetic anchors whose snapshots include the undone events (C.5)', async () => {
+		// Set up: paint 20 events to trigger an auto-anchor, then undo
+		// the latest. The synthetic anchor's snapshot included the
+		// now-undone event, so it must be hard-deleted to avoid stale
+		// projection state. Auto-anchor will re-fire on the next K=20.
+		const map = await seedMap();
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: 'plains' }] }
+					}
+				})
+			);
+		}
+		const beforeUndo = await currentDb
+			.select({ id: mapAnchors.id, isSynthetic: mapAnchors.isSynthetic })
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const syntheticBefore = beforeUndo.filter((a) => a.isSynthetic);
+		expect(syntheticBefore).toHaveLength(1);
+
+		// Undo the latest (synthetic anchor snapshot included it).
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+
+		const afterUndo = await currentDb
+			.select({ id: mapAnchors.id, isSynthetic: mapAnchors.isSynthetic })
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id));
+		const syntheticAfter = afterUndo.filter((a) => a.isSynthetic);
+		// Synthetic anchor must be gone — its snapshot was stale.
+		expect(syntheticAfter).toHaveLength(0);
+		// User-authored baseline anchor (created by seedMap) must still
+		// be there — only synthetic anchors are invalidated.
+		const userAuthoredAfter = afterUndo.filter((a) => !a.isSynthetic);
+		expect(userAuthoredAfter.length).toBeGreaterThan(0);
+	});
+
+	it('undo does NOT delete user-authored anchors (C.5)', async () => {
+		// Belt-and-suspenders: hard-delete is gated on is_synthetic=true.
+		// Even an aggressive undo cascade must leave user anchors alone.
+		const map = await seedMap();
+		// User-authored anchor snapshot at t=5.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 5,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'forest' }] }
+				}
+			})
+		);
+		const userAnchorsBefore = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(
+				and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, false))
+			);
+
+		// Undo — only the paint_cells event soft-deletes; no anchors
+		// touched because none were synthetic.
+		await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
+
+		const userAnchorsAfter = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(
+				and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, false))
+			);
+		expect(userAnchorsAfter.length).toBe(userAnchorsBefore.length);
+	});
+
 	it('undone paint_cells events do NOT count toward the K=20 trigger', async () => {
 		const map = await seedMap();
 		// Land 15 events; undo 5 of them; land 10 more. Total non-undone = 20
