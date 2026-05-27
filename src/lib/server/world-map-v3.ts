@@ -918,6 +918,33 @@ function decodeCreatedAtCursor(raw: string): CreatedAtCursor {
 	}
 }
 
+/**
+ * codex PR review (iter 4): JS Date is millisecond-precision but PG
+ * timestamptz with `defaultNow()` stores microseconds. `last.createdAt.
+ * toISOString()` truncates microseconds; the next page's keyset
+ * comparison then includes the boundary row again (sub-ms tiebreak
+ * fails). At `limit=1` this loops indefinitely; at larger limits it
+ * duplicates the boundary row. Re-fetch the boundary row's
+ * `created_at` as a microsecond-precise text string for the cursor.
+ *
+ * One extra round-trip per page that has `next_cursor != null` —
+ * acceptable for an authoring-time write rate.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function microPreciseCreatedAt(db: any, table: any, id: string): Promise<string> {
+	const result = await db.execute(sql`
+		SELECT to_char(${table.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS c
+		FROM ${table}
+		WHERE ${table.id} = ${id}::uuid
+		LIMIT 1
+	`);
+	// Drizzle's execute returns shape depends on driver. Handle both
+	// node-postgres ({ rows: [...] }) and pg-bridge (array).
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const row = ((result as any).rows ?? (result as any))?.[0];
+	return (row?.c as string | undefined) ?? new Date().toISOString();
+}
+
 function clampLimit(raw: number | null | undefined): number {
 	if (raw == null || !Number.isFinite(raw)) return DEFAULT_PAGE_SIZE;
 	const n = Math.floor(raw);
@@ -951,7 +978,9 @@ export async function listFactions(
 	const page = hasMore ? rows.slice(0, limit) : rows;
 	const last = page[page.length - 1];
 	const next_cursor =
-		hasMore && last ? encodeCursor({ c: last.createdAt.toISOString(), id: last.id }) : null;
+		hasMore && last
+			? encodeCursor({ c: await microPreciseCreatedAt(db, factions, last.id), id: last.id })
+			: null;
 	return { rows: page, next_cursor };
 }
 
@@ -982,7 +1011,11 @@ export async function listMapAnchors(
 	const last = page[page.length - 1];
 	const next_cursor =
 		hasMore && last
-			? encodeCursor({ t: last.tPosition, c: last.createdAt.toISOString(), id: last.id })
+			? encodeCursor({
+					t: last.tPosition,
+					c: await microPreciseCreatedAt(db, mapAnchors, last.id),
+					id: last.id
+				})
 			: null;
 	return { rows: page, next_cursor };
 }
@@ -1018,7 +1051,11 @@ export async function listMapEvents(
 	const last = page[page.length - 1];
 	const next_cursor =
 		hasMore && last
-			? encodeCursor({ t: last.tPosition, c: last.createdAt.toISOString(), id: last.id })
+			? encodeCursor({
+					t: last.tPosition,
+					c: await microPreciseCreatedAt(db, mapEvents, last.id),
+					id: last.id
+				})
 			: null;
 	return { rows: page, next_cursor };
 }
