@@ -23,6 +23,19 @@ export type EventInput = {
 	sourceEventId?: string | null;
 };
 
+// codex PR review: server orders ties by (tPosition, createdAt, id) — see
+// projection.ts → compareCreatedAt + projectState's applicable.sort. The
+// client's insert-and-sort path was using (tPosition, id) only, so a redo
+// at the same tPosition folded in a different order than the server
+// until the next load. Match the server tiebreak exactly.
+function compareEvents(a: MapEvent, b: MapEvent): number {
+	if (a.tPosition !== b.tPosition) return a.tPosition - b.tPosition;
+	const am = Date.parse(a.createdAt);
+	const bm = Date.parse(b.createdAt);
+	if (am !== bm) return am - bm;
+	return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
 function createMapEventsStore() {
 	const store = writable<MapEvent[]>([]);
 	// See map-anchors-store.ts for the rationale. Codex P1 on PR #55.
@@ -77,9 +90,7 @@ function createMapEventsStore() {
 		if (!res.ok) throw new Error(`Failed to create event: ${await errorMessage(res)}`);
 		const created = (await res.json()) as MapEvent;
 		if (lastLoadedMapId !== mapId) return created;
-		store.update((rows) =>
-			[...rows, created].sort((a, b) => a.tPosition - b.tPosition || a.id.localeCompare(b.id))
-		);
+		store.update((rows) => [...rows, created].sort(compareEvents));
 		// New event authored — invalidate the redo stack (D3 contract).
 		if (redoStackForMapId === mapId) redoStore.set([]);
 		return created;
@@ -142,9 +153,7 @@ function createMapEventsStore() {
 		}
 		const created = (await res.json()) as MapEvent;
 		if (lastLoadedMapId !== mapId) return created;
-		store.update((rows) =>
-			[...rows, created].sort((a, b) => a.tPosition - b.tPosition || a.id.localeCompare(b.id))
-		);
+		store.update((rows) => [...rows, created].sort(compareEvents));
 		return created;
 	}
 
