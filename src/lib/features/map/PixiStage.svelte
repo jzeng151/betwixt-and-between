@@ -43,11 +43,9 @@
 	let ready = $state(false);
 
 	// Reactive context wrapper so descendants can read the live Application
-	// via getContext(PIXI_STAGE_CONTEXT). $state-backed object: PixiRegionLayer's
-	// $effect re-runs when `app` mutates (null → PIXI.Application → null on
-	// renderer-flag flip). Avoids the props_invalid_value bug that $bindable
-	// hit at the orchestrator layer (see commit 2 history).
-	const stageCtx = $state<PixiStageContext>({ app: null });
+	// and viewport via getContext(PIXI_STAGE_CONTEXT). $state-backed object:
+	// PixiRegionLayer's $effect re-runs when `app` or `viewport` mutates.
+	const stageCtx = $state<PixiStageContext>({ app: null, viewport: null });
 	setContext(PIXI_STAGE_CONTEXT, stageCtx);
 
 	onMount(() => {
@@ -56,13 +54,18 @@
 
 		(async () => {
 			try {
-				const PIXI = await import('pixi.js');
+				const [PIXI, pvMod] = await Promise.all([
+					import('pixi.js'),
+					import('pixi-viewport')
+				]);
 				if (cancelled) return;
 
+				const mapW = activeMap?.width ?? 1024;
+				const mapH = activeMap?.height ?? 768;
 				const newApp = new PIXI.Application();
 				await newApp.init({
-					width: activeMap?.width ?? 1024,
-					height: activeMap?.height ?? 768,
+					width: mapW,
+					height: mapH,
 					background: 0x222222,
 					antialias: true
 				});
@@ -90,7 +93,23 @@
 					// the canvas so our menu is the only one users see.
 					app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 				}
+
+				// T13 parity (codex PR#57 iter3): pixi-viewport provides
+				// wheel-zoom, drag-pan, and pinch. Mount once per app; all
+				// other layers addChild to this viewport (via stageCtx) so
+				// they pan/zoom together with the bitmap.
+				const viewport = new pvMod.Viewport({
+					screenWidth: mapW,
+					screenHeight: mapH,
+					worldWidth: mapW,
+					worldHeight: mapH,
+					events: newApp.renderer.events
+				});
+				viewport.drag().pinch().wheel().clampZoom({ minScale: 0.25, maxScale: 8 });
+				newApp.stage.addChild(viewport);
+
 				stageCtx.app = newApp;
+				stageCtx.viewport = viewport;
 				ready = true;
 			} catch (err) {
 				if (cancelled) return;
@@ -101,6 +120,7 @@
 		return () => {
 			cancelled = true;
 			stageCtx.app = null;
+			stageCtx.viewport = null;
 			if (app) {
 				try {
 					app.destroy(true, {
@@ -126,11 +146,25 @@
 	// then-current dimensions).
 	$effect(() => {
 		const app = stageCtx.app;
+		const viewport = stageCtx.viewport;
 		if (!app || !activeMap?.width || !activeMap?.height) return;
 		const w = activeMap.width;
 		const h = activeMap.height;
 		if (app.renderer.width !== w || app.renderer.height !== h) {
 			app.renderer.resize(w, h);
+		}
+		// Keep the viewport's screen + world dimensions in sync with the
+		// active map so wheel zoom + pan bounds reference the new image.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const vp = viewport as any;
+		if (vp) {
+			vp.screenWidth = w;
+			vp.screenHeight = h;
+			vp.worldWidth = w;
+			vp.worldHeight = h;
+			// Reset transform so we're not stuck mid-zoom on the previous map.
+			vp.setZoom?.(1, true);
+			vp.moveCenter?.(w / 2, h / 2);
 		}
 	});
 

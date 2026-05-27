@@ -44,7 +44,11 @@
 		mapId,
 		dataLoading = false,
 		isInScope = null,
-		onDrawHere
+		onDrawHere,
+		onEditRegion,
+		onDeleteRegion,
+		onDrillIntoLocation,
+		onOpenLocation
 	}: {
 		regions: MapRegion[];
 		renderedState: RenderedState | null;
@@ -65,6 +69,16 @@
 		// image-pixel coords. The parent flips PixiPolygonDraw into active
 		// mode seeded with that point.
 		onDrawHere?: (x: number, y: number) => void;
+		// T13 parity (Codex iter PR#57): the deleted Leaflet popup wired
+		// Edit / Delete / Drill / Create-map for regions. Restore them on
+		// the Pixi right-click menu so users still have access to those
+		// actions after the renderer flag is gone.
+		onEditRegion?: (regionId: string) => void;
+		onDeleteRegion?: (regionId: string) => void;
+		onDrillIntoLocation?: (locationId: string) => void;
+		// codex PR#57 iter3 P2: Leaflet popup made the Location name
+		// clickable → opened entity-detail. Restore as a menu item.
+		onOpenLocation?: (locationId: string) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -178,11 +192,15 @@
 
 	function openSnapshotMenu(e: FederatedPointerEvent) {
 		const { x, y } = clientXY(e);
-		// e.global is the stage-local coordinate (image-pixel space) — used
-		// by "Draw region here" to seed the polygon's first vertex.
-		const stageX = (e.global?.x ?? 0) as number;
-		const stageY = (e.global?.y ?? 0) as number;
-		menu = { kind: 'snapshot', x, y, stageX, stageY };
+		// T13 parity (codex PR#57 iter3 + pixi-viewport): with the viewport
+		// in place between app.stage and our layer, e.global is canvas-
+		// pixel screen coords while polygons live in world coords. Convert
+		// to world via getLocalPosition(viewport) so "Draw region here"
+		// seeds the polygon's first vertex in the correct space — survives
+		// pan/zoom.
+		const vp = stageCtx.viewport;
+		const local = vp ? e.getLocalPosition(vp) : { x: e.global?.x ?? 0, y: e.global?.y ?? 0 };
+		menu = { kind: 'snapshot', x, y, stageX: local.x, stageY: local.y };
 	}
 
 	async function snapshotWorldState() {
@@ -338,14 +356,53 @@
 				}
 			];
 		}
-		if (factionList.length === 0) {
-			return [
-				{
-					label: 'No factions yet — create one first',
-					disabled: true,
-					onSelect: () => {}
+		// T13 parity: Edit / Delete / Drill always appear (independent of
+		// faction list state). They were the Leaflet popup's bread-and-butter
+		// actions; PR#57 review caught that PixiRegionLayer's previous menu
+		// only handled ownership. Drill is disabled when the region has no
+		// linked Location.
+		const region = regions.find((r) => r.id === regionId);
+		const linkedLocationId = region?.locationId ?? null;
+		const items: MenuItem[] = [];
+		if (onEditRegion) {
+			items.push({
+				label: 'Edit region',
+				icon: '✎',
+				onSelect: () => onEditRegion!(regionId)
+			});
+		}
+		if (onOpenLocation && linkedLocationId) {
+			items.push({
+				label: 'Open linked location',
+				icon: '↗',
+				onSelect: () => onOpenLocation!(linkedLocationId)
+			});
+		}
+		if (onDrillIntoLocation) {
+			items.push({
+				label: linkedLocationId ? 'Drill into location' : 'Drill into location (no link)',
+				icon: '↳',
+				disabled: !linkedLocationId,
+				onSelect: () => {
+					if (linkedLocationId) onDrillIntoLocation!(linkedLocationId);
 				}
-			];
+			});
+		}
+		if (onDeleteRegion) {
+			items.push({
+				label: 'Delete region',
+				icon: '🗑',
+				onSelect: () => onDeleteRegion!(regionId)
+			});
+		}
+
+		if (factionList.length === 0) {
+			items.push({
+				label: 'No factions yet — create one first',
+				disabled: true,
+				onSelect: () => {}
+			});
+			return items;
 		}
 		// Current owner of this region at the active playhead, per the most
 		// recent projectState pass. Disable the item that points back to the
@@ -354,8 +411,8 @@
 		const currentFactionId = renderedState?.regions.find(
 			(r) => r.regionId === regionId
 		)?.factionId ?? null;
-		return factionList.map(
-			(f): MenuItem => ({
+		for (const f of factionList) {
+			items.push({
 				label:
 					f.id === currentFactionId
 						? `${f.name} (current owner)`
@@ -365,27 +422,31 @@
 				onSelect: () => {
 					void changeOwner(regionId, f.id);
 				}
-			})
-		);
+			});
+		}
+		return items;
 	});
 
 	$effect(() => {
 		const app = stageCtx.app;
-		if (!app || !PIXI) return;
+		const viewport = stageCtx.viewport;
+		if (!app || !PIXI || !viewport) return;
 
 		if (!layer) {
 			layer = new PIXI.Container();
-			app.stage.addChild(layer);
-			// Stage-level right-click → "Snapshot world state here" menu.
-			// Stage must be event-aware ('static') so events bubble from
-			// children up to it. Regions' rightclick handlers call
-			// stopPropagation so this fires only on EMPTY-area clicks.
-			app.stage.eventMode = 'static';
-			app.stage.hitArea = app.screen;
+			viewport.addChild(layer);
+			// Viewport-level right-click → "Snapshot world state here" menu.
+			// pixi-viewport is itself event-aware so events bubble up from
+			// children. Regions' rightclick handlers call stopPropagation so
+			// this fires only on EMPTY-area clicks. Listener moved from
+			// app.stage to viewport in T13 parity (codex PR#57 iter3) so
+			// the snapshot menu's seed coords are viewport-local (world)
+			// rather than screen-space — survives pan/zoom correctly.
+			viewport.eventMode = 'static';
 			stageRightClickHandler = (e: FederatedPointerEvent) => {
 				openSnapshotMenu(e);
 			};
-			app.stage.on('rightclick', stageRightClickHandler);
+			viewport.on('rightclick', stageRightClickHandler);
 		}
 
 		// Clear previous draws + listeners. removeChildren returns the
@@ -447,11 +508,11 @@
 		// regionsMatchMap-style gates remount us; without .off() the
 		// stage accumulates a fresh listener per remount.
 		const app = stageCtx.app;
-		if (app && stageRightClickHandler) {
+		if (stageCtx.viewport && stageRightClickHandler) {
 			try {
-				app.stage.off('rightclick', stageRightClickHandler);
+				stageCtx.viewport.off('rightclick', stageRightClickHandler);
 			} catch (_) {
-				/* stage may have been destroyed already */
+				/* viewport may have been destroyed already */
 			}
 			stageRightClickHandler = null;
 		}

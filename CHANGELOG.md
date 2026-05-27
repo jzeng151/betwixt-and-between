@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.9.0] - 2026-05-27
+
+### Removed
+- **Leaflet entirely.** The strangler-fig renderer toggle from Slice 1b retires here. Pixi is the only renderer; `?renderer=` query param is now ignored. Deleted: `MapStage.svelte`, `RegionLayer.svelte` (Leaflet), `PlacementLayer.svelte` (Leaflet — Pixi version lives on as `PixiPlacementLayer.svelte`), `RendererToggle.svelte`, `renderer-flag.ts`, `leaflet-controller.ts`, `region-popup.ts`. 7 files, 651 lines removed. `leaflet`, `leaflet-draw`, `@types/leaflet`, `@types/leaflet-draw` dropped from package.json.
+- **`tests/e2e/renderer-toggle.spec.ts`** — there's no toggle to test.
+
+### Changed
+- **`WorldMap.svelte`** simplified by ~180 lines: Leaflet branch deleted, `accentColor` / `borderColor` / `resolveCssColors` removed (only Leaflet's `RegionLayer` consumed them), `popupCallbacks` removed (only Leaflet's `MapStage` consumed it), `leafletMap` / `L` / `drawnItems` state removed, `renderer === 'leaflet'` conditional rendering removed.
+- **Pre-deletion checkpoint tag** `pre-renderer-flag-deletion` placed on `c65be06` (v0.7.8.0) for fast revert. Rollback is `git revert <PR-merge-commit>` + redeploy + canary check; no code-level escape hatch.
+
+### Tests
+- 1062 vitest still passing (the leaflet codepath had no dedicated unit tests beyond the deleted renderer-toggle E2E).
+- `snapshot-anchor.spec.ts` updated to drop `?renderer=pixi` from the URL since Pixi is now the default.
+
 ## [0.7.8.0] - 2026-05-27
 
 ### Added
