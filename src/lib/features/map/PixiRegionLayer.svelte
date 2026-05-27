@@ -42,7 +42,8 @@
 		regions,
 		renderedState,
 		mapId,
-		dataLoading = false
+		dataLoading = false,
+		onDrawHere
 	}: {
 		regions: MapRegion[];
 		renderedState: RenderedState | null;
@@ -53,6 +54,11 @@
 		// is incomplete and a snapshot persists silently-wrong null
 		// faction_ids. Gate menu + function on this signal.
 		dataLoading?: boolean;
+		// Slice 2 D4 prep (T8): the snapshot menu adds a "Draw region here"
+		// entry that calls back into the parent with the right-click's
+		// image-pixel coords. The parent flips PixiPolygonDraw into active
+		// mode seeded with that point.
+		onDrawHere?: (x: number, y: number) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -82,7 +88,10 @@
 	// right-clicks (Δ1b-E).
 	type MenuState =
 		| { kind: 'region'; x: number; y: number; regionId: string }
-		| { kind: 'snapshot'; x: number; y: number };
+		// Slice 2 D4 prep (T8): snapshot menu also captures stage-local
+		// (image-pixel) coords so "Draw region here" can seed the first
+		// vertex of the polygon at the right-click location.
+		| { kind: 'snapshot'; x: number; y: number; stageX: number; stageY: number };
 	let menu = $state<MenuState | null>(null);
 	let actionError = $state<string | null>(null);
 	let actionInfo = $state<string | null>(null);
@@ -163,7 +172,11 @@
 
 	function openSnapshotMenu(e: FederatedPointerEvent) {
 		const { x, y } = clientXY(e);
-		menu = { kind: 'snapshot', x, y };
+		// e.global is the stage-local coordinate (image-pixel space) — used
+		// by "Draw region here" to seed the polygon's first vertex.
+		const stageX = (e.global?.x ?? 0) as number;
+		const stageY = (e.global?.y ?? 0) as number;
+		menu = { kind: 'snapshot', x, y, stageX, stageY };
 	}
 
 	async function snapshotWorldState() {
@@ -277,7 +290,20 @@
 					}
 				];
 			}
+			const stageX = menu.stageX;
+			const stageY = menu.stageY;
 			return [
+				// Slice 2 D4 prep (T8): "Draw region here" appears alongside
+				// the snapshot affordance; both share the right-click gesture
+				// on the canvas (Variant D — Cartographer's tool).
+				{
+					label: 'Draw region here',
+					icon: '✎',
+					disabled: !onDrawHere,
+					onSelect: () => {
+						onDrawHere?.(stageX, stageY);
+					}
+				},
 				{
 					label: 'Snapshot world state here',
 					icon: '📌',

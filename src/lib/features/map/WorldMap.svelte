@@ -22,6 +22,7 @@
 	import MapStage from '$lib/features/map/MapStage.svelte';
 	import PixiStage from '$lib/features/map/PixiStage.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
+	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import RegionLayer from '$lib/features/map/RegionLayer.svelte';
 	import PlacementLayer from '$lib/features/map/PlacementLayer.svelte';
@@ -68,6 +69,12 @@
 	let activeMapId = $state<string | null>(null);
 	let showRegionForm = $state(false);
 	let pendingPolygon: number[][] | null = $state(null);
+	// Slice 2 D4 prep (T8): Pixi polygon-draw state. `pixiDrawingActive`
+	// drives the PixiPolygonDraw overlay; `pixiDrawSeed` is the right-click
+	// origin point that seeds the first vertex (Variant D, Cartographer's
+	// tool). Both reset on commit / cancel / map switch.
+	let pixiDrawingActive = $state(false);
+	let pixiDrawSeed = $state<{ x: number; y: number } | null>(null);
 	let regionFormLocationId = $state<string | null>(null);
 	let regionFormColor = $state('#e8a838');
 	let regionFormSceneIds = $state<Set<string>>(new Set());
@@ -387,6 +394,24 @@
 		showRegionForm = true;
 	}
 
+	// Slice 2 D4 prep (T8): Pixi polygon-draw entry + commit/cancel.
+	function startPixiDraw(stageX: number, stageY: number) {
+		pixiDrawSeed = { x: stageX, y: stageY };
+		pixiDrawingActive = true;
+	}
+	function handlePixiPolygonCommit(polygon: number[][]) {
+		pixiDrawingActive = false;
+		pixiDrawSeed = null;
+		// Same downstream path as leaflet-draw: open RegionFormModal so the
+		// user picks a Location (D1 dropped color, so the modal's color
+		// picker is legacy — the server ignores it).
+		handlePolygonCreated(polygon);
+	}
+	function cancelPixiDraw() {
+		pixiDrawingActive = false;
+		pixiDrawSeed = null;
+	}
+
 	function handleCanvasClick(fx: number, fy: number) {
 		// Disarm synchronously before the await so a quick second click can't
 		// fire createPlacementAt twice while the POST is in flight.
@@ -612,7 +637,9 @@
 		creatingRegionLocation = false;
 		regionNewLocationName = '';
 		regionNewLocationError = '';
-		drawnItems.clearLayers();
+		// drawnItems is the leaflet-draw layer — only present under
+		// ?renderer=leaflet. Skip under Pixi (T8).
+		drawnItems?.clearLayers?.();
 	}
 
 	// ── Actions ────────────────────────────────────────────────────────────
@@ -1065,9 +1092,24 @@
 						{renderedState}
 						mapId={activeMapId}
 						{dataLoading}
+						onDrawHere={startPixiDraw}
+					/>
+					<PixiPolygonDraw
+						bind:active={pixiDrawingActive}
+						seedPoint={pixiDrawSeed}
+						onCommit={handlePixiPolygonCommit}
+						onCancel={cancelPixiDraw}
 					/>
 				{/snippet}
 			</PixiStage>
+			{#if pixiDrawingActive}
+				<!-- Slice 2 D4 prep (T8): drawing-mode status overlay.
+				     9px Inter uppercase tracked, matches Variant A/D status
+				     text spec from docs/plans/world-map-v3-slice-2-plan.md. -->
+				<div class="pixi-draw-status" role="status">
+					DRAWING · ESC TO EXIT · DBL-CLICK OR SNAP TO CLOSE
+				</div>
+			{/if}
 			<MapSidebar />
 		{/if}
 		{#if hasImage && activeMap?.locationId && renderer === 'leaflet'}
@@ -1440,6 +1482,23 @@
 		cursor: pointer;
 	}
 
+	.pixi-draw-status {
+		/* Slice 2 D4 prep (T8): top-left status text while drawing mode is
+		   active. 9px Inter uppercase tracked, matches Variant A/D spec.
+		   pointer-events: none so the canvas under the text still gets
+		   pointer events for vertex placement. */
+		position: absolute;
+		top: 12px;
+		left: 12px;
+		z-index: 1100;
+		font-size: 9px;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--color-text-muted, #6b7280);
+		pointer-events: none;
+		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+	}
 	.hint-overlay {
 		position: absolute;
 		/* bottom-center: the hint shows only on an empty new map ($mapRegions
