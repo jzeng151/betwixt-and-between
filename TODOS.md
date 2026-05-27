@@ -163,9 +163,9 @@ Hex-grid-overlay was the original Phase 4 World Map upgrade and is now **superse
 
 - [ ] **Fog-of-war** — scope a separate design pass before scheduling. The hex-grid foundation it depended on lands inside WM3 Slice 1, so this is unblocked-on-foundation after Slice 1 ships, but still needs its own design pass for the reveal/visibility model.
 
-- [ ] **T10-hexlock — Postgres BEFORE UPDATE trigger for `world_maps.hex_size` immutability.** Belt-and-suspenders for the hex-fog feature. App-layer (`PATCH /api/maps/[id]`) is primary; trigger backs direct SQL writes. Raises if `hex_size` changes when reveal rows exist.
+- [ ] **T10-hexlock — Postgres BEFORE UPDATE trigger for `world_maps.grid_scale_value` + `grid_type` immutability.** Belt-and-suspenders for the hex-fog feature. App-layer (`PATCH /api/maps/[id]`) is primary; trigger backs direct SQL writes. Raises if either grid-shape column changes when reveal rows exist. **Renamed 2026-05-27 per Slice 3 T20:** the original `hex_size` column never landed; Slice 3's grid lives in `world_maps.grid_scale_value` (size) + `world_maps.grid_type` ('square'|'hex') + `grid_cells_x/y`. The immutability concern stays the same — once fog reveals are tied to a grid layout, changing the grid silently invalidates them.
 
-- [ ] **T11-hexrecompute — Spatial projection of `hex_size` changes.** Recompute `map_hex_reveals` and `map_hex_region_overrides` when user changes `hex_size` on a map with existing overrides. Project (x, y) coords old → new grid, accept rounding loss, surface preview + confirm. Why deferred: rare path, error-prone math, lots of UX surface. Depends on T10-hexlock.
+- [ ] **T11-hexrecompute — Spatial projection of grid-shape changes.** Recompute `map_hex_reveals` and `map_hex_region_overrides` when user changes `grid_scale_value` / `grid_type` / `grid_cells_x` / `grid_cells_y` on a map with existing overrides. Project (x, y) coords old → new grid, accept rounding loss, surface preview + confirm. Why deferred: rare path, error-prone math, lots of UX surface. Depends on T10-hexlock. **Renamed 2026-05-27 per Slice 3 T20** (was `hex_size`-only).
 
 ### Generic icon registry — vocabulary expansion
 

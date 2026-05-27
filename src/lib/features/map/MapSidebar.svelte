@@ -129,6 +129,64 @@
 			deleteBusy = false;
 		}
 	}
+
+	// Slice 3 F2 (Slice 1b carry-over T13) — inline rename + recolor.
+	// PATCH endpoint exists from Slice 1b PR1; only the UI was deferred.
+	// One faction is in edit mode at a time; click-name enters rename,
+	// click-stripe opens the swatch picker, Enter/blur commits, Esc
+	// cancels. is_system rows can still be renamed/recolored — user
+	// owns them; only DELETE is blocked.
+	let editingFactionId = $state<string | null>(null);
+	let editName = $state('');
+	let editColor = $state('');
+	let editBusy = $state(false);
+	let editError = $state('');
+	let showColorPicker = $state(false);
+
+	function startEdit(f: Faction) {
+		editingFactionId = f.id;
+		editName = f.name;
+		editColor = f.color;
+		editError = '';
+		showColorPicker = false;
+	}
+
+	function cancelEdit() {
+		editingFactionId = null;
+		editName = '';
+		editColor = '';
+		editError = '';
+		showColorPicker = false;
+	}
+
+	async function commitEdit(f: Faction) {
+		if (editBusy) return;
+		const name = editName.trim();
+		if (!name) {
+			editError = 'Name is required';
+			return;
+		}
+		// No-op if nothing changed.
+		if (name === f.name && editColor === f.color) {
+			cancelEdit();
+			return;
+		}
+		editBusy = true;
+		editError = '';
+		try {
+			await factionsStore.update(f.id, { name, color: editColor });
+			cancelEdit();
+		} catch (err) {
+			editError = err instanceof Error ? err.message : String(err);
+		} finally {
+			editBusy = false;
+		}
+	}
+
+	function pickColor(c: string) {
+		editColor = c;
+		showColorPicker = false;
+	}
 </script>
 
 <aside class="map-sidebar" aria-label="Map controls">
@@ -202,25 +260,87 @@
 
 	<ul class="faction-list" role="list">
 		{#each factionList as faction (faction.id)}
-			<li class="faction-row">
-				<span class="faction-stripe" style="background: {faction.color}" aria-hidden="true"></span>
-				<span class="faction-name" title={faction.name}>{faction.name}</span>
-				{#if faction.isSystem}
-					<!-- Slice 2 D1: system Neutral faction is the fallback ownership
-					     target for un-faction-ed regions. Delete would orphan every
-					     region resolving through it. UI hides the affordance; server
-					     also returns 422 on DELETE attempts (defense in depth). -->
-					<span class="system-badge" title="System faction — cannot be deleted">SYSTEM</span>
-				{:else}
+			<li class="faction-row" class:editing={editingFactionId === faction.id}>
+				{#if editingFactionId === faction.id}
+					<!-- Slice 3 F2 — inline edit mode. Stripe becomes a color
+					     button (opens swatch picker); name becomes a text
+					     input. Enter commits, Esc cancels. -->
 					<button
 						type="button"
-						class="btn-icon btn-danger"
-						aria-label="Delete {faction.name}"
-						title="Delete"
-						onclick={() => void startDelete(faction)}
-					>×</button>
+						class="faction-stripe edit-stripe"
+						style="background: {editColor}"
+						aria-label="Pick color"
+						onclick={() => (showColorPicker = !showColorPicker)}
+						disabled={editBusy}
+					></button>
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						type="text"
+						class="faction-name-input"
+						bind:value={editName}
+						autofocus
+						disabled={editBusy}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') void commitEdit(faction);
+							if (e.key === 'Escape') cancelEdit();
+						}}
+						onblur={() => {
+							// Blur commits unless the swatch picker is open
+							// (clicking a swatch fires blur AND we want the
+							// commit to come from the picker, not the input).
+							if (!showColorPicker) void commitEdit(faction);
+						}}
+					/>
+				{:else}
+					<span
+						class="faction-stripe"
+						style="background: {faction.color}"
+						aria-hidden="true"
+					></span>
+					<button
+						type="button"
+						class="faction-name faction-name-button"
+						title={`Rename "${faction.name}"`}
+						onclick={() => startEdit(faction)}
+					>{faction.name}</button>
+					{#if faction.isSystem}
+						<!-- Slice 2 D1: system Neutral faction is the fallback ownership
+						     target for un-faction-ed regions. Delete would orphan every
+						     region resolving through it. UI hides the affordance; server
+						     also returns 422 on DELETE attempts (defense in depth). -->
+						<span class="system-badge" title="System faction — cannot be deleted">SYSTEM</span>
+					{:else}
+						<button
+							type="button"
+							class="btn-icon btn-danger"
+							aria-label="Delete {faction.name}"
+							title="Delete"
+							onclick={() => void startDelete(faction)}
+						>×</button>
+					{/if}
 				{/if}
 			</li>
+			{#if editingFactionId === faction.id && showColorPicker}
+				<li class="edit-swatch-row">
+					<div class="color-swatches">
+						{#each MAP_PALETTE as c (c)}
+							<button
+								type="button"
+								class="color-swatch"
+								class:selected={editColor === c}
+								style="background: {c}"
+								aria-label={`Color ${c}`}
+								onclick={() => pickColor(c)}
+							></button>
+						{/each}
+					</div>
+				</li>
+			{/if}
+			{#if editingFactionId === faction.id && editError}
+				<li class="edit-error-row">
+					<p class="error-msg">{editError}</p>
+				</li>
+			{/if}
 		{/each}
 		{#if factionList.length === 0 && !creating}
 			<li class="empty-row">No factions yet.</li>
@@ -384,6 +504,37 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		color: var(--color-text);
+	}
+	/* Slice 3 F2 — name turns into a click target in display mode. Looks
+	   identical to the span until hover. */
+	.faction-name-button {
+		background: transparent;
+		border: none;
+		padding: 0;
+		text-align: left;
+		cursor: text;
+		font: inherit;
+	}
+	.faction-name-button:hover {
+		color: var(--color-accent, #c8942a);
+	}
+	.faction-row.editing {
+		align-items: center;
+	}
+	.edit-stripe {
+		border: 1px solid var(--color-border);
+		padding: 0;
+		cursor: pointer;
+	}
+	.edit-stripe:hover {
+		border-color: var(--color-accent, #c8942a);
+	}
+	.edit-swatch-row {
+		padding: 4px 0;
+		list-style: none;
+	}
+	.edit-error-row {
+		list-style: none;
 	}
 	.empty-row {
 		color: var(--color-text-muted);
