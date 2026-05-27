@@ -127,6 +127,41 @@
       "when": 1779852000000,
       "tag": "0017_map_events_undone_at",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1779926400000,
+      "tag": "0018_world_maps_grid",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1779926460000,
+      "tag": "0019_map_anchors_is_synthetic",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1779926520000,
+      "tag": "0020_map_events_command_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1779926580000,
+      "tag": "0021_world_map_layer_prefs",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1779926640000,
+      "tag": "0022_anchor_cells_backfill",
+      "breakpoints": true
     }
   ]
 }
