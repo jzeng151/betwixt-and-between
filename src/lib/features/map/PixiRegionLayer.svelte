@@ -43,6 +43,7 @@
 		renderedState,
 		mapId,
 		dataLoading = false,
+		isInScope = null,
 		onDrawHere
 	}: {
 		regions: MapRegion[];
@@ -54,6 +55,11 @@
 		// is incomplete and a snapshot persists silently-wrong null
 		// faction_ids. Gate menu + function on this signal.
 		dataLoading?: boolean;
+		// T9 follow-up: out-of-scope regions render dimmed (matches
+		// Leaflet's RegionLayer treatment — regions whose locationId is
+		// not in the playhead-derived scope go to lower opacity). When
+		// null (no scope filter wired) all regions render in-scope.
+		isInScope?: ((entityId: string) => boolean) | null;
 		// Slice 2 D4 prep (T8): the snapshot menu adds a "Draw region here"
 		// entry that calls back into the parent with the right-click's
 		// image-pixel coords. The parent flips PixiPolygonDraw into active
@@ -392,10 +398,21 @@
 			}
 			if (flat.length < 6) continue;
 
+			// T9 follow-up: scope-based dimming. In scope when the region's
+			// linked location is in the playhead's interval cone (matches
+			// Leaflet RegionLayer). Region without a locationId is treated
+			// as in-scope (geometry only, not tied to a location).
+			const inScope = isInScope && region.locationId
+				? isInScope(region.locationId)
+				: true;
+			const fillAlpha = inScope ? 0.35 : 0.08;
+			const strokeWidth = inScope ? 2 : 1;
+			const strokeAlpha = inScope ? 1 : 0.3;
+
 			const g: PixiGraphics = new PIXI.Graphics();
 			g.poly(flat)
-				.fill({ color: fill, alpha: 0.35 })
-				.stroke({ color: fill, width: 2 });
+				.fill({ color: fill, alpha: fillAlpha })
+				.stroke({ color: fill, width: strokeWidth, alpha: strokeAlpha });
 			g.eventMode = 'static';
 			g.cursor = 'pointer';
 			// 'rightclick' fires on pointerup with right button; matches

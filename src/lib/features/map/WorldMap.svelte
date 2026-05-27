@@ -1093,6 +1093,7 @@
 						{renderedState}
 						mapId={activeMapId}
 						{dataLoading}
+						isInScope={$isInScope}
 						onDrawHere={startPixiDraw}
 					/>
 					<PixiPlacementLayer
@@ -1100,6 +1101,7 @@
 						playhead={$playhead}
 						placements={$placementsStore}
 						entities={$entities}
+						isInScope={$isInScope}
 						armedPlaceableId={pixiDrawingActive ? null : armedPlaceableId}
 						onOpenEntity={(id) => windowStore.open('entity-detail', id)}
 						onDeletePlacement={(id) => void deletePlacement(id)}

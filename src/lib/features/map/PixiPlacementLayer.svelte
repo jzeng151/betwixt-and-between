@@ -35,6 +35,7 @@
 		playhead,
 		placements,
 		entities,
+		isInScope = null,
 		armedPlaceableId = null,
 		onOpenEntity,
 		onDeletePlacement,
@@ -44,6 +45,12 @@
 		playhead: number | null;
 		placements: MapPlacement[];
 		entities: Entity[];
+		// T9 follow-up: out-of-scope placements (the placeable entity has
+		// intervals that don't cover the current playhead) render dimmed.
+		// Mirrors the scope treatment Leaflet's RegionLayer applies to
+		// regions — extended to placements for consistency under Pixi.
+		// When null, no scope filter is applied.
+		isInScope?: ((entityId: string) => boolean) | null;
 		// When non-null, a left-click on empty stage area fires onCanvasClick
 		// with fractional [0,1] coords against the source-image dimensions —
 		// matches MapStage.svelte's onCanvasClick contract so WorldMap can
@@ -143,10 +150,19 @@
 			const cy = placement.y * mapH;
 			const fill = parseHex(getEntityTypeColor(placeable.type));
 
+			// T9 follow-up: scope-based dim. The placeable entity is in
+			// scope when its intervals contain the playhead (or playhead is
+			// null = idle, which deriveScope reports as "everything in
+			// scope"). Out-of-scope placements stay visible but fade so
+			// the canvas isn't visually noisy with off-scene markers.
+			const inScope = isInScope ? isInScope(placeable.id) : true;
+			const fillAlpha = inScope ? 1 : 0.3;
+			const strokeAlpha = inScope ? 0.6 : 0.2;
+
 			const g: PixiGraphics = new PIXI.Graphics();
 			g.circle(cx, cy, 8)
-				.fill({ color: fill, alpha: 1 })
-				.stroke({ color: 0x000000, width: 1.5, alpha: 0.6 });
+				.fill({ color: fill, alpha: fillAlpha })
+				.stroke({ color: 0x000000, width: 1.5, alpha: strokeAlpha });
 			g.eventMode = 'static';
 			g.cursor = 'pointer';
 			g.on('pointerover', (e: FederatedPointerEvent) => {
