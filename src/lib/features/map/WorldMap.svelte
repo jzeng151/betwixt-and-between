@@ -75,6 +75,14 @@
 	});
 	let placementError = $state('');
 
+	// Slice 3 T8' (codex P2) — the live pixi-viewport, handed up from
+	// PixiStage. The AssetLibrary drop handler is a DOM listener outside the
+	// Pixi stage context, so it can't call getLocalPosition(viewport) the way
+	// the click-to-place path does; it uses this reference to convert the
+	// drop's screen coords → world coords through the pan/zoom transform.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let pixiViewport = $state<any>(null);
+
 	// UI state
 	let activeMapId = $state<string | null>(null);
 	let showRegionForm = $state(false);
@@ -494,8 +502,27 @@
 		const rect = (canvas ?? target).getBoundingClientRect();
 		// Guard against zero-area target (unmounted between dragover and drop).
 		if (rect.width <= 0 || rect.height <= 0) return;
-		const fx = (e.clientX - rect.left) / rect.width;
-		const fy = (e.clientY - rect.top) / rect.height;
+		let fx: number;
+		let fy: number;
+		// Codex P2 — when the viewport has been panned/zoomed, the cursor's
+		// position in the visible canvas is NOT the underlying world
+		// coordinate. Convert through the pixi-viewport transform (same world
+		// space the click-to-place path reaches via getLocalPosition) so the
+		// placement lands where the user dropped on the MAP, not on screen.
+		// screenWidth/Height track activeMap dimensions (PixiStage keeps them
+		// in sync), so map CSS position → viewport screen space → world.
+		if (pixiViewport && typeof pixiViewport.toWorld === 'function') {
+			const screenX = ((e.clientX - rect.left) / rect.width) * pixiViewport.screenWidth;
+			const screenY = ((e.clientY - rect.top) / rect.height) * pixiViewport.screenHeight;
+			const world = pixiViewport.toWorld(screenX, screenY);
+			fx = world.x / activeMap.width;
+			fy = world.y / activeMap.height;
+		} else {
+			// No viewport yet (race) — fall back to the linear mapping, which
+			// is exact at the identity transform (no pan/zoom).
+			fx = (e.clientX - rect.left) / rect.width;
+			fy = (e.clientY - rect.top) / rect.height;
+		}
 		if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
 		void createPlacementAt(assetId, fx, fy, { sourceAssetId: assetId });
 	}
@@ -1111,7 +1138,7 @@
 			ondragover={handleAssetDragOver}
 			ondrop={handleAssetDrop}
 		>
-		<PixiStage {activeMap}>
+		<PixiStage {activeMap} onViewport={(vp) => (pixiViewport = vp)}>
 			{#snippet children()}
 				<PixiBackgroundLayer {activeMap} />
 				<PixiGridLayer {activeMap} />

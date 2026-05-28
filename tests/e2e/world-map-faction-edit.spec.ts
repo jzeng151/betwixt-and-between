@@ -1,15 +1,13 @@
 /**
- * Slice 3 F2 (Slice 1b T13 carry-over) — inline faction rename.
+ * Slice 3 F2 (Slice 1b T13 carry-over) — inline faction rename + recolor.
  *
  * The MapSidebar Factions list lets the user click a faction name to edit
- * it inline; Enter commits via PATCH /api/factions/[id]. This drives the
- * rename through the UI and asserts the persisted row changed.
+ * it inline (Enter commits) and click its stripe to open a swatch picker
+ * (selecting a swatch commits the recolor). Both PATCH /api/factions/[id].
  *
- * (Recolor is intentionally not E2E-driven here — entering edit mode
- * autofocuses the name input, and clicking the color stripe blurs it,
- * which commits+exits edit before the swatch picker can open. That UX
- * blur-race is tracked separately; the recolor PATCH path itself is
- * covered by API/integration tests.)
+ * Recolor is the regression guard for the blur-race codex flagged: the
+ * stripe button suppresses the name-input blur via mousedown preventDefault
+ * so the swatch picker can open instead of commit+exiting edit mode.
  */
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
@@ -35,7 +33,7 @@ async function factionById(request: APIRequestContext, id: string) {
 	return rows.find((f) => f.id === id) ?? null;
 }
 
-test('rename a faction inline from the sidebar', async ({ page, request }) => {
+test('rename and recolor a faction inline from the sidebar', async ({ page, request }) => {
 	await clearAll(request);
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 
@@ -66,4 +64,15 @@ test('rename a faction inline from the sidebar', async ({ page, request }) => {
 	await expect
 		.poll(async () => (await factionById(request, faction.id))?.name, { timeout: 8000 })
 		.toBe('New Banner');
+
+	// ── Recolor ──────────────────────────────────────────────────────────
+	// Re-enter edit, open the swatch picker via the stripe (must NOT blur-
+	// commit-and-exit), pick a different palette color (commits on click).
+	await win.locator('.faction-name-button', { hasText: 'New Banner' }).click();
+	await win.locator('.faction-row.editing .edit-stripe').click();
+	await win.locator('.edit-swatch-row [aria-label="Color #ef4444"]').click();
+
+	await expect
+		.poll(async () => (await factionById(request, faction.id))?.color, { timeout: 8000 })
+		.toBe('#ef4444');
 });

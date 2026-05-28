@@ -276,6 +276,7 @@
 						class="faction-stripe edit-stripe"
 						style="background: {editColor}"
 						aria-label="Pick color"
+						onmousedown={(e) => e.preventDefault()}
 						onclick={() => (showColorPicker = !showColorPicker)}
 						disabled={editBusy}
 					></button>
