@@ -865,12 +865,21 @@ async function maybeWriteAutoAnchor(
 	// differ. We want the most recently WRITTEN anchor, not the most
 	// time-advanced one.
 	const [latestAnchor] = await tx
-		.select({ createdAt: mapAnchors.createdAt })
+		.select({ id: mapAnchors.id })
 		.from(mapAnchors)
 		.where(eq(mapAnchors.worldMapId, worldMapId))
 		.orderBy(desc(mapAnchors.createdAt), desc(mapAnchors.id))
 		.limit(1);
-	const cutoff = latestAnchor?.createdAt ?? new Date(0);
+	// Bind the cutoff via a scalar subquery on the anchor's own row rather
+	// than a JS Date param. The neon + postgres-js drivers mis-serialize a
+	// JS Date in a raw timestamp comparison (the cursor queries below hit
+	// the same hazard and defend with tsLiteral / micro-precise text — see
+	// the comment at `tPosLiteral`). Reading created_at back out of the row
+	// avoids the JS round-trip entirely and keeps full microsecond
+	// precision. No anchor yet → every paint_cells event counts (-infinity).
+	const cutoffSql = latestAnchor
+		? sql`(SELECT created_at FROM map_anchors WHERE id = ${latestAnchor.id})`
+		: sql`'-infinity'::timestamptz`;
 
 	// Count non-undone paint_cells events committed AFTER the cutoff.
 	const countResult = await tx.execute(sql`
@@ -879,7 +888,7 @@ async function maybeWriteAutoAnchor(
 		WHERE world_map_id = ${worldMapId}
 		  AND kind = 'paint_cells'
 		  AND undone_at IS NULL
-		  AND created_at > ${cutoff}
+		  AND created_at > ${cutoffSql}
 	`);
 	const countRows = Array.isArray(countResult.rows)
 		? countResult.rows
@@ -911,7 +920,7 @@ async function maybeWriteAutoAnchor(
 			and(
 				eq(mapEvents.worldMapId, worldMapId),
 				sql`${mapEvents.undoneAt} IS NULL`,
-				sql`${mapEvents.createdAt} > ${cutoff}`
+				sql`${mapEvents.createdAt} > ${cutoffSql}`
 			)
 		);
 	if (recentEvents.length === 0) return; // belt + suspenders
@@ -1184,18 +1193,28 @@ export async function undoLatestMapEvent(
 			// Inside the same transaction as the soft-delete so a concurrent
 			// paint_cells (which would also hold FOR UPDATE) cannot insert
 			// a synthetic anchor between our soft-delete and this DELETE.
-			const earliestUndoneAt = all.reduce((acc, e) => {
-				const t = e.createdAt instanceof Date ? e.createdAt : new Date(String(e.createdAt));
-				return acc === null || t.getTime() < acc.getTime() ? t : acc;
-			}, null as Date | null);
-			if (earliestUndoneAt) {
+			const earliestUndone = all.reduce(
+				(acc, e) => {
+					const t =
+						e.createdAt instanceof Date ? e.createdAt.getTime() : Date.parse(String(e.createdAt));
+					return acc === null || t < acc.t ? { id: e.id, t } : acc;
+				},
+				null as { id: string; t: number } | null
+			);
+			if (earliestUndone) {
+				// Bind the boundary via a scalar subquery on the undone event's
+				// own row, not a JS Date param — the neon + postgres-js drivers
+				// mis-serialize JS Date in a raw timestamp comparison (same
+				// hazard the cursor queries defend against with tsLiteral). The
+				// events are soft-deleted (undone_at set), not removed, so the
+				// row is still readable. Keeps full microsecond precision.
 				await tx
 					.delete(mapAnchors)
 					.where(
 						and(
 							eq(mapAnchors.worldMapId, worldMapId),
 							eq(mapAnchors.isSynthetic, true),
-							sql`${mapAnchors.createdAt} >= ${earliestUndoneAt}`
+							sql`${mapAnchors.createdAt} >= (SELECT created_at FROM map_events WHERE id = ${earliestUndone.id})`
 						)
 					);
 			}
