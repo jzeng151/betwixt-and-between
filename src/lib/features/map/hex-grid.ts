@@ -40,6 +40,13 @@ export type HexSize = {
  * Compute the hex side length so that `cellsX × cellsY` hexes fill the
  * given canvas dimensions. Picks the smaller of width-fit and height-fit
  * so neither axis overflows.
+ *
+ * Codex /review P2 fix — pointy-top axial layout shifts each row r right
+ * by r/2 cell-widths (the parallelogram tilt in hexAxialToPixel). The
+ * rightmost hex in the bottom row sits at column (cellsX - 1 + (cellsY -
+ * 1)/2). The original formula only fit (cellsX + 0.5), so for any
+ * cellsY > 2 the grid (and brush hit-test) overflowed the canvas to
+ * the right.
  */
 export function hexSizeForCanvas(
 	cellsX: number,
@@ -47,11 +54,13 @@ export function hexSizeForCanvas(
 	canvasWidth: number,
 	canvasHeight: number
 ): HexSize {
-	// Pointy-top: total width = (cellsX + 0.5) * sqrt(3) * radius,
-	//             total height = (cellsY * 1.5 + 0.5) * radius.
+	// Pointy-top axial rhombus dimensions:
+	//   total width  = (cellsX + (cellsY - 1) / 2 + 0.5) * sqrt(3) * radius
+	//   total height = (cellsY * 1.5 + 0.5) * radius
 	// Solve for the radius that fits both axes; smallest wins.
 	const sqrt3 = Math.sqrt(3);
-	const rByWidth = canvasWidth / ((cellsX + 0.5) * sqrt3);
+	const widthCells = cellsX + Math.max(0, (cellsY - 1) / 2) + 0.5;
+	const rByWidth = canvasWidth / (widthCells * sqrt3);
 	const rByHeight = canvasHeight / (cellsY * 1.5 + 0.5);
 	const radius = Math.max(1, Math.min(rByWidth, rByHeight));
 	return {

@@ -34,6 +34,7 @@
 	import { cellAtPoint } from './grid-snap.js';
 	import { biomeStyle } from './biome-textures.js';
 	import { hexSizeForCanvas, hexAxialToPixel, hexVertices } from './hex-grid.js';
+	import { PAINT_CELLS_MAX_PER_EVENT } from './projection.js';
 	import type { BiomeKind } from './projection.js';
 	import type { WorldMap } from './types.js';
 
@@ -57,7 +58,8 @@
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
-	const MAX_CELLS_PER_EVENT = 256;
+	// Server-side cap is the source of truth (projection.ts).
+	const MAX_CELLS_PER_EVENT = PAINT_CELLS_MAX_PER_EVENT;
 
 	let PIXI = $state<PixiModule | null>(null);
 	let layer: PixiContainer | null = null;
@@ -154,21 +156,21 @@
 		}
 		const mapId = activeMap.id;
 		const tPosition = get(playhead) ?? 0;
+		// Snapshot the gesture state BEFORE the awaits. Don't mutate
+		// touched/strokeId yet — outside-voice adversarial #9 + codex:
+		// resetting before the await loop means a mid-stroke failure
+		// drops chunks 3..N from client memory with no retry path. We
+		// reset only after a SUCCESSFUL commit; on failure the gesture
+		// stays open so the caller can retry.
+		const localStrokeId = strokeId;
 		const all = Array.from(touched.values());
+		const totalCells = all.length;
 		// Chunk at MAX_CELLS_PER_EVENT. Each chunk shares the strokeId;
 		// only the final chunk sets command_complete=true.
 		const chunks: Array<typeof all> = [];
 		for (let i = 0; i < all.length; i += MAX_CELLS_PER_EVENT) {
 			chunks.push(all.slice(i, i + MAX_CELLS_PER_EVENT));
 		}
-		const totalCells = all.length;
-		// Reset gesture state BEFORE the awaits so a rapid second stroke
-		// has a fresh slate.
-		const localStrokeId = strokeId;
-		touched = new Map();
-		strokeId = null;
-		painting = false;
-		hoverCells = [];
 
 		try {
 			for (let i = 0; i < chunks.length; i++) {
@@ -183,11 +185,18 @@
 					commandId: localStrokeId
 				});
 			}
+			// All chunks landed. Reset gesture state now.
+			touched = new Map();
+			strokeId = null;
+			painting = false;
+			hoverCells = [];
 			onStrokeComplete?.(totalCells);
 		} catch (err) {
 			// Partial-stroke failure: leave already-committed chunks in
-			// place (server saw them, they're in the event log) and
-			// surface the error to the console. Future polish: UI toast.
+			// place (server saw them, they're in the event log under the
+			// localStrokeId — undo will pop them as a group). Leave the
+			// in-memory gesture state INTACT so the user could retry
+			// or the next mousedown could continue. Surface to console.
 			console.error('paint_cells stroke failed mid-flight', err);
 		}
 	}
@@ -199,6 +208,13 @@
 
 		stagePointerDown = (e: FederatedPointerEvent) => {
 			if (e.button !== 0) return;
+			// Outside-voice adversarial #3 — re-entrant pointerdown
+			// guard. A second pointer (multi-touch, trackpad gesture)
+			// firing pointerdown mid-stroke would otherwise reset
+			// strokeId + touched and silently drop the in-flight cells.
+			// First-pointer-wins: ignore subsequent down events until
+			// the current stroke commits.
+			if (painting) return;
 			const local = e.getLocalPosition(viewport);
 			const cell = pointerToCell(local.x, local.y);
 			if (!cell) return;
@@ -212,6 +228,12 @@
 			const local = e.getLocalPosition(viewport);
 			const cell = pointerToCell(local.x, local.y);
 			if (!cell) {
+				// Cursor off the grid (out of bounds OR off-canvas).
+				// We DON'T commit here — the user might drag back in
+				// with the button still held, and Pixi doesn't fire
+				// pointerdown a second time for a held-button gesture.
+				// Just clear hover preview; pointerup is the canonical
+				// commit signal.
 				hoverCells = [];
 				return;
 			}
@@ -226,14 +248,13 @@
 			void commitStroke();
 		};
 		stagePointerLeave = () => {
-			// Leaving the viewport mid-stroke commits whatever was
-			// touched. Otherwise the user has a hung in-progress stroke
-			// that never POSTs.
-			if (painting) {
-				void commitStroke();
-			} else {
-				hoverCells = [];
-			}
+			// Outside-voice adversarial #2 — DO NOT commit on leave.
+			// Cursor leaving the viewport (drag past edge then back) is
+			// not a release. Committing here lost the second half of any
+			// stroke that crossed the canvas edge without releasing.
+			// Just clear the hover preview; the gesture stays open until
+			// pointerup OR pointerupoutside fires.
+			hoverCells = [];
 		};
 
 		viewport.eventMode = 'static';
@@ -264,6 +285,13 @@
 
 	// Hover preview render. Lights up the cells currently under the
 	// brush at low alpha so the user knows what'll get painted on click.
+	//
+	// /review perf — uses ONE persistent Graphics with .clear() per
+	// tick instead of destroying + reallocating on every pointermove.
+	// At 60-120 pointermove events/sec during drag, the old destroy-
+	// per-frame pattern thrashed GC. Pixi v8 Graphics.clear() reuses
+	// the geometry buffer.
+	let previewGraphics: PixiGraphics | null = null;
 	$effect(() => {
 		const viewport = stageCtx.viewport;
 		if (!PIXI || !viewport) return;
@@ -278,9 +306,12 @@
 			layer = new PIXI.Container();
 			viewport.addChild(layer);
 		}
-		for (const child of layer.removeChildren()) {
-			child.destroy();
+		if (!previewGraphics) {
+			previewGraphics = new PIXI.Graphics();
+			layer.addChild(previewGraphics);
 		}
+
+		previewGraphics.clear();
 
 		if (!isActive || !map || !map.width || !map.height || cells.length === 0) {
 			return;
@@ -291,17 +322,15 @@
 		// alpha) so the user gets consistent visual weight per stroke
 		// regardless of biome.
 		const previewAlpha = b === 'unset' ? 0.2 : 0.5;
-		const g: PixiGraphics = new PIXI.Graphics();
 		if (map.gridType === 'hex') {
-			drawHexPreview(g, cells, map);
+			drawHexPreview(previewGraphics, cells, map);
 		} else {
-			drawSquarePreview(g, cells, map);
+			drawSquarePreview(previewGraphics, cells, map);
 		}
-		g.fill({
+		previewGraphics.fill({
 			color: b === 'unset' ? 0xef4444 : style.color,
 			alpha: previewAlpha
 		});
-		layer.addChild(g);
 	});
 
 	function drawSquarePreview(

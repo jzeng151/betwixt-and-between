@@ -621,7 +621,14 @@ export const mapEvents = pgTable('map_events', {
 	// "soft-delete all rows with this command_id" undo path.
 	index('map_events_command_id_idx')
 		.on(table.worldMapId, table.commandId)
-		.where(sql`command_id IS NOT NULL`)
+		.where(sql`command_id IS NOT NULL`),
+	// Slice 3 /review perf — auto-anchor count hot path. Partial index
+	// for (kind='paint_cells' AND undone_at IS NULL); keys on
+	// (world_map_id, created_at) for the cutoff range. Declared here
+	// so npm run db:push picks it up alongside the migration.
+	index('map_events_auto_anchor_idx')
+		.on(table.worldMapId, table.createdAt)
+		.where(sql`kind = 'paint_cells' AND undone_at IS NULL`)
 ]);
 
 export const factions = pgTable('factions', {

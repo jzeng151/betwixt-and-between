@@ -135,6 +135,15 @@
 		return placementsAtPlayhead(placements, playhead);
 	});
 
+	// /review adversarial — entities.find() inside the per-placement loop
+	// is O(P*E) per $effect tick. Memoize as a Map once per entities
+	// snapshot.
+	let entityById = $derived.by<Map<string, Entity>>(() => {
+		const m = new Map<string, Entity>();
+		for (const e of entities) m.set(e.id, e);
+		return m;
+	});
+
 	$effect(() => {
 		const app = stageCtx.app;
 		const viewport = stageCtx.viewport;
@@ -158,7 +167,7 @@
 		const mapH = activeMap.height;
 
 		for (const placement of activePlacements) {
-			const placeable = entities.find((e) => e.id === placement.placeableId);
+			const placeable = entityById.get(placement.placeableId);
 			if (!placeable) continue;
 			const cx = placement.x * mapW;
 			const cy = placement.y * mapH;

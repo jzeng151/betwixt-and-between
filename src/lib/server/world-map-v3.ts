@@ -27,6 +27,7 @@ import type { Db } from './intervals.js';
 import {
 	BIOMES,
 	EVENT_KINDS,
+	PAINT_CELLS_MAX_PER_EVENT,
 	type AnchorState,
 	type BiomeKind,
 	type EventKind,
@@ -36,15 +37,8 @@ import {
 
 // Re-export the shared event-payload type so callers that only depend on the
 // server module don't have to reach across into projection.ts.
-export { BIOMES, EVENT_KINDS };
+export { BIOMES, EVENT_KINDS, PAINT_CELLS_MAX_PER_EVENT };
 export type { BiomeKind, EventKind, PaintCellsPayload, TransferRegionPayload };
-
-// Slice 3 outside-voice A3 — server-side cap on cells per paint_cells event.
-// Client chunks strokes at this boundary (events sharing a command_id are one
-// logical command; see B5). Hard reject above the cap to defend against bad
-// clients or replay attacks that try to dodge the chunking via a 10k-cell
-// payload.
-const PAINT_CELLS_MAX_PER_EVENT = 256;
 
 // Slice 3 outside-voice A2 + B7 — auto-anchor fires after K non-undone
 // paint_cells events accumulate since the last anchor on a map. Bounds
@@ -897,10 +891,18 @@ async function maybeWriteAutoAnchor(
 	// know the t_position range and can fold cells. Then read the most
 	// time-advanced anchor at or before MAX_T to grab the rolling
 	// regions/artifacts/chains state.
+	// Codex P1 — fetch ALL live event kinds in the window, not just
+	// paint_cells. The synthetic snapshot must project events forward
+	// from baseAnchor to maxT for every kind; otherwise a transfer_region
+	// (or future kind) committed in this window gets shadowed when the
+	// synthetic anchor's same-T rule excludes events at tPosition <=
+	// anchorT. Filtering on kind='paint_cells' here would lose the
+	// ownership change in projection after this anchor lands.
 	const recentEvents = await tx
 		.select({
 			id: mapEvents.id,
 			tPosition: mapEvents.tPosition,
+			kind: mapEvents.kind,
 			createdAt: mapEvents.createdAt,
 			payloadJsonb: mapEvents.payloadJsonb
 		})
@@ -908,7 +910,6 @@ async function maybeWriteAutoAnchor(
 		.where(
 			and(
 				eq(mapEvents.worldMapId, worldMapId),
-				eq(mapEvents.kind, 'paint_cells'),
 				sql`${mapEvents.undoneAt} IS NULL`,
 				sql`${mapEvents.createdAt} > ${cutoff}`
 			)
@@ -940,10 +941,18 @@ async function maybeWriteAutoAnchor(
 		cells: []
 	}) as AnchorState;
 
-	// Fold recent paint_cells into cells map (last write wins on (x,y)).
-	// Same ordering rule as projection.ts: tPosition, created_at, id.
+	// Fold ALL recent events into the snapshot (codex P1). Order by
+	// (tPosition, created_at, id) — same rule as projection.ts. Both
+	// paint_cells (cells map, last-write-wins) and transfer_region
+	// (region faction_id mutation) are applied; unknown future kinds
+	// pass through silently. Keeps the snapshot semantically equivalent
+	// to "projectState(maxT) with the events folded in" so the post-
+	// anchor projection lookups read the correct rolling state.
 	const sortedEvents = [...recentEvents].sort(
-		(a: { tPosition: number; createdAt: Date | string; id: string }, b: typeof a) => {
+		(
+			a: { tPosition: number; createdAt: Date | string; id: string },
+			b: typeof a
+		) => {
 			if (a.tPosition !== b.tPosition) return a.tPosition - b.tPosition;
 			const am = a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(String(a.createdAt));
 			const bm = b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(String(b.createdAt));
@@ -955,23 +964,54 @@ async function maybeWriteAutoAnchor(
 	for (const cell of baseState.cells ?? []) {
 		cells.set(`${cell.x},${cell.y}`, cell);
 	}
+	// Region snapshot starts from baseAnchor and gets mutated by
+	// transfer_region events. Keep object identity per region_id so
+	// later folds find existing entries.
+	const regionsById = new Map<string, AnchorState['regions'] extends (infer R)[] | undefined ? R : never>();
+	for (const r of baseState.regions ?? []) {
+		regionsById.set(r.region_id, r);
+	}
 	for (const e of sortedEvents) {
-		const p = e.payloadJsonb as Partial<PaintCellsPayload> | null;
-		if (!p || !Array.isArray(p.cells)) continue;
-		for (const c of p.cells) {
-			if (
-				c &&
-				Number.isInteger(c.x) &&
-				Number.isInteger(c.y) &&
-				(BIOMES as readonly string[]).includes(c.biome)
-			) {
-				cells.set(`${c.x},${c.y}`, c);
+		const p = e.payloadJsonb as Record<string, unknown> | null;
+		if (!p || typeof p !== 'object') continue;
+		if (e.kind === 'paint_cells') {
+			const cs = (p as Partial<PaintCellsPayload>).cells;
+			if (!Array.isArray(cs)) continue;
+			for (const c of cs) {
+				if (
+					c &&
+					Number.isInteger(c.x) &&
+					Number.isInteger(c.y) &&
+					(BIOMES as readonly string[]).includes(c.biome)
+				) {
+					cells.set(`${c.x},${c.y}`, c);
+				}
+			}
+		} else if (e.kind === 'transfer_region') {
+			const regionId = (p as { region_id?: unknown }).region_id;
+			const newFactionId = (p as { new_faction_id?: unknown }).new_faction_id;
+			if (typeof regionId !== 'string' || typeof newFactionId !== 'string') {
+				continue;
+			}
+			const existing = regionsById.get(regionId);
+			if (existing) {
+				regionsById.set(regionId, { ...existing, faction_id: newFactionId });
+			} else {
+				// Region not in baseAnchor (lazy GC at render still drops
+				// unresolvable refs, but the event ownership claim is
+				// recorded here so post-anchor projection sees it).
+				regionsById.set(regionId, {
+					region_id: regionId,
+					faction_id: newFactionId
+				});
 			}
 		}
+		// Unknown kinds (Slice 2+ move_entity, Slice 5 link_chain) pass
+		// through unchanged. When added, fold them here too.
 	}
 
 	const snapshot: AnchorState = {
-		regions: baseState.regions ?? [],
+		regions: Array.from(regionsById.values()),
 		artifacts: baseState.artifacts ?? [],
 		chains: baseState.chains ?? [],
 		cells: Array.from(cells.values())
@@ -1059,107 +1099,113 @@ export async function undoLatestMapEvent(
 ): Promise<(typeof mapEvents.$inferSelect)[]> {
 	await assertMapOwnership(db, userId, worldMapId);
 
-	// Retry loop: two concurrent undo requests both SELECT the same latest
-	// event. One UPDATE wins (undoneAt=now); the other's UPDATE matches 0
-	// rows because the WHERE undoneAt IS NULL guard filters out the
-	// just-undone row. Without retry, the second caller gets 422 even
-	// though older live events exist — a double-click leaves the stack
-	// only half-undone. The loop re-SELECTs the next latest until either
-	// an UPDATE succeeds or the SELECT finds nothing.
-	//
-	// Cap the retries to keep this bounded under a runaway race; in
-	// practice the contention window is microseconds and a single retry
-	// resolves it.
-	for (let attempt = 0; attempt < 8; attempt++) {
-		const [latest] = await db
-			.select()
-			.from(mapEvents)
-			.where(
-				and(
-					eq(mapEvents.worldMapId, worldMapId),
-					sql`${mapEvents.undoneAt} IS NULL`
-				)
-			)
-			.orderBy(desc(mapEvents.createdAt), desc(mapEvents.id))
-			.limit(1);
-		if (!latest) error(422, 'No events to undo');
+	// /review adversarial #1 — wrap the 4-statement undo sequence in a
+	// transaction with SELECT FOR UPDATE on world_maps. Mirrors the
+	// auto-anchor pattern in createMapEvent. Two effects:
+	//  1. Crash mid-flight rolls back ALL statements (no partial state on
+	//     disk).
+	//  2. Concurrent paint_cells POSTs (which take the same FOR UPDATE
+	//     lock) serialize with this undo — eliminates the race where the
+	//     synthetic-anchor DELETE could remove an anchor a concurrent
+	//     paint POST just wrote.
+	return await db.transaction(async (tx) => {
+		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
 
-		// Race-tolerant single-event UPDATE first. If the latest event has
-		// a command_id, the follow-up grouped soft-delete picks up its
-		// siblings in the same transaction below.
-		const [updated] = await db
-			.update(mapEvents)
-			.set({ undoneAt: new Date() })
-			.where(
-				and(
-					eq(mapEvents.id, latest.id),
-					eq(mapEvents.worldMapId, worldMapId),
-					sql`${mapEvents.undoneAt} IS NULL`
+		// Retry loop: two concurrent undo requests both SELECT the same
+		// latest event. One UPDATE wins (undoneAt=now); the other's
+		// UPDATE matches 0 rows because the WHERE undoneAt IS NULL guard
+		// filters out the just-undone row. Without retry, the second
+		// caller gets 422 even though older live events exist — a
+		// double-click leaves the stack only half-undone. The loop
+		// re-SELECTs the next latest until either an UPDATE succeeds or
+		// the SELECT finds nothing.
+		//
+		// Note: post-FOR-UPDATE, this loop should rarely retry because
+		// concurrent undos on the same map now serialize. The retry is
+		// belt + suspenders for any code path that somehow bypasses the
+		// lock (currently none).
+		for (let attempt = 0; attempt < 8; attempt++) {
+			const [latest] = await tx
+				.select()
+				.from(mapEvents)
+				.where(
+					and(
+						eq(mapEvents.worldMapId, worldMapId),
+						sql`${mapEvents.undoneAt} IS NULL`
+					)
 				)
-			)
-			.returning();
-		if (!updated) continue; // Lost the race; loop.
+				.orderBy(desc(mapEvents.createdAt), desc(mapEvents.id))
+				.limit(1);
+			if (!latest) error(422, 'No events to undo');
 
-		let all: (typeof mapEvents.$inferSelect)[];
-		if (updated.commandId === null) {
-			all = [updated];
-		} else {
-			// Grouped soft-delete. Any sibling chunk already-undone is left
-			// alone (idempotent if a concurrent undo grabbed half the group).
-			// Order DESC so the client can replay in original write order
-			// when reversing.
-			const siblings = await db
+			// Race-tolerant single-event UPDATE first. If the latest event
+			// has a command_id, the follow-up grouped soft-delete picks up
+			// its siblings.
+			const [updated] = await tx
 				.update(mapEvents)
 				.set({ undoneAt: new Date() })
 				.where(
 					and(
+						eq(mapEvents.id, latest.id),
 						eq(mapEvents.worldMapId, worldMapId),
-						eq(mapEvents.commandId, updated.commandId),
 						sql`${mapEvents.undoneAt} IS NULL`
 					)
 				)
 				.returning();
-			// `updated` is already soft-deleted; siblings is everything ELSE
-			// in the group that was still live. Combine and sort DESC so the
-			// caller gets a consistent commit-order ordering.
-			all = [updated, ...siblings];
-			all.sort((a, b) => {
-				const am = a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(String(a.createdAt));
-				const bm = b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(String(b.createdAt));
-				if (am !== bm) return bm - am;
-				return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
-			});
-		}
+			if (!updated) continue; // Lost the race; loop.
 
-		// Slice 3 outside-voice A9 — synthetic anchor invalidation.
-		// Synthetic anchors snapshot rolling cell state. When their
-		// summarized events get undone, the snapshot becomes stale (the
-		// undone events' effects would still be in the snapshot's cells).
-		// Hard-delete any synthetic anchor with created_at >= the EARLIEST
-		// undone event's created_at — those snapshots are now wrong. The
-		// auto-anchor path will re-fire when K=20 paint_cells events
-		// accumulate again. User-authored anchors are never touched here.
-		const earliestUndoneAt = all.reduce((acc, e) => {
-			const t = e.createdAt instanceof Date ? e.createdAt : new Date(String(e.createdAt));
-			return acc === null || t.getTime() < acc.getTime() ? t : acc;
-		}, null as Date | null);
-		if (earliestUndoneAt) {
-			await db
-				.delete(mapAnchors)
-				.where(
-					and(
-						eq(mapAnchors.worldMapId, worldMapId),
-						eq(mapAnchors.isSynthetic, true),
-						sql`${mapAnchors.createdAt} >= ${earliestUndoneAt}`
+			let all: (typeof mapEvents.$inferSelect)[];
+			if (updated.commandId === null) {
+				all = [updated];
+			} else {
+				const siblings = await tx
+					.update(mapEvents)
+					.set({ undoneAt: new Date() })
+					.where(
+						and(
+							eq(mapEvents.worldMapId, worldMapId),
+							eq(mapEvents.commandId, updated.commandId),
+							sql`${mapEvents.undoneAt} IS NULL`
+						)
 					)
-				);
-		}
+					.returning();
+				all = [updated, ...siblings];
+				all.sort((a, b) => {
+					const am =
+						a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(String(a.createdAt));
+					const bm =
+						b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(String(b.createdAt));
+					if (am !== bm) return bm - am;
+					return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+				});
+			}
 
-		return all;
-	}
-	// Pathological contention — surface 422 rather than a 500 so the
-	// client can retry the user action.
-	error(422, 'No events to undo');
+			// Slice 3 outside-voice A9 — synthetic anchor invalidation.
+			// Inside the same transaction as the soft-delete so a concurrent
+			// paint_cells (which would also hold FOR UPDATE) cannot insert
+			// a synthetic anchor between our soft-delete and this DELETE.
+			const earliestUndoneAt = all.reduce((acc, e) => {
+				const t = e.createdAt instanceof Date ? e.createdAt : new Date(String(e.createdAt));
+				return acc === null || t.getTime() < acc.getTime() ? t : acc;
+			}, null as Date | null);
+			if (earliestUndoneAt) {
+				await tx
+					.delete(mapAnchors)
+					.where(
+						and(
+							eq(mapAnchors.worldMapId, worldMapId),
+							eq(mapAnchors.isSynthetic, true),
+							sql`${mapAnchors.createdAt} >= ${earliestUndoneAt}`
+						)
+					);
+			}
+
+			return all;
+		}
+		// Pathological contention — surface 422 rather than a 500 so the
+		// client can retry the user action.
+		error(422, 'No events to undo');
+	});
 }
 
 // ── Layer prefs (Slice 3 E1 — outside-voice A1 + B3) ────────────────────────

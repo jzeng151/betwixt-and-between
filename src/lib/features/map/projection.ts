@@ -43,6 +43,12 @@
 
 export const NEUTRAL_REGION_COLOR = '#9ca3af';
 
+// Slice 3 outside-voice A3 — single source of truth for the paint_cells
+// chunking cap. Server-side validator rejects payloads over this;
+// client-side PixiBrushLayer chunks gestures at this boundary. Keep them
+// in lockstep by importing this constant from both sides.
+export const PAINT_CELLS_MAX_PER_EVENT = 256;
+
 // -- Anchor payload (state_jsonb) ---------------------------------------------
 // Matches docs/plans/world-map-v3-design.md § "State_jsonb shape (anchor
 // content, all slices)". Slice 1 only reads `regions`; `artifacts` and

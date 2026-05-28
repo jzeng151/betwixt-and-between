@@ -183,9 +183,15 @@
 		}
 	}
 
-	function pickColor(c: string) {
+	function pickColor(c: string, faction: Faction) {
+		// Codex P2 — selecting a swatch never committed. Old behavior:
+		// editColor mutated + picker closed, focus stayed on the (now-
+		// removed) swatch button, no blur/Enter path fired commit. Fix:
+		// commit immediately on selection so the recolor persists in
+		// one click.
 		editColor = c;
 		showColorPicker = false;
+		void commitEdit(faction);
 	}
 </script>
 
@@ -330,7 +336,7 @@
 								class:selected={editColor === c}
 								style="background: {c}"
 								aria-label={`Color ${c}`}
-								onclick={() => pickColor(c)}
+								onclick={() => pickColor(c, faction)}
 							></button>
 						{/each}
 					</div>

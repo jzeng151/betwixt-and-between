@@ -162,6 +162,13 @@
       "when": 1779926640000,
       "tag": "0022_anchor_cells_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1779930000000,
+      "tag": "0023_map_events_auto_anchor_idx",
+      "breakpoints": true
     }
   ]
 }

@@ -71,6 +71,10 @@
 		};
 	});
 
+	// Geometry effect: rebuild Graphics on cells/map/dimensions change.
+	// /review perf — visibility toggle is a SEPARATE effect (below) so
+	// flipping the Layers checkbox doesn't tear down + rebuild up to 16k
+	// cell polygons. Same pattern as PixiGridLayer.
 	$effect(() => {
 		const viewport = stageCtx.viewport;
 		if (!PIXI || !viewport) return;
@@ -82,8 +86,6 @@
 			// clamped index works either way.
 			viewport.addChildAt(layer, Math.min(3, viewport.children.length));
 		}
-		// Slice 3 E4 — apply user visibility toggle.
-		layer.visible = $visible;
 
 		if (graphics) {
 			try {
@@ -109,6 +111,12 @@
 		}
 		layer.addChild(g);
 		graphics = g;
+	});
+
+	// Visibility-only effect — flips layer.visible without touching the
+	// Graphics. Toggling the Layers checkbox is now O(1).
+	$effect(() => {
+		if (layer) layer.visible = $visible;
 	});
 
 	function drawSquareCells(

@@ -36,7 +36,8 @@
 
 	// Slice 3 E4 — layer toggle. Separate from world_maps.grid_visible
 	// (the latter is per-MAP config; this is per-USER preference).
-	const userVisible = layerVisibility('grid');
+	// Effective visibility = (map.gridVisible) AND $visible.
+	const visible = layerVisibility('grid');
 
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
@@ -84,12 +85,12 @@
 			viewport.addChildAt(layer, Math.min(2, viewport.children.length));
 		}
 
-		// Read map state via $effect so the layer redraws when grid_type
-		// or grid_visible toggles, or when dimensions/cell counts change.
-		// Effective visibility = world_maps.grid_visible (per-map config)
-		// AND user's layer toggle (per-user pref). Either flag off ⇒ hide.
+		// Geometry effect: rebuild Graphics only when shape inputs change
+		// (gridType, cell counts, canvas dimensions, map identity).
+		// Visibility toggling is a separate effect below — flipping the
+		// per-user layer pref shouldn't tear down + reconstruct up to 16k
+		// hex polygons. Per outside-voice maintainability finding.
 		const map = activeMap;
-		const visible = (map?.gridVisible ?? false) && $userVisible;
 		const w = map?.width ?? null;
 		const h = map?.height ?? null;
 
@@ -103,8 +104,10 @@
 			graphics = null;
 		}
 
-		if (!visible || !map || !w || !h) {
-			// Toggle off OR no canvas yet — nothing to draw.
+		if (!map || !w || !h) {
+			// No canvas yet — nothing to draw. Visibility still applies via
+			// the separate effect below, but with no Graphics there's
+			// nothing to hide.
 			return;
 		}
 
@@ -116,6 +119,15 @@
 		}
 		layer.addChild(g);
 		graphics = g;
+	});
+
+	// Visibility-only effect — flips layer.visible based on map config
+	// AND user pref. No Graphics teardown, just a boolean. Matches the
+	// pattern in PixiBackgroundLayer / PixiTerrainLayer / etc.
+	$effect(() => {
+		const map = activeMap;
+		const effective = (map?.gridVisible ?? false) && $visible;
+		if (layer) layer.visible = effective;
 	});
 
 	function drawSquareGrid(

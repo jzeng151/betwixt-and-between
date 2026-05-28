@@ -483,12 +483,15 @@
 		if (!assetId) return;
 		if (!activeMap?.width || !activeMap?.height || !activeMap?.locationId) return;
 		e.preventDefault();
-		// Drop coords are in screen-pixel space (clientX/Y). Translate to
-		// canvas-local pixels, then to fractional [0, 1] coords. The
-		// target div fills the canvas area so its boundingClientRect is
-		// the right reference.
+		// Codex /review P2 — drop coords must reference the actual Pixi
+		// canvas, not the .pixi-drop-target wrapper. When the wrapper is
+		// letterboxed (wide map in a tall viewport, or extra chrome
+		// inside the flex column), wrapper.boundingClientRect is larger
+		// than the canvas and fx/fy land off-image. Query the inner
+		// <canvas> element so the rect matches the rendered map area.
 		const target = e.currentTarget as HTMLElement;
-		const rect = target.getBoundingClientRect();
+		const canvas = target.querySelector('canvas');
+		const rect = (canvas ?? target).getBoundingClientRect();
 		// Guard against zero-area target (unmounted between dragover and drop).
 		if (rect.width <= 0 || rect.height <= 0) return;
 		const fx = (e.clientX - rect.left) / rect.width;
