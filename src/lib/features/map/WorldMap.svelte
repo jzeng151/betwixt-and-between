@@ -1187,9 +1187,14 @@
 				<!-- Slice 3 T5 — brush layer. Active only when the user enters
 				     brush mode via BrushPalette. Captures pointer events on
 				     the viewport when active. Inactive: zero overhead, no
-				     listeners attached. -->
+				     listeners attached.
+				     codex P2: suspend the brush while a polygon is being drawn
+				     (pixiDrawingActive) — otherwise each left-click that places
+				     a vertex also drives the brush pointer path and paints a
+				     paint_cells stroke at that vertex. One-way prop (the layer
+				     only reads `active`; BrushPalette owns brushActive). -->
 				<PixiBrushLayer
-					bind:active={brushActive}
+					active={brushActive && !pixiDrawingActive}
 					{activeMap}
 					biome={brushBiome}
 					size={brushSize}
