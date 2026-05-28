@@ -1026,23 +1026,61 @@ async function maybeWriteAutoAnchor(
 		cells: Array.from(cells.values())
 	};
 
-	// Insert the synthetic anchor. Unique constraint (world_map_id, t_position)
-	// can fire if a user-authored or prior synthetic anchor already lives at
-	// maxT — that's fine, swallow the conflict (the existing anchor already
-	// covers projection at that T, and our count restart still works because
-	// the latest anchor's created_at advances).
-	try {
-		await tx.insert(mapAnchors).values({
+	// Insert the synthetic anchor. The unique constraint
+	// (world_map_id, t_position) fires when an anchor already lives at maxT —
+	// common when the user keeps painting at the same playhead T after a
+	// synthetic anchor was already written there.
+	//
+	// codex P1: swallowing the conflict silently loses data. Projection
+	// treats an anchor at T as the state at T and excludes events with
+	// t_position <= T, so the new same-T paint events get folded into
+	// neither the (stale) anchor snapshot nor the event stream — the just-
+	// painted cells vanish and every later paint re-fires the same failed
+	// insert. Upsert instead: overwrite the snapshot of a prior SYNTHETIC
+	// anchor at this T with the freshly-folded state. The setWhere guard
+	// leaves a user-authored anchor at T untouched — it's authoritative.
+	await tx
+		.insert(mapAnchors)
+		.values({
 			worldMapId,
 			tPosition: maxT,
 			stateJsonb: snapshot,
 			isSynthetic: true
+		})
+		.onConflictDoUpdate({
+			target: [mapAnchors.worldMapId, mapAnchors.tPosition],
+			set: { stateJsonb: snapshot },
+			setWhere: sql`${mapAnchors.isSynthetic} = true`
 		});
-	} catch (err) {
-		if (!isUniqueViolation(err)) throw err;
-		// Conflict is benign: another anchor exists at this T. The next
-		// auto-anchor cycle will use a later maxT.
-	}
+}
+
+/**
+ * Delete every synthetic anchor whose frozen snapshot may have folded the
+ * event identified by `boundaryEventId`. A synthetic anchor folds events
+ * committed up to its own created_at, so any synthetic anchor created at
+ * or after the (soft-deleted) event's created_at could be holding that
+ * event's now-removed cells. Bind the boundary via a scalar subquery on
+ * the event's own row — not a JS Date param, which the neon/postgres-js
+ * drivers mis-serialize (see the comment at `tPosLiteral`). The event row
+ * is still present (soft-delete sets undone_at), so the subquery resolves.
+ * Caller must hold the world_maps FOR UPDATE lock so a concurrent paint
+ * can't re-insert a synthetic anchor between this delete and its count.
+ */
+async function invalidateSyntheticAnchorsFrom(
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	tx: any,
+	worldMapId: string,
+	boundaryEventId: string
+): Promise<void> {
+	await tx
+		.delete(mapAnchors)
+		.where(
+			and(
+				eq(mapAnchors.worldMapId, worldMapId),
+				eq(mapAnchors.isSynthetic, true),
+				sql`${mapAnchors.createdAt} >= (SELECT created_at FROM map_events WHERE id = ${boundaryEventId})`
+			)
+		);
 }
 
 export async function deleteMapEvent(
@@ -1059,18 +1097,29 @@ export async function deleteMapEvent(
 	// still on disk. Convert this route to a soft-delete so the audit
 	// trail stays append-only. Already-undone events return 404
 	// (idempotent — caller sees the same result as "row missing").
-	const [updated] = await db
-		.update(mapEvents)
-		.set({ undoneAt: new Date() })
-		.where(
-			and(
-				eq(mapEvents.id, eventId),
-				eq(mapEvents.worldMapId, worldMapId),
-				sql`${mapEvents.undoneAt} IS NULL`
+	await db.transaction(async (tx) => {
+		// Serialize with concurrent paints/undos on this map (same lock the
+		// paint + undo paths take) so the synthetic-anchor invalidation
+		// below can't race a paint re-inserting one.
+		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+		const [updated] = await tx
+			.update(mapEvents)
+			.set({ undoneAt: new Date() })
+			.where(
+				and(
+					eq(mapEvents.id, eventId),
+					eq(mapEvents.worldMapId, worldMapId),
+					sql`${mapEvents.undoneAt} IS NULL`
+				)
 			)
-		)
-		.returning();
-	if (!updated) error(404, 'Event not found');
+			.returning();
+		if (!updated) error(404, 'Event not found');
+		// codex P2: a synthetic anchor may have folded this event's cells.
+		// Soft-deleting the event without invalidating those anchors leaves
+		// the terrain visible via the stale snapshot — projection can still
+		// pick the synthetic anchor. Same invalidation the undo path runs.
+		await invalidateSyntheticAnchorsFrom(tx, worldMapId, eventId);
+	});
 }
 
 /**
@@ -1202,21 +1251,7 @@ export async function undoLatestMapEvent(
 				null as { id: string; t: number } | null
 			);
 			if (earliestUndone) {
-				// Bind the boundary via a scalar subquery on the undone event's
-				// own row, not a JS Date param — the neon + postgres-js drivers
-				// mis-serialize JS Date in a raw timestamp comparison (same
-				// hazard the cursor queries defend against with tsLiteral). The
-				// events are soft-deleted (undone_at set), not removed, so the
-				// row is still readable. Keeps full microsecond precision.
-				await tx
-					.delete(mapAnchors)
-					.where(
-						and(
-							eq(mapAnchors.worldMapId, worldMapId),
-							eq(mapAnchors.isSynthetic, true),
-							sql`${mapAnchors.createdAt} >= (SELECT created_at FROM map_events WHERE id = ${earliestUndone.id})`
-						)
-					);
+				await invalidateSyntheticAnchorsFrom(tx, worldMapId, earliestUndone.id);
 			}
 
 			return all;

@@ -32,6 +32,9 @@ const { POST: CREATE_EVENT } = await import(
 const { POST: UNDO_EVENT } = await import(
 	'../../src/routes/api/maps/[id]/events/undo/+server.js'
 );
+const { DELETE: DELETE_EVENT } = await import(
+	'../../src/routes/api/maps/[id]/events/[eventId]/+server.js'
+);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mkEvent(overrides: { params?: Record<string, string>; body?: unknown } = {}): any {
@@ -637,5 +640,103 @@ describe('Slice 3 B.5 — auto-anchor tight rules', () => {
 				and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true))
 			);
 		expect(synthetic).toHaveLength(1);
+	});
+});
+
+describe('Slice 3 codex P1 — same-T auto-anchor upsert', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		userId = (await seedTestUser(currentDb)).id;
+	});
+
+	it('re-painting at the same playhead T upserts the synthetic anchor instead of dropping cells', async () => {
+		const map = await seedMap();
+		const T = 5;
+		// 40 distinct cells within the default 32×24 grid: x = i % 16,
+		// y = ⌊i/16⌋ keeps every coord in bounds while staying unique.
+		const cellFor = (i: number) => ({ x: i % 16, y: Math.floor(i / 16), biome: 'plains' });
+		// First 20 distinct cells at T → one synthetic anchor at T (20 cells).
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: T,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [cellFor(i)], command_complete: true }
+					}
+				})
+			);
+		}
+		// Next 20 distinct cells, SAME T → the second auto-anchor hits the
+		// (world_map_id, t_position) unique constraint. Pre-fix it swallowed
+		// the conflict, leaving the stale 20-cell snapshot to shadow these
+		// new same-T events (projection excludes events at t_position <= T),
+		// so cells 20..39 silently vanished.
+		for (let i = 20; i < 40; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: T,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [cellFor(i)], command_complete: true }
+					}
+				})
+			);
+		}
+		const synthetic = await currentDb
+			.select({ tPosition: mapAnchors.tPosition, stateJsonb: mapAnchors.stateJsonb })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true)));
+		// Still exactly one synthetic anchor at T (the unique constraint holds)…
+		expect(synthetic).toHaveLength(1);
+		expect(synthetic[0].tPosition).toBe(T);
+		// …but its snapshot was upserted to include all 40 distinct cells, so
+		// no same-T paint is lost.
+		const cells = (synthetic[0].stateJsonb as { cells: Array<{ x: number; y: number }> }).cells;
+		expect(cells).toHaveLength(40);
+		expect(new Set(cells.map((c) => `${c.x},${c.y}`)).size).toBe(40);
+	});
+});
+
+describe('Slice 3 codex P2 — DELETE invalidates synthetic anchors', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		userId = (await seedTestUser(currentDb)).id;
+	});
+
+	it('deleting a folded paint event removes the synthetic anchor that snapshotted it', async () => {
+		const map = await seedMap();
+		const eventIds: string[] = [];
+		for (let i = 0; i < 20; i++) {
+			const res = await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: 'plains' }], command_complete: true }
+					}
+				})
+			);
+			eventIds.push(((await readJson(res)) as { id: string }).id);
+		}
+		const before = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true)));
+		expect(before).toHaveLength(1);
+
+		// DELETE a folded event via the API DELETE handler (NOT undo). Pre-fix
+		// this soft-deleted the event but left the synthetic anchor's stale
+		// snapshot rendering the now-deleted terrain.
+		await DELETE_EVENT(mkEvent({ params: { id: map.id, eventId: eventIds[5] } }));
+
+		const after = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true)));
+		expect(after).toHaveLength(0);
 	});
 });

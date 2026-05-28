@@ -258,6 +258,49 @@ describe('/api/maps/[id]', () => {
 		).rejects.toMatchObject({ status: 400 });
 	});
 
+	it('PATCH rejects shrinking the grid below painted cells (codex P2)', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+		};
+		// Paint a cell at x=30 (within the default 32-wide grid).
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 30, y: 0, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		// Shrinking to 16 columns would orphan the x=30 cell → reject.
+		await expect(
+			mapIdRoute.PATCH(mkEvent({ params: { id: created.id }, body: { gridCellsX: 16 } }))
+		).rejects.toMatchObject({ status: 409 });
+	});
+
+	it('PATCH allows shrinking the grid when no painted cell exceeds the new bounds', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+		};
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 5, y: 3, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		const res = await mapIdRoute.PATCH(
+			mkEvent({ params: { id: created.id }, body: { gridCellsX: 16, gridCellsY: 16 } })
+		);
+		const body = (await readJson(res)) as { gridCellsX: number; gridCellsY: number };
+		expect(body.gridCellsX).toBe(16);
+		expect(body.gridCellsY).toBe(16);
+	});
+
 	it('PATCH returns 404 for missing id', async () => {
 		await expect(
 			mapIdRoute.PATCH(

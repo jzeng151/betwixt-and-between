@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { worldMaps } from '$lib/server/db/schema.js';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import {
 	assertLocationIdIsLocation,
@@ -88,6 +88,39 @@ export const PATCH: RequestHandler = async (event) => {
 		}
 		updates.gridVisible = body.gridVisible;
 	}
+	// codex P2: shrinking grid_cells_x/y below already-painted cells would
+	// orphan that terrain — the cells stay in projection state but fall
+	// outside the new bounds and render at the new cell pitch off the usable
+	// grid. Reject a shrink while any live paint_cells event OR anchor
+	// snapshot holds a cell outside the proposed bounds; the user must erase
+	// the out-of-bounds terrain first. (Growth is always safe.)
+	if ('gridCellsX' in body || 'gridCellsY' in body) {
+		const newCellsX = (updates.gridCellsX as number | undefined) ?? existing.gridCellsX;
+		const newCellsY = (updates.gridCellsY as number | undefined) ?? existing.gridCellsY;
+		if (newCellsX < existing.gridCellsX || newCellsY < existing.gridCellsY) {
+			const oob = await db.execute(sql`
+				SELECT 1 AS hit FROM (
+					SELECT (c->>'x')::int AS x, (c->>'y')::int AS y
+					FROM map_events me, jsonb_array_elements(me.payload_jsonb->'cells') AS c
+					WHERE me.world_map_id = ${event.params.id}
+					  AND me.kind = 'paint_cells' AND me.undone_at IS NULL
+					UNION ALL
+					SELECT (c->>'x')::int AS x, (c->>'y')::int AS y
+					FROM map_anchors ma, jsonb_array_elements(ma.state_jsonb->'cells') AS c
+					WHERE ma.world_map_id = ${event.params.id}
+				) cells
+				WHERE cells.x >= ${newCellsX} OR cells.y >= ${newCellsY}
+				LIMIT 1
+			`);
+			// drizzle execute shape differs by driver (neon {rows} vs pg-js array).
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const rows = ((oob as any).rows ?? oob) as unknown[];
+			if (rows.length > 0) {
+				error(409, 'Cannot shrink the grid below painted cells — erase the out-of-bounds terrain first.');
+			}
+		}
+	}
+
 	// locationId: explicit presence (including null) is meaningful — null means unlink.
 	// location_inactive_at is managed by the world_maps_stamp_location_inactive_at
 	// trigger (migration 0008) so every unlink path — user PATCH, ON DELETE SET NULL
