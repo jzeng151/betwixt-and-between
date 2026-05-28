@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0.0] - 2026-05-28
+
+World Map v3 Slice 3 — terrain authoring, asset library, layers, and faction editing.
+
+### Added
+- **Paint terrain onto the map with a brush.** New brush palette under the canvas: pick a biome, pick a size (1/3/5), drag to paint cells. One drag is one undo-able stroke — every cell you touch in a gesture commits together. An eraser (biome `unset`) clears cells back to transparent. Strokes touching more than 256 cells chunk automatically.
+- **Square and hex grids.** Maps carry a configurable grid (`grid_type` square/hex, `grid_cells_x/y` 4–128, scale unit/value). The grid renders as its own toggleable layer; terrain cells snap to it.
+- **Asset library with drag-drop placement.** A sidebar palette lists your Characters / Artifacts / Items; drag a chip onto the map to drop a placement at that spot. Drops create `map_placements` rows (not new entities) and record `data.source_asset_id` for Slice 4's sync-from-template. Opt an entity out with `data.is_asset = false`.
+- **Per-placement style cascade.** A pure `resolveStyle` resolver merges per-instance `entity.data.style` over type defaults over a global default (color/icon/scale/opacity), emitted on every placement in the projection.
+- **Per-user-per-map layer visibility.** New `world_map_layer_prefs` table + `GET`/`PATCH /api/world-map-layer-prefs`. The MapSidebar Layers pane toggles background/grid/terrain/regions/placements; toggles persist across reloads. The projection still emits every layer regardless of visibility (purity preserved).
+- **Inline faction rename.** Click a faction name in the sidebar to rename it; Enter commits via `PATCH /api/factions/[id]`.
+- **Polygon snap-to-grid.** Hold Shift while placing region vertices to snap each to the nearest grid intersection (square corners or hex vertices); release for free-form placement.
+- **Automatic snapshots while painting.** After 20 paint events since the last anchor, the server writes a synthetic anchor in the same transaction (`map_anchors.is_synthetic`) so projection stays fast on long histories. Undoing the stroke that crossed the threshold invalidates the synthetic anchor.
+- **Grouped chunked-undo.** `map_events.command_id` ties a stroke's chunks together; a single `POST /events/undo` soft-deletes the whole group atomically.
+- **Style whitelist validation.** `style` jsonb on entities and placements is validated server-side (allowed keys only, hex colors, clamped scale/opacity, 4 KB cap; 422 on violation).
+- Migrations `0018`–`0023`: grid columns, `is_synthetic`, `command_id` + partial index, `world_map_layer_prefs`, anchor `cells[]` backfill, auto-anchor index.
+
+### Fixed
+- **Painting no longer 500s in production.** The auto-anchor counter, its event-window read, and the grouped-undo synthetic-anchor cleanup bound a raw JavaScript `Date` into a timestamp comparison. The production `neon-serverless` driver (and the `postgres-js` E2E driver) mis-serialize that — the same hazard the cursor queries already defend against — so any stroke that hit the auto-anchor path errored, even though the in-process PGlite unit tests tolerated it. The three comparisons now read `created_at` back from the row by id via a scalar subquery (no JS `Date` round-trip, full microsecond precision).
+
+### Tests
+- 5 Playwright E2E specs covering the new flows end-to-end: brush stroke + grouped undo (the production-500 regression guard), asset drag-drop placement, layer-toggle persistence across reload, faction rename, and polygon snap (Shift-on vs free-form differential).
+- Unit + integration coverage for paint_cells validation, auto-anchor (K=20, concurrent, stroke-boundary), layer-prefs CRUD + cross-user isolation, style cascade + validation, hex-grid and grid-snap math, and the asset/placement `source_asset_id` invariant. 1178 vitest passing.
+
 ## [0.7.9.0] - 2026-05-27
 
 ### Removed
