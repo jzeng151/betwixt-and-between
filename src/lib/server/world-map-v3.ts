@@ -511,6 +511,10 @@ export async function createMapAnchor(
 				stateJsonb: normalizedState
 			})
 			.returning();
+		// codex P2: a new authored anchor changes the base state for
+		// projections at/after its T — drop any synthetic anchors that froze
+		// the old base there.
+		await invalidateSyntheticAnchorsAtOrAfter(db, worldMapId, input.tPosition);
 		return row;
 	} catch (err) {
 		// Unique violation on (world_map_id, t_position) when an anchor
@@ -601,6 +605,14 @@ export async function updateMapAnchor(
 		throw err;
 	}
 	if (!row) error(404, 'Anchor not found');
+	// codex P2: editing this anchor (its state, or its t_position) can stale
+	// synthetic anchors that froze its base — invalidate from the earliest of
+	// the old/new t_position so both the vacated and the new slot are covered.
+	const affectedT = Math.min(
+		existing.tPosition,
+		(updates.tPosition as number | undefined) ?? existing.tPosition
+	);
+	await invalidateSyntheticAnchorsAtOrAfter(db, worldMapId, affectedT);
 	return row;
 }
 
@@ -629,6 +641,9 @@ export async function deleteMapAnchor(
 		.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
 		.returning();
 	if (deleted.length === 0) error(404, 'Anchor not found');
+	// codex P2: removing an authored anchor changes the base for projections
+	// at/after its T — drop synthetic anchors that froze the old base there.
+	await invalidateSyntheticAnchorsAtOrAfter(db, worldMapId, existing.tPosition);
 }
 
 // ── Event CRUD ──────────────────────────────────────────────────────────────
@@ -896,17 +911,12 @@ async function maybeWriteAutoAnchor(
 	const count = countRows.length > 0 ? Number(countRows[0].cnt) : 0;
 	if (count < AUTO_ANCHOR_K) return;
 
-	// Build the snapshot. Read all paint_cells events since cutoff so we
-	// know the t_position range and can fold cells. Then read the most
-	// time-advanced anchor at or before MAX_T to grab the rolling
-	// regions/artifacts/chains state.
-	// Codex P1 — fetch ALL live event kinds in the window, not just
-	// paint_cells. The synthetic snapshot must project events forward
-	// from baseAnchor to maxT for every kind; otherwise a transfer_region
-	// (or future kind) committed in this window gets shadowed when the
-	// synthetic anchor's same-T rule excludes events at tPosition <=
-	// anchorT. Filtering on kind='paint_cells' here would lose the
-	// ownership change in projection after this anchor lands.
+	// Read the post-cutoff window only to learn the t_position range (maxT)
+	// and confirm there's something to snapshot. The actual fold is rebuilt
+	// from the full live log below (foldEvents) so it can't miss earlier
+	// same-T paints. ALL live event kinds are read (not just paint_cells) so
+	// transfer_region / future kinds fold forward too — filtering on kind
+	// here would lose an ownership change once this anchor shadows it.
 	const recentEvents = await tx
 		.select({
 			id: mapEvents.id,
@@ -929,26 +939,61 @@ async function maybeWriteAutoAnchor(
 		Number.NEGATIVE_INFINITY
 	);
 
-	// Pick the active anchor at maxT (largest t_position ≤ maxT) to inherit
-	// non-cell state. tPosition ASC + LIMIT is fine even for -Infinity.
-	const anchorsAtOrBefore = await tx
+	// Build the snapshot to EQUAL projectState(maxT): start from the anchor
+	// strictly BEFORE maxT and fold every live event in (baseT, maxT].
+	//
+	// Why strictly before (codex P2): if we keyed off the anchor AT maxT we'd
+	// pick the very synthetic anchor we're about to replace, and folding only
+	// "events after that anchor's T" would drop the same-T repaints we're
+	// trying to bake in (the #1 data-loss case). Anchoring on the PRIOR
+	// distinct anchor and folding through maxT inclusive bakes in same-T
+	// paints, while events at or below the prior anchor's T stay shadowed by
+	// baseState — so a retroactive paint committed late at an earlier
+	// playhead doesn't leak into the snapshot.
+	const anchorsBefore = await tx
 		.select()
 		.from(mapAnchors)
 		.where(
 			and(
 				eq(mapAnchors.worldMapId, worldMapId),
-				sql`${mapAnchors.tPosition} <= ${maxT}`
+				sql`${mapAnchors.tPosition} < ${maxT}`
 			)
 		)
 		.orderBy(desc(mapAnchors.tPosition), desc(mapAnchors.createdAt), desc(mapAnchors.id))
 		.limit(1);
-	const baseAnchor = anchorsAtOrBefore[0];
+	const baseAnchor = anchorsBefore[0];
+	const baseAnchorT = baseAnchor ? Number(baseAnchor.tPosition) : Number.NEGATIVE_INFINITY;
 	const baseState = (baseAnchor?.stateJsonb ?? {
 		regions: [],
 		artifacts: [],
 		chains: [],
 		cells: []
 	}) as AnchorState;
+
+	// Re-fold from the FULL live log in (baseAnchorT, maxT] rather than the
+	// cutoff window — the cutoff window can miss earlier same-T paints (folded
+	// into a prior synthetic that is no longer the base) and can include
+	// retroactive paints the base already shadows. A finite lower bound is
+	// only applied when there's a prior anchor; -Infinity baselines bind no
+	// lower bound (binding ±Infinity as a param breaks the driver).
+	const foldConds = [
+		eq(mapEvents.worldMapId, worldMapId),
+		sql`${mapEvents.undoneAt} IS NULL`,
+		sql`${mapEvents.tPosition} <= ${maxT}`
+	];
+	if (Number.isFinite(baseAnchorT)) {
+		foldConds.push(sql`${mapEvents.tPosition} > ${baseAnchorT}`);
+	}
+	const foldEvents = await tx
+		.select({
+			id: mapEvents.id,
+			tPosition: mapEvents.tPosition,
+			kind: mapEvents.kind,
+			createdAt: mapEvents.createdAt,
+			payloadJsonb: mapEvents.payloadJsonb
+		})
+		.from(mapEvents)
+		.where(and(...foldConds));
 
 	// Fold ALL recent events into the snapshot (codex P1). Order by
 	// (tPosition, created_at, id) — same rule as projection.ts. Both
@@ -957,7 +1002,7 @@ async function maybeWriteAutoAnchor(
 	// pass through silently. Keeps the snapshot semantically equivalent
 	// to "projectState(maxT) with the events folded in" so the post-
 	// anchor projection lookups read the correct rolling state.
-	const sortedEvents = [...recentEvents].sort(
+	const sortedEvents = [...foldEvents].sort(
 		(
 			a: { tPosition: number; createdAt: Date | string; id: string },
 			b: typeof a
@@ -1026,32 +1071,47 @@ async function maybeWriteAutoAnchor(
 		cells: Array.from(cells.values())
 	};
 
-	// Insert the synthetic anchor. The unique constraint
-	// (world_map_id, t_position) fires when an anchor already lives at maxT —
-	// common when the user keeps painting at the same playhead T after a
-	// synthetic anchor was already written there.
+	// Write the synthetic anchor. The unique constraint (world_map_id,
+	// t_position) fires when an anchor already lives at maxT — common when
+	// the user keeps painting at the same playhead T after a synthetic anchor
+	// was already written there.
 	//
-	// codex P1: swallowing the conflict silently loses data. Projection
+	// codex P1: swallowing the conflict silently loses data — projection
 	// treats an anchor at T as the state at T and excludes events with
-	// t_position <= T, so the new same-T paint events get folded into
-	// neither the (stale) anchor snapshot nor the event stream — the just-
-	// painted cells vanish and every later paint re-fires the same failed
-	// insert. Upsert instead: overwrite the snapshot of a prior SYNTHETIC
-	// anchor at this T with the freshly-folded state. The setWhere guard
-	// leaves a user-authored anchor at T untouched — it's authoritative.
+	// t_position <= T, so the new same-T paint events fold into neither the
+	// stale snapshot nor the event stream and the just-painted cells vanish.
+	//
+	// codex P2 (follow-up): an in-place stateJsonb UPDATE would keep the old
+	// created_at, but the re-folded snapshot now contains events committed
+	// AFTER that created_at. invalidateSyntheticAnchorsFrom keys off
+	// (anchor.created_at >= event.created_at), so on a later undo/delete of
+	// one of those events the stale anchor would escape invalidation and keep
+	// rendering removed cells. Delete-then-insert instead: the replacement
+	// row gets a fresh created_at >= every event it folds (invalidation works)
+	// AND advances the count cutoff so we don't re-fold a growing window. The
+	// delete is scoped to is_synthetic, so a user-authored anchor at maxT is
+	// left intact and the insert below hits the constraint (swallowed) —
+	// the authored anchor stays authoritative.
 	await tx
-		.insert(mapAnchors)
-		.values({
+		.delete(mapAnchors)
+		.where(
+			and(
+				eq(mapAnchors.worldMapId, worldMapId),
+				eq(mapAnchors.tPosition, maxT),
+				eq(mapAnchors.isSynthetic, true)
+			)
+		);
+	try {
+		await tx.insert(mapAnchors).values({
 			worldMapId,
 			tPosition: maxT,
 			stateJsonb: snapshot,
 			isSynthetic: true
-		})
-		.onConflictDoUpdate({
-			target: [mapAnchors.worldMapId, mapAnchors.tPosition],
-			set: { stateJsonb: snapshot },
-			setWhere: sql`${mapAnchors.isSynthetic} = true`
 		});
+	} catch (err) {
+		if (!isUniqueViolation(err)) throw err;
+		// A user-authored anchor lives at maxT — authoritative, leave it.
+	}
 }
 
 /**
@@ -1079,6 +1139,34 @@ async function invalidateSyntheticAnchorsFrom(
 				eq(mapAnchors.worldMapId, worldMapId),
 				eq(mapAnchors.isSynthetic, true),
 				sql`${mapAnchors.createdAt} >= (SELECT created_at FROM map_events WHERE id = ${boundaryEventId})`
+			)
+		);
+}
+
+/**
+ * Drop synthetic anchors at or after `tPosition` (codex P2). Each synthetic
+ * anchor freezes a copy of the rolling state inherited from the user anchor
+ * active at its t_position. When a user authors, edits, or deletes an
+ * anchor at T, every synthetic anchor at t_position >= T may have copied a
+ * now-stale base, so projection at/after those points would keep reading
+ * the frozen snapshot instead of the user's change. Deleting them forces
+ * projection to re-fold from the nearest surviving anchor; the next paint
+ * stroke past K regenerates a fresh synthetic anchor. `tPosition` is a
+ * finite JS number (validated by callers), so binding it directly is safe.
+ */
+async function invalidateSyntheticAnchorsAtOrAfter(
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	db: any,
+	worldMapId: string,
+	tPosition: number
+): Promise<void> {
+	await db
+		.delete(mapAnchors)
+		.where(
+			and(
+				eq(mapAnchors.worldMapId, worldMapId),
+				eq(mapAnchors.isSynthetic, true),
+				sql`${mapAnchors.tPosition} >= ${tPosition}`
 			)
 		);
 }

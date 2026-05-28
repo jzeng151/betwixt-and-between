@@ -35,6 +35,9 @@ const { POST: UNDO_EVENT } = await import(
 const { DELETE: DELETE_EVENT } = await import(
 	'../../src/routes/api/maps/[id]/events/[eventId]/+server.js'
 );
+const { POST: CREATE_ANCHOR } = await import(
+	'../../src/routes/api/maps/[id]/anchors/+server.js'
+);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mkEvent(overrides: { params?: Record<string, string>; body?: unknown } = {}): any {
@@ -733,6 +736,161 @@ describe('Slice 3 codex P2 — DELETE invalidates synthetic anchors', () => {
 		// snapshot rendering the now-deleted terrain.
 		await DELETE_EVENT(mkEvent({ params: { id: map.id, eventId: eventIds[5] } }));
 
+		const after = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true)));
+		expect(after).toHaveLength(0);
+	});
+});
+
+describe('Slice 3 codex P2 follow-ups (iter 2 review)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		userId = (await seedTestUser(currentDb)).id;
+	});
+
+	it('#7 same-T repaint refreshes the synthetic anchor created_at so undo/delete still invalidates it', async () => {
+		const map = await seedMap();
+		const T = 5;
+		const cellFor = (i: number) => ({ x: i % 16, y: Math.floor(i / 16), biome: 'plains' });
+		const secondBatchIds: string[] = [];
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: T,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [cellFor(i)], command_complete: true }
+					}
+				})
+			);
+		}
+		for (let i = 20; i < 40; i++) {
+			const res = await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: T,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [cellFor(i)], command_complete: true }
+					}
+				})
+			);
+			secondBatchIds.push(((await readJson(res)) as { id: string }).id);
+		}
+		// One synthetic anchor at T, snapshot has all 40 cells (the delete-then-
+		// insert upsert gave it a created_at newer than every folded event).
+		const before = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true)));
+		expect(before).toHaveLength(1);
+
+		// Delete a SECOND-batch event (folded after the original anchor's
+		// created_at). Pre-fix the in-place update kept the stale created_at,
+		// so `created_at >= event.created_at` was false and the anchor survived
+		// with the deleted cell still in its snapshot. With the fresh created_at
+		// it's correctly invalidated.
+		await DELETE_EVENT(mkEvent({ params: { id: map.id, eventId: secondBatchIds[5] } }));
+		const after = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true)));
+		expect(after).toHaveLength(0);
+	});
+
+	it('#8 auto-anchor fold excludes retroactive events shadowed by the base anchor', async () => {
+		const map = await seedMap();
+		// Author a user anchor at T=10 carrying one cell.
+		await CREATE_ANCHOR(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 10,
+					stateJsonb: {
+						regions: [],
+						artifacts: [],
+						chains: [],
+						cells: [{ x: 1, y: 1, biome: 'plains' }]
+					}
+				}
+			})
+		);
+		// 19 paints at T=11 (after the anchor) …
+		for (let i = 0; i < 19; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 11,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 5, biome: 'plains' }], command_complete: true }
+					}
+				})
+			);
+		}
+		// …then a 20th, RETROACTIVE paint at T=5 (< anchor T=10). It trips the
+		// K=20 count, so the auto-anchor fires with maxT=11 and base = the
+		// T=10 anchor. projectState(11) would shadow the T=5 cell behind that
+		// anchor, so it must NOT appear in the synthetic snapshot.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 5,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 9, y: 9, biome: 'forest' }], command_complete: true }
+				}
+			})
+		);
+		const synthetic = await currentDb
+			.select({ stateJsonb: mapAnchors.stateJsonb })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true)));
+		expect(synthetic).toHaveLength(1);
+		const cells = (synthetic[0].stateJsonb as { cells: Array<{ x: number; y: number }> }).cells;
+		const key = (c: { x: number; y: number }) => `${c.x},${c.y}`;
+		const keys = new Set(cells.map(key));
+		expect(keys.has('1,1')).toBe(true); // inherited from the base anchor
+		expect(keys.has('0,5')).toBe(true); // a T=11 paint (after the anchor)
+		expect(keys.has('9,9')).toBe(false); // retroactive T=5 paint — shadowed
+	});
+
+	it('#9 authoring a user anchor invalidates later synthetic anchors', async () => {
+		const map = await seedMap();
+		// 20 paints at distinct T just above 1 → one synthetic anchor (~T=1.019).
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: 'plains' }], command_complete: true }
+					}
+				})
+			);
+		}
+		const before = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true)));
+		expect(before).toHaveLength(1);
+
+		// Author a user anchor at an EARLIER T — it changes the base state for
+		// projections at/after T=0.5, so the later synthetic anchor (frozen
+		// from the old base) must be dropped.
+		await CREATE_ANCHOR(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 0.5,
+					stateJsonb: { regions: [], artifacts: [], chains: [], cells: [] }
+				}
+			})
+		);
 		const after = await currentDb
 			.select({ id: mapAnchors.id })
 			.from(mapAnchors)
