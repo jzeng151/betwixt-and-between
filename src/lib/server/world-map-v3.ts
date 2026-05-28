@@ -877,6 +877,18 @@ export async function createMapEvent(
 			})
 			.returning();
 
+		// codex P2: a synthetic anchor at a LATER t_position froze a snapshot
+		// that didn't include this event. projectState picks that anchor and
+		// excludes events with t_position <= anchorT, so a retroactive or
+		// same-T paint, or a transfer_region at T <= the anchor's T, would be
+		// silently hidden. Drop synthetic anchors at/after this event's T so a
+		// freshly-authored event isn't shadowed by a stale cache row. Runs
+		// before the auto-anchor write below, which re-materializes a correct
+		// snapshot when the stroke completes. Forward painting (the common
+		// case) advances T past every synthetic anchor, so this is a no-op
+		// there; only retroactive/same-T edits pay the re-fold cost.
+		await invalidateSyntheticAnchorsAtOrAfter(tx, worldMapId, input.tPosition);
+
 		if (input.kind === 'paint_cells') {
 			await maybeWriteAutoAnchor(tx, worldMapId, input, commandId);
 		}

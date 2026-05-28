@@ -1007,3 +1007,50 @@ describe('Slice 3 codex P2 follow-ups (iter 3 review — authored anchors)', () 
 		expect(body.stateJsonb.cells).toHaveLength(1);
 	});
 });
+
+describe('Slice 3 codex P2 follow-ups (iter 4 review)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		userId = (await seedTestUser(currentDb)).id;
+	});
+
+	it('#16 a retroactive paint below a synthetic anchor is not shadowed (anchor refreshed)', async () => {
+		const map = await seedMap();
+		// 20 paints at T=10 → synthetic anchor at T=10 (cells x=0..19).
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 10,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: 'plains' }], command_complete: true }
+					}
+				})
+			);
+		}
+		// A retroactive paint at T=5 (< the synthetic anchor's T). Pre-fix the
+		// synthetic@10 snapshot (which excludes events at t<=10) would shadow
+		// it. The event-insert invalidation drops the stale anchor; the
+		// re-materialized snapshot at maxT=10 folds events through T=10, so the
+		// retroactive cell is now part of projected state at/after T=10.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 5,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 25, y: 5, biome: 'forest' }], command_complete: true }
+				}
+			})
+		);
+		const synthetic = await currentDb
+			.select({ stateJsonb: mapAnchors.stateJsonb })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true)));
+		expect(synthetic).toHaveLength(1);
+		const cells = (synthetic[0].stateJsonb as { cells: Array<{ x: number; y: number }> }).cells;
+		// The retroactive cell is no longer hidden behind a stale snapshot.
+		expect(cells.some((c) => c.x === 25 && c.y === 5)).toBe(true);
+	});
+});

@@ -301,6 +301,40 @@ describe('/api/maps/[id]', () => {
 		expect(body.gridCellsY).toBe(16);
 	});
 
+	it('PATCH allows shrinking past a cell that was painted then erased (codex P2)', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+		};
+		// Paint a far cell, then erase it (biome 'unset') — both paint_cells
+		// rows stay live, but the cell's LATEST state is absent.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 30, y: 0, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 2,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 30, y: 0, biome: 'unset' }], command_complete: true }
+				}
+			})
+		);
+		// The far cell is no longer visible, so the shrink must be allowed.
+		const res = await mapIdRoute.PATCH(
+			mkEvent({ params: { id: created.id }, body: { gridCellsX: 16 } })
+		);
+		const body = (await readJson(res)) as { gridCellsX: number };
+		expect(body.gridCellsX).toBe(16);
+	});
+
 	it('PATCH returns 404 for missing id', async () => {
 		await expect(
 			mapIdRoute.PATCH(
