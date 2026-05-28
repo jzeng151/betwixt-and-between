@@ -898,3 +898,112 @@ describe('Slice 3 codex P2 follow-ups (iter 2 review)', () => {
 		expect(after).toHaveLength(0);
 	});
 });
+
+describe('Slice 3 codex P2 follow-ups (iter 3 review — authored anchors)', () => {
+	beforeEach(async () => {
+		currentDb = await createTestDb();
+		userId = (await seedTestUser(currentDb)).id;
+	});
+
+	it('#12 authoring a snapshot at a T occupied by a synthetic anchor replaces it (no 409)', async () => {
+		const map = await seedMap();
+		// 20 paints at T=5 → a synthetic anchor at T=5.
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 5,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: 'plains' }], command_complete: true }
+					}
+				})
+			);
+		}
+		// An authored snapshot at the same T must succeed — the synthetic cache
+		// row is replaced, not collided with.
+		const res = await CREATE_ANCHOR(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 5,
+					stateJsonb: {
+						regions: [],
+						artifacts: [],
+						chains: [],
+						cells: [{ x: 0, y: 0, biome: 'forest' }]
+					}
+				}
+			})
+		);
+		expect(res.status).toBe(201);
+		// Exactly one anchor at T=5, and it is authored (not synthetic).
+		const at5 = await currentDb
+			.select({ isSynthetic: mapAnchors.isSynthetic })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.tPosition, 5)));
+		expect(at5).toHaveLength(1);
+		expect(at5[0].isSynthetic).toBe(false);
+	});
+
+	it('#14 authored anchor with an out-of-bounds cell is rejected (400)', async () => {
+		const map = await seedMap(); // default grid 32×24
+		await expect(
+			CREATE_ANCHOR(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 3,
+						stateJsonb: {
+							regions: [],
+							artifacts: [],
+							chains: [],
+							cells: [{ x: 99, y: 0, biome: 'plains' }]
+						}
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('#14 authored anchor with an unknown biome is rejected (400)', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_ANCHOR(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 3,
+						stateJsonb: {
+							regions: [],
+							artifacts: [],
+							chains: [],
+							cells: [{ x: 1, y: 1, biome: 'lava' }]
+						}
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('#14 authored anchor with valid in-bounds cells is accepted and persists them', async () => {
+		const map = await seedMap();
+		const res = await CREATE_ANCHOR(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 3,
+					stateJsonb: {
+						regions: [],
+						artifacts: [],
+						chains: [],
+						cells: [{ x: 2, y: 2, biome: 'water' }]
+					}
+				}
+			})
+		);
+		expect(res.status).toBe(201);
+		const body = (await readJson(res)) as { stateJsonb: { cells: Array<{ x: number }> } };
+		expect(body.stateJsonb.cells).toHaveLength(1);
+	});
+});

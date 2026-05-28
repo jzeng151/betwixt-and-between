@@ -405,9 +405,9 @@ function validateAnchorStateShape(state: unknown): asserts state is AnchorState 
 	}
 	// Slice 3 T2 — cells must be an array if present. Default of [] is
 	// applied by createMapAnchor/updateMapAnchor before INSERT (see below).
-	// Per-cell validation (bounds, biome enum) happens at paint_cells event
-	// write time, not at anchor write time; anchor state is a snapshot and
-	// is expected to already match a validated event chain.
+	// Per-cell shape/biome/bounds validation runs in those write paths via
+	// assertCellsInBounds (codex P2 — anchor POST/PATCH are client-write
+	// boundaries, not just internal snapshots of a validated event chain).
 	if ('cells' in s && s.cells !== undefined && !Array.isArray(s.cells)) {
 		error(400, 'state_jsonb.cells must be an array if present');
 	}
@@ -477,6 +477,48 @@ export type AnchorInput = {
 // that captures the playhead's tPosition directly; Slice 2's auto-anchor
 // will re-introduce an FK-based helper when it actually has a caller.)
 
+/**
+ * Validate a cells array against a map's grid: each entry an object with
+ * integer x/y inside [0, gridX) × [0, gridY) and a known biome. Shared by
+ * the paint_cells event validator and the authored-anchor write path
+ * (codex P2 — anchor POST/PATCH are client-write boundaries too, so a
+ * direct snapshot can't be trusted to carry only already-validated cells).
+ */
+function assertCellsInBounds(cells: unknown, gridX: number, gridY: number, label: string): void {
+	if (!Array.isArray(cells)) error(400, `${label} cells must be an array`);
+	for (let i = 0; i < cells.length; i++) {
+		const cell = cells[i] as { x?: unknown; y?: unknown; biome?: unknown } | null;
+		if (!cell || typeof cell !== 'object') error(400, `${label} cells[${i}] must be an object`);
+		if (typeof cell.x !== 'number' || !Number.isInteger(cell.x)) {
+			error(400, `${label} cells[${i}].x must be an integer`);
+		}
+		if (typeof cell.y !== 'number' || !Number.isInteger(cell.y)) {
+			error(400, `${label} cells[${i}].y must be an integer`);
+		}
+		if (cell.x < 0 || cell.x >= gridX) {
+			error(400, `${label} cells[${i}].x out of bounds [0, ${gridX})`);
+		}
+		if (cell.y < 0 || cell.y >= gridY) {
+			error(400, `${label} cells[${i}].y out of bounds [0, ${gridY})`);
+		}
+		if (!(BIOMES as readonly string[]).includes(cell.biome as BiomeKind)) {
+			error(400, `${label} cells[${i}].biome must be one of ${BIOMES.join('|')}`);
+		}
+	}
+}
+
+/**
+ * Load a map's grid dimensions (caller must have asserted ownership).
+ */
+async function loadGridDims(db: Db, worldMapId: string): Promise<{ x: number; y: number }> {
+	const [map] = await db
+		.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY })
+		.from(worldMaps)
+		.where(eq(worldMaps.id, worldMapId));
+	if (!map) error(404, 'world_map not found');
+	return map;
+}
+
 export async function createMapAnchor(
 	db: Db,
 	userId: string,
@@ -501,6 +543,21 @@ export async function createMapAnchor(
 		...input.stateJsonb,
 		cells: input.stateJsonb.cells ?? []
 	};
+	// codex P2: anchor POST is a client-write boundary — validate cell
+	// shape/biome/bounds the same way paint_cells does, so a direct snapshot
+	// can't persist off-grid terrain that projection would draw and
+	// grid-shrink checks would treat as real.
+	const grid = await loadGridDims(db, worldMapId);
+	assertCellsInBounds(normalizedState.cells, grid.x, grid.y, 'anchor state_jsonb');
+
+	// codex P2: a synthetic anchor (server cache row) may already sit at this
+	// T after ~20 paints at the current playhead. It is NOT authored state,
+	// so drop synthetic anchors at/after this T BEFORE inserting — otherwise
+	// the unique constraint rejects the user's authored snapshot with a 409.
+	// This also clears stale downstream synthetic anchors that froze the old
+	// base. A real authored anchor at this T survives (synthetic-only delete)
+	// and still yields the 409 below.
+	await invalidateSyntheticAnchorsAtOrAfter(db, worldMapId, input.tPosition);
 
 	try {
 		const [row] = await db
@@ -511,10 +568,6 @@ export async function createMapAnchor(
 				stateJsonb: normalizedState
 			})
 			.returning();
-		// codex P2: a new authored anchor changes the base state for
-		// projections at/after its T — drop any synthetic anchors that froze
-		// the old base there.
-		await invalidateSyntheticAnchorsAtOrAfter(db, worldMapId, input.tPosition);
 		return row;
 	} catch (err) {
 		// Unique violation on (world_map_id, t_position) when an anchor
@@ -581,11 +634,30 @@ export async function updateMapAnchor(
 		// omit it; default to [] to match createMapAnchor's normalization.
 		const incoming = patch.stateJsonb as AnchorState;
 		updates.stateJsonb = { ...incoming, cells: incoming.cells ?? [] };
+		// codex P2: client-write boundary — validate cell shape/biome/bounds.
+		const grid = await loadGridDims(db, worldMapId);
+		assertCellsInBounds(
+			(updates.stateJsonb as AnchorState).cells,
+			grid.x,
+			grid.y,
+			'anchor state_jsonb'
+		);
 	}
 
 	if (Object.keys(updates).length === 0) {
 		error(400, 'No updatable fields supplied');
 	}
+
+	// codex P2: invalidate synthetic anchors at/after the earliest of the
+	// old/new t_position BEFORE the update — both to clear stale frozen bases
+	// and so PATCHing the t_position onto a synthetic-occupied slot replaces
+	// that cache row instead of colliding with it. A real authored anchor at
+	// the target T survives (synthetic-only delete) and still 409s below.
+	const affectedT = Math.min(
+		existing.tPosition,
+		(updates.tPosition as number | undefined) ?? existing.tPosition
+	);
+	await invalidateSyntheticAnchorsAtOrAfter(db, worldMapId, affectedT);
 
 	let row: typeof mapAnchors.$inferSelect | undefined;
 	try {
@@ -596,23 +668,15 @@ export async function updateMapAnchor(
 			.returning();
 	} catch (err) {
 		// Same UNIQUE (world_map_id, t_position) collision shape as
-		// createMapAnchor — PATCHing tPosition onto an occupied slot lands
-		// here. Surface 409 so the UI can offer "edit the existing anchor"
-		// instead of seeing an opaque 500.
+		// createMapAnchor — PATCHing tPosition onto an anchor-occupied slot
+		// lands here. Surface 409 so the UI can offer "edit the existing
+		// anchor" instead of seeing an opaque 500.
 		if (isUniqueViolation(err)) {
 			error(409, 'An anchor already exists at this t_position');
 		}
 		throw err;
 	}
 	if (!row) error(404, 'Anchor not found');
-	// codex P2: editing this anchor (its state, or its t_position) can stale
-	// synthetic anchors that froze its base — invalidate from the earliest of
-	// the old/new t_position so both the vacated and the new slot are covered.
-	const affectedT = Math.min(
-		existing.tPosition,
-		(updates.tPosition as number | undefined) ?? existing.tPosition
-	);
-	await invalidateSyntheticAnchorsAtOrAfter(db, worldMapId, affectedT);
 	return row;
 }
 
@@ -722,27 +786,7 @@ async function validateEventPayload(
 			.from(worldMaps)
 			.where(eq(worldMaps.id, worldMapId));
 		if (!map) error(404, 'world_map not found');
-		for (let i = 0; i < p.cells.length; i++) {
-			const cell = p.cells[i];
-			if (!cell || typeof cell !== 'object') {
-				error(400, `paint_cells cells[${i}] must be an object`);
-			}
-			if (typeof cell.x !== 'number' || !Number.isInteger(cell.x)) {
-				error(400, `paint_cells cells[${i}].x must be an integer`);
-			}
-			if (typeof cell.y !== 'number' || !Number.isInteger(cell.y)) {
-				error(400, `paint_cells cells[${i}].y must be an integer`);
-			}
-			if (cell.x < 0 || cell.x >= map.x) {
-				error(400, `paint_cells cells[${i}].x out of bounds [0, ${map.x})`);
-			}
-			if (cell.y < 0 || cell.y >= map.y) {
-				error(400, `paint_cells cells[${i}].y out of bounds [0, ${map.y})`);
-			}
-			if (!(BIOMES as readonly string[]).includes(cell.biome as BiomeKind)) {
-				error(400, `paint_cells cells[${i}].biome must be one of ${BIOMES.join('|')}`);
-			}
-		}
+		assertCellsInBounds(p.cells, map.x, map.y, 'paint_cells');
 		// command_complete is optional; when omitted, the auto-anchor
 		// path (T22) treats the event as a single-event stroke (eligible
 		// to trigger an anchor write). When present, must be a boolean.
