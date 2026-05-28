@@ -253,7 +253,13 @@
 					locationId: r.locationId ?? null
 				})),
 				artifacts: [],
-				chains: []
+				chains: [],
+				// codex P2: an anchor at T is the COMPLETE state at T and shadows
+				// events with t_position <= T, so a snapshot that omits cells
+				// (normalized server-side to []) would erase all terrain painted
+				// at/before this playhead from T forward. Capture the projected
+				// terrain as rendered right now.
+				cells: renderedState?.cells ?? []
 			};
 			await mapAnchorsStore.create(mapId, { tPosition, stateJsonb });
 			// Snapshot doesn't visually change anything (it just records

@@ -192,12 +192,19 @@
 			hoverCells = [];
 			onStrokeComplete?.(totalCells);
 		} catch (err) {
-			// Partial-stroke failure: leave already-committed chunks in
-			// place (server saw them, they're in the event log under the
-			// localStrokeId — undo will pop them as a group). Leave the
-			// in-memory gesture state INTACT so the user could retry
-			// or the next mousedown could continue. Surface to console.
-			console.error('paint_cells stroke failed mid-flight', err);
+			// codex P2: a permanent commit failure (a 400 after the grid
+			// changed, sustained network loss) must ABORT the gesture. The
+			// previous "leave state intact for retry" had no retry affordance,
+			// so the brush got stuck after pointer-up: the `if (painting)
+			// return` guard swallowed every new pointerdown while button-up
+			// pointermoves kept appending cells to the dead stroke. Reset the
+			// gesture instead. Chunks that already landed stay in the event log
+			// under localStrokeId and undo pops them as a group.
+			console.error('paint_cells stroke failed mid-flight; aborting gesture', err);
+			touched = new Map();
+			strokeId = null;
+			painting = false;
+			hoverCells = [];
 		}
 	}
 
