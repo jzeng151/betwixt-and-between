@@ -209,6 +209,55 @@ describe('/api/maps/[id]', () => {
 		expect(body.height).toBe(768);
 	});
 
+	// Regression: grid settings had no write path — /qa 2026-05-28
+	// PATCH /api/maps/[id] accepted name/baseImageUrl/width/height/
+	// locationId/variant-bounds but NOT the Slice 3 grid_* columns, so
+	// "hex available per-map" (design doc D1) was unreachable through
+	// the API. Found by /qa browser testing.
+	// Report: .gstack/qa-reports/qa-report-localhost-2026-05-28.md
+	it('PATCH updates grid settings (gridType / cells / scale / visible)', async () => {
+		const created = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })));
+		const res = await mapIdRoute.PATCH(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					gridType: 'hex',
+					gridCellsX: 48,
+					gridCellsY: 40,
+					gridScaleUnit: 'ft',
+					gridScaleValue: 10,
+					gridVisible: false
+				}
+			})
+		);
+		expect(res.status).toBe(200);
+		const body = await readJson(res);
+		expect(body.gridType).toBe('hex');
+		expect(body.gridCellsX).toBe(48);
+		expect(body.gridCellsY).toBe(40);
+		expect(body.gridScaleUnit).toBe('ft');
+		expect(body.gridScaleValue).toBe(10);
+		expect(body.gridVisible).toBe(false);
+	});
+
+	it('PATCH rejects invalid gridType', async () => {
+		const created = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })));
+		await expect(
+			mapIdRoute.PATCH(
+				mkEvent({ params: { id: created.id }, body: { gridType: 'triangle' } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('PATCH rejects out-of-bounds gridCellsX', async () => {
+		const created = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })));
+		await expect(
+			mapIdRoute.PATCH(
+				mkEvent({ params: { id: created.id }, body: { gridCellsX: 200 } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
 	it('PATCH returns 404 for missing id', async () => {
 		await expect(
 			mapIdRoute.PATCH(

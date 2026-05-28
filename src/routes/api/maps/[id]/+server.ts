@@ -45,6 +45,49 @@ export const PATCH: RequestHandler = async (event) => {
 	if (typeof body.baseImageUrl === 'string') updates.baseImageUrl = body.baseImageUrl;
 	if (typeof body.width === 'number') updates.width = body.width;
 	if (typeof body.height === 'number') updates.height = body.height;
+
+	// Slice 3 (QA gap fix) — grid settings write path. The grid_* columns
+	// landed in 0018 with defaults and are read by the Pixi renderer, but
+	// the PATCH handler never accepted them, so "hex available per-map"
+	// (design doc D1) had no way to take effect. Validate app-side; the
+	// DB CHECK constraints (world_maps_grid_type_check / _cells_bounds)
+	// back-stop direct writes.
+	if ('gridType' in body) {
+		if (body.gridType !== 'square' && body.gridType !== 'hex') {
+			error(400, "gridType must be 'square' or 'hex'");
+		}
+		updates.gridType = body.gridType;
+	}
+	if ('gridCellsX' in body) {
+		if (!Number.isInteger(body.gridCellsX) || body.gridCellsX < 4 || body.gridCellsX > 128) {
+			error(400, 'gridCellsX must be an integer in [4, 128]');
+		}
+		updates.gridCellsX = body.gridCellsX;
+	}
+	if ('gridCellsY' in body) {
+		if (!Number.isInteger(body.gridCellsY) || body.gridCellsY < 4 || body.gridCellsY > 128) {
+			error(400, 'gridCellsY must be an integer in [4, 128]');
+		}
+		updates.gridCellsY = body.gridCellsY;
+	}
+	if ('gridScaleUnit' in body) {
+		if (typeof body.gridScaleUnit !== 'string' || body.gridScaleUnit.length === 0 || body.gridScaleUnit.length > 16) {
+			error(400, 'gridScaleUnit must be a non-empty string ≤ 16 chars');
+		}
+		updates.gridScaleUnit = body.gridScaleUnit;
+	}
+	if ('gridScaleValue' in body) {
+		if (typeof body.gridScaleValue !== 'number' || !Number.isFinite(body.gridScaleValue) || body.gridScaleValue <= 0) {
+			error(400, 'gridScaleValue must be a positive number');
+		}
+		updates.gridScaleValue = body.gridScaleValue;
+	}
+	if ('gridVisible' in body) {
+		if (typeof body.gridVisible !== 'boolean') {
+			error(400, 'gridVisible must be a boolean');
+		}
+		updates.gridVisible = body.gridVisible;
+	}
 	// locationId: explicit presence (including null) is meaningful — null means unlink.
 	// location_inactive_at is managed by the world_maps_stamp_location_inactive_at
 	// trigger (migration 0008) so every unlink path — user PATCH, ON DELETE SET NULL
