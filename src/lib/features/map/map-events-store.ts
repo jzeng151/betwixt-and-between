@@ -114,6 +114,14 @@ function createMapEventsStore() {
 		if (!res.ok) throw new Error(`Failed to delete event: ${await errorMessage(res)}`);
 		if (lastLoadedMapId !== mapId) return;
 		store.update((rows) => rows.filter((r) => r.id !== eventId));
+		// codex P2 (PR #58): deleteMapEvent soft-deletes the event AND invalidates
+		// synthetic anchors that folded it (same invalidation as undo). The 204
+		// response carries nothing, so refetch the anchor set to drop the stale
+		// synthetic snapshot — else projectState keeps rendering the deleted
+		// terrain/ownership until a reload. Best-effort (mirrors undo()).
+		void mapAnchorsStore.load(mapId).catch((err) => {
+			console.error('anchor re-sync after event delete failed; projection may be stale until reload', err);
+		});
 	}
 
 	// Slice 2 D3 (T7) — pop the latest live event from the server, push

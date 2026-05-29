@@ -51,8 +51,19 @@ export const POST: RequestHandler = async (event) => {
 				baseImageUrl: source.baseImageUrl,
 				width: source.width,
 				height: source.height,
-				locationId: null
+				locationId: null,
 				// variant bounds + locationId intentionally omitted — see comment above
+				// codex P2 (PR #58): carry the source's grid calibration so a
+				// clone of the same image renders the same grid and future brush
+				// coordinates line up. Terrain cells are still NOT cloned (the
+				// anchor below starts with cells: []) — only the grid geometry/
+				// scale/visibility config is copied.
+				gridType: source.gridType,
+				gridCellsX: source.gridCellsX,
+				gridCellsY: source.gridCellsY,
+				gridScaleUnit: source.gridScaleUnit,
+				gridScaleValue: source.gridScaleValue,
+				gridVisible: source.gridVisible
 			})
 			.returning();
 

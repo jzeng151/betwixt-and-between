@@ -26,6 +26,7 @@
 	// needed. Not premature here.
 
 	import { getContext, onDestroy, onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
 	import { biomeStyle } from './biome-textures.js';
 	import { layerVisibility } from './layer-prefs-store.js';
@@ -81,6 +82,16 @@
 
 		if (!layer) {
 			layer = new PIXI.Container();
+			// codex P2 (PR #58): seed visibility at creation. PIXI imports
+			// async, so on the normal first-load order the visibility effect
+			// below already ran with layer === null (a no-op) and won't rerun
+			// just because layer flipped to set (layer isn't reactive). A layer
+			// created afterward would keep Pixi's default visible=true and show
+			// terrain even when the saved pref is false. get(visible) is an
+			// UNTRACKED read so this geometry effect does not subscribe to the
+			// pref store (toggling visibility stays the separate effect's job —
+			// it must not rebuild up to 16k cell polygons).
+			layer.visible = get(visible);
 			// Terrain layer sits at viewport.children[3] if grid layer
 			// mounted, viewport.children[2] otherwise. addChildAt with a
 			// clamped index works either way.

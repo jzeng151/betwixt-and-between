@@ -61,6 +61,21 @@ function createMapAnchorsStore() {
 	// lands (a tx is a tx); only the optimistic local update is gated.
 	// When the user returns to A, .load(A) refetches the canonical state.
 
+	// codex P2 (PR #58): authored-anchor writes invalidate synthetic anchors
+	// at/after their t_position server-side (invalidateSyntheticAnchorsAtOrAfter
+	// in createMapAnchor / updateMapAnchor / deleteMapAnchor), but the mutation
+	// response only carries the single written row (or 204 on delete). If the
+	// client holds a later synthetic anchor, it stays in the local store and
+	// projectState keeps selecting that stale snapshot, hiding the user's anchor
+	// change until a full reload. Refetch the canonical set after the optimistic
+	// update reconciles. Best-effort — a failed resync only leaves the stale
+	// snapshot until the next reload, so swallow rather than fail the mutation.
+	function resyncAfterWrite(mapId: string): void {
+		void load(mapId).catch((err) => {
+			console.error('anchor resync after write failed; projection may be stale until reload', err);
+		});
+	}
+
 	async function create(mapId: string, input: AnchorInput): Promise<MapAnchor> {
 		const res = await fetch(`/api/maps/${mapId}/anchors`, {
 			method: 'POST',
@@ -73,6 +88,7 @@ function createMapAnchorsStore() {
 		store.update((rows) =>
 			[...rows, created].sort((a, b) => a.tPosition - b.tPosition || a.id.localeCompare(b.id))
 		);
+		resyncAfterWrite(mapId);
 		return created;
 	}
 
@@ -94,6 +110,7 @@ function createMapAnchorsStore() {
 				.map((r) => (r.id === anchorId ? updated : r))
 				.sort((a, b) => a.tPosition - b.tPosition || a.id.localeCompare(b.id))
 		);
+		resyncAfterWrite(mapId);
 		return updated;
 	}
 
@@ -102,6 +119,7 @@ function createMapAnchorsStore() {
 		if (!res.ok) throw new Error(`Failed to delete anchor: ${await errorMessage(res)}`);
 		if (lastLoadedMapId !== mapId) return;
 		store.update((rows) => rows.filter((r) => r.id !== anchorId));
+		resyncAfterWrite(mapId);
 	}
 
 	// codex P2 (PR #58): evict synthetic anchors the server invalidated as a

@@ -285,6 +285,17 @@
 
 		return () => {
 			dragPlugin.plugins?.resume('drag');
+			// codex P2 (PR #58): the brush can deactivate mid-stroke — a map
+			// switch flips dataLoading and makes `active` false, or drawing mode
+			// takes over — before pointerup fires. Clear the in-flight gesture
+			// here too. Otherwise `painting` stays true: the re-entrancy guard
+			// swallows the next pointerdown, and a later pointerup commits the
+			// stale cells against the NEW activeMap/playhead. Mirrors the
+			// failure-path reset in commitStroke.
+			painting = false;
+			strokeId = null;
+			touched = new Map();
+			hoverCells = [];
 			try {
 				if (stagePointerDown) viewport.off('pointerdown', stagePointerDown);
 				if (stagePointerMove) viewport.off('pointermove', stagePointerMove);

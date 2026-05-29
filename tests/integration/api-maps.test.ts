@@ -1491,6 +1491,48 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		});
 	});
 
+	it('G2: duplicating a map copies its grid calibration but not its terrain (codex P2, PR #58)', async () => {
+		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Calibrated' } }));
+		const source = await readJson(sourceRes);
+		// Calibrate the source: hex, custom cell counts, scale, grid hidden.
+		await mapIdRoute.PATCH(
+			mkEvent({
+				params: { id: source.id },
+				body: {
+					gridType: 'hex',
+					gridCellsX: 48,
+					gridCellsY: 40,
+					gridScaleUnit: 'mi',
+					gridScaleValue: 5,
+					gridVisible: false
+				}
+			})
+		);
+		const cloneRes = await DUPLICATE_MAP(mkEvent({ params: { id: source.id } }));
+		const clone = (await readJson(cloneRes)) as {
+			id: string;
+			gridType: string;
+			gridCellsX: number;
+			gridCellsY: number;
+			gridScaleUnit: string;
+			gridScaleValue: number;
+			gridVisible: boolean;
+		};
+		expect(clone.gridType).toBe('hex');
+		expect(clone.gridCellsX).toBe(48);
+		expect(clone.gridCellsY).toBe(40);
+		expect(clone.gridScaleUnit).toBe('mi');
+		expect(clone.gridScaleValue).toBe(5);
+		expect(clone.gridVisible).toBe(false);
+		// Terrain is NOT cloned — the baseline anchor still starts empty.
+		const anchors = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, clone.id));
+		expect(anchors).toHaveLength(1);
+		expect((anchors[0].stateJsonb as { cells: unknown[] }).cells).toEqual([]);
+	});
+
 	it('G2: source map keeps its own baseline anchor untouched after duplicate', async () => {
 		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Source' } }));
 		const source = await readJson(sourceRes);
