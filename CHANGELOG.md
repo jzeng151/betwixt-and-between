@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.8.0.0] - 2026-05-28
+## [0.8.0.0] - 2026-05-29
 
 World Map v3 Slice 3 — terrain authoring, asset library, layers, and faction editing.
 
@@ -18,6 +18,9 @@ World Map v3 Slice 3 — terrain authoring, asset library, layers, and faction e
 - **Grouped chunked-undo.** `map_events.command_id` ties a stroke's chunks together; a single `POST /events/undo` soft-deletes the whole group atomically.
 - **Style whitelist validation.** `style` jsonb on entities and placements is validated server-side (allowed keys only, hex colors, clamped scale/opacity, 4 KB cap; 422 on violation).
 - Migrations `0018`–`0023`: grid columns, `is_synthetic`, `command_id` + partial index, `world_map_layer_prefs`, anchor `cells[]` backfill, auto-anchor index.
+- **Undo / redo for map edits.** Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z (scoped to the focused World Map window, ignored while typing) plus Undo/Redo buttons in the brush palette now drive the event undo/redo that previously had no UI. Paint, undo, and redo are optimistic — the canvas updates before the server round-trip and reconciles on the response.
+- **Loading state while a map loads.** The canvas shows a "Loading map…" overlay until the saved layer config, terrain/region data, and placements have all settled (each tracked by a bounded flag that can't get stuck on a failed load), so layers no longer flash on then snap to the saved config and placement markers no longer pop in afterward.
+- **Faction recolor UI.** An edit (pencil) button on each faction (including the system faction) opens an inline form with a name field and always-visible color swatches; Save commits name + color together.
 
 ### Fixed
 - **Same-playhead repaint no longer drops cells (codex P1).** Painting more terrain at the same playhead T after a synthetic anchor was already written there hit the `(world_map_id, t_position)` unique constraint; swallowing the conflict left the stale snapshot shadowing the new same-T events, so the just-painted cells vanished. The auto-anchor now rebuilds the snapshot to equal `projectState(maxT)` — folding the full live event log from the anchor strictly before maxT and replacing the synthetic anchor with a fresh row — so same-T repaints bake in correctly, late retroactive paints stay shadowed, and undo/delete still invalidates the anchor.
@@ -50,9 +53,17 @@ World Map v3 Slice 3 — terrain authoring, asset library, layers, and faction e
 - **Authored-anchor writes serialize with auto-anchor writes (codex P2, PR #58).** `createMapAnchor`/`updateMapAnchor`/`deleteMapAnchor` invalidated synthetic anchors and wrote outside the paint row lock, so an in-flight paint could re-materialize a synthetic anchor from the old base between the invalidation and the authored write, shadowing the user's anchor. Each now runs the invalidation + write under the same `world_maps ... FOR UPDATE` lock (and rolls the invalidation back if the write 409s on a duplicate T).
 - **Per-placement/entity icon styles now render (codex P2, PR #58).** The style cascade resolved `icon` but `PixiPlacementLayer` ignored it (always drew the circular marker), so a saved icon override was a silent no-op. The renderer now async-loads the icon texture and overlays it as a sprite (sized to the marker, dimmed to the resolved opacity), keeping the circle as the visual while loading and as the fallback on any load failure. Markers are now Containers with a stable hit area so click/tooltip interaction survives the circle→sprite swap; an internal render generation aborts texture loads that resolve after a re-render so a sprite can't attach to a torn-down marker.
 
+- **Grid renders on pre-existing maps (QA).** Grid visibility now follows the per-user layer toggle alone. It was AND-gated behind a per-map `grid_visible` column that has no UI and was backfilled `false` on existing maps, so the grid never drew even though the Layers checkbox read checked. The stroke is also lightened for legibility.
+- **Grid / terrain layer toggles reach the canvas (QA).** Their visibility `$effect` read the pref inside an `if (layer)` guard, so on the async-Pixi-import first run (layer still null) it never subscribed to the pref store and toggling did nothing afterward. It now reads the pref unconditionally (matching the region/placement layers).
+- **The World Map window is resizable (QA).** Map chrome (toolbar at `z-index:1000`, sidebar, bottom palettes) leaked high z-indexes into the window's stacking context and painted over the resize handles, killing the bottom edge + corners. `.win-content` is now `isolation: isolate` so the handles stay on top — fixes resize for every windowed app.
+- **Sidebar no longer covers the bottom palettes (QA).** Dropped the sidebar z-index and gave it `overflow-y: auto` scrolling; raised the placeables/asset/brush palettes and error toasts above it; reserved palette space so the brush size selector isn't occluded.
+- **Two quick brush clicks no longer paint a line (QA).** `commitStroke` kept `painting=true` until the POST resolved, so button-up pointermoves between two clicks recorded the cells between them and the second click's pointerup committed the line. The gesture now resets synchronously on pointerup; the POST fires with a captured snapshot.
+- **Undo/redo are race-free (QA).** `create()`, `undo()`, and `redo()` run on one serialization chain. Spamming undo previously fired concurrent requests whose out-of-order responses re-added strokes and corrupted the redo stack (and 422-stormed past the start of history); undoing right after a paint, before its POST committed, undid the previous event instead of the new one. Both are fixed; the empty-log guard also stops the 422 spam.
+- **Paint / undo / redo latency (QA).** The events store mutates locally before the POST and reconciles on the response (rolling back on failure), removing the visible lag on painting, undoing, and redoing.
+
 ### Tests
-- 5 Playwright E2E specs covering the new flows end-to-end: brush stroke + grouped undo (the production-500 regression guard), asset drag-drop placement, layer-toggle persistence across reload, faction rename, and polygon snap (Shift-on vs free-form differential).
-- Unit + integration coverage for paint_cells validation, auto-anchor (K=20, concurrent, stroke-boundary), layer-prefs CRUD + cross-user isolation, style cascade + validation, hex-grid and grid-snap math, and the asset/placement `source_asset_id` invariant. 1178 vitest passing.
+- ~10 Playwright E2E specs covering the new flows end-to-end: brush stroke + grouped undo (the production-500 regression guard), asset drag-drop placement, layer-toggle persistence across reload, faction rename + recolor, polygon snap (Shift-on vs free-form), the loading overlay (waits for layer-prefs / placements / terrain data), window resize (bottom edge under the palettes), and the brush QA bugs (size selector reachable, wide-drag paints a line, undo/redo, spam-undo, two-clicks-not-a-line, paint-then-undo race). Several are verified to fail without their fix.
+- Unit + integration coverage for paint_cells validation, auto-anchor (K=20, concurrent, stroke-boundary), layer-prefs CRUD + cross-user isolation, style cascade + validation, hex-grid and grid-snap math, and the asset/placement `source_asset_id` invariant. 1201 vitest passing.
 
 ## [0.7.9.0] - 2026-05-27
 
