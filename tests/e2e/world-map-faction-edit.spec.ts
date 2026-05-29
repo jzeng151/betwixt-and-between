@@ -1,13 +1,9 @@
 /**
- * Slice 3 F2 (Slice 1b T13 carry-over) — inline faction rename + recolor.
+ * Inline faction rename + recolor from the MapSidebar Factions list.
  *
- * The MapSidebar Factions list lets the user click a faction name to edit
- * it inline (Enter commits) and click its stripe to open a swatch picker
- * (selecting a swatch commits the recolor). Both PATCH /api/factions/[id].
- *
- * Recolor is the regression guard for the blur-race codex flagged: the
- * stripe button suppresses the name-input blur via mousedown preventDefault
- * so the swatch picker can open instead of commit+exiting edit mode.
+ * The ✎ button (or clicking the name) opens an inline edit form: a name
+ * field + color swatches (always visible) + Save/Cancel. Swatches select a
+ * color; Save commits name + color together. Both PATCH /api/factions/[id].
  */
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
@@ -66,11 +62,13 @@ test('rename and recolor a faction inline from the sidebar', async ({ page, requ
 		.toBe('New Banner');
 
 	// ── Recolor ──────────────────────────────────────────────────────────
-	// Re-enter edit, open the swatch picker via the stripe (must NOT blur-
-	// commit-and-exit), pick a different palette color (commits on click).
-	await win.locator('.faction-name-button', { hasText: 'New Banner' }).click();
-	await win.locator('.faction-row.editing .edit-stripe').click();
-	await win.locator('.edit-swatch-row [aria-label="Color #ef4444"]').click();
+	// Re-enter edit via the ✎ button; the swatches are visible immediately.
+	// Pick a different palette color (selects), then Save commits.
+	await win.locator('[aria-label="Edit New Banner"]').click();
+	const editingRow = win.locator('.faction-row.editing');
+	await expect(editingRow).toBeVisible();
+	await editingRow.locator('.color-swatch[aria-label="Color #ef4444"]').click();
+	await editingRow.locator('.edit-actions .btn-primary').click();
 
 	await expect
 		.poll(async () => (await factionById(request, faction.id))?.color, { timeout: 8000 })

@@ -230,6 +230,11 @@
     overflow: auto;
     padding: 16px;
     position: relative;
+    /* Contain the content's z-indexes in their own stacking context so app
+       chrome (e.g. the World Map toolbar at z-index:1000, its sidebar, and
+       the bottom palettes) can't paint over the window's resize handles —
+       which otherwise made the window un-resizable from the covered edges. */
+    isolation: isolate;
   }
 
   .win-content.bare {

@@ -130,25 +130,23 @@
 		}
 	}
 
-	// Slice 3 F2 (Slice 1b carry-over T13) — inline rename + recolor.
-	// PATCH endpoint exists from Slice 1b PR1; only the UI was deferred.
-	// One faction is in edit mode at a time; click-name enters rename,
-	// click-stripe opens the swatch picker, Enter/blur commits, Esc
-	// cancels. is_system rows can still be renamed/recolored — user
-	// owns them; only DELETE is blocked.
+	// Faction rename + recolor. The ✎ button next to delete (or the name)
+	// opens an inline edit form: a name field + the color swatches (always
+	// visible) + Save/Cancel. Swatches just SELECT a color (preview); Save
+	// commits name + color together, which sidesteps the blur/focus races the
+	// old click-stripe-then-swatch flow needed showColorPicker to manage.
+	// is_system factions can be renamed/recolored too — only DELETE is blocked.
 	let editingFactionId = $state<string | null>(null);
 	let editName = $state('');
 	let editColor = $state('');
 	let editBusy = $state(false);
 	let editError = $state('');
-	let showColorPicker = $state(false);
 
 	function startEdit(f: Faction) {
 		editingFactionId = f.id;
 		editName = f.name;
 		editColor = f.color;
 		editError = '';
-		showColorPicker = false;
 	}
 
 	function cancelEdit() {
@@ -156,7 +154,6 @@
 		editName = '';
 		editColor = '';
 		editError = '';
-		showColorPicker = false;
 	}
 
 	async function commitEdit(f: Faction) {
@@ -181,17 +178,6 @@
 		} finally {
 			editBusy = false;
 		}
-	}
-
-	function pickColor(c: string, faction: Faction) {
-		// Codex P2 — selecting a swatch never committed. Old behavior:
-		// editColor mutated + picker closed, focus stayed on the (now-
-		// removed) swatch button, no blur/Enter path fired commit. Fix:
-		// commit immediately on selection so the recolor persists in
-		// one click.
-		editColor = c;
-		showColorPicker = false;
-		void commitEdit(faction);
 	}
 </script>
 
@@ -268,36 +254,58 @@
 		{#each factionList as faction (faction.id)}
 			<li class="faction-row" class:editing={editingFactionId === faction.id}>
 				{#if editingFactionId === faction.id}
-					<!-- Slice 3 F2 — inline edit mode. Stripe becomes a color
-					     button (opens swatch picker); name becomes a text
-					     input. Enter commits, Esc cancels. -->
-					<button
-						type="button"
-						class="faction-stripe edit-stripe"
-						style="background: {editColor}"
-						aria-label="Pick color"
-						onmousedown={(e) => e.preventDefault()}
-						onclick={() => (showColorPicker = !showColorPicker)}
-						disabled={editBusy}
-					></button>
-					<!-- svelte-ignore a11y_autofocus -->
-					<input
-						type="text"
-						class="faction-name-input"
-						bind:value={editName}
-						autofocus
-						disabled={editBusy}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') void commitEdit(faction);
-							if (e.key === 'Escape') cancelEdit();
-						}}
-						onblur={() => {
-							// Blur commits unless the swatch picker is open
-							// (clicking a swatch fires blur AND we want the
-							// commit to come from the picker, not the input).
-							if (!showColorPicker) void commitEdit(faction);
-						}}
-					/>
+					<!-- Inline edit form: name field + color swatches (always
+					     shown) + Save/Cancel. Swatches select a color (preview on
+					     the live stripe); Save commits name + color together. -->
+					<div class="faction-edit">
+						<div class="faction-edit-row">
+							<span
+								class="faction-stripe"
+								style="background: {editColor}"
+								aria-hidden="true"
+							></span>
+							<!-- svelte-ignore a11y_autofocus -->
+							<input
+								type="text"
+								class="faction-name-input"
+								bind:value={editName}
+								autofocus
+								disabled={editBusy}
+								onkeydown={(e) => {
+									if (e.key === 'Enter') void commitEdit(faction);
+									if (e.key === 'Escape') cancelEdit();
+								}}
+							/>
+						</div>
+						<div class="color-swatches" aria-label="Faction color">
+							{#each MAP_PALETTE as c (c)}
+								<button
+									type="button"
+									class="color-swatch"
+									class:selected={editColor === c}
+									style="background: {c}"
+									aria-label={`Color ${c}`}
+									onclick={() => (editColor = c)}
+									disabled={editBusy}
+								></button>
+							{/each}
+						</div>
+						{#if editError}<p class="error-msg">{editError}</p>{/if}
+						<div class="edit-actions">
+							<button
+								type="button"
+								class="btn-secondary"
+								onclick={cancelEdit}
+								disabled={editBusy}>Cancel</button
+							>
+							<button
+								type="button"
+								class="btn-primary"
+								onclick={() => void commitEdit(faction)}
+								disabled={editBusy}>{editBusy ? 'Saving…' : 'Save'}</button
+							>
+						</div>
+					</div>
 				{:else}
 					<span
 						class="faction-stripe"
@@ -307,9 +315,16 @@
 					<button
 						type="button"
 						class="faction-name faction-name-button"
-						title={`Rename "${faction.name}"`}
+						title={`Edit "${faction.name}"`}
 						onclick={() => startEdit(faction)}
 					>{faction.name}</button>
+					<button
+						type="button"
+						class="btn-icon"
+						aria-label="Edit {faction.name}"
+						title="Rename / recolor"
+						onclick={() => startEdit(faction)}
+					>✎</button>
 					{#if faction.isSystem}
 						<!-- Slice 2 D1: system Neutral faction is the fallback ownership
 						     target for un-faction-ed regions. Delete would orphan every
@@ -327,27 +342,6 @@
 					{/if}
 				{/if}
 			</li>
-			{#if editingFactionId === faction.id && showColorPicker}
-				<li class="edit-swatch-row">
-					<div class="color-swatches">
-						{#each MAP_PALETTE as c (c)}
-							<button
-								type="button"
-								class="color-swatch"
-								class:selected={editColor === c}
-								style="background: {c}"
-								aria-label={`Color ${c}`}
-								onclick={() => pickColor(c, faction)}
-							></button>
-						{/each}
-					</div>
-				</li>
-			{/if}
-			{#if editingFactionId === faction.id && editError}
-				<li class="edit-error-row">
-					<p class="error-msg">{editError}</p>
-				</li>
-			{/if}
 		{/each}
 		{#if factionList.length === 0 && !creating}
 			<li class="empty-row">No factions yet.</li>
@@ -533,22 +527,32 @@
 		color: var(--color-accent, #c8942a);
 	}
 	.faction-row.editing {
+		/* The edit form stacks (name row → swatches → actions), so the row
+		   becomes a full-width block instead of a single horizontal line. */
+		align-items: stretch;
+		flex-direction: column;
+		gap: 6px;
+		padding: 6px;
+		border: 1px dashed var(--color-border);
+	}
+	.faction-edit {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.faction-edit-row {
+		display: flex;
 		align-items: center;
+		gap: 6px;
 	}
-	.edit-stripe {
-		border: 1px solid var(--color-border);
-		padding: 0;
-		cursor: pointer;
+	.faction-edit-row .faction-name-input {
+		flex: 1;
+		min-width: 0;
 	}
-	.edit-stripe:hover {
-		border-color: var(--color-accent, #c8942a);
-	}
-	.edit-swatch-row {
-		padding: 4px 0;
-		list-style: none;
-	}
-	.edit-error-row {
-		list-style: none;
+	.edit-actions {
+		display: flex;
+		gap: 6px;
+		justify-content: flex-end;
 	}
 	.empty-row {
 		color: var(--color-text-muted);
