@@ -56,39 +56,6 @@ export const PATCH: RequestHandler = async (event) => {
 		if (body.gridType !== 'square' && body.gridType !== 'hex') {
 			error(400, "gridType must be 'square' or 'hex'");
 		}
-		// codex P2 (PR #58): switching gridType (square↔hex) reinterprets the
-		// same stored (x,y) cell keys under a different geometry —
-		// PixiTerrainLayer draws those coords as square cells or hex axial
-		// cells — so existing terrain would move/distort even though the
-		// event/anchor data is unchanged. Reject the change once any non-erased
-		// terrain exists. Events are temporal, so a painted-then-erased cell
-		// still renders at an intermediate playhead; scan all live paint_cells
-		// events + anchor snapshots and treat 'unset' (erasures) as absent.
-		if (body.gridType !== existing.gridType) {
-			const terrain = await db.execute(sql`
-				SELECT 1 AS hit FROM (
-					SELECT c->>'biome' AS biome
-					FROM map_events me, jsonb_array_elements(me.payload_jsonb->'cells') AS c
-					WHERE me.world_map_id = ${event.params.id}
-					  AND me.kind = 'paint_cells' AND me.undone_at IS NULL
-					UNION ALL
-					SELECT c->>'biome' AS biome
-					FROM map_anchors ma, jsonb_array_elements(ma.state_jsonb->'cells') AS c
-					WHERE ma.world_map_id = ${event.params.id}
-				) cells
-				WHERE cells.biome <> 'unset'
-				LIMIT 1
-			`);
-			// drizzle execute shape differs by driver (neon {rows} vs pg-js array).
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			const rows = ((terrain as any).rows ?? terrain) as unknown[];
-			if (rows.length > 0) {
-				error(
-					409,
-					'Cannot change the grid type after terrain has been painted — erase all terrain first.'
-				);
-			}
-		}
 		updates.gridType = body.gridType;
 	}
 	if ('gridCellsX' in body) {
@@ -120,43 +87,6 @@ export const PATCH: RequestHandler = async (event) => {
 			error(400, 'gridVisible must be a boolean');
 		}
 		updates.gridVisible = body.gridVisible;
-	}
-	// codex P2: shrinking grid_cells_x/y below terrain that is visible at ANY
-	// playhead would orphan it — cells fall outside the new bounds yet still
-	// project at the new pitch off the usable grid. Map events are temporal, so
-	// the guard cannot collapse each cell to its LATEST biome: a cell painted
-	// out of bounds at T=1 and erased at T=2 is still projected (non-erased) at
-	// an intermediate T like 1.5, so scrubbing back renders OOB terrain after
-	// the shrink. Reject the shrink when ANY non-'unset' paint_cells interval
-	// (or anchor-snapshot cell) lies out of bounds — eraser rows (biome
-	// 'unset') don't count. Growth is always safe. (PR #58 codex P2: this
-	// supersedes the earlier latest-biome check, which wrongly allowed shrinks
-	// past painted-then-erased far cells.)
-	if ('gridCellsX' in body || 'gridCellsY' in body) {
-		const newCellsX = (updates.gridCellsX as number | undefined) ?? existing.gridCellsX;
-		const newCellsY = (updates.gridCellsY as number | undefined) ?? existing.gridCellsY;
-		if (newCellsX < existing.gridCellsX || newCellsY < existing.gridCellsY) {
-			const oob = await db.execute(sql`
-				SELECT 1 AS hit FROM (
-					SELECT (c->>'x')::int AS x, (c->>'y')::int AS y, c->>'biome' AS biome
-					FROM map_events me, jsonb_array_elements(me.payload_jsonb->'cells') AS c
-					WHERE me.world_map_id = ${event.params.id}
-					  AND me.kind = 'paint_cells' AND me.undone_at IS NULL
-					UNION ALL
-					SELECT (c->>'x')::int AS x, (c->>'y')::int AS y, c->>'biome' AS biome
-					FROM map_anchors ma, jsonb_array_elements(ma.state_jsonb->'cells') AS c
-					WHERE ma.world_map_id = ${event.params.id}
-				) cells
-				WHERE cells.biome <> 'unset' AND (cells.x >= ${newCellsX} OR cells.y >= ${newCellsY})
-				LIMIT 1
-			`);
-			// drizzle execute shape differs by driver (neon {rows} vs pg-js array).
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			const rows = ((oob as any).rows ?? oob) as unknown[];
-			if (rows.length > 0) {
-				error(409, 'Cannot shrink the grid below painted cells — erase the out-of-bounds terrain first.');
-			}
-		}
 	}
 
 	// locationId: explicit presence (including null) is meaningful — null means unlink.
@@ -235,11 +165,95 @@ export const PATCH: RequestHandler = async (event) => {
 
 	let updated;
 	try {
-		[updated] = await db
-			.update(worldMaps)
-			.set(updates)
-			.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)))
-			.returning();
+		updated = await db.transaction(async (tx) => {
+			// codex P2 (PR #58): grid edits READ terrain (the guards below) then
+			// WRITE the grid columns. Without a lock, a concurrent paint_cells
+			// POST — which takes SELECT ... FOR UPDATE on this world_maps row in
+			// createMapEvent — can validate + insert a far/old-geometry cell
+			// between our guard read and our write, leaving live terrain outside
+			// the new bounds or painted under the old grid type. Take the same
+			// row lock so grid edits serialize with terrain writes. Only when a
+			// grid field changes — other PATCH fields don't race terrain.
+			const gridTouched =
+				'gridType' in body || 'gridCellsX' in body || 'gridCellsY' in body;
+			if (gridTouched) {
+				await tx.execute(
+					sql`SELECT id FROM world_maps WHERE id = ${event.params.id} FOR UPDATE`
+				);
+
+				// gridType change reinterprets the same stored (x,y) cell keys
+				// under a different geometry (square cells vs hex axial), so
+				// existing terrain would move/distort. Reject once any non-erased
+				// terrain exists. Events are temporal — a painted-then-erased cell
+				// still renders at an intermediate playhead — so scan all live
+				// paint_cells events + anchor snapshots, treating 'unset' as absent.
+				if ('gridType' in body && body.gridType !== existing.gridType) {
+					const terrain = await tx.execute(sql`
+						SELECT 1 AS hit FROM (
+							SELECT c->>'biome' AS biome
+							FROM map_events me, jsonb_array_elements(me.payload_jsonb->'cells') AS c
+							WHERE me.world_map_id = ${event.params.id}
+							  AND me.kind = 'paint_cells' AND me.undone_at IS NULL
+							UNION ALL
+							SELECT c->>'biome' AS biome
+							FROM map_anchors ma, jsonb_array_elements(ma.state_jsonb->'cells') AS c
+							WHERE ma.world_map_id = ${event.params.id}
+						) cells
+						WHERE cells.biome <> 'unset'
+						LIMIT 1
+					`);
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					const rows = ((terrain as any).rows ?? terrain) as unknown[];
+					if (rows.length > 0) {
+						error(
+							409,
+							'Cannot change the grid type after terrain has been painted — erase all terrain first.'
+						);
+					}
+				}
+
+				// Shrinking grid_cells_x/y below terrain visible at ANY playhead
+				// orphans it (cells fall outside the new bounds yet still project
+				// off the usable grid). Same temporal reasoning: reject when ANY
+				// non-'unset' paint_cells interval (or anchor cell) is out of
+				// bounds, regardless of a later erase. Growth is always safe.
+				if ('gridCellsX' in body || 'gridCellsY' in body) {
+					const newCellsX = (updates.gridCellsX as number | undefined) ?? existing.gridCellsX;
+					const newCellsY = (updates.gridCellsY as number | undefined) ?? existing.gridCellsY;
+					if (newCellsX < existing.gridCellsX || newCellsY < existing.gridCellsY) {
+						const oob = await tx.execute(sql`
+							SELECT 1 AS hit FROM (
+								SELECT (c->>'x')::int AS x, (c->>'y')::int AS y, c->>'biome' AS biome
+								FROM map_events me, jsonb_array_elements(me.payload_jsonb->'cells') AS c
+								WHERE me.world_map_id = ${event.params.id}
+								  AND me.kind = 'paint_cells' AND me.undone_at IS NULL
+								UNION ALL
+								SELECT (c->>'x')::int AS x, (c->>'y')::int AS y, c->>'biome' AS biome
+								FROM map_anchors ma, jsonb_array_elements(ma.state_jsonb->'cells') AS c
+								WHERE ma.world_map_id = ${event.params.id}
+							) cells
+							WHERE cells.biome <> 'unset' AND (cells.x >= ${newCellsX} OR cells.y >= ${newCellsY})
+							LIMIT 1
+						`);
+						// eslint-disable-next-line @typescript-eslint/no-explicit-any
+						const rows = ((oob as any).rows ?? oob) as unknown[];
+						if (rows.length > 0) {
+							error(
+								409,
+								'Cannot shrink the grid below painted cells — erase the out-of-bounds terrain first.'
+							);
+						}
+					}
+				}
+			}
+
+			const [row] = await tx
+				.update(worldMaps)
+				.set(updates)
+				.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)))
+				.returning();
+			return row;
+		});
 	} catch (err) {
 		const wrapped = err as { code?: string; cause?: { code?: string }; message?: string };
 		const code = wrapped.code ?? wrapped.cause?.code ?? '';

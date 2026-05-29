@@ -39,6 +39,8 @@
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
 	type PixiGraphics = import('pixi.js').Graphics;
+	type PixiSprite = import('pixi.js').Sprite;
+	type PixiTexture = import('pixi.js').Texture;
 	type FederatedPointerEvent = import('pixi.js').FederatedPointerEvent;
 
 	let {
@@ -144,11 +146,20 @@
 		return m;
 	});
 
+	// codex P2 (PR #58): monotonic render token. Icon textures load
+	// asynchronously; if this effect re-runs (and destroys the current markers)
+	// while a load is in flight, the resolved sprite must NOT be added to a
+	// torn-down marker. Each effect run bumps this; in-flight loads capture the
+	// value at dispatch and abort on resolution if it has advanced.
+	let renderGeneration = 0;
+
 	$effect(() => {
 		const app = stageCtx.app;
 		const viewport = stageCtx.viewport;
 		if (!app || !PIXI || !viewport) return;
 		if (!activeMap?.width || !activeMap?.height) return;
+
+		const generation = ++renderGeneration;
 
 		if (!layer) {
 			layer = new PIXI.Container();
@@ -203,13 +214,16 @@
 			// Sprite radius scales with cascade.scale. Base radius 8.
 			const radius = 8 * resolved.scale;
 
-			const g: PixiGraphics = new PIXI.Graphics();
-			g.circle(cx, cy, radius)
-				.fill({ color: fillColor, alpha: fillAlpha })
-				.stroke({ color: 0x000000, width: 1.5, alpha: strokeAlpha });
-			g.eventMode = 'static';
-			g.cursor = 'pointer';
-			g.on('pointerover', (e: FederatedPointerEvent) => {
+			// Marker is a Container that owns the hit area + interaction, so the
+			// visual (circle fallback OR icon sprite) can swap without losing
+			// pointer handlers. codex P2 (PR #58): resolved.icon is now honored.
+			const marker: PixiContainer = new PIXI.Container();
+			marker.eventMode = 'static';
+			marker.cursor = 'pointer';
+			// Stable hit area on the container — independent of which child
+			// visual is shown (the circle may be hidden once an icon loads).
+			marker.hitArea = new PIXI.Circle(cx, cy, radius);
+			marker.on('pointerover', (e: FederatedPointerEvent) => {
 				const { x, y } = clientXY(e);
 				tooltip = {
 					x,
@@ -217,10 +231,10 @@
 					text: `${placeable.name} (${placeable.type})`
 				};
 			});
-			g.on('pointerout', () => {
+			marker.on('pointerout', () => {
 				tooltip = null;
 			});
-			g.on('pointertap', (e: FederatedPointerEvent) => {
+			marker.on('pointertap', (e: FederatedPointerEvent) => {
 				if (e.button !== 0) return;
 				e.stopPropagation();
 				const { x, y } = clientXY(e);
@@ -234,9 +248,62 @@
 					placeableName: placeable.name
 				};
 			});
-			layer.addChild(g);
+
+			const g: PixiGraphics = new PIXI.Graphics();
+			g.circle(cx, cy, radius)
+				.fill({ color: fillColor, alpha: fillAlpha })
+				.stroke({ color: 0x000000, width: 1.5, alpha: strokeAlpha });
+			marker.addChild(g);
+			layer.addChild(marker);
+
+			// codex P2 (PR #58): an accepted per-placement/entity icon override
+			// now renders. The circle stays as the visual while the texture
+			// loads and as the fallback if the load fails; on success the icon
+			// sprite overlays it and the circle is hidden.
+			if (resolved.icon) {
+				void loadIconSprite(resolved.icon, cx, cy, radius, fillAlpha, marker, g, generation);
+			}
 		}
 	});
+
+	// codex P2 (PR #58): load a placement's icon-override texture and overlay it
+	// as a sprite, sized to the marker diameter and dimmed to the resolved
+	// alpha. Generation-guarded (see renderGeneration) so a load resolving after
+	// the render effect re-ran doesn't attach to a destroyed marker. On a load
+	// failure (bad URL, CORS/CSP, decode error) the circle fallback simply
+	// stays — the override is best-effort, never blocking.
+	async function loadIconSprite(
+		url: string,
+		cx: number,
+		cy: number,
+		radius: number,
+		alpha: number,
+		marker: PixiContainer,
+		circle: PixiGraphics,
+		generation: number
+	): Promise<void> {
+		if (!PIXI) return;
+		let texture: PixiTexture;
+		try {
+			texture = await PIXI.Assets.load(url);
+		} catch {
+			return; // keep the circle fallback
+		}
+		// Effect re-ran (markers destroyed) or layer torn down while loading.
+		if (generation !== renderGeneration || !layer) return;
+		const sprite: PixiSprite = new PIXI.Sprite(texture);
+		sprite.anchor.set(0.5);
+		sprite.position.set(cx, cy);
+		// Fit the icon to the marker diameter; cascade.scale is already in radius.
+		sprite.width = radius * 2;
+		sprite.height = radius * 2;
+		sprite.alpha = alpha;
+		// The marker Container owns hit-testing via hitArea; the sprite must not
+		// intercept events or it would shadow the container's handlers.
+		sprite.eventMode = 'none';
+		circle.visible = false;
+		marker.addChild(sprite);
+	}
 
 	const menuItems = $derived(
 		menu

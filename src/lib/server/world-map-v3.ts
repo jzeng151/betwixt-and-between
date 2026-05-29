@@ -557,29 +557,39 @@ export async function createMapAnchor(
 	// This also clears stale downstream synthetic anchors that froze the old
 	// base. A real authored anchor at this T survives (synthetic-only delete)
 	// and still yields the 409 below.
-	await invalidateSyntheticAnchorsAtOrAfter(db, worldMapId, input.tPosition);
-
-	try {
-		const [row] = await db
-			.insert(mapAnchors)
-			.values({
-				worldMapId,
-				tPosition: input.tPosition,
-				stateJsonb: normalizedState
-			})
-			.returning();
-		return row;
-	} catch (err) {
-		// Unique violation on (world_map_id, t_position) when an anchor
-		// already exists at this T — surface as 409 so the UI can offer
-		// "edit existing anchor" instead of silently failing. Drizzle +
-		// PGlite both wrap the original Postgres error in `.cause`, so we
-		// check both levels.
-		if (isUniqueViolation(err)) {
-			error(409, 'An anchor already exists at this t_position');
+	//
+	// codex P2 (PR #58): the invalidate + insert run under the SAME world_maps
+	// row lock createMapEvent holds for paint writes. Without it, a paint can
+	// land between the synthetic delete and the authored insert and
+	// re-materialize a synthetic anchor from the OLD base — leaving the
+	// authored anchor shadowed by a stale snapshot at/after its T. The lock
+	// serializes the two; the transaction also rolls the invalidate back if the
+	// insert 409s, so a duplicate-T failure doesn't strip synthetic anchors.
+	return await db.transaction(async (tx) => {
+		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+		await invalidateSyntheticAnchorsAtOrAfter(tx, worldMapId, input.tPosition);
+		try {
+			const [row] = await tx
+				.insert(mapAnchors)
+				.values({
+					worldMapId,
+					tPosition: input.tPosition,
+					stateJsonb: normalizedState
+				})
+				.returning();
+			return row;
+		} catch (err) {
+			// Unique violation on (world_map_id, t_position) when an anchor
+			// already exists at this T — surface as 409 so the UI can offer
+			// "edit existing anchor" instead of silently failing. Drizzle +
+			// PGlite both wrap the original Postgres error in `.cause`, so we
+			// check both levels.
+			if (isUniqueViolation(err)) {
+				error(409, 'An anchor already exists at this t_position');
+			}
+			throw err;
 		}
-		throw err;
-	}
+	});
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -657,15 +667,23 @@ export async function updateMapAnchor(
 		existing.tPosition,
 		(updates.tPosition as number | undefined) ?? existing.tPosition
 	);
-	await invalidateSyntheticAnchorsAtOrAfter(db, worldMapId, affectedT);
 
+	// codex P2 (PR #58): invalidate + update under the same world_maps row lock
+	// paint writes take, so a concurrent paint can't re-materialize a synthetic
+	// anchor from the old base between the delete and the update and shadow the
+	// edited anchor.
 	let row: typeof mapAnchors.$inferSelect | undefined;
 	try {
-		[row] = await db
-			.update(mapAnchors)
-			.set(updates)
-			.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
-			.returning();
+		row = await db.transaction(async (tx) => {
+			await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+			await invalidateSyntheticAnchorsAtOrAfter(tx, worldMapId, affectedT);
+			const [updatedRow] = await tx
+				.update(mapAnchors)
+				.set(updates)
+				.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
+				.returning();
+			return updatedRow;
+		});
 	} catch (err) {
 		// Same UNIQUE (world_map_id, t_position) collision shape as
 		// createMapAnchor — PATCHing tPosition onto an anchor-occupied slot
@@ -700,14 +718,21 @@ export async function deleteMapAnchor(
 	if (!Number.isFinite(existing.tPosition)) {
 		error(422, 'Cannot delete the baseline anchor — it tracks canonical region geometry');
 	}
-	const deleted = await db
-		.delete(mapAnchors)
-		.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
-		.returning();
-	if (deleted.length === 0) error(404, 'Anchor not found');
-	// codex P2: removing an authored anchor changes the base for projections
-	// at/after its T — drop synthetic anchors that froze the old base there.
-	await invalidateSyntheticAnchorsAtOrAfter(db, worldMapId, existing.tPosition);
+	// codex P2 (PR #58): delete + invalidate under the same world_maps row lock
+	// paint writes take, so a concurrent paint can't slip a synthetic anchor in
+	// between the delete and the invalidation and survive it, shadowing the
+	// post-delete base.
+	await db.transaction(async (tx) => {
+		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+		const deleted = await tx
+			.delete(mapAnchors)
+			.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
+			.returning();
+		if (deleted.length === 0) error(404, 'Anchor not found');
+		// Removing an authored anchor changes the base for projections at/after
+		// its T — drop synthetic anchors that froze the old base there.
+		await invalidateSyntheticAnchorsAtOrAfter(tx, worldMapId, existing.tPosition);
+	});
 }
 
 // ── Event CRUD ──────────────────────────────────────────────────────────────
