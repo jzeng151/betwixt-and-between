@@ -41,7 +41,12 @@
 	import type { BiomeKind } from '$lib/features/map/projection.js';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
 
-	let { entityId = $bindable<string | undefined>(undefined) }: { entityId?: string } = $props();
+	// windowId is this WorldMap instance's window id (from WindowManager). Two
+	// world-map windows can coexist (the default `world-map` plus a location-
+	// specific `world-map-<entityId>`), so the keyboard-shortcut handler scopes
+	// to THIS window's id, not just appId — otherwise one Ctrl+Z would undo in
+	// every open map instance.
+	let { entityId = $bindable<string | undefined>(undefined), windowId = undefined }: { entityId?: string; windowId?: string } = $props();
 
 	// armed placeable id (chip selected in PlaceablesPalette). When non-null,
 	// the next click on the Pixi canvas creates a placement at the clicked
@@ -108,7 +113,12 @@
 	// the user is working in another app, and ignored while typing in a field.
 	function handleMapKeydown(e: KeyboardEvent) {
 		if (!activeMapId) return;
-		if (windowStore.focusedWindow()?.appId !== 'world-map') return;
+		// Scope to THIS window instance. Multiple world-map windows can be open
+		// (default + location-specific), each with its own handler + activeMapId;
+		// comparing the focused window's id (not just appId) ensures only the
+		// focused map undoes/redoes. Falls back to appId when windowId is unset.
+		const focused = windowStore.focusedWindow();
+		if (windowId ? focused?.id !== windowId : focused?.appId !== 'world-map') return;
 		const target = e.target as HTMLElement | null;
 		if (
 			target &&

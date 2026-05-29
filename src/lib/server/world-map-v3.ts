@@ -890,6 +890,28 @@ export async function createMapEvent(
 		// concurrency control between the same user's own writes.
 		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
 
+		// codex P2: re-validate paint_cells bounds UNDER the lock. The
+		// validateEventPayload() bounds check above ran before this transaction;
+		// a concurrent PATCH /api/maps/:id that shrinks grid_cells_x/y can commit
+		// between that read and acquiring this lock, and the PATCH's own shrink
+		// guard can't see this not-yet-inserted cell. Grid edits take the SAME
+		// world_maps FOR UPDATE lock, so re-reading the grid here sees their
+		// committed result — an out-of-bounds paint is rejected instead of
+		// slipping terrain outside the new bounds.
+		if (input.kind === 'paint_cells') {
+			const [lockedGrid] = await tx
+				.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY })
+				.from(worldMaps)
+				.where(eq(worldMaps.id, worldMapId));
+			if (!lockedGrid) error(404, 'world_map not found');
+			assertCellsInBounds(
+				(input.payloadJsonb as Partial<PaintCellsPayload>).cells,
+				lockedGrid.x,
+				lockedGrid.y,
+				'paint_cells'
+			);
+		}
+
 		const [row] = await tx
 			.insert(mapEvents)
 			.values({

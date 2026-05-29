@@ -34,6 +34,12 @@
 	async function toggleLayer(key: LayerKey): Promise<void> {
 		if (!activeMapId) return;
 		if (layersBusy.has(key)) return;
+		// codex P2: ignore toggles while prefs are still loading. During load the
+		// store is in 'loading' with mapId:null, so toggle()'s optimistic update
+		// is skipped (mapId mismatch) and the in-flight GET would overwrite the
+		// PATCH locally — the change persists server-side but the canvas/sidebar
+		// stay stale until another load. The checkbox is also disabled in markup.
+		if ($layerPrefs.status === 'loading') return;
 		layersBusy = new Set([...layersBusy, key]);
 		layersError = '';
 		try {
@@ -194,7 +200,7 @@
 							<input
 								type="checkbox"
 								checked={isVisible(key)}
-								disabled={layersBusy.has(key)}
+								disabled={layersBusy.has(key) || $layerPrefs.status === 'loading'}
 								onchange={() => void toggleLayer(key)}
 							/>
 							<span class="layer-name">{LAYER_LABELS[key]}</span>

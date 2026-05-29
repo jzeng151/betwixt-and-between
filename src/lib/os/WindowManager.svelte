@@ -69,7 +69,7 @@
         onClose={() => windowStore.close(win.id)}
       />
     {:else if win.appId === 'world-map'}
-      <WorldMap entityId={win.entityId ?? undefined} />
+      <WorldMap entityId={win.entityId ?? undefined} windowId={win.id} />
     {:else if win.appId === 'story-graph'}
       <StoryGraph />
     {:else if win.appId === 'focused-graph'}
