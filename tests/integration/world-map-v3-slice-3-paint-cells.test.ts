@@ -568,6 +568,68 @@ describe('Slice 3 B.5 — auto-anchor tight rules', () => {
 		expect(userAuthoredAfter.length).toBeGreaterThan(0);
 	});
 
+	it('returns invalidatedAnchorIds for a retroactive event that drops a synthetic anchor (PR #58 codex P2)', async () => {
+		const map = await seedMap();
+		// 20 forward paints → one synthetic auto-anchor at the stroke's maxT.
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: 'plains' }] }
+					}
+				})
+			);
+		}
+		const [synthetic] = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(and(eq(mapAnchors.worldMapId, map.id), eq(mapAnchors.isSynthetic, true)));
+		expect(synthetic).toBeDefined();
+
+		// A retroactive paint at T=0.5 sits before the synthetic anchor's T,
+		// so the server invalidates it and must surface its id on the response
+		// (the client uses these ids to evict the now-stale anchor locally).
+		const res = await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 0.5,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 0, y: 1, biome: 'forest' }], command_complete: true }
+				}
+			})
+		);
+		const body = (await readJson(res)) as { invalidatedAnchorIds: string[] };
+		expect(body.invalidatedAnchorIds).toContain(synthetic.id);
+
+		// The stale synthetic anchor is gone from the DB.
+		const stillThere = await currentDb
+			.select({ id: mapAnchors.id })
+			.from(mapAnchors)
+			.where(eq(mapAnchors.id, synthetic.id));
+		expect(stillThere).toHaveLength(0);
+	});
+
+	it('returns an empty invalidatedAnchorIds when nothing is invalidated (PR #58 codex P2)', async () => {
+		const map = await seedMap();
+		const res = await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		const body = (await readJson(res)) as { invalidatedAnchorIds: string[] };
+		expect(Array.isArray(body.invalidatedAnchorIds)).toBe(true);
+		expect(body.invalidatedAnchorIds).toHaveLength(0);
+	});
+
 	it('undo does NOT delete user-authored anchors (C.5)', async () => {
 		// Belt-and-suspenders: hard-delete is gated on is_synthetic=true.
 		// Even an aggressive undo cascade must leave user anchors alone.

@@ -801,7 +801,7 @@ export async function createMapEvent(
 	userId: string,
 	worldMapId: string,
 	input: EventInput
-): Promise<typeof mapEvents.$inferSelect> {
+): Promise<typeof mapEvents.$inferSelect & { invalidatedAnchorIds: string[] }> {
 	await assertMapOwnership(db, userId, worldMapId);
 	assertObjectBody(input);
 	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition)) {
@@ -887,13 +887,24 @@ export async function createMapEvent(
 		// snapshot when the stroke completes. Forward painting (the common
 		// case) advances T past every synthetic anchor, so this is a no-op
 		// there; only retroactive/same-T edits pay the re-fold cost.
-		await invalidateSyntheticAnchorsAtOrAfter(tx, worldMapId, input.tPosition);
+		//
+		// codex P2 (PR #58): the deleted synthetic-anchor ids ride back on
+		// the response so the client can evict them from mapAnchorsStore.
+		// Otherwise the /events response returns only the new event, the
+		// client appends it but keeps the now-stale synthetic anchor, and
+		// projectState still picks that anchor — hiding the just-authored
+		// retroactive/same-T change until a full reload.
+		const invalidatedAnchorIds = await invalidateSyntheticAnchorsAtOrAfter(
+			tx,
+			worldMapId,
+			input.tPosition
+		);
 
 		if (input.kind === 'paint_cells') {
 			await maybeWriteAutoAnchor(tx, worldMapId, input, commandId);
 		}
 
-		return row;
+		return { ...row, invalidatedAnchorIds };
 	});
 }
 
@@ -1215,8 +1226,8 @@ async function invalidateSyntheticAnchorsAtOrAfter(
 	db: any,
 	worldMapId: string,
 	tPosition: number
-): Promise<void> {
-	await db
+): Promise<string[]> {
+	const deleted = await db
 		.delete(mapAnchors)
 		.where(
 			and(
@@ -1224,7 +1235,9 @@ async function invalidateSyntheticAnchorsAtOrAfter(
 				eq(mapAnchors.isSynthetic, true),
 				sql`${mapAnchors.tPosition} >= ${tPosition}`
 			)
-		);
+		)
+		.returning({ id: mapAnchors.id });
+	return (deleted as Array<{ id: string }>).map((r) => r.id);
 }
 
 export async function deleteMapEvent(

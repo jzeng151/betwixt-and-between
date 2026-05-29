@@ -301,6 +301,40 @@ describe('/api/maps/[id]', () => {
 		expect(body.gridCellsY).toBe(16);
 	});
 
+	it('PATCH rejects changing gridType after terrain has been painted (codex P2, PR #58)', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+			gridType: string;
+		};
+		// Paint a cell, then attempt to flip the geometry. The stored (x,y)
+		// keys would reinterpret under hex axial coords and the terrain would
+		// distort, so the change must be rejected.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 2, y: 2, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		await expect(
+			mapIdRoute.PATCH(mkEvent({ params: { id: created.id }, body: { gridType: 'hex' } }))
+		).rejects.toMatchObject({ status: 409 });
+	});
+
+	it('PATCH allows changing gridType when no terrain exists (codex P2, PR #58)', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+		};
+		const res = await mapIdRoute.PATCH(
+			mkEvent({ params: { id: created.id }, body: { gridType: 'hex' } })
+		);
+		const body = (await readJson(res)) as { gridType: string };
+		expect(body.gridType).toBe('hex');
+	});
+
 	it('PATCH allows shrinking past a cell that was painted then erased (codex P2)', async () => {
 		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
 			id: string;

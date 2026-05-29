@@ -122,4 +122,39 @@ describe('resolveStyle cascade', () => {
 		// null style → no overrides; type defaults stand.
 		expect(style.color).toBe(STYLE_DEFAULTS.Character!.color);
 	});
+
+	// PR #58 codex P2 — per-placement style override is the top cascade layer.
+	it('placement.data.style overrides entity.data.style', () => {
+		const style = resolveStyle(
+			mk({ type: 'Character', data: { style: { color: '#ff0000', scale: 2 } } }),
+			{ color: '#00ff00' }
+		);
+		// Placement color wins; scale (not set on placement) keeps entity override.
+		expect(style.color).toBe('#00ff00');
+		expect(style.scale).toBe(2);
+	});
+
+	it('placement override merges per-field, falling through to entity/type/global', () => {
+		const style = resolveStyle(
+			mk({ type: 'Artifact', data: { style: { opacity: 0.5 } } }),
+			{ scale: 3, opacity: 0.9 }
+		);
+		expect(style.scale).toBe(3); // placement
+		expect(style.opacity).toBe(0.9); // placement beats entity's 0.5
+		expect(style.color).toBe(STYLE_DEFAULTS.Artifact!.color); // neither set → type default
+	});
+
+	it('absent placementStyle leaves the entity-level cascade unchanged', () => {
+		const entity = mk({ type: 'Character', data: { style: { color: '#abcdef' } } });
+		expect(resolveStyle(entity, undefined)).toEqual(resolveStyle(entity));
+	});
+
+	it('malformed placementStyle is ignored (unknown keys dropped)', () => {
+		const style = resolveStyle(
+			mk({ type: 'Character', data: { style: { color: '#111111' } } }),
+			{ color: 42, bogus: 'x' } as unknown
+		);
+		// Non-string placement color falls through to the entity override.
+		expect(style.color).toBe('#111111');
+	});
 });

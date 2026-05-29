@@ -104,6 +104,18 @@ function createMapAnchorsStore() {
 		store.update((rows) => rows.filter((r) => r.id !== anchorId));
 	}
 
+	// codex P2 (PR #58): evict synthetic anchors the server invalidated as a
+	// side effect of an event write (createMapEvent returns their ids). No
+	// network call — the rows are already gone server-side; this only keeps
+	// the local cache consistent so projectState doesn't pick a stale anchor.
+	// Honors lastLoadedMapId like the mutation paths above.
+	function dropLocal(mapId: string, anchorIds: string[]): void {
+		if (anchorIds.length === 0) return;
+		if (lastLoadedMapId !== mapId) return;
+		const drop = new Set(anchorIds);
+		store.update((rows) => rows.filter((r) => !drop.has(r.id)));
+	}
+
 	function reset(): void {
 		lastLoadedMapId = null;
 		store.set([]);
@@ -115,6 +127,7 @@ function createMapAnchorsStore() {
 		create,
 		update,
 		delete: remove,
+		dropLocal,
 		reset
 	};
 }

@@ -1217,9 +1217,20 @@
 			<!-- Slice 3 T8' asset library — drag source for placements.
 			     Drop target lives on the pixi-drop-target wrapper above. -->
 			<AssetLibrary />
-			<!-- Slice 3 T5 brush palette. Mounts under the canvas alongside
-			     PlaceablesPalette. Toggling brush ON disarms any placement
-			     chip (cross-exclusion in $effect above). -->
+			{#if placementError}
+				<div class="placement-error" role="alert">
+					{placementError}
+					<button type="button" onclick={() => (placementError = '')}>✕</button>
+				</div>
+			{/if}
+		{/if}
+		{#if hasImage}
+			<!-- Slice 3 T5 brush palette. codex P2 (PR #58): gated on
+			     hasImage only, NOT on a linked Location — terrain painting
+			     needs just the map image + grid. Duplicated maps keep
+			     locationId: null, so Location-gating this hid the brush on
+			     clones. Toggling brush ON disarms any placement chip
+			     (cross-exclusion in $effect above). -->
 			<BrushPalette
 				active={brushActive}
 				biome={brushBiome}
@@ -1228,12 +1239,6 @@
 				onSetBiome={(b) => (brushBiome = b)}
 				onSetSize={(s) => (brushSize = s)}
 			/>
-			{#if placementError}
-				<div class="placement-error" role="alert">
-					{placementError}
-					<button type="button" onclick={() => (placementError = '')}>✕</button>
-				</div>
-			{/if}
 		{/if}
 		{#if !hasImage}
 			<div class="upload-area">

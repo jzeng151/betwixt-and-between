@@ -265,6 +265,18 @@
 		};
 
 		viewport.eventMode = 'static';
+		// codex P2 (PR #58): while brush mode is active, suspend the
+		// pixi-viewport 'drag' plugin (installed by PixiStage via
+		// viewport.drag()). Otherwise a click-and-drag paint gesture also
+		// pans the viewport, so getLocalPosition(viewport) drifts under the
+		// cursor mid-stroke and records unintended cells. Pinch/wheel zoom
+		// stay live — only the pan-on-drag conflicts with painting. Resumed
+		// on cleanup (brush deactivated / unmount). Optional-chained so a
+		// mocked viewport without a plugin manager is a no-op in tests.
+		const dragPlugin = viewport as unknown as {
+			plugins?: { pause(name: string): void; resume(name: string): void };
+		};
+		dragPlugin.plugins?.pause('drag');
 		viewport.on('pointerdown', stagePointerDown);
 		viewport.on('pointermove', stagePointerMove);
 		viewport.on('pointerup', stagePointerUp);
@@ -272,6 +284,7 @@
 		viewport.on('pointerleave', stagePointerLeave);
 
 		return () => {
+			dragPlugin.plugins?.resume('drag');
 			try {
 				if (stagePointerDown) viewport.off('pointerdown', stagePointerDown);
 				if (stagePointerMove) viewport.off('pointermove', stagePointerMove);

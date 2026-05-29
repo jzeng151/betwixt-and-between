@@ -56,6 +56,39 @@ export const PATCH: RequestHandler = async (event) => {
 		if (body.gridType !== 'square' && body.gridType !== 'hex') {
 			error(400, "gridType must be 'square' or 'hex'");
 		}
+		// codex P2 (PR #58): switching gridType (square↔hex) reinterprets the
+		// same stored (x,y) cell keys under a different geometry —
+		// PixiTerrainLayer draws those coords as square cells or hex axial
+		// cells — so existing terrain would move/distort even though the
+		// event/anchor data is unchanged. Reject the change once any non-erased
+		// terrain exists. Events are temporal, so a painted-then-erased cell
+		// still renders at an intermediate playhead; scan all live paint_cells
+		// events + anchor snapshots and treat 'unset' (erasures) as absent.
+		if (body.gridType !== existing.gridType) {
+			const terrain = await db.execute(sql`
+				SELECT 1 AS hit FROM (
+					SELECT c->>'biome' AS biome
+					FROM map_events me, jsonb_array_elements(me.payload_jsonb->'cells') AS c
+					WHERE me.world_map_id = ${event.params.id}
+					  AND me.kind = 'paint_cells' AND me.undone_at IS NULL
+					UNION ALL
+					SELECT c->>'biome' AS biome
+					FROM map_anchors ma, jsonb_array_elements(ma.state_jsonb->'cells') AS c
+					WHERE ma.world_map_id = ${event.params.id}
+				) cells
+				WHERE cells.biome <> 'unset'
+				LIMIT 1
+			`);
+			// drizzle execute shape differs by driver (neon {rows} vs pg-js array).
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const rows = ((terrain as any).rows ?? terrain) as unknown[];
+			if (rows.length > 0) {
+				error(
+					409,
+					'Cannot change the grid type after terrain has been painted — erase all terrain first.'
+				);
+			}
+		}
 		updates.gridType = body.gridType;
 	}
 	if ('gridCellsX' in body) {

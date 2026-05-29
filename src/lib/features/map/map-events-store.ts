@@ -4,6 +4,7 @@
 
 import { writable } from 'svelte/store';
 import { errorMessage } from '$lib/util/api-error-message.js';
+import { mapAnchorsStore } from './map-anchors-store.js';
 import type { EventKind } from './projection.js';
 
 export type MapEvent = {
@@ -92,8 +93,16 @@ function createMapEventsStore() {
 			body: JSON.stringify(input)
 		});
 		if (!res.ok) throw new Error(`Failed to create event: ${await errorMessage(res)}`);
-		const created = (await res.json()) as MapEvent;
+		// codex P2 (PR #58): the server drops synthetic anchors at/after this
+		// event's tPosition and returns their ids. Evict them from the anchors
+		// store so projectState doesn't keep picking a stale snapshot that
+		// excludes the just-authored event. Strip the field before storing —
+		// it's not part of the MapEvent shape.
+		const { invalidatedAnchorIds, ...created } = (await res.json()) as MapEvent & {
+			invalidatedAnchorIds?: string[];
+		};
 		if (lastLoadedMapId !== mapId) return created;
+		if (invalidatedAnchorIds?.length) mapAnchorsStore.dropLocal(mapId, invalidatedAnchorIds);
 		store.update((rows) => [...rows, created].sort(compareEvents));
 		// New event authored — invalidate the redo stack (D3 contract).
 		if (redoStackForMapId === mapId) redoStore.set([]);
@@ -167,8 +176,13 @@ function createMapEventsStore() {
 			redoStore.update((stack) => [...stack, popped!]);
 			throw new Error(`Failed to redo: ${await errorMessage(res)}`);
 		}
-		const created = (await res.json()) as MapEvent;
+		// Redo re-POSTs the event, so it can invalidate synthetic anchors too
+		// (codex P2, PR #58) — evict them client-side just like create().
+		const { invalidatedAnchorIds, ...created } = (await res.json()) as MapEvent & {
+			invalidatedAnchorIds?: string[];
+		};
 		if (lastLoadedMapId !== mapId) return created;
+		if (invalidatedAnchorIds?.length) mapAnchorsStore.dropLocal(mapId, invalidatedAnchorIds);
 		store.update((rows) => [...rows, created].sort(compareEvents));
 		return created;
 	}

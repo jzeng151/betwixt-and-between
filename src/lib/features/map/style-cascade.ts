@@ -1,14 +1,22 @@
 // Slice 3 D5 + outside-voice B6 — style cascade resolver.
 //
-// Three-layer merge for rendering placement styles:
+// Four-layer merge for rendering placement styles (highest priority last):
 //
 //   GLOBAL_STYLE_DEFAULT
 //     ⊕ STYLE_DEFAULTS[entity.type]
 //     ⊕ entity.data.style
+//     ⊕ placement.data.style   (per-instance override)
 //
-// User-style-prefs (the 4th layer in the original A7) is deferred to
+// User-style-prefs (the layer in the original A7) is deferred to
 // Slice 4 with the editor UI (B4). When Slice 4 lands, it inserts
 // between STYLE_DEFAULTS and entity.data.style.
+//
+// codex P2 (PR #58): the placement endpoints accept + validate a
+// per-instance `placement.data.style`, but the renderer only resolved
+// entity-level style and ignored it, so a customized single-placement
+// color/scale/opacity persisted but never rendered. The optional
+// `placementStyle` arg threads that instance override in as the
+// top-priority layer.
 //
 // Per outside-voice B6, this module is a PURE FUNCTION. projection.ts
 // does NOT know about entities or placements — it only folds anchors +
@@ -63,22 +71,46 @@ export const STYLE_DEFAULTS: Partial<Record<EntityType, StyleOverride>> = {
 
 /**
  * Resolve the final style for an entity by cascading through GLOBAL →
- * TYPE_DEFAULTS → instance overrides. Unknown keys in entity.data.style
- * are silently dropped (the merge only copies the four known fields).
+ * TYPE_DEFAULTS → entity override → placement override. Unknown keys in
+ * either override are silently dropped (the merge only copies the four
+ * known fields). `placementStyle` is the raw `placement.data.style` of the
+ * specific map instance being rendered; pass it so a per-placement
+ * customization takes precedence over the entity-level style.
  */
-export function resolveStyle(entity: Entity): ResolvedStyle {
+export function resolveStyle(entity: Entity, placementStyle?: unknown): ResolvedStyle {
 	const typeDefault = STYLE_DEFAULTS[entity.type] ?? {};
-	const rawOverride = extractStyleOverride(entity.data?.style);
+	const entityOverride = extractStyleOverride(entity.data?.style);
+	const instanceOverride = extractStyleOverride(placementStyle);
 	return {
-		color: pickString(rawOverride.color, typeDefault.color, GLOBAL_STYLE_DEFAULT.color),
-		icon: pickIcon(rawOverride.icon, typeDefault.icon, GLOBAL_STYLE_DEFAULT.icon),
+		color: pickString(
+			instanceOverride.color,
+			entityOverride.color,
+			typeDefault.color,
+			GLOBAL_STYLE_DEFAULT.color
+		),
+		icon: pickIcon(
+			instanceOverride.icon,
+			entityOverride.icon,
+			typeDefault.icon,
+			GLOBAL_STYLE_DEFAULT.icon
+		),
 		scale: clampNumber(
-			pickNumber(rawOverride.scale, typeDefault.scale, GLOBAL_STYLE_DEFAULT.scale),
+			pickNumber(
+				instanceOverride.scale,
+				entityOverride.scale,
+				typeDefault.scale,
+				GLOBAL_STYLE_DEFAULT.scale
+			),
 			0.1,
 			10
 		),
 		opacity: clampNumber(
-			pickNumber(rawOverride.opacity, typeDefault.opacity, GLOBAL_STYLE_DEFAULT.opacity),
+			pickNumber(
+				instanceOverride.opacity,
+				entityOverride.opacity,
+				typeDefault.opacity,
+				GLOBAL_STYLE_DEFAULT.opacity
+			),
 			0,
 			1
 		)

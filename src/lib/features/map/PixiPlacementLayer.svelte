@@ -180,7 +180,10 @@
 			// so visuals don't regress for entities without explicit
 			// styles. resolveStyle's color is preferred; the legacy is
 			// the fallback for type defaults the new const doesn't list.
-			const resolved = resolveStyle(placeable);
+			// codex P2 (PR #58): pass the per-placement style override
+			// (placement.data.style) so an instance customization wins over
+			// the entity-level style instead of being silently ignored.
+			const resolved = resolveStyle(placeable, placement.data?.style);
 			const fillColor =
 				resolved.color === GLOBAL_DEFAULT_COLOR
 					? parseHex(getEntityTypeColor(placeable.type))
