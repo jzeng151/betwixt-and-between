@@ -28,11 +28,26 @@
 		active: boolean;
 		biome: BiomeKind;
 		size: 1 | 3 | 5;
+		canUndo?: boolean;
+		canRedo?: boolean;
 		onSetActive: (active: boolean) => void;
 		onSetBiome: (biome: BiomeKind) => void;
 		onSetSize: (size: 1 | 3 | 5) => void;
+		onUndo?: () => void;
+		onRedo?: () => void;
 	}
-	let { active, biome, size, onSetActive, onSetBiome, onSetSize }: Props = $props();
+	let {
+		active,
+		biome,
+		size,
+		canUndo = false,
+		canRedo = false,
+		onSetActive,
+		onSetBiome,
+		onSetSize,
+		onUndo,
+		onRedo
+	}: Props = $props();
 
 	// Paintable biomes first; 'unset' (eraser) rendered as a separate
 	// affordance to the right so it visually reads as a tool.
@@ -109,6 +124,27 @@
 					{s}
 				</button>
 			{/each}
+		</div>
+
+		<div class="history-controls" aria-label="History">
+			<button
+				type="button"
+				class="history-button"
+				disabled={!canUndo}
+				onclick={() => onUndo?.()}
+				title="Undo (Ctrl/Cmd+Z)"
+			>
+				↶ Undo
+			</button>
+			<button
+				type="button"
+				class="history-button"
+				disabled={!canRedo}
+				onclick={() => onRedo?.()}
+				title="Redo (Ctrl/Cmd+Shift+Z)"
+			>
+				↷ Redo
+			</button>
 		</div>
 	</div>
 </div>
@@ -243,5 +279,26 @@
 	.size-button.armed {
 		border-color: var(--color-accent, #c8942a);
 		background: color-mix(in srgb, var(--color-accent, #c8942a) 25%, transparent);
+	}
+	.history-controls {
+		display: flex;
+		gap: 4px;
+	}
+	.history-button {
+		padding: 4px 8px;
+		border-radius: 4px;
+		border: 1px solid var(--color-border, #333);
+		background: var(--color-bg, #1a1a1a);
+		color: var(--color-text, #ddd);
+		font-size: 11px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.history-button:hover:not(:disabled) {
+		border-color: var(--color-accent, #c8942a);
+	}
+	.history-button:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 </style>

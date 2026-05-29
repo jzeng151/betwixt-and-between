@@ -2,7 +2,7 @@
 // an event means delete + insert. Scoped per world_map like the anchors
 // store.
 
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { errorMessage } from '$lib/util/api-error-message.js';
 import { mapAnchorsStore } from './map-anchors-store.js';
 import type { EventKind } from './projection.js';
@@ -15,6 +15,10 @@ export type MapEvent = {
 	payloadJsonb: unknown;
 	sourceEventId: string | null;
 	createdAt: string;
+	// Groups chunked-stroke events under one undo command (map_events.command_id).
+	// NULL = standalone event. The server returns it on every row; the client
+	// uses it to predict the undo group for optimistic undo.
+	commandId?: string | null;
 };
 
 export type EventInput = {
@@ -52,6 +56,23 @@ function createMapEventsStore() {
 	// currently-loaded map.
 	const redoStore = writable<MapEvent[]>([]);
 	let redoStackForMapId: string | null = null;
+
+	// Serialize undo/redo so spamming them can't fire concurrent POSTs. The
+	// server's undo pops the latest LIVE event; N in-flight optimistic undos
+	// would race, and out-of-order responses made each call's reconciliation
+	// re-add another call's predicted group (strokes "came back" while the
+	// redo stack corrupted). Running one op at a time keeps each prediction
+	// matched to the row the server actually pops. A single (un-spammed) op
+	// still runs on the next microtask — visually instant.
+	let opChain: Promise<void> = Promise.resolve();
+	function enqueue<T>(task: () => Promise<T>): Promise<T> {
+		const result = opChain.then(task);
+		opChain = result.then(
+			() => undefined,
+			() => undefined
+		);
+		return result;
+	}
 
 	// Pages through /api/maps/[id]/events until next_cursor is null. See
 	// map-anchors-store.ts for the lastLoadedMapId rationale (Codex P1 on
@@ -101,7 +122,8 @@ function createMapEventsStore() {
 			kind: input.kind,
 			payloadJsonb: input.payloadJsonb,
 			sourceEventId: input.sourceEventId ?? null,
-			createdAt: new Date().toISOString()
+			createdAt: new Date().toISOString(),
+			commandId: input.commandId ?? null
 		};
 		if (lastLoadedMapId === mapId) {
 			store.update((rows) => [...rows, optimistic].sort(compareEvents));
@@ -162,21 +184,74 @@ function createMapEventsStore() {
 	// Slice 2 D3 (T7) — pop the latest live event from the server, push
 	// onto the redo stack. Surfaces 422 ("No events to undo") to callers
 	// unchanged so the UI can disable the undo button on empty stack.
-	async function undo(mapId: string): Promise<MapEvent | null> {
-		const res = await fetch(`/api/maps/${mapId}/events/undo`, { method: 'POST' });
-		if (res.status === 422) return null;
-		if (!res.ok) throw new Error(`Failed to undo: ${await errorMessage(res)}`);
-		// Slice 3 B5: server now returns an array. Length 1 for standalone
-		// events (legacy); length N for chunked brush strokes that share a
-		// command_id. All N rows are filtered from local state in one pass.
+	function undo(mapId: string): Promise<MapEvent | null> {
+		return enqueue(() => undoImpl(mapId));
+	}
+	async function undoImpl(mapId: string): Promise<MapEvent | null> {
+		// Optimistic undo: predict the command group the server will pop — the
+		// latest live event plus any events sharing its commandId — and remove
+		// it from the store NOW so the terrain updates without waiting for the
+		// round-trip (the "slight delay" QA flagged). Reconcile to the server's
+		// authoritative set on response; roll the prediction back if the server
+		// had nothing to undo or the request failed.
+		const current = get(store);
+		// Nothing locally to undo → don't POST (avoids the 422 spam when undo
+		// is hammered past the start of history). The Undo button + Ctrl+Z both
+		// no-op cleanly. Serialization above means `current` already reflects
+		// every prior undo in the queue.
+		if (lastLoadedMapId === mapId && current.length === 0) return null;
+		const latestLocal = current.length ? current[current.length - 1] : null;
+		let predicted: MapEvent[] = [];
+		if (latestLocal && lastLoadedMapId === mapId) {
+			const gid = latestLocal.commandId ?? null;
+			predicted = gid ? current.filter((r) => (r.commandId ?? null) === gid) : [latestLocal];
+			const ids = new Set(predicted.map((r) => r.id));
+			store.update((rows) => rows.filter((r) => !ids.has(r.id)));
+		}
+		const rollback = () => {
+			if (lastLoadedMapId === mapId && predicted.length) {
+				store.update((rows) => [...rows, ...predicted].sort(compareEvents));
+			}
+		};
+
+		let res: Response;
+		try {
+			res = await fetch(`/api/maps/${mapId}/events/undo`, { method: 'POST' });
+		} catch (err) {
+			rollback();
+			throw err;
+		}
+		if (res.status === 422) {
+			rollback();
+			return null;
+		}
+		if (!res.ok) {
+			rollback();
+			throw new Error(`Failed to undo: ${await errorMessage(res)}`);
+		}
+		// Slice 3 B5: server returns an array. Length 1 for standalone events;
+		// length N for chunked brush strokes that share a command_id.
 		const undone = (await res.json()) as MapEvent[];
-		if (undone.length === 0) return null;
+		if (undone.length === 0) {
+			rollback();
+			return null;
+		}
 		const undoneIds = new Set(undone.map((e) => e.id));
 		// Latest popped event (commit DESC) is what callers historically
 		// got back — preserve that for return-shape compatibility.
 		const latest = undone[0];
 		if (lastLoadedMapId !== mapId) return latest;
-		store.update((rows) => rows.filter((r) => !undoneIds.has(r.id)));
+		// Reconcile the optimistic removal with the server's authoritative set:
+		// drop every server-undone row, and restore any row we removed
+		// optimistically that the server did NOT actually undo (prediction
+		// mismatch — rare, but never silently lose an event).
+		store.update((rows) => {
+			const next = rows.filter((r) => !undoneIds.has(r.id));
+			for (const r of predicted) {
+				if (!undoneIds.has(r.id) && !next.some((x) => x.id === r.id)) next.push(r);
+			}
+			return next.sort(compareEvents);
+		});
 		// codex P2 (PR #58): undo also invalidates synthetic anchors
 		// server-side (undoLatestMapEvent runs the same invalidation as the
 		// write paths). The /events/undo response is contractually an array of
@@ -206,7 +281,10 @@ function createMapEventsStore() {
 	// Re-POSTs the most recently undone event. Server has no redo state;
 	// this creates a fresh row (new id + created_at, same t_position +
 	// payload). Returns null if the redo stack is empty for this map.
-	async function redo(mapId: string): Promise<MapEvent | null> {
+	function redo(mapId: string): Promise<MapEvent | null> {
+		return enqueue(() => redoImpl(mapId));
+	}
+	async function redoImpl(mapId: string): Promise<MapEvent | null> {
 		if (redoStackForMapId !== mapId) return null;
 		let popped: MapEvent | undefined;
 		redoStore.update((stack) => {
@@ -214,22 +292,48 @@ function createMapEventsStore() {
 			return stack.slice(0, -1);
 		});
 		if (!popped) return null;
+		const poppedRow = popped;
+		// Optimistic: re-add the event to the store NOW (temp id) so the terrain
+		// reappears without waiting for the re-POST (the redo delay QA flagged).
+		// Swapped for the server row on success; on failure remove it and push
+		// the event back onto the redo stack so the user can retry.
+		const tempId = `temp:${crypto.randomUUID()}`;
+		const optimistic: MapEvent = {
+			...poppedRow,
+			id: tempId,
+			createdAt: new Date().toISOString()
+		};
+		if (lastLoadedMapId === mapId) {
+			store.update((rows) => [...rows, optimistic].sort(compareEvents));
+		}
+		const rollback = () => {
+			if (lastLoadedMapId === mapId) {
+				store.update((rows) => rows.filter((r) => r.id !== tempId));
+			}
+			redoStore.update((stack) => [...stack, poppedRow]);
+		};
+
 		// `create` would clear the redo stack on success — we just popped
 		// from it, so the clear is a no-op. Use the raw POST so the
 		// behavior stays explicit.
-		const res = await fetch(`/api/maps/${mapId}/events`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				tPosition: popped.tPosition,
-				kind: popped.kind,
-				payloadJsonb: popped.payloadJsonb,
-				sourceEventId: popped.sourceEventId
-			})
-		});
+		let res: Response;
+		try {
+			res = await fetch(`/api/maps/${mapId}/events`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					tPosition: poppedRow.tPosition,
+					kind: poppedRow.kind,
+					payloadJsonb: poppedRow.payloadJsonb,
+					sourceEventId: poppedRow.sourceEventId
+				})
+			});
+		} catch (err) {
+			rollback();
+			throw err;
+		}
 		if (!res.ok) {
-			// Restore the stack on failure so the user can retry.
-			redoStore.update((stack) => [...stack, popped!]);
+			rollback();
 			throw new Error(`Failed to redo: ${await errorMessage(res)}`);
 		}
 		// Redo re-POSTs the event, so it can invalidate synthetic anchors too
@@ -239,7 +343,8 @@ function createMapEventsStore() {
 		};
 		if (lastLoadedMapId !== mapId) return created;
 		if (invalidatedAnchorIds?.length) mapAnchorsStore.dropLocal(mapId, invalidatedAnchorIds);
-		store.update((rows) => [...rows, created].sort(compareEvents));
+		// Swap the provisional row for the server row in one update.
+		store.update((rows) => [...rows.filter((r) => r.id !== tempId), created].sort(compareEvents));
 		return created;
 	}
 

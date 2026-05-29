@@ -74,6 +74,59 @@
 		if (brushActive && armedPlaceableId !== null) armedPlaceableId = null;
 	});
 	let placementError = $state('');
+	// In-flight flag for the per-map placements fetch (see the placements
+	// loader effect below). Read by the `mapLoading` overlay gate.
+	let placementsLoading = $state(false);
+
+	// Slice 3 — undo/redo for map events (brush strokes, region transfers).
+	// The store + /events/undo endpoint existed but nothing in the UI called
+	// them. canUndo follows the live event log; canRedo follows the client
+	// redo stack the store maintains.
+	const mapEventsRedoStack = mapEventsStore.redoStack;
+	let canUndo = $derived($mapEventsStore.length > 0);
+	let canRedo = $derived($mapEventsRedoStack.length > 0);
+
+	async function handleUndo() {
+		if (!activeMapId) return;
+		try {
+			await mapEventsStore.undo(activeMapId);
+		} catch (err) {
+			console.error('Undo failed:', err);
+		}
+	}
+	async function handleRedo() {
+		if (!activeMapId) return;
+		try {
+			await mapEventsStore.redo(activeMapId);
+		} catch (err) {
+			console.error('Redo failed:', err);
+		}
+	}
+
+	// Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z or Ctrl+Y = redo. Scoped to the
+	// focused World Map window so the shortcut doesn't undo map events while
+	// the user is working in another app, and ignored while typing in a field.
+	function handleMapKeydown(e: KeyboardEvent) {
+		if (!activeMapId) return;
+		if (windowStore.focusedWindow()?.appId !== 'world-map') return;
+		const target = e.target as HTMLElement | null;
+		if (
+			target &&
+			(target.tagName === 'INPUT' ||
+				target.tagName === 'TEXTAREA' ||
+				target.isContentEditable)
+		)
+			return;
+		if (!(e.metaKey || e.ctrlKey)) return;
+		const key = e.key.toLowerCase();
+		if (key === 'z' && !e.shiftKey) {
+			e.preventDefault();
+			void handleUndo();
+		} else if ((key === 'z' && e.shiftKey) || key === 'y') {
+			e.preventDefault();
+			void handleRedo();
+		}
+	}
 
 	// Slice 3 T8' (codex P2) — the live pixi-viewport, handed up from
 	// PixiStage. The AssetLibrary drop handler is a DOM listener outside the
@@ -200,6 +253,13 @@
 	// window would persist null faction_ids. Track factionsLoaded so the
 	// dataLoading prop reflects all three sources.
 	let factionsLoaded = $state(false);
+	// Bounded "settled" flags (success OR failure) for the loading overlay.
+	// Distinct from the *Healthy/*Loaded flags above, which stay false on error
+	// (to keep writes gated): these flip true once the load SETTLES so the
+	// overlay can't get stuck on a failed load. See `mapLoading`.
+	let factionsSettled = $state(false);
+	let anchorsEventsSettled = $state(false);
+	let regionsSettled = $state(false);
 
 	onMount(() => {
 		worldMapStore.loadMaps();
@@ -219,6 +279,9 @@
 			})
 			.catch((err) => {
 				console.error('Failed to load factions:', err);
+			})
+			.finally(() => {
+				factionsSettled = true;
 			});
 	});
 
@@ -280,10 +343,12 @@
 			mapEventsStore.reset();
 			layerPrefs.reset();
 			projectionCtxHealthy = false;
+			anchorsEventsSettled = false;
 			return;
 		}
 		let cancelled = false;
 		projectionCtxHealthy = false;
+		anchorsEventsSettled = false;
 		// Slice 3 E2 — layer prefs are independent of anchors/events; load
 		// in parallel. Failure is non-blocking (store returns defaults).
 		void layerPrefs.load(id).catch((err) => {
@@ -309,6 +374,12 @@
 				console.error('Failed to load anchors/events:', err);
 				mapAnchorsStore.reset();
 				mapEventsStore.reset();
+			})
+			.finally(() => {
+				// Bounded settle for the overlay — true on success OR failure so
+				// the overlay never sticks. Guarded by cancelled so a stale load
+				// can't clear the overlay for a newer map.
+				if (!cancelled) anchorsEventsSettled = true;
 			});
 		return () => {
 			cancelled = true;
@@ -336,6 +407,23 @@
 	// map that actually has regions.
 	let dataLoading = $derived(
 		!projectionCtxHealthy || !factionsLoaded || !mapRegionsHealthy
+	);
+
+	// Bug 2 — the saved layer config AND the placements load on their own
+	// fetches a beat after the map mounts, so layers flashed/popped in. The
+	// layer-vis store hides layers while prefs load; here we cover the canvas
+	// with an explicit loading state until BOTH the layer-prefs round-trip and
+	// the placements load have settled, so nothing pops in afterward. Both
+	// inputs are bounded (layer-prefs leaves 'loading' on success/error;
+	// placementsLoading is cleared in .finally()), so the overlay can't stick.
+	// `placementsLoading` is declared with the placements loader below.
+	let mapLoading = $derived(
+		activeMapId != null &&
+			($layerPrefs.status === 'loading' ||
+				!anchorsEventsSettled ||
+				!regionsSettled ||
+				!factionsSettled ||
+				(activeMap?.locationId != null && placementsLoading))
 	);
 
 	// Codex P2 on PR #55 (commits 4ccb183 + da20221): regions and
@@ -541,6 +629,12 @@
 	// projection is keyed on location_id so a variant swap doesn't drop the
 	// placements. Loads on map change; per-tick rendering filters in-memory
 	// via PlacementLayer (no DB roundtrip on tick).
+	// Bug 2 (placeables) — placements load on their own fetch, separate from
+	// the layer-prefs round-trip, so the on-canvas markers popped in a beat
+	// after the map appeared. `placementsLoading` (declared up top, near the
+	// other UI state) tracks the in-flight load so the loading overlay can stay
+	// up until they land. Bounded: cleared in .finally() and on the
+	// no-location branch, so it never sticks.
 	$effect(() => {
 		const locId = activeMap?.locationId;
 		if (!locId) {
@@ -548,9 +642,20 @@
 			// rather than issuing a request the server would reject as invalid
 			// UUID syntax (locationId column is uuid, no sentinel works).
 			placementsStore.reset();
+			placementsLoading = false;
 			return;
 		}
-		void placementsStore.load({ locationId: locId });
+		placementsLoading = true;
+		let cancelled = false;
+		void placementsStore
+			.load({ locationId: locId })
+			.catch((err) => console.error('Failed to load placements:', err))
+			.finally(() => {
+				if (!cancelled) placementsLoading = false;
+			});
+		return () => {
+			cancelled = true;
+		};
 	});
 
 	// ── Auto-select map ────────────────────────────────────────────────────
@@ -728,16 +833,22 @@
 	async function switchMap(mapId: string) {
 		activeMapId = mapId;
 		mapRegionsHealthy = false;
+		regionsSettled = false;
 		try {
 			await worldMapStore.loadMapRegions(mapId);
 			// Only mark healthy if THIS switchMap call is still the active
 			// one. A rapid switch A → B could leave switchMap(A) resolving
 			// after switchMap(B) started; checking activeMapId avoids
 			// flipping healthy on stale data.
-			if (activeMapId === mapId) mapRegionsHealthy = true;
+			if (activeMapId === mapId) {
+				mapRegionsHealthy = true;
+				regionsSettled = true;
+			}
 		} catch (err) {
 			console.error('Failed to load regions for map:', mapId, err);
-			// Stay unhealthy — dataLoading remains true, blocking writes.
+			// Stay unhealthy — dataLoading remains true, blocking writes — but
+			// mark settled so the loading overlay doesn't stick on error.
+			if (activeMapId === mapId) regionsSettled = true;
 		}
 	}
 
@@ -834,11 +945,16 @@
 		const map = await worldMapStore.createMap('New Map');
 		activeMapId = map.id;
 		mapRegionsHealthy = false;
+		regionsSettled = false;
 		try {
 			await worldMapStore.loadMapRegions(map.id);
-			if (activeMapId === map.id) mapRegionsHealthy = true;
+			if (activeMapId === map.id) {
+				mapRegionsHealthy = true;
+				regionsSettled = true;
+			}
 		} catch (err) {
 			console.error('Failed to load regions for new map:', err);
+			if (activeMapId === map.id) regionsSettled = true;
 		}
 	}
 
@@ -869,13 +985,21 @@
 		const nextId = $worldMaps.find((m) => m.id !== oldId)?.id ?? null;
 		activeMapId = nextId;
 		mapRegionsHealthy = false;
+		regionsSettled = false;
 		if (nextId) {
 			try {
 				await worldMapStore.loadMapRegions(nextId);
-				if (activeMapId === nextId) mapRegionsHealthy = true;
+				if (activeMapId === nextId) {
+					mapRegionsHealthy = true;
+					regionsSettled = true;
+				}
 			} catch (err) {
 				console.error('Failed to load regions for switched map:', err);
+				if (activeMapId === nextId) regionsSettled = true;
 			}
+		} else {
+			// No map left to show — nothing to wait for.
+			regionsSettled = true;
 		}
 		deleting = false;
 	}
@@ -1074,6 +1198,8 @@
 
 </script>
 
+<svelte:window onkeydown={handleMapKeydown} />
+
 {#if !hasMaps}
 	<!-- Empty state: no maps -->
 	<div class="empty-state">
@@ -1138,6 +1264,15 @@
 			ondragover={handleAssetDragOver}
 			ondrop={handleAssetDrop}
 		>
+		{#if mapLoading}
+			<!-- Bug 2: cover the canvas while the saved layer config AND the
+			     placements load, so the user sees an intentional loading state
+			     instead of layers/markers flashing or popping in. -->
+			<div class="map-loading-overlay" role="status" aria-live="polite">
+				<span class="map-loading-spinner" aria-hidden="true"></span>
+				<span class="map-loading-text">Loading map…</span>
+			</div>
+		{/if}
 		<PixiStage {activeMap} onViewport={(vp) => (pixiViewport = vp)}>
 			{#snippet children()}
 				<PixiBackgroundLayer {activeMap} />
@@ -1240,9 +1375,13 @@
 				active={brushActive}
 				biome={brushBiome}
 				size={brushSize}
+				{canUndo}
+				{canRedo}
 				onSetActive={(a) => (brushActive = a)}
 				onSetBiome={(b) => (brushBiome = b)}
 				onSetSize={(s) => (brushSize = s)}
+				onUndo={handleUndo}
+				onRedo={handleRedo}
 			/>
 		{/if}
 		{#if !hasImage}
@@ -1864,6 +2003,34 @@
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
+		/* Anchor for the absolutely-positioned loading overlay (bug 2). */
+		position: relative;
+	}
+	.map-loading-overlay {
+		position: absolute;
+		inset: 0;
+		z-index: 200;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 10px;
+		background: var(--color-surface, #1a1a1a);
+		color: var(--color-text-muted, #888);
+		font-size: 13px;
+	}
+	.map-loading-spinner {
+		width: 22px;
+		height: 22px;
+		border: 2px solid color-mix(in srgb, var(--color-text-muted, #888) 35%, transparent);
+		border-top-color: var(--color-accent, #c8942a);
+		border-radius: 50%;
+		animation: map-loading-spin 0.7s linear infinite;
+	}
+	@keyframes map-loading-spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 	.placement-error button {
 		background: transparent;

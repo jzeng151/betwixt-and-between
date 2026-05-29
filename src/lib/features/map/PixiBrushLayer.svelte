@@ -146,7 +146,7 @@
 		);
 	}
 
-	async function commitStroke(): Promise<void> {
+	function commitStroke(): void {
 		if (!activeMap || !strokeId || touched.size === 0) {
 			painting = false;
 			strokeId = null;
@@ -156,15 +156,22 @@
 		}
 		const mapId = activeMap.id;
 		const tPosition = get(playhead) ?? 0;
-		// Snapshot the gesture state BEFORE the awaits. Don't mutate
-		// touched/strokeId yet — outside-voice adversarial #9 + codex:
-		// resetting before the await loop means a mid-stroke failure
-		// drops chunks 3..N from client memory with no retry path. We
-		// reset only after a SUCCESSFUL commit; on failure the gesture
-		// stays open so the caller can retry.
 		const localStrokeId = strokeId;
 		const all = Array.from(touched.values());
 		const totalCells = all.length;
+
+		// Reset the gesture SYNCHRONOUSLY, before any await. The POST is async
+		// (and now optimistic), so if we left `painting` true until it resolved,
+		// button-up pointermoves between two quick clicks kept recording cells
+		// and the second click's pointerup committed the whole path as a line.
+		// Snapshot the cells above, reset here, then fire the POST with the
+		// captured data. (There's no retry path anymore — a failed commit
+		// aborts — so keeping state open until success bought nothing.)
+		painting = false;
+		strokeId = null;
+		touched = new Map();
+		hoverCells = [];
+
 		// Chunk at MAX_CELLS_PER_EVENT. Each chunk shares the strokeId;
 		// only the final chunk sets command_complete=true.
 		const chunks: Array<typeof all> = [];
@@ -172,40 +179,29 @@
 			chunks.push(all.slice(i, i + MAX_CELLS_PER_EVENT));
 		}
 
-		try {
-			for (let i = 0; i < chunks.length; i++) {
-				const isLast = i === chunks.length - 1;
-				await mapEventsStore.create(mapId, {
-					tPosition,
-					kind: 'paint_cells',
-					payloadJsonb: {
-						cells: chunks[i],
-						command_complete: isLast
-					},
-					commandId: localStrokeId
-				});
+		void (async () => {
+			try {
+				for (let i = 0; i < chunks.length; i++) {
+					const isLast = i === chunks.length - 1;
+					await mapEventsStore.create(mapId, {
+						tPosition,
+						kind: 'paint_cells',
+						payloadJsonb: {
+							cells: chunks[i],
+							command_complete: isLast
+						},
+						commandId: localStrokeId
+					});
+				}
+				onStrokeComplete?.(totalCells);
+			} catch (err) {
+				// A permanent commit failure (400 after the grid changed,
+				// sustained network loss) just drops the stroke — the gesture is
+				// already reset. Chunks that already landed stay in the event log
+				// under localStrokeId and undo pops them as a group.
+				console.error('paint_cells stroke failed mid-flight; aborting gesture', err);
 			}
-			// All chunks landed. Reset gesture state now.
-			touched = new Map();
-			strokeId = null;
-			painting = false;
-			hoverCells = [];
-			onStrokeComplete?.(totalCells);
-		} catch (err) {
-			// codex P2: a permanent commit failure (a 400 after the grid
-			// changed, sustained network loss) must ABORT the gesture. The
-			// previous "leave state intact for retry" had no retry affordance,
-			// so the brush got stuck after pointer-up: the `if (painting)
-			// return` guard swallowed every new pointerdown while button-up
-			// pointermoves kept appending cells to the dead stroke. Reset the
-			// gesture instead. Chunks that already landed stay in the event log
-			// under localStrokeId and undo pops them as a group.
-			console.error('paint_cells stroke failed mid-flight; aborting gesture', err);
-			touched = new Map();
-			strokeId = null;
-			painting = false;
-			hoverCells = [];
-		}
+		})();
 	}
 
 	$effect(() => {

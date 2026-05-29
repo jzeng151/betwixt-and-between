@@ -20,30 +20,51 @@ type RawPref = {
 	visible: number;
 };
 
+// 'loading' is the window between a map switch and the prefs landing. We
+// surface it so the canvas can hide layers instead of flashing everything
+// visible (the default) and then snapping to the saved config ~0.25s later.
+// 'error' falls back to defaults-visible rather than a permanent blank.
+type LoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
+
 type MapState = {
 	mapId: string | null;
 	prefs: Map<string, boolean>; // layerKey -> visible
+	status: LoadStatus;
 };
 
 function createLayerPrefsStore() {
-	const state = writable<MapState>({ mapId: null, prefs: new Map() });
+	const state = writable<MapState>({ mapId: null, prefs: new Map(), status: 'idle' });
 	let loadToken = 0;
 
 	function reset(): void {
 		loadToken += 1;
-		state.set({ mapId: null, prefs: new Map() });
+		state.set({ mapId: null, prefs: new Map(), status: 'idle' });
 	}
 
 	async function load(mapId: string): Promise<void> {
 		const token = ++loadToken;
-		const res = await fetch(
-			`/api/world-map-layer-prefs?worldMapId=${encodeURIComponent(mapId)}`
-		);
-		if (!res.ok) {
-			// 404 = map not found / not owned. Don't crash — clear the
-			// store so callers can render the defaults.
+		// Flip to 'loading' synchronously (before the await) so the canvas
+		// hides layers for the whole round-trip instead of painting the
+		// default-visible state first.
+		state.set({ mapId: null, prefs: new Map(), status: 'loading' });
+		let res: Response;
+		try {
+			res = await fetch(
+				`/api/world-map-layer-prefs?worldMapId=${encodeURIComponent(mapId)}`
+			);
+		} catch (err) {
+			// Network failure — fall back to defaults-visible so the canvas
+			// doesn't stay blank forever, then let the caller log.
 			if (token === loadToken) {
-				state.set({ mapId: null, prefs: new Map() });
+				state.set({ mapId: null, prefs: new Map(), status: 'error' });
+			}
+			throw err;
+		}
+		if (!res.ok) {
+			// 404 = map not found / not owned. Don't crash — fall back to
+			// defaults-visible (status 'error') rather than a permanent blank.
+			if (token === loadToken) {
+				state.set({ mapId: null, prefs: new Map(), status: 'error' });
 			}
 			return;
 		}
@@ -53,7 +74,7 @@ function createLayerPrefsStore() {
 		for (const row of rows) {
 			prefs.set(row.layerKey, row.visible === 1);
 		}
-		state.set({ mapId, prefs });
+		state.set({ mapId, prefs, status: 'loaded' });
 	}
 
 	/** Read the visibility for a layer on the currently-loaded map.
@@ -73,7 +94,7 @@ function createLayerPrefsStore() {
 			if (s.mapId !== mapId) return s; // map switched mid-flight
 			const newPrefs = new Map(s.prefs);
 			newPrefs.set(layerKey, next);
-			return { mapId: s.mapId, prefs: newPrefs };
+			return { ...s, prefs: newPrefs };
 		});
 		const token = loadToken;
 		try {
@@ -94,7 +115,7 @@ function createLayerPrefsStore() {
 					if (s.mapId !== mapId) return s;
 					const rolled = new Map(s.prefs);
 					rolled.set(layerKey, prior);
-					return { mapId: s.mapId, prefs: rolled };
+					return { ...s, prefs: rolled };
 				});
 			}
 			throw err;
@@ -113,6 +134,11 @@ export const layerPrefs = createLayerPrefsStore();
  *  case). */
 export function layerVisibility(layerKey: LayerKey): Readable<boolean> {
 	return derived(layerPrefs, ($state) => {
+		// While the saved prefs are still loading, report NOT visible so the
+		// canvas stays blank instead of flashing every layer on and then
+		// snapping to the saved config a moment later. 'loaded'/'error'/'idle'
+		// fall through to the default-visible behavior.
+		if ($state.status === 'loading') return false;
 		const v = $state.prefs.get(layerKey);
 		return v === undefined ? true : v;
 	});

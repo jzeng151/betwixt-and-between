@@ -44,6 +44,13 @@ async function distinctPaintedCells(request: APIRequestContext, mapId: string): 
 	return seen.size;
 }
 
+async function livePaintEvents(request: APIRequestContext, mapId: string): Promise<MapEvent[]> {
+	const { rows }: { rows: MapEvent[] } = await (
+		await request.get(`/api/maps/${mapId}/events`)
+	).json();
+	return rows.filter((e) => e.kind === 'paint_cells');
+}
+
 test('size selector is clickable and a wide drag paints many distinct cells', async ({
 	page,
 	request
@@ -98,4 +105,175 @@ test('size selector is clickable and a wide drag paints many distinct cells', as
 	await expect
 		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
 		.toBeGreaterThan(4);
+});
+
+test('undo reverts a single-click paint (button) and a stroke (keyboard)', async ({
+	page,
+	request
+}) => {
+	await clearAll(request);
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+
+	const loc = await (
+		await request.post('/api/entities', { data: { type: 'Location', name: 'Undo Realm' } })
+	).json();
+	const map = await (await request.post('/api/maps', { data: { name: 'Undo QA' } })).json();
+	await request.patch(`/api/maps/${map.id}`, {
+		data: { baseImageUrl: 'about:blank', width: 640, height: 480, locationId: loc.id }
+	});
+
+	await page.goto('/app');
+	await page.click('button[title="World Map"]');
+	const win = page.locator('.window[aria-label="World Map"]');
+	await win.locator('button[aria-label="Maximize"]').click();
+	const canvas = win.locator('.pixi-stage canvas');
+	await expect(canvas).toBeVisible({ timeout: 10000 });
+
+	const palette = win.locator('[data-testid="brush-palette"]');
+	await palette.locator('.mode-toggle').click();
+	await expect(palette.locator('.mode-toggle')).toHaveText('Brush ON');
+
+	const box = await canvas.boundingBox();
+	if (!box) throw new Error('no box');
+	const cx = box.x + box.width * 0.5;
+	const cy = box.y + box.height * 0.5;
+
+	// Single click = one cell, one command (command_complete=true).
+	await page.mouse.move(cx, cy);
+	await page.mouse.down();
+	await page.mouse.up();
+	await expect
+		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
+		.toBeGreaterThan(0);
+
+	// Undo via the palette button reverts the single paint.
+	await palette.locator('.history-button', { hasText: 'Undo' }).click();
+	await expect
+		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
+		.toBe(0);
+
+	// Paint a multi-cell stroke, then undo via keyboard (Ctrl+Z).
+	await page.mouse.move(box.x + box.width * 0.2, cy);
+	await page.mouse.down();
+	await page.mouse.move(box.x + box.width * 0.8, cy, { steps: 20 });
+	await page.mouse.up();
+	await expect
+		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
+		.toBeGreaterThan(4);
+
+	// The World Map window is already focused from the interactions above, so
+	// the window-scoped Ctrl+Z handler fires. (Don't click the canvas to focus
+	// — the brush is active and a click would paint a new cell.)
+	await page.keyboard.press('Control+z');
+	await expect
+		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
+		.toBe(0);
+
+	// Redo via the palette button re-applies the stroke (optimistic redo).
+	await palette.locator('.history-button', { hasText: 'Redo' }).click();
+	await expect
+		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
+		.toBeGreaterThan(0);
+});
+
+test('spamming undo past history clears every stroke (no leftover, no race)', async ({
+	page,
+	request
+}) => {
+	await clearAll(request);
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+	const loc = await (
+		await request.post('/api/entities', { data: { type: 'Location', name: 'Spam Realm' } })
+	).json();
+	const map = await (await request.post('/api/maps', { data: { name: 'Spam QA' } })).json();
+	await request.patch(`/api/maps/${map.id}`, {
+		data: { baseImageUrl: 'about:blank', width: 640, height: 480, locationId: loc.id }
+	});
+
+	await page.goto('/app');
+	await page.click('button[title="World Map"]');
+	const win = page.locator('.window[aria-label="World Map"]');
+	await win.locator('button[aria-label="Maximize"]').click();
+	const canvas = win.locator('.pixi-stage canvas');
+	await expect(canvas).toBeVisible({ timeout: 10000 });
+	const palette = win.locator('[data-testid="brush-palette"]');
+	await palette.locator('.mode-toggle').click();
+
+	const box = await canvas.boundingBox();
+	if (!box) throw new Error('no box');
+	const cy = box.y + box.height * 0.5;
+	// Three separate single-click strokes at distinct cells.
+	for (const fx of [0.3, 0.5, 0.7]) {
+		await page.mouse.move(box.x + box.width * fx, cy);
+		await page.mouse.down();
+		await page.mouse.up();
+	}
+	// Wait until all three are committed server-side before undoing.
+	await expect
+		.poll(async () => (await livePaintEvents(request, map.id)).length, { timeout: 8000 })
+		.toBe(3);
+
+	// Spam undo well past the 3 strokes. Serialized undo + the empty-store
+	// guard mean the extra presses no-op (no 422 storm) and nothing bounces
+	// back.
+	for (let i = 0; i < 7; i++) await page.keyboard.press('Control+z');
+
+	await expect
+		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
+		.toBe(0);
+	// And it stays at 0 (no late out-of-order response re-adds a stroke).
+	await page.waitForTimeout(500);
+	expect(await distinctPaintedCells(request, map.id)).toBe(0);
+});
+
+test('two quick separate clicks paint two cells, not a line between them', async ({
+	page,
+	request
+}) => {
+	await clearAll(request);
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+	const loc = await (
+		await request.post('/api/entities', { data: { type: 'Location', name: 'Line Realm' } })
+	).json();
+	const map = await (await request.post('/api/maps', { data: { name: 'Line QA' } })).json();
+	await request.patch(`/api/maps/${map.id}`, {
+		data: { baseImageUrl: 'about:blank', width: 640, height: 480, locationId: loc.id }
+	});
+
+	// Delay the paint POST so the first click's commit is still in flight while
+	// the cursor moves to the second click — the exact window where the old
+	// code recorded a line and the second pointerup committed it.
+	await page.route('**/api/maps/*/events', async (route) => {
+		if (route.request().method() === 'POST') await new Promise((r) => setTimeout(r, 600));
+		await route.continue();
+	});
+
+	await page.goto('/app');
+	await page.click('button[title="World Map"]');
+	const win = page.locator('.window[aria-label="World Map"]');
+	await win.locator('button[aria-label="Maximize"]').click();
+	const canvas = win.locator('.pixi-stage canvas');
+	await expect(canvas).toBeVisible({ timeout: 10000 });
+	const palette = win.locator('[data-testid="brush-palette"]');
+	await palette.locator('.mode-toggle').click();
+
+	const box = await canvas.boundingBox();
+	if (!box) throw new Error('no box');
+	const cy = box.y + box.height * 0.5;
+	const ax = box.x + box.width * 0.3;
+	const bx = box.x + box.width * 0.7;
+	// Click A, move to B with the button UP, click B — all inside the 600ms
+	// POST delay so the first commit is still pending during the move.
+	await page.mouse.move(ax, cy);
+	await page.mouse.down();
+	await page.mouse.up();
+	await page.mouse.move(bx, cy, { steps: 15 });
+	await page.mouse.down();
+	await page.mouse.up();
+
+	// After both delayed POSTs land: exactly the two clicked cells, NOT the
+	// ~12-cell line that the gap between them would produce.
+	await expect
+		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
+		.toBe(2);
 });
