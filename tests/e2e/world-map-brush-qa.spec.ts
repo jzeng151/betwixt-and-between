@@ -1,16 +1,14 @@
 /**
- * QA verification spec (temporary) for two brush bugs:
- *
- *  - Bug 4: the size selector was occluded by the right-side MapSidebar, so
- *    QA reported "no brush size selection". Verify the size buttons are
- *    actually clickable (Playwright's actionability check fails if another
- *    element intercepts the pointer).
- *
- *  - Bug 5: dragging while the brush is active panned the viewport instead of
- *    painting. When the pixi-viewport 'drag' plugin is NOT paused, a drag
- *    keeps the same world point under the cursor, so the gesture records ~1
- *    cell. With drag paused (correct), a wide horizontal drag records many
- *    distinct cells. We assert the painted-cell count is well above 1.
+ * Brush + undo/redo QA regression specs. Each test guards a bug found during
+ * world-map QA:
+ *  - size selector reachable (was occluded by the sidebar) + a wide drag
+ *    paints many distinct cells (was panning the viewport instead).
+ *  - undo/redo wired to button + Ctrl+Z, optimistic.
+ *  - spamming undo past history clears everything with no race / no leftover.
+ *  - two quick separate clicks paint two cells, not a line between them
+ *    (gesture must reset synchronously on pointerup).
+ *  - undo fired while a paint POST is still in flight undoes the NEW stroke,
+ *    not the previous one (create + undo share one serialization chain).
  */
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
@@ -49,6 +47,14 @@ async function livePaintEvents(request: APIRequestContext, mapId: string): Promi
 		await request.get(`/api/maps/${mapId}/events`)
 	).json();
 	return rows.filter((e) => e.kind === 'paint_cells');
+}
+
+async function paintedCellKeys(request: APIRequestContext, mapId: string): Promise<string[]> {
+	const seen = new Set<string>();
+	for (const e of await livePaintEvents(request, mapId)) {
+		for (const c of e.payloadJsonb.cells ?? []) seen.add(`${c.x},${c.y}`);
+	}
+	return [...seen].sort();
 }
 
 test('size selector is clickable and a wide drag paints many distinct cells', async ({
@@ -276,4 +282,58 @@ test('two quick separate clicks paint two cells, not a line between them', async
 	await expect
 		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
 		.toBe(2);
+});
+
+test('undo right after a paint (POST in flight) undoes the new stroke, not the previous one', async ({
+	page,
+	request
+}) => {
+	await clearAll(request);
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+	const loc = await (
+		await request.post('/api/entities', { data: { type: 'Location', name: 'Race Realm' } })
+	).json();
+	const map = await (await request.post('/api/maps', { data: { name: 'Race QA' } })).json();
+	await request.patch(`/api/maps/${map.id}`, {
+		data: { baseImageUrl: 'about:blank', width: 640, height: 480, locationId: loc.id }
+	});
+
+	await page.goto('/app');
+	await page.click('button[title="World Map"]');
+	const win = page.locator('.window[aria-label="World Map"]');
+	await win.locator('button[aria-label="Maximize"]').click();
+	const canvas = win.locator('.pixi-stage canvas');
+	await expect(canvas).toBeVisible({ timeout: 10000 });
+	const palette = win.locator('[data-testid="brush-palette"]');
+	await palette.locator('.mode-toggle').click();
+
+	const box = await canvas.boundingBox();
+	if (!box) throw new Error('no box');
+	const cy = box.y + box.height * 0.5;
+
+	// Paint cell A and let it fully commit server-side.
+	await page.mouse.move(box.x + box.width * 0.3, cy);
+	await page.mouse.down();
+	await page.mouse.up();
+	await expect
+		.poll(async () => (await livePaintEvents(request, map.id)).length, { timeout: 8000 })
+		.toBe(1);
+	const cellA = (await paintedCellKeys(request, map.id))[0];
+
+	// Now delay the events POST, paint cell B, and immediately undo while B's
+	// POST is still in flight. Serialized create+undo must undo B (the latest),
+	// leaving A. The pre-fix race undid A (B not yet live server-side).
+	await page.route('**/api/maps/*/events', async (route) => {
+		if (route.request().method() === 'POST') await new Promise((r) => setTimeout(r, 700));
+		await route.continue();
+	});
+	await page.mouse.move(box.x + box.width * 0.7, cy);
+	await page.mouse.down();
+	await page.mouse.up();
+	await page.keyboard.press('Control+z');
+
+	// A survives, B is gone.
+	await expect
+		.poll(async () => paintedCellKeys(request, map.id), { timeout: 10000 })
+		.toEqual([cellA]);
 });

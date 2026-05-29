@@ -107,7 +107,17 @@ function createMapEventsStore() {
 	// in-flight POST against map A doesn't merge into map B's store
 	// after the user switches.
 
-	async function create(mapId: string, input: EventInput): Promise<MapEvent> {
+	// create() shares the same serialization chain as undo()/redo(): an author
+	// event in flight (paint chunk, transfer_region) must settle before an undo
+	// reads the store to predict what to pop. Otherwise pressing Ctrl+Z right
+	// after a paint — before its POST commits — let undo pop the PREVIOUS event
+	// (the new one isn't live server-side yet) while the just-painted cell
+	// stayed. Serializing also keeps optimism instant: with the chain idle the
+	// task runs on the next microtask, so the optimistic insert is immediate.
+	function create(mapId: string, input: EventInput): Promise<MapEvent> {
+		return enqueue(() => createImpl(mapId, input));
+	}
+	async function createImpl(mapId: string, input: EventInput): Promise<MapEvent> {
 		// Optimistic insert: render the painted cells immediately instead of
 		// waiting for the POST round-trip. Without this the brush had a visible
 		// lag between releasing the gesture and the terrain appearing (the POST
