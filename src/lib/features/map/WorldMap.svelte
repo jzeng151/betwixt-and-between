@@ -1192,9 +1192,14 @@
 				     (pixiDrawingActive) — otherwise each left-click that places
 				     a vertex also drives the brush pointer path and paints a
 				     paint_cells stroke at that vertex. One-way prop (the layer
-				     only reads `active`; BrushPalette owns brushActive). -->
+				     only reads `active`; BrushPalette owns brushActive).
+				     codex P2 (PR #58): also suspend while dataLoading — a paint
+				     POST that lands while mapEventsStore.load is in flight would
+				     be clobbered when load() replaces the store with its stale
+				     pre-stroke rows. Same guard the snapshot/ownership writes
+				     use. -->
 				<PixiBrushLayer
-					active={brushActive && !pixiDrawingActive}
+					active={brushActive && !pixiDrawingActive && !dataLoading}
 					{activeMap}
 					biome={brushBiome}
 					size={brushSize}

@@ -134,6 +134,19 @@ function createMapEventsStore() {
 		const latest = undone[0];
 		if (lastLoadedMapId !== mapId) return latest;
 		store.update((rows) => rows.filter((r) => !undoneIds.has(r.id)));
+		// codex P2 (PR #58): undo also invalidates synthetic anchors
+		// server-side (undoLatestMapEvent runs the same invalidation as the
+		// write paths). The /events/undo response is contractually an array of
+		// event rows only, so — unlike create/redo which evict by returned id —
+		// refetch the canonical anchor set to drop any synthetic anchor whose
+		// snapshot folded a now-undone event. Otherwise projectState keeps
+		// picking the stale snapshot and the undone terrain/ownership stays
+		// visible until a full reload. load() honors lastLoadedMapId. Best
+		// effort — a failed re-sync only means the stale snapshot lingers
+		// until the next reload, so swallow rather than fail the undo.
+		void mapAnchorsStore.load(mapId).catch((err) => {
+			console.error('anchor re-sync after undo failed; projection may be stale until reload', err);
+		});
 		// Push each undone row onto the redo stack individually. Grouped
 		// redo (replaying the whole stroke with a fresh command_id) lands
 		// with the brush UX in PR C; for now redo pops one event at a

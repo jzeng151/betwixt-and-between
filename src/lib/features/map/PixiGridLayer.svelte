@@ -24,6 +24,7 @@
 	// constants, replace.
 
 	import { getContext, onDestroy, onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
 	import {
 		hexSizeForCanvas,
@@ -78,6 +79,18 @@
 		// (index 0) and below regions/placements/chrome.
 		if (!layer) {
 			layer = new PIXI.Container();
+			// codex P2 (PR #58): seed visibility at creation. PIXI imports
+			// async, so on the normal first-load order the visibility effect
+			// below already ran with layer === null (a no-op) and won't rerun
+			// just because layer flipped to set (layer isn't reactive). A
+			// layer created afterward would keep Pixi's default visible=true
+			// and flash the grid even when it should be hidden (existing maps
+			// migrated with gridVisible=false, or a saved pref of false).
+			// get(visible) is an UNTRACKED read so this geometry effect does
+			// not subscribe to the per-user pref store — toggling visibility
+			// must not tear down + rebuild the grid (the separate visibility
+			// effect below owns that, to avoid rebuilding up to 16k polygons).
+			layer.visible = (activeMap?.gridVisible ?? false) && get(visible);
 			// addChildAt(2) so it lives between PixiBackgroundLayer (index
 			// 0/1) and the region/placement layers above. Pixi clamps
 			// indices that exceed the current child count, so 2 here is
