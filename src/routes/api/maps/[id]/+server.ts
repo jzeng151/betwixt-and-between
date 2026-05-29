@@ -121,38 +121,31 @@ export const PATCH: RequestHandler = async (event) => {
 		}
 		updates.gridVisible = body.gridVisible;
 	}
-	// codex P2: shrinking grid_cells_x/y below VISIBLE terrain would orphan
-	// it — cells stay in projection state but fall outside the new bounds and
-	// render at the new pitch off the usable grid. Reject a shrink only when a
-	// cell is still visible there: a painted-then-erased far cell leaves both
-	// paint_cells rows live (the eraser is a later cell with biome 'unset'),
-	// so scanning raw event coords would wrongly block the shrink. Resolve
-	// each (x,y) to its LATEST biome (projectState ordering: t_position,
-	// created_at, id) and treat 'unset' as absent. Anchor-snapshot cells are
-	// already last-write-wins folded, so check them directly (also dropping
-	// 'unset'). Growth is always safe.
+	// codex P2: shrinking grid_cells_x/y below terrain that is visible at ANY
+	// playhead would orphan it — cells fall outside the new bounds yet still
+	// project at the new pitch off the usable grid. Map events are temporal, so
+	// the guard cannot collapse each cell to its LATEST biome: a cell painted
+	// out of bounds at T=1 and erased at T=2 is still projected (non-erased) at
+	// an intermediate T like 1.5, so scrubbing back renders OOB terrain after
+	// the shrink. Reject the shrink when ANY non-'unset' paint_cells interval
+	// (or anchor-snapshot cell) lies out of bounds — eraser rows (biome
+	// 'unset') don't count. Growth is always safe. (PR #58 codex P2: this
+	// supersedes the earlier latest-biome check, which wrongly allowed shrinks
+	// past painted-then-erased far cells.)
 	if ('gridCellsX' in body || 'gridCellsY' in body) {
 		const newCellsX = (updates.gridCellsX as number | undefined) ?? existing.gridCellsX;
 		const newCellsY = (updates.gridCellsY as number | undefined) ?? existing.gridCellsY;
 		if (newCellsX < existing.gridCellsX || newCellsY < existing.gridCellsY) {
 			const oob = await db.execute(sql`
-				WITH event_latest AS (
-					SELECT DISTINCT ON (c->>'x', c->>'y')
-						(c->>'x')::int AS x, (c->>'y')::int AS y, c->>'biome' AS biome
+				SELECT 1 AS hit FROM (
+					SELECT (c->>'x')::int AS x, (c->>'y')::int AS y, c->>'biome' AS biome
 					FROM map_events me, jsonb_array_elements(me.payload_jsonb->'cells') AS c
 					WHERE me.world_map_id = ${event.params.id}
 					  AND me.kind = 'paint_cells' AND me.undone_at IS NULL
-					ORDER BY c->>'x', c->>'y', me.t_position DESC, me.created_at DESC, me.id DESC
-				),
-				anchor_cells AS (
+					UNION ALL
 					SELECT (c->>'x')::int AS x, (c->>'y')::int AS y, c->>'biome' AS biome
 					FROM map_anchors ma, jsonb_array_elements(ma.state_jsonb->'cells') AS c
 					WHERE ma.world_map_id = ${event.params.id}
-				)
-				SELECT 1 AS hit FROM (
-					SELECT x, y, biome FROM event_latest
-					UNION ALL
-					SELECT x, y, biome FROM anchor_cells
 				) cells
 				WHERE cells.biome <> 'unset' AND (cells.x >= ${newCellsX} OR cells.y >= ${newCellsY})
 				LIMIT 1

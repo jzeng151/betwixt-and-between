@@ -335,12 +335,16 @@ describe('/api/maps/[id]', () => {
 		expect(body.gridType).toBe('hex');
 	});
 
-	it('PATCH allows shrinking past a cell that was painted then erased (codex P2)', async () => {
+	it('PATCH rejects shrinking past a cell painted then erased at a LATER T (codex P2, PR #58)', async () => {
 		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
 			id: string;
 		};
-		// Paint a far cell, then erase it (biome 'unset') — both paint_cells
-		// rows stay live, but the cell's LATEST state is absent.
+		// Paint a far cell at T=1, erase it at T=2. The cell's LATEST state is
+		// 'unset', BUT events are temporal: scrubbing to T=1.5 still projects
+		// the painted 'plains' at x=30, which a shrink to 16 columns would
+		// orphan off-grid. So the shrink must be REJECTED — the non-erased
+		// interval [1, 2) is still visible. (Supersedes the earlier
+		// latest-biome behavior that allowed this shrink.)
 		await CREATE_EVENT(
 			mkEvent({
 				params: { id: created.id },
@@ -361,9 +365,40 @@ describe('/api/maps/[id]', () => {
 				}
 			})
 		);
-		// The far cell is no longer visible, so the shrink must be allowed.
+		await expect(
+			mapIdRoute.PATCH(mkEvent({ params: { id: created.id }, body: { gridCellsX: 16 } }))
+		).rejects.toMatchObject({ status: 409 });
+	});
+
+	it('PATCH allows shrinking when an in-bounds cell was painted then erased (codex P2, PR #58)', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+		};
+		// Paint + erase a cell that stays WITHIN the new bounds — never OOB at
+		// any T, so the shrink is allowed. Guards against the strict check
+		// over-rejecting in-bounds history.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 5, y: 3, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 2,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 5, y: 3, biome: 'unset' }], command_complete: true }
+				}
+			})
+		);
 		const res = await mapIdRoute.PATCH(
-			mkEvent({ params: { id: created.id }, body: { gridCellsX: 16 } })
+			mkEvent({ params: { id: created.id }, body: { gridCellsX: 16, gridCellsY: 16 } })
 		);
 		const body = (await readJson(res)) as { gridCellsX: number };
 		expect(body.gridCellsX).toBe(16);
