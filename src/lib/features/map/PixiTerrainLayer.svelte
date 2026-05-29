@@ -125,9 +125,14 @@
 	});
 
 	// Visibility-only effect — flips layer.visible without touching the
-	// Graphics. Toggling the Layers checkbox is now O(1).
+	// Graphics. Toggling the Layers checkbox is O(1). Read $visible
+	// UNCONDITIONALLY (not inside the `if (layer)`): on the first run `layer`
+	// is still null (Pixi imports async), so reading it inside the guard would
+	// never subscribe the effect to the pref store — the toggle would never
+	// reach the canvas.
 	$effect(() => {
-		if (layer) layer.visible = $visible;
+		const v = $visible;
+		if (layer) layer.visible = v;
 	});
 
 	function drawSquareCells(

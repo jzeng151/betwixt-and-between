@@ -35,9 +35,14 @@
 	import { layerVisibility } from './layer-prefs-store.js';
 	import type { WorldMap } from './types.js';
 
-	// Slice 3 E4 — layer toggle. Separate from world_maps.grid_visible
-	// (the latter is per-MAP config; this is per-USER preference).
-	// Effective visibility = (map.gridVisible) AND $visible.
+	// Slice 3 E4 — layer toggle. This per-user-per-map pref (the "Grid"
+	// checkbox in the Layers pane) is the SINGLE source of truth for grid
+	// visibility. We intentionally do NOT also gate on world_maps.grid_visible:
+	// that column has no UI to flip it and was backfilled to false on every
+	// pre-existing map (migration 0018, two-pass default), so AND-gating left
+	// those maps with the checkbox checked but no grid ever drawn. The pref
+	// row is already per-map (keyed by worldMapId), so it captures everything
+	// the redundant column would have.
 	const visible = layerVisibility('grid');
 
 	type PixiModule = typeof import('pixi.js');
@@ -51,8 +56,8 @@
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
-	const GRID_STROKE_COLOR = 0x6b7280;
-	const GRID_STROKE_ALPHA = 0.25;
+	const GRID_STROKE_COLOR = 0x9ca3af;
+	const GRID_STROKE_ALPHA = 0.45;
 	const GRID_STROKE_WIDTH = 1;
 
 	let PIXI = $state<PixiModule | null>(null);
@@ -84,13 +89,12 @@
 			// below already ran with layer === null (a no-op) and won't rerun
 			// just because layer flipped to set (layer isn't reactive). A
 			// layer created afterward would keep Pixi's default visible=true
-			// and flash the grid even when it should be hidden (existing maps
-			// migrated with gridVisible=false, or a saved pref of false).
+			// and flash the grid even when the saved pref is false.
 			// get(visible) is an UNTRACKED read so this geometry effect does
 			// not subscribe to the per-user pref store — toggling visibility
 			// must not tear down + rebuild the grid (the separate visibility
 			// effect below owns that, to avoid rebuilding up to 16k polygons).
-			layer.visible = (activeMap?.gridVisible ?? false) && get(visible);
+			layer.visible = get(visible);
 			// addChildAt(2) so it lives between PixiBackgroundLayer (index
 			// 0/1) and the region/placement layers above. Pixi clamps
 			// indices that exceed the current child count, so 2 here is
@@ -134,13 +138,15 @@
 		graphics = g;
 	});
 
-	// Visibility-only effect — flips layer.visible based on map config
-	// AND user pref. No Graphics teardown, just a boolean. Matches the
-	// pattern in PixiBackgroundLayer / PixiTerrainLayer / etc.
+	// Visibility-only effect — flips layer.visible from the user pref. No
+	// Graphics teardown, just a boolean. Read $visible UNCONDITIONALLY (not
+	// inside the `if (layer)`): on the first run `layer` is still null (Pixi
+	// imports async), so reading it inside the guard would never subscribe the
+	// effect to the pref store and toggling the Layers checkbox would be a
+	// no-op forever after.
 	$effect(() => {
-		const map = activeMap;
-		const effective = (map?.gridVisible ?? false) && $visible;
-		if (layer) layer.visible = effective;
+		const v = $visible;
+		if (layer) layer.visible = v;
 	});
 
 	function drawSquareGrid(

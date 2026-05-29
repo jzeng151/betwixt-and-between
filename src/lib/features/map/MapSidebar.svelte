@@ -426,7 +426,10 @@
 		right: 8px;
 		bottom: 8px;
 		width: 200px;
-		z-index: 900;
+		/* Below the bottom palettes (placeables/asset/brush) so it doesn't
+		   cover them, but still above the Pixi canvas. The toolbar stays at
+		   1000. */
+		z-index: 100;
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
@@ -438,7 +441,11 @@
 		padding: 8px 10px;
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 		font-size: 12px;
-		overflow: hidden;
+		/* Scroll the whole sidebar when Layers + Factions exceed the height
+		   between top:48px and bottom:8px (the faction list already scrolls
+		   internally; this catches the combined overflow). */
+		overflow-y: auto;
+		overflow-x: hidden;
 	}
 	.sidebar-header {
 		display: flex;

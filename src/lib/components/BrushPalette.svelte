@@ -119,9 +119,20 @@
 		flex-direction: column;
 		gap: 6px;
 		padding: 8px 10px;
+		/* The MapSidebar (Layers/Factions) is position:absolute, right:8px,
+		   width:200px and overlays the bottom-right of the map wrapper — i.e.
+		   the right end of this full-width palette. The size selector is the
+		   last control in the row, so it landed underneath the sidebar and
+		   read as "no brush size selection". Reserve the sidebar's footprint
+		   (200 + 8 right + 8 gap) so every control stays in the clear. */
+		padding-right: 216px;
 		background: var(--color-panel, rgba(0, 0, 0, 0.6));
 		border-top: 1px solid var(--color-border, #333);
 		font-size: 12px;
+		/* Sit above the MapSidebar (z-index:100) so the absolutely-positioned
+		   sidebar doesn't paint over this bottom-of-column rail. */
+		position: relative;
+		z-index: 150;
 	}
 	.palette-header {
 		display: flex;

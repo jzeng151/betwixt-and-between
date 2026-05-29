@@ -1849,6 +1849,11 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		/* Sit above the MapSidebar (z-index:100) — these error toasts render
+		   in the bottom-of-column flow alongside the palettes, so the
+		   absolutely-positioned sidebar would otherwise paint over them. */
+		position: relative;
+		z-index: 150;
 	}
 	/* Slice 3 T8' drop target wraps the Pixi canvas. Must have a real box
 	   so getBoundingClientRect() in the drop handler returns the canvas

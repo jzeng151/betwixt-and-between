@@ -87,12 +87,45 @@ function createMapEventsStore() {
 	// after the user switches.
 
 	async function create(mapId: string, input: EventInput): Promise<MapEvent> {
-		const res = await fetch(`/api/maps/${mapId}/events`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(input)
-		});
-		if (!res.ok) throw new Error(`Failed to create event: ${await errorMessage(res)}`);
+		// Optimistic insert: render the painted cells immediately instead of
+		// waiting for the POST round-trip. Without this the brush had a visible
+		// lag between releasing the gesture and the terrain appearing (the POST
+		// to Neon is the latency). We append a provisional row keyed by a temp
+		// id so the projection folds it on the next tick, then swap it for the
+		// authoritative server row on success / drop it on failure.
+		const tempId = `temp:${crypto.randomUUID()}`;
+		const optimistic: MapEvent = {
+			id: tempId,
+			worldMapId: mapId,
+			tPosition: input.tPosition,
+			kind: input.kind,
+			payloadJsonb: input.payloadJsonb,
+			sourceEventId: input.sourceEventId ?? null,
+			createdAt: new Date().toISOString()
+		};
+		if (lastLoadedMapId === mapId) {
+			store.update((rows) => [...rows, optimistic].sort(compareEvents));
+		}
+		let res: Response;
+		try {
+			res = await fetch(`/api/maps/${mapId}/events`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(input)
+			});
+		} catch (err) {
+			// Network failure — roll back the optimistic row.
+			if (lastLoadedMapId === mapId) {
+				store.update((rows) => rows.filter((r) => r.id !== tempId));
+			}
+			throw err;
+		}
+		if (!res.ok) {
+			if (lastLoadedMapId === mapId) {
+				store.update((rows) => rows.filter((r) => r.id !== tempId));
+			}
+			throw new Error(`Failed to create event: ${await errorMessage(res)}`);
+		}
 		// codex P2 (PR #58): the server drops synthetic anchors at/after this
 		// event's tPosition and returns their ids. Evict them from the anchors
 		// store so projectState doesn't keep picking a stale snapshot that
@@ -103,7 +136,9 @@ function createMapEventsStore() {
 		};
 		if (lastLoadedMapId !== mapId) return created;
 		if (invalidatedAnchorIds?.length) mapAnchorsStore.dropLocal(mapId, invalidatedAnchorIds);
-		store.update((rows) => [...rows, created].sort(compareEvents));
+		// Swap the provisional row for the server row in one update so the
+		// terrain never flickers off between the two.
+		store.update((rows) => [...rows.filter((r) => r.id !== tempId), created].sort(compareEvents));
 		// New event authored — invalidate the redo stack (D3 contract).
 		if (redoStackForMapId === mapId) redoStore.set([]);
 		return created;
