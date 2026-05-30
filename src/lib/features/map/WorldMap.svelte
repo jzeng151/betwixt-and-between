@@ -93,6 +93,12 @@
 
 	async function handleUndo() {
 		if (!activeMapId) return;
+		// codex P2: block undo while the map is loading. On a map switch
+		// activeMapId flips before mapEventsStore.load() clears the old map's
+		// rows, so canUndo can read true from the PREVIOUS map while the overlay
+		// is up — and undo would POST /events/undo against the NEW map, deleting
+		// its latest event. mapLoading stays true until anchors/events settle.
+		if (mapLoading) return;
 		try {
 			await mapEventsStore.undo(activeMapId);
 		} catch (err) {
@@ -101,6 +107,7 @@
 	}
 	async function handleRedo() {
 		if (!activeMapId) return;
+		if (mapLoading) return;
 		try {
 			await mapEventsStore.redo(activeMapId);
 		} catch (err) {
@@ -113,6 +120,7 @@
 	// the user is working in another app, and ignored while typing in a field.
 	function handleMapKeydown(e: KeyboardEvent) {
 		if (!activeMapId) return;
+		if (mapLoading) return; // codex P2: don't undo/redo against a still-loading map
 		// Scope to THIS window instance. Multiple world-map windows can be open
 		// (default + location-specific), each with its own handler + activeMapId;
 		// comparing the focused window's id (not just appId) ensures only the
@@ -574,8 +582,12 @@
 		// an OS file drag.
 		if (!Array.from(e.dataTransfer.types).includes(ASSET_DRAG_MIME)) return;
 		// Block the drop if the active map can't host a placement (no
-		// linked Location → no anchor for the placement to bind to).
-		if (!activeMap?.locationId) {
+		// linked Location → no anchor for the placement to bind to), or while
+		// the map is still loading (codex P2: a placement POST during the
+		// placements GET can be clobbered when the in-flight load replaces the
+		// store with pre-drop rows). Drops bubble through the loading overlay to
+		// this handler, so guard here too.
+		if (!activeMap?.locationId || mapLoading) {
 			e.dataTransfer.dropEffect = 'none';
 			return;
 		}
@@ -588,6 +600,9 @@
 		const assetId = e.dataTransfer.getData(ASSET_DRAG_MIME);
 		if (!assetId) return;
 		if (!activeMap?.width || !activeMap?.height || !activeMap?.locationId) return;
+		// codex P2: ignore drops while the map is still loading — a placement
+		// POST mid-load can be overwritten by the in-flight placements GET.
+		if (mapLoading) return;
 		e.preventDefault();
 		// Codex /review P2 — drop coords must reference the actual Pixi
 		// canvas, not the .pixi-drop-target wrapper. When the wrapper is
@@ -1385,8 +1400,8 @@
 				active={brushActive}
 				biome={brushBiome}
 				size={brushSize}
-				{canUndo}
-				{canRedo}
+				canUndo={canUndo && !mapLoading}
+				canRedo={canRedo && !mapLoading}
 				onSetActive={(a) => (brushActive = a)}
 				onSetBiome={(b) => (brushBiome = b)}
 				onSetSize={(s) => (brushSize = s)}
