@@ -567,6 +567,12 @@ export async function createMapAnchor(
 	// insert 409s, so a duplicate-T failure doesn't strip synthetic anchors.
 	return await db.transaction(async (tx) => {
 		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+		// codex P2: re-validate anchor cell bounds UNDER the lock (concurrent grid-shrink
+		// PATCH holds the same world_maps FOR UPDATE lock and may commit after the
+		// pre-transaction loadGridDims).
+		const [lockedGrid] = await tx.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY }).from(worldMaps).where(eq(worldMaps.id, worldMapId));
+		if (!lockedGrid) error(404, 'world_map not found');
+		assertCellsInBounds(normalizedState.cells, lockedGrid.x, lockedGrid.y, 'anchor state_jsonb');
 		await invalidateSyntheticAnchorsAtOrAfter(tx, worldMapId, input.tPosition);
 		try {
 			const [row] = await tx
@@ -676,6 +682,13 @@ export async function updateMapAnchor(
 	try {
 		row = await db.transaction(async (tx) => {
 			await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+			// codex P2: re-validate anchor cell bounds UNDER the lock when stateJsonb is
+			// patched (same race as createMapAnchor / paint_cells).
+			if ('stateJsonb' in patch) {
+				const [lockedGrid] = await tx.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY }).from(worldMaps).where(eq(worldMaps.id, worldMapId));
+				if (!lockedGrid) error(404, 'world_map not found');
+				assertCellsInBounds((updates.stateJsonb as AnchorState).cells, lockedGrid.x, lockedGrid.y, 'anchor state_jsonb');
+			}
 			await invalidateSyntheticAnchorsAtOrAfter(tx, worldMapId, affectedT);
 			const [updatedRow] = await tx
 				.update(mapAnchors)
