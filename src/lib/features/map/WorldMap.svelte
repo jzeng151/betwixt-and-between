@@ -543,29 +543,20 @@
 		void createPlacementAt(placeableId, fx, fy);
 	}
 
-	async function createPlacementAt(
-		placeableId: string,
-		x: number,
-		y: number,
-		options: { sourceAssetId?: string } = {}
-	) {
+	async function createPlacementAt(placeableId: string, x: number, y: number) {
 		placementError = '';
 		try {
-			// Slice 3 T17 — source_asset_id stored in placement.data.
-			// Click-to-place path (PlaceablesPalette) leaves it undefined;
-			// drag-drop path (AssetLibrary) passes it through. Slice 4's
-			// sync-from-template button reads this field to look up the
-			// asset entity.
-			const data = options.sourceAssetId
-				? { source_asset_id: options.sourceAssetId }
-				: undefined;
+			// Slice 4 PR-A (D1 reference model): a placement references the
+			// existing entity directly, so the old `source_asset_id` provenance
+			// field was always equal to placeableId and carried no information.
+			// Both the click-to-place and drag-drop paths now create a plain
+			// placement; per-instance differences live in placement.data.style.
 			await placementsStore.create({
 				placeableId,
 				locationId: activeMap?.locationId ?? null,
 				mapId: activeMap?.id ?? null,
 				x,
-				y,
-				...(data ? { data } : {})
+				y
 			});
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
@@ -637,7 +628,7 @@
 			fy = (e.clientY - rect.top) / rect.height;
 		}
 		if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
-		void createPlacementAt(assetId, fx, fy, { sourceAssetId: assetId });
+		void createPlacementAt(assetId, fx, fy);
 	}
 
 	async function deletePlacement(id: string) {

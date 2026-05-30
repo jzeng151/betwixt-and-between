@@ -3,9 +3,11 @@
  *
  * Dragging a Character/Artifact/Item chip from the AssetLibrary palette
  * onto the Pixi canvas creates a `map_placements` row (NOT a new entity,
- * per outside-voice B1) at the dropped fractional coords, with
- * `data.source_asset_id` set to the dragged entity's id (Slice 3 T17 —
- * Slice 4's sync-from-template button reads this field).
+ * per outside-voice B1) at the dropped fractional coords.
+ *
+ * Slice 4 PR-A regression: the placement references the entity directly
+ * (D1 reference model), so the old `data.source_asset_id` provenance field
+ * is no longer written — a drag-drop placement carries no `source_asset_id`.
  *
  * HTML5 drag-and-drop isn't synthesized by Playwright's mouse, so this
  * uses the shared `html5Drag` helper (dispatches real DragEvents with a
@@ -26,7 +28,7 @@ async function clearAll(request: APIRequestContext) {
 	for (const m of maps) await request.delete(`/api/maps/${m.id}`);
 }
 
-test('drag an asset chip onto the canvas creates a placement with source_asset_id', async ({
+test('drag an asset chip onto the canvas creates a placement (no source_asset_id)', async ({
 	page,
 	request
 }) => {
@@ -74,8 +76,8 @@ test('drag an asset chip onto the canvas creates a placement with source_asset_i
 	await expect(dropZone).toBeVisible();
 	await html5Drag(page, chip, dropZone);
 
-	// A placement now exists, bound to the dragged asset, carrying the
-	// source_asset_id provenance field.
+	// A placement now exists, bound to the dragged asset. Under the D1
+	// reference model it carries no source_asset_id provenance field.
 	await expect
 		.poll(
 			async () => {
@@ -95,7 +97,8 @@ test('drag an asset chip onto the canvas creates a placement with source_asset_i
 		data?: { source_asset_id?: string };
 	}> = await (await request.get(`/api/map-placements?locationId=${loc.id}`)).json();
 	expect(after[0].placeableId).toBe(asset.id);
-	expect(after[0].data?.source_asset_id).toBe(asset.id);
+	// Slice 4 PR-A regression: no source_asset_id written on drag-drop.
+	expect(after[0].data?.source_asset_id).toBeUndefined();
 	// Dropped at canvas center → fractional coords near the middle.
 	expect(after[0].x).toBeGreaterThan(0);
 	expect(after[0].x).toBeLessThan(1);
