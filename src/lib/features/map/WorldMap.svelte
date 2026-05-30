@@ -34,9 +34,8 @@
 	import { mapEventsStore } from '$lib/features/map/map-events-store.js';
 	import { layerPrefs } from '$lib/features/map/layer-prefs-store.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
-	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
+	import PlaceablePalette from '$lib/components/PlaceablePalette.svelte';
 	import BrushPalette from '$lib/components/BrushPalette.svelte';
-	import AssetLibrary from '$lib/components/AssetLibrary.svelte';
 	import { ASSET_DRAG_MIME } from '$lib/components/asset-drag.js';
 	import PixiBrushLayer from '$lib/features/map/PixiBrushLayer.svelte';
 	import type { BiomeKind } from '$lib/features/map/projection.js';
@@ -49,7 +48,7 @@
 	// every open map instance.
 	let { entityId = $bindable<string | undefined>(undefined), windowId = undefined }: { entityId?: string; windowId?: string } = $props();
 
-	// armed placeable id (chip selected in PlaceablesPalette). When non-null,
+	// armed placeable id (chip selected in PlaceablePalette). When non-null,
 	// the next click on the Pixi canvas creates a placement at the clicked
 	// fractional coords for this entity.
 	let armedPlaceableId = $state<string | null>(null);
@@ -148,7 +147,7 @@
 	}
 
 	// Slice 3 T8' (codex P2) — the live pixi-viewport, handed up from
-	// PixiStage. The AssetLibrary drop handler is a DOM listener outside the
+	// PixiStage. The palette drop handler is a DOM listener outside the
 	// Pixi stage context, so it can't call getLocalPosition(viewport) the way
 	// the click-to-place path does; it uses this reference to convert the
 	// drop's screen coords → world coords through the pan/zoom transform.
@@ -579,7 +578,7 @@
 		}
 	}
 
-	// Slice 3 T8' — drop handler for AssetLibrary drags. Pixi canvas
+	// Slice 3 T8' — drop handler for placeable-palette drags. Pixi canvas
 	// lives inside PixiStage's pixi-stage div; we wrap the stage with
 	// listeners. dragover must preventDefault so the drop event fires.
 	function handleAssetDragOver(e: DragEvent): void {
@@ -1286,7 +1285,7 @@
 				<button type="button" onclick={() => (toolbarNewLocationError = '')}>✕</button>
 			</div>
 		{/if}
-		<!-- Slice 3 T8' drop target. Wraps PixiStage so AssetLibrary drags
+		<!-- Slice 3 T8' drop target. Wraps PixiStage so palette chip drags
 		     can drop onto the canvas. dragover preventDefault enables drop;
 		     ASSET_DRAG_MIME filter rejects accidental file drops. -->
 		<div
@@ -1384,12 +1383,11 @@
 		{/if}
 		<MapSidebar {activeMapId} />
 		{#if hasImage && activeMap?.locationId}
-			<!-- PlaceablesPalette: armed chip → PixiPlacementLayer's stage-
-			     level pointertap → handleCanvasClick → create placement. -->
-			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
-			<!-- Slice 3 T8' asset library — drag source for placements.
-			     Drop target lives on the pixi-drop-target wrapper above. -->
-			<AssetLibrary />
+			<!-- Slice 4 PR-D — single placeables palette. Each chip is both a
+			     click-to-arm target (armed chip → PixiPlacementLayer pointertap →
+			     handleCanvasClick → create placement) and a drag source (drop
+			     target lives on the pixi-drop-target wrapper above). -->
+			<PlaceablePalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
 				<div class="placement-error" role="alert">
 					{placementError}

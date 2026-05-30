@@ -1,7 +1,8 @@
 /**
- * Slice 3 T8' — AssetLibrary drag-drop E2E.
+ * Slice 3 T8' — placeable-palette drag-drop E2E.
  *
- * Dragging a Character/Artifact/Item chip from the AssetLibrary palette
+ * Dragging a Character/Artifact/Item chip from the consolidated
+ * PlaceablePalette (Slice 4 PR-D merged the old AssetLibrary into it)
  * onto the Pixi canvas creates a `map_placements` row (NOT a new entity,
  * per outside-voice B1) at the dropped fractional coords.
  *
@@ -35,7 +36,7 @@ test('drag an asset chip onto the canvas creates a placement (no source_asset_id
 	await clearAll(request);
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 
-	// Seed: a Location to anchor the map (AssetLibrary + drop only render
+	// Seed: a Location to anchor the map (the palette + drop only render
 	// when the active map has a linked Location and an image), and a
 	// Character to act as the library asset.
 	const loc = await (
@@ -62,13 +63,13 @@ test('drag an asset chip onto the canvas creates a placement (no source_asset_id
 	await page.click('button[title="World Map"]');
 	const win = page.locator('.window[aria-label="World Map"]');
 	await expect(win).toBeVisible();
-	// Maximize so the AssetLibrary palette (below the canvas) is within the
+	// Maximize so the placeable palette (below the canvas) is within the
 	// viewport — the default 1024×720 window pushes it below the fold.
 	await win.locator('button[aria-label="Maximize"]').click();
 	await expect(win.locator('.pixi-stage canvas')).toBeVisible({ timeout: 10000 });
 
-	// The asset chip in the AssetLibrary palette.
-	const chip = win.locator('[data-testid="asset-library"] .chip', { hasText: 'Dragged Knight' });
+	// The asset chip in the consolidated placeable palette.
+	const chip = win.locator('[data-testid="placeable-palette"] .chip', { hasText: 'Dragged Knight' });
 	await expect(chip).toBeVisible({ timeout: 10000 });
 
 	// Drop onto the canvas drop zone (center).

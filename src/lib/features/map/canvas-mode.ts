@@ -22,7 +22,7 @@ export type CanvasModeInputs = {
 	drawing: boolean;
 	/** Terrain brush is active (BrushPalette). */
 	brushing: boolean;
-	/** A placeable chip is armed for click-to-place (PlaceablesPalette). */
+	/** A placeable chip is armed for click-to-place (PlaceablePalette). */
 	armed: boolean;
 };
 
