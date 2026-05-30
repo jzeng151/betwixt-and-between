@@ -13,7 +13,13 @@
 
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
+	import { layerVisibility } from './layer-prefs-store.js';
 	import type { WorldMap } from './types.js';
+
+	// Slice 3 E4 — per-user-per-map layer visibility. Toggled off ⇒ the
+	// layer's Pixi Container has .visible = false so the sprite stays
+	// instantiated but doesn't paint. Cheap to flip back on.
+	const visible = layerVisibility('background');
 
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
@@ -57,6 +63,8 @@
 			layer = new PIXI.Container();
 			viewport.addChildAt(layer, 0);
 		}
+		// Slice 3 E4 — apply user visibility toggle.
+		layer.visible = $visible;
 
 		const url = activeMap?.baseImageUrl ?? null;
 		const w = activeMap?.width ?? null;

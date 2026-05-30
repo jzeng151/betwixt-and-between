@@ -209,6 +209,201 @@ describe('/api/maps/[id]', () => {
 		expect(body.height).toBe(768);
 	});
 
+	// Regression: grid settings had no write path — /qa 2026-05-28
+	// PATCH /api/maps/[id] accepted name/baseImageUrl/width/height/
+	// locationId/variant-bounds but NOT the Slice 3 grid_* columns, so
+	// "hex available per-map" (design doc D1) was unreachable through
+	// the API. Found by /qa browser testing.
+	// Report: .gstack/qa-reports/qa-report-localhost-2026-05-28.md
+	it('PATCH updates grid settings (gridType / cells / scale / visible)', async () => {
+		const created = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })));
+		const res = await mapIdRoute.PATCH(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					gridType: 'hex',
+					gridCellsX: 48,
+					gridCellsY: 40,
+					gridScaleUnit: 'ft',
+					gridScaleValue: 10,
+					gridVisible: false
+				}
+			})
+		);
+		expect(res.status).toBe(200);
+		const body = await readJson(res);
+		expect(body.gridType).toBe('hex');
+		expect(body.gridCellsX).toBe(48);
+		expect(body.gridCellsY).toBe(40);
+		expect(body.gridScaleUnit).toBe('ft');
+		expect(body.gridScaleValue).toBe(10);
+		expect(body.gridVisible).toBe(false);
+	});
+
+	it('PATCH rejects invalid gridType', async () => {
+		const created = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })));
+		await expect(
+			mapIdRoute.PATCH(
+				mkEvent({ params: { id: created.id }, body: { gridType: 'triangle' } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('PATCH rejects out-of-bounds gridCellsX', async () => {
+		const created = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })));
+		await expect(
+			mapIdRoute.PATCH(
+				mkEvent({ params: { id: created.id }, body: { gridCellsX: 200 } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('PATCH rejects shrinking the grid below painted cells (codex P2)', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+		};
+		// Paint a cell at x=30 (within the default 32-wide grid).
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 30, y: 0, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		// Shrinking to 16 columns would orphan the x=30 cell → reject.
+		await expect(
+			mapIdRoute.PATCH(mkEvent({ params: { id: created.id }, body: { gridCellsX: 16 } }))
+		).rejects.toMatchObject({ status: 409 });
+	});
+
+	it('PATCH allows shrinking the grid when no painted cell exceeds the new bounds', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+		};
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 5, y: 3, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		const res = await mapIdRoute.PATCH(
+			mkEvent({ params: { id: created.id }, body: { gridCellsX: 16, gridCellsY: 16 } })
+		);
+		const body = (await readJson(res)) as { gridCellsX: number; gridCellsY: number };
+		expect(body.gridCellsX).toBe(16);
+		expect(body.gridCellsY).toBe(16);
+	});
+
+	it('PATCH rejects changing gridType after terrain has been painted (codex P2, PR #58)', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+			gridType: string;
+		};
+		// Paint a cell, then attempt to flip the geometry. The stored (x,y)
+		// keys would reinterpret under hex axial coords and the terrain would
+		// distort, so the change must be rejected.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 2, y: 2, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		await expect(
+			mapIdRoute.PATCH(mkEvent({ params: { id: created.id }, body: { gridType: 'hex' } }))
+		).rejects.toMatchObject({ status: 409 });
+	});
+
+	it('PATCH allows changing gridType when no terrain exists (codex P2, PR #58)', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+		};
+		const res = await mapIdRoute.PATCH(
+			mkEvent({ params: { id: created.id }, body: { gridType: 'hex' } })
+		);
+		const body = (await readJson(res)) as { gridType: string };
+		expect(body.gridType).toBe('hex');
+	});
+
+	it('PATCH rejects shrinking past a cell painted then erased at a LATER T (codex P2, PR #58)', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+		};
+		// Paint a far cell at T=1, erase it at T=2. The cell's LATEST state is
+		// 'unset', BUT events are temporal: scrubbing to T=1.5 still projects
+		// the painted 'plains' at x=30, which a shrink to 16 columns would
+		// orphan off-grid. So the shrink must be REJECTED — the non-erased
+		// interval [1, 2) is still visible. (Supersedes the earlier
+		// latest-biome behavior that allowed this shrink.)
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 30, y: 0, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 2,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 30, y: 0, biome: 'unset' }], command_complete: true }
+				}
+			})
+		);
+		await expect(
+			mapIdRoute.PATCH(mkEvent({ params: { id: created.id }, body: { gridCellsX: 16 } }))
+		).rejects.toMatchObject({ status: 409 });
+	});
+
+	it('PATCH allows shrinking when an in-bounds cell was painted then erased (codex P2, PR #58)', async () => {
+		const created = (await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Map' } })))) as {
+			id: string;
+		};
+		// Paint + erase a cell that stays WITHIN the new bounds — never OOB at
+		// any T, so the shrink is allowed. Guards against the strict check
+		// over-rejecting in-bounds history.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 5, y: 3, biome: 'plains' }], command_complete: true }
+				}
+			})
+		);
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: created.id },
+				body: {
+					tPosition: 2,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 5, y: 3, biome: 'unset' }], command_complete: true }
+				}
+			})
+		);
+		const res = await mapIdRoute.PATCH(
+			mkEvent({ params: { id: created.id }, body: { gridCellsX: 16, gridCellsY: 16 } })
+		);
+		const body = (await readJson(res)) as { gridCellsX: number };
+		expect(body.gridCellsX).toBe(16);
+	});
+
 	it('PATCH returns 404 for missing id', async () => {
 		await expect(
 			mapIdRoute.PATCH(
@@ -1160,7 +1355,10 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		expect(anchors[0].stateJsonb).toEqual({
 			regions: [],
 			artifacts: [],
-			chains: []
+			chains: [],
+			// Slice 3 invariant: baseline anchors include cells: [] so
+			// projection.ts can read state_jsonb.cells unconditionally.
+			cells: []
 		});
 	});
 
@@ -1287,8 +1485,52 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		expect(anchors[0].stateJsonb).toEqual({
 			regions: [],
 			artifacts: [],
-			chains: []
+			chains: [],
+			// Slice 3 invariant: duplicate writers include cells: [].
+			cells: []
 		});
+	});
+
+	it('G2: duplicating a map copies its grid calibration but not its terrain (codex P2, PR #58)', async () => {
+		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Calibrated' } }));
+		const source = await readJson(sourceRes);
+		// Calibrate the source: hex, custom cell counts, scale, grid hidden.
+		await mapIdRoute.PATCH(
+			mkEvent({
+				params: { id: source.id },
+				body: {
+					gridType: 'hex',
+					gridCellsX: 48,
+					gridCellsY: 40,
+					gridScaleUnit: 'mi',
+					gridScaleValue: 5,
+					gridVisible: false
+				}
+			})
+		);
+		const cloneRes = await DUPLICATE_MAP(mkEvent({ params: { id: source.id } }));
+		const clone = (await readJson(cloneRes)) as {
+			id: string;
+			gridType: string;
+			gridCellsX: number;
+			gridCellsY: number;
+			gridScaleUnit: string;
+			gridScaleValue: number;
+			gridVisible: boolean;
+		};
+		expect(clone.gridType).toBe('hex');
+		expect(clone.gridCellsX).toBe(48);
+		expect(clone.gridCellsY).toBe(40);
+		expect(clone.gridScaleUnit).toBe('mi');
+		expect(clone.gridScaleValue).toBe(5);
+		expect(clone.gridVisible).toBe(false);
+		// Terrain is NOT cloned — the baseline anchor still starts empty.
+		const anchors = await currentDb
+			.select()
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, clone.id));
+		expect(anchors).toHaveLength(1);
+		expect((anchors[0].stateJsonb as { cells: unknown[] }).cells).toEqual([]);
 	});
 
 	it('G2: source map keeps its own baseline anchor untouched after duplicate', async () => {
@@ -2059,13 +2301,19 @@ describe('Slice 2 D3 — undo endpoint (T7)', () => {
 			{ tPosition: 1, createdAt: new Date('2026-01-02T00:00:00Z') }
 		]);
 
+		// Slice 3 B5: undo response is an array (length 1 for standalone
+		// events; length N for chunked strokes sharing command_id). These
+		// events are standalone, so each pop returns a one-element array.
 		const res1 = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
 		const popped1 = await readJson(res1);
-		expect(popped1.id).toBe(eventB.id);
+		expect(Array.isArray(popped1)).toBe(true);
+		expect(popped1).toHaveLength(1);
+		expect(popped1[0].id).toBe(eventB.id);
 
 		const res2 = await UNDO_EVENT(mkEvent({ params: { id: map.id } }));
 		const popped2 = await readJson(res2);
-		expect(popped2.id).toBe(eventA.id);
+		expect(popped2).toHaveLength(1);
+		expect(popped2[0].id).toBe(eventA.id);
 	});
 
 	it('soft-deletes (sets undone_at, does not delete the row)', async () => {

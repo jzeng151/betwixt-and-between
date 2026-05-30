@@ -30,8 +30,12 @@
 	import { factions as factionsStore, type Faction } from './factions-store.js';
 	import { mapEventsStore } from './map-events-store.js';
 	import { mapAnchorsStore } from './map-anchors-store.js';
+	import { layerVisibility } from './layer-prefs-store.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
 	import type { MapRegion } from './types.js';
+
+	// Slice 3 E4 — layer toggle.
+	const visible = layerVisibility('regions');
 
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
@@ -249,7 +253,13 @@
 					locationId: r.locationId ?? null
 				})),
 				artifacts: [],
-				chains: []
+				chains: [],
+				// codex P2: an anchor at T is the COMPLETE state at T and shadows
+				// events with t_position <= T, so a snapshot that omits cells
+				// (normalized server-side to []) would erase all terrain painted
+				// at/before this playhead from T forward. Capture the projected
+				// terrain as rendered right now.
+				cells: renderedState?.cells ?? []
 			};
 			await mapAnchorsStore.create(mapId, { tPosition, stateJsonb });
 			// Snapshot doesn't visually change anything (it just records
@@ -448,6 +458,12 @@
 			};
 			viewport.on('rightclick', stageRightClickHandler);
 		}
+
+		// Slice 3 E4 — apply user visibility toggle. The right-click
+		// snapshot handler stays bound on the viewport (it fires on
+		// empty area, not on regions specifically), so toggling the
+		// layer hides geometry without disabling authoring gestures.
+		layer.visible = $visible;
 
 		// Clear previous draws + listeners. removeChildren returns the
 		// removed nodes; destroying them releases their event handlers

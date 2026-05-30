@@ -77,7 +77,7 @@ const FIXTURES: Fixture[] = [
 		anchors: [],
 		events: [],
 		ctx: fullCtx(),
-		expected: { tPosition: 0, regions: [], artifacts: [], chains: [] }
+		expected: { tPosition: 0, regions: [], artifacts: [], chains: [], cells: [] }
 	},
 	{
 		name: 'single region with faction',
@@ -96,7 +96,8 @@ const FIXTURES: Fixture[] = [
 			tPosition: 0,
 			regions: [{ regionId: REG_1, factionId: FAC_A, color: '#aa0000' }],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	},
 	{
@@ -128,7 +129,8 @@ const FIXTURES: Fixture[] = [
 				{ regionId: REG_3, factionId: null, color: '#9ca3af' }
 			],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	},
 	{
@@ -154,7 +156,8 @@ const FIXTURES: Fixture[] = [
 			tPosition: 5,
 			regions: [{ regionId: REG_1, factionId: FAC_B, color: '#0000bb' }],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	},
 	{
@@ -180,7 +183,8 @@ const FIXTURES: Fixture[] = [
 			tPosition: 0,
 			regions: [{ regionId: REG_2, factionId: FAC_B, color: '#0000bb' }],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	},
 	{
@@ -210,7 +214,8 @@ const FIXTURES: Fixture[] = [
 				{ regionId: REG_2, factionId: FAC_B, color: '#0000bb' }
 			],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	},
 	{
@@ -232,7 +237,8 @@ const FIXTURES: Fixture[] = [
 			tPosition: 0,
 			regions: [{ regionId: REG_1, factionId: null, color: NEUTRAL_REGION_COLOR }],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	},
 	{
@@ -257,7 +263,8 @@ const FIXTURES: Fixture[] = [
 			tPosition: 0,
 			regions: [{ regionId: REG_1, factionId: FAC_A, color: '#aa0000' }],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	},
 	{
@@ -285,7 +292,8 @@ const FIXTURES: Fixture[] = [
 			tPosition: 1,
 			regions: [{ regionId: REG_1, factionId: null, color: NEUTRAL_REGION_COLOR }],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	},
 	{
@@ -313,7 +321,8 @@ const FIXTURES: Fixture[] = [
 			tPosition: 5,
 			regions: [{ regionId: REG_1, factionId: FAC_A, color: '#aa0000' }],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	},
 	{
@@ -348,7 +357,8 @@ const FIXTURES: Fixture[] = [
 			tPosition: 2,
 			regions: [{ regionId: REG_1, factionId: FAC_A, color: '#aa0000' }],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	},
 	{
@@ -373,7 +383,8 @@ const FIXTURES: Fixture[] = [
 			tPosition: 0,
 			regions: [{ regionId: REG_1, factionId: FAC_A, color: '#aa0000' }],
 			artifacts: [],
-			chains: []
+			chains: [],
+			cells: []
 		}
 	}
 ];

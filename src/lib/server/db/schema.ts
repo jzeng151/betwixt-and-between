@@ -46,6 +46,15 @@ export type EntityType = (typeof EntityType)[number];
 export const PlaceableEntityType = ['Character', 'Artifact', 'Item'] as const;
 export type PlaceableEntityType = (typeof PlaceableEntityType)[number];
 
+// Slice 3 T1' — grid types accepted by world_maps.grid_type. CHECK constraint
+// in drizzle/0018_world_maps_grid.sql restricts to these two values; the
+// `text('grid_type', { enum: GridType })` annotation on worldMaps below gives
+// Drizzle the same constraint at the TS layer. Matches the EntityType /
+// PlaceableEntityType pattern so client + server code import one source of
+// truth instead of typing string literals.
+export const GridType = ['square', 'hex'] as const;
+export type GridType = (typeof GridType)[number];
+
 // ── Auth tables (Better-Auth) ──────────────────────────────────────────────
 
 export const user = pgTable('user', {
@@ -412,10 +421,36 @@ export const worldMaps = pgTable('world_maps', {
 	endSceneId: uuid('end_scene_id').references(() => entities.id, { onDelete: 'set null' }),
 	startPosition: doublePrecision('start_position'),
 	endPosition: doublePrecision('end_position'),
+	// Slice 3 T1' — grid columns (drizzle/0018_world_maps_grid.sql).
+	// Deferred from Slice 1a per design doc § A3; Slice 3 owns them.
+	// CHECK constraints declared below; values:
+	//   • gridType: 'square' (default) | 'hex'. Open Question #1
+	//     resolved to square as the code default; hex available per
+	//     map by setting the column.
+	//   • gridCellsX/Y: 32/24 defaults; CHECK bounds 4-128 per
+	//     outside-voice B9b (codex #12: 200×200 = 40k cells/anchor
+	//     is too generous; 128×128 = 16k is a sensible upper).
+	//   • gridScaleUnit/Value: display metadata, not used in projection.
+	//   • gridVisible: false for existing rows (two-pass default in
+	//     0018 per outside-voice B9a); true for new rows.
+	gridType: text('grid_type', { enum: GridType }).notNull().default('square'),
+	gridCellsX: integer('grid_cells_x').notNull().default(32),
+	gridCellsY: integer('grid_cells_y').notNull().default(24),
+	gridScaleUnit: text('grid_scale_unit').notNull().default('m'),
+	gridScaleValue: doublePrecision('grid_scale_value').notNull().default(5.0),
+	gridVisible: boolean('grid_visible').notNull().default(true),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
-	index('world_maps_location_id_idx').on(table.locationId)
+	index('world_maps_location_id_idx').on(table.locationId),
+	check(
+		'world_maps_grid_type_check',
+		sql`${table.gridType} IN ('square', 'hex')`
+	),
+	check(
+		'world_maps_grid_cells_bounds_check',
+		sql`${table.gridCellsX} BETWEEN 4 AND 128 AND ${table.gridCellsY} BETWEEN 4 AND 128`
+	)
 	// EXCLUDE constraint (world_maps_variant_no_overlap), CHECK
 	// (world_maps_variant_position_order) and partial-unique
 	// (world_maps_one_default_per_location) defined in
@@ -541,6 +576,15 @@ export const mapAnchors = pgTable('map_anchors', {
 		.references(() => worldMaps.id, { onDelete: 'cascade' }),
 	tPosition: doublePrecision('t_position').notNull(),
 	stateJsonb: jsonb('state_jsonb').notNull(),
+	// Slice 3 T15 — synthetic-anchor marker
+	// (drizzle/0019_map_anchors_is_synthetic.sql). true = server-written
+	// by the auto-anchor path in paint_cells POST (outside-voice B7
+	// tight rules: K=20 non-undone paint_cells events between user
+	// anchors, stroke-boundary aware). false = user-authored anchor.
+	// Undo policy (outside-voice A9 + B7): synthetic anchors are NOT
+	// dependents in the Slice 2 D3 cascade-undo prompt; projection
+	// bypasses them when their snapshot would be invalidated.
+	isSynthetic: boolean('is_synthetic').notNull().default(false),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
@@ -561,9 +605,30 @@ export const mapEvents = pgTable('map_events', {
 	// `undone_at IS NULL`. Append-only history posture preserved — undone
 	// rows are kept for audit, never resurrected (redo creates a fresh row).
 	undoneAt: timestamp('undone_at', { withTimezone: true }),
+	// Slice 3 T21 — chunked-stroke grouping
+	// (drizzle/0020_map_events_command_id.sql). Client generates one
+	// UUID per brush stroke; every chunked paint_cells event in that
+	// stroke shares the same command_id. Undo handler treats rows
+	// sharing a command_id as one logical command (soft-delete all
+	// atomically). NULL = standalone event (manual anchors, transfer_
+	// region, etc — legacy behavior). Outside-voice B5.
+	commandId: uuid('command_id'),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
-	index('map_events_world_map_id_t_position_idx').on(table.worldMapId, table.tPosition)
+	index('map_events_world_map_id_t_position_idx').on(table.worldMapId, table.tPosition),
+	// Partial index over command_id avoids paying index cost on the
+	// much-more-common NULL-command_id rows; accelerates the
+	// "soft-delete all rows with this command_id" undo path.
+	index('map_events_command_id_idx')
+		.on(table.worldMapId, table.commandId)
+		.where(sql`command_id IS NOT NULL`),
+	// Slice 3 /review perf — auto-anchor count hot path. Partial index
+	// for (kind='paint_cells' AND undone_at IS NULL); keys on
+	// (world_map_id, created_at) for the cutoff range. Declared here
+	// so npm run db:push picks it up alongside the migration.
+	index('map_events_auto_anchor_idx')
+		.on(table.worldMapId, table.createdAt)
+		.where(sql`kind = 'paint_cells' AND undone_at IS NULL`)
 ]);
 
 export const factions = pgTable('factions', {
@@ -594,3 +659,53 @@ export const factions = pgTable('factions', {
 		.on(table.userId)
 		.where(sql`is_system = true`)
 ]);
+
+// =============================================================================
+// world_map_layer_prefs — World Map v3 Slice 3 T14' (2026-05-27)
+// =============================================================================
+//
+// Per-user-per-map layer visibility. The Slice 3 D6 layered canvas
+// (background / grid / terrain / regions / placements / chrome) needs
+// per-layer toggle state that survives reloads. window_canvas_state
+// doesn't fit (it's keyed on (window_id, entity_id) for graph-window
+// node placement — different shape, different lifecycle).
+//
+// Cross-user invariant (CLAUDE.md + outside-voice codex #15): every
+// write MUST scope through world_maps.user_id via JOIN — the user_id
+// on this row is "the user authoring the pref," and that user must
+// own the world_map. The server-side write helper validates before
+// INSERT/UPDATE/DELETE; cross-user writes return 404. Tests in
+// tests/integration/auth-isolation-world-map-v3.test.ts.
+//
+// `visible` is integer 0/1 (not boolean) per CLAUDE.md convention —
+// matches window_canvas_state.pinned. Keeps SQL portable.
+//
+// Layer keys are NOT constrained at the DB layer. The design doc
+// enumeration lives in code (src/lib/features/map/layers.ts when it
+// lands); stale layer_key rows from renamed/removed layers are
+// silently skipped by the reader (lazy GC, matches anchor-jsonb
+// policy).
+//
+// bump_updated_at trigger installed by drizzle/0021. Updated_at
+// participation is required because Slice 2 D5 cursor pagination
+// orders by updated_at, and CLAUDE.md forbids app-code setting it.
+// =============================================================================
+export const worldMapLayerPrefs = pgTable(
+	'world_map_layer_prefs',
+	{
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		worldMapId: uuid('world_map_id')
+			.notNull()
+			.references(() => worldMaps.id, { onDelete: 'cascade' }),
+		layerKey: text('layer_key').notNull(),
+		visible: integer('visible').notNull().default(1),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		primaryKey({ columns: [table.userId, table.worldMapId, table.layerKey] }),
+		index('world_map_layer_prefs_map_idx').on(table.worldMapId)
+	]
+);

@@ -1,3 +1,8 @@
+// Slice 3 grid type — mirrors schema.ts GridType const array. Inlined
+// here (not imported) because schema.ts instantiates pgTable at module
+// load; pulling it into client bundles is forbidden by CLAUDE.md.
+export type GridType = 'square' | 'hex';
+
 export type WorldMap = {
 	id: string;
 	name: string;
@@ -15,6 +20,14 @@ export type WorldMap = {
 	endSceneId: string | null;
 	startPosition: number | null;
 	endPosition: number | null;
+	// Slice 3 T1' grid columns (drizzle/0018). Defaults: 'square', 32, 24,
+	// 'm', 5.0, true for new rows; false for pre-Slice-3 rows.
+	gridType: GridType;
+	gridCellsX: number;
+	gridCellsY: number;
+	gridScaleUnit: string;
+	gridScaleValue: number;
+	gridVisible: boolean;
 	createdAt: string;
 	updatedAt: string;
 };

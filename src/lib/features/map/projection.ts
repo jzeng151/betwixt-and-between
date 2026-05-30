@@ -43,6 +43,12 @@
 
 export const NEUTRAL_REGION_COLOR = '#9ca3af';
 
+// Slice 3 outside-voice A3 — single source of truth for the paint_cells
+// chunking cap. Server-side validator rejects payloads over this;
+// client-side PixiBrushLayer chunks gestures at this boundary. Keep them
+// in lockstep by importing this constant from both sides.
+export const PAINT_CELLS_MAX_PER_EVENT = 256;
+
 // -- Anchor payload (state_jsonb) ---------------------------------------------
 // Matches docs/plans/world-map-v3-design.md § "State_jsonb shape (anchor
 // content, all slices)". Slice 1 only reads `regions`; `artifacts` and
@@ -76,10 +82,22 @@ export type AnchorChain = {
 	active_step_index: number;
 };
 
+// Slice 3 D2 — per-cell biome state in anchor JSON. Cells are sparse:
+// only painted cells appear; missing cells render transparent. Same-T
+// ordering: last paint_cells event at a given (x,y) wins (CMT-5).
+export type AnchorCell = {
+	x: number;
+	y: number;
+	biome: BiomeKind;
+};
+
 export type AnchorState = {
 	regions?: AnchorRegion[];
 	artifacts?: AnchorArtifact[];
 	chains?: AnchorChain[];
+	// Slice 3: terrain cells. Backfilled to [] by drizzle/0022; new
+	// anchors must include this key (PR A invariant test enforces).
+	cells?: AnchorCell[];
 };
 
 export type ProjectionAnchor = {
@@ -102,13 +120,46 @@ export type ProjectionAnchor = {
 //   2. src/lib/server/world-map-v3.ts validateEventPayload's switch
 //   3. projection.ts's applyTransferRegion fold (or its successor)
 
-export const EVENT_KINDS = ['transfer_region'] as const;
+export const EVENT_KINDS = ['transfer_region', 'paint_cells'] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
 export type TransferRegionPayload = {
 	region_id: string;
 	new_faction_id: string;
 };
+
+// Slice 3 D2 — terrain brush event. Each event carries a batched cells array
+// (one event = one brush gesture; PixiBrushLayer chunks at 256 cells per
+// outside-voice A3). Events sharing a command_id are one logical command
+// (chunked stroke); undo soft-deletes the whole group atomically. The
+// command_complete flag on the last chunk lets the server-side auto-anchor
+// fire only at stroke boundary (outside-voice B7).
+export type PaintCellsPayload = {
+	cells: Array<{ x: number; y: number; biome: BiomeKind }>;
+	// Optional. Last chunk of a multi-event stroke sets this true so the
+	// auto-anchor logic doesn't fire mid-stroke. Single-event strokes
+	// either set it true or omit it (defaults to true server-side).
+	command_complete?: boolean;
+};
+
+// Slice 3 D3 — biome enum, hardcoded for the MVP. User-defined biomes
+// deferred to Slice 4 (needs asset upload pipeline). 'unset' IS a valid
+// stored value per outside-voice A6: eraser strokes write biome='unset'
+// to anchor state, projection treats stored 'unset' and missing cells
+// identically (transparent at render). Sparseness is a backfill-time
+// optimization only.
+export const BIOMES = [
+	'plains',
+	'forest',
+	'water',
+	'desert',
+	'mountain',
+	'swamp',
+	'snow',
+	'urban',
+	'unset'
+] as const;
+export type BiomeKind = (typeof BIOMES)[number];
 
 export type ProjectionEvent = {
 	id: string;
@@ -141,11 +192,21 @@ export type RenderedRegion = {
 	color: string;
 };
 
+// Slice 3 — output of the cells projection. Same shape as AnchorCell;
+// distinct type so future fields (resolved color, layer overrides) can
+// land without touching anchor state.
+export type RenderedCell = {
+	x: number;
+	y: number;
+	biome: BiomeKind;
+};
+
 export type RenderedState = {
 	tPosition: number;
 	regions: RenderedRegion[];
 	artifacts: AnchorArtifact[];
 	chains: AnchorChain[];
+	cells: RenderedCell[];
 };
 
 // -- Implementation -----------------------------------------------------------
@@ -188,6 +249,37 @@ function pickActiveAnchor(t: number, anchors: ProjectionAnchor[]): ProjectionAnc
 		}
 	}
 	return best;
+}
+
+function applyPaintCells(
+	cells: Map<string, AnchorCell>,
+	payload: unknown
+): void {
+	if (!payload || typeof payload !== 'object') return;
+	const p = payload as Partial<PaintCellsPayload>;
+	if (!Array.isArray(p.cells)) return;
+	for (const cell of p.cells) {
+		if (!cell || typeof cell !== 'object') continue;
+		const x = (cell as AnchorCell).x;
+		const y = (cell as AnchorCell).y;
+		const biome = (cell as AnchorCell).biome;
+		if (
+			typeof x !== 'number' ||
+			!Number.isInteger(x) ||
+			typeof y !== 'number' ||
+			!Number.isInteger(y) ||
+			typeof biome !== 'string' ||
+			!(BIOMES as readonly string[]).includes(biome)
+		) {
+			// Lazy GC: malformed entries silently dropped at render
+			// (matches the cross-user ref policy in resolveRegionColor).
+			continue;
+		}
+		// Last-write-wins on (x, y). Caller has already sorted events
+		// by (t_position, created_at, id); the final write at each cell
+		// is the projected biome.
+		cells.set(`${x},${y}`, { x, y, biome: biome as BiomeKind });
+	}
 }
 
 function applyTransferRegion(
@@ -254,6 +346,8 @@ export function projectState(
 	const regions = new Map<string, AnchorRegion>();
 	const artifacts: AnchorArtifact[] = [];
 	const chains: AnchorChain[] = [];
+	// Slice 3: cells keyed by "x,y" for last-write-wins folding.
+	const cells = new Map<string, AnchorCell>();
 
 	if (anchor) {
 		for (const r of anchor.stateJsonb.regions ?? []) {
@@ -264,6 +358,16 @@ export function projectState(
 		}
 		for (const c of anchor.stateJsonb.chains ?? []) {
 			chains.push(c);
+		}
+		for (const cell of anchor.stateJsonb.cells ?? []) {
+			if (
+				cell &&
+				Number.isInteger(cell.x) &&
+				Number.isInteger(cell.y) &&
+				(BIOMES as readonly string[]).includes(cell.biome)
+			) {
+				cells.set(`${cell.x},${cell.y}`, cell);
+			}
 		}
 	}
 
@@ -278,12 +382,14 @@ export function projectState(
 		});
 
 	for (const e of applicable) {
-		// Slice 1: only transfer_region. Other kinds (move_entity, link_chain,
-		// spawn_artifact, despawn_artifact) are Slice 2+; ignoring them here
-		// is the correct forward-compatible behavior.
 		if (e.kind === 'transfer_region') {
 			applyTransferRegion(regions, e.payloadJsonb);
+		} else if (e.kind === 'paint_cells') {
+			applyPaintCells(cells, e.payloadJsonb);
 		}
+		// Unknown kinds (move_entity, link_chain, spawn_artifact,
+		// despawn_artifact — Slice 2+/5) flow through unchanged. The fold
+		// is forward-compatible: adding cases doesn't break existing ones.
 	}
 
 	const renderedRegions: RenderedRegion[] = [];
@@ -292,10 +398,18 @@ export function projectState(
 		if (resolved) renderedRegions.push(resolved);
 	}
 
+	// Sparse output: 'unset' cells are stored but treated as transparent
+	// at render time. Whether to emit them is a renderer concern, not a
+	// projection one. projectState emits everything that was stored so the
+	// renderer can choose: skip 'unset' for sparser draw calls, or render
+	// it as a marker for "explicitly erased here." Same shape either way.
+	const renderedCells: RenderedCell[] = Array.from(cells.values());
+
 	return {
 		tPosition: t,
 		regions: renderedRegions,
 		artifacts,
-		chains
+		chains,
+		cells: renderedCells
 	};
 }

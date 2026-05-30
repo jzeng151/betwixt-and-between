@@ -17,6 +17,14 @@ function mkMap(overrides: Partial<WorldMap> & { id: string }): WorldMap {
 		endSceneId: null,
 		startPosition: overrides.startPosition ?? null,
 		endPosition: overrides.endPosition ?? null,
+		// Slice 3 grid defaults — match drizzle/0018 column defaults so
+		// fixture maps look like fresh-from-API rows.
+		gridType: 'square',
+		gridCellsX: 32,
+		gridCellsY: 24,
+		gridScaleUnit: 'm',
+		gridScaleValue: 5.0,
+		gridVisible: true,
 		createdAt: overrides.createdAt ?? '2026-05-01T00:00:00.000Z',
 		updatedAt: overrides.updatedAt ?? '2026-05-01T00:00:00.000Z'
 	};

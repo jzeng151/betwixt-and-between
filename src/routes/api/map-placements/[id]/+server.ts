@@ -18,6 +18,7 @@ import {
 	assertPlacementVariantBounds,
 	resolvePlacementBounds
 } from '$lib/server/map-placements.js';
+import { validateStyleInData } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -71,6 +72,8 @@ export const PATCH: RequestHandler = async (event) => {
 				updates.y = body.y;
 			}
 			if ('data' in body) {
+				// Slice 3 T24 — style whitelist applies on PATCH too.
+				validateStyleInData(body.data, 'placement.data');
 				updates.data = body.data && typeof body.data === 'object' ? body.data : {};
 			}
 

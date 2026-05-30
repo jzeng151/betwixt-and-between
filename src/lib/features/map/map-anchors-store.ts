@@ -28,6 +28,12 @@ function createMapAnchorsStore() {
 	// content. Each load() records its target; on response, we no-op the
 	// store.set() if the target changed during the await.
 	let lastLoadedMapId: string | null = null;
+	// codex P2: monotonic load token. lastLoadedMapId only distinguishes
+	// DIFFERENT maps; two same-map loads (resyncAfterWrite fires one per
+	// authored-anchor write) could resolve out of order and let an older load
+	// overwrite the store with a stale anchor set. Each load captures a token
+	// and only commits if it is still the latest.
+	let loadToken = 0;
 
 	// Pages through /api/maps/[id]/anchors until next_cursor is null.
 	// Projection requires the complete ordered stream so loadAll-on-mount
@@ -36,6 +42,8 @@ function createMapAnchorsStore() {
 	// abandon the in-progress load (Codex P1 on PR #55).
 	async function load(mapId: string): Promise<void> {
 		lastLoadedMapId = mapId;
+		const token = ++loadToken;
+		const stale = () => lastLoadedMapId !== mapId || token !== loadToken;
 		const collected: MapAnchor[] = [];
 		let cursor: string | null = null;
 		do {
@@ -43,14 +51,14 @@ function createMapAnchorsStore() {
 				? `/api/maps/${mapId}/anchors?after=${encodeURIComponent(cursor)}`
 				: `/api/maps/${mapId}/anchors`;
 			const res = await fetch(url);
-			if (lastLoadedMapId !== mapId) return;
+			if (stale()) return;
 			if (!res.ok) throw new Error(`Failed to load anchors: ${await errorMessage(res)}`);
 			const body = (await res.json()) as { rows: MapAnchor[]; next_cursor: string | null };
-			if (lastLoadedMapId !== mapId) return;
+			if (stale()) return;
 			collected.push(...body.rows);
 			cursor = body.next_cursor;
 		} while (cursor != null);
-		if (lastLoadedMapId !== mapId) return;
+		if (stale()) return;
 		store.set(collected);
 	}
 
@@ -60,6 +68,21 @@ function createMapAnchorsStore() {
 	// must NOT merge into B's local store. The server-side write still
 	// lands (a tx is a tx); only the optimistic local update is gated.
 	// When the user returns to A, .load(A) refetches the canonical state.
+
+	// codex P2 (PR #58): authored-anchor writes invalidate synthetic anchors
+	// at/after their t_position server-side (invalidateSyntheticAnchorsAtOrAfter
+	// in createMapAnchor / updateMapAnchor / deleteMapAnchor), but the mutation
+	// response only carries the single written row (or 204 on delete). If the
+	// client holds a later synthetic anchor, it stays in the local store and
+	// projectState keeps selecting that stale snapshot, hiding the user's anchor
+	// change until a full reload. Refetch the canonical set after the optimistic
+	// update reconciles. Best-effort — a failed resync only leaves the stale
+	// snapshot until the next reload, so swallow rather than fail the mutation.
+	function resyncAfterWrite(mapId: string): void {
+		void load(mapId).catch((err) => {
+			console.error('anchor resync after write failed; projection may be stale until reload', err);
+		});
+	}
 
 	async function create(mapId: string, input: AnchorInput): Promise<MapAnchor> {
 		const res = await fetch(`/api/maps/${mapId}/anchors`, {
@@ -73,6 +96,7 @@ function createMapAnchorsStore() {
 		store.update((rows) =>
 			[...rows, created].sort((a, b) => a.tPosition - b.tPosition || a.id.localeCompare(b.id))
 		);
+		resyncAfterWrite(mapId);
 		return created;
 	}
 
@@ -94,6 +118,7 @@ function createMapAnchorsStore() {
 				.map((r) => (r.id === anchorId ? updated : r))
 				.sort((a, b) => a.tPosition - b.tPosition || a.id.localeCompare(b.id))
 		);
+		resyncAfterWrite(mapId);
 		return updated;
 	}
 
@@ -102,6 +127,19 @@ function createMapAnchorsStore() {
 		if (!res.ok) throw new Error(`Failed to delete anchor: ${await errorMessage(res)}`);
 		if (lastLoadedMapId !== mapId) return;
 		store.update((rows) => rows.filter((r) => r.id !== anchorId));
+		resyncAfterWrite(mapId);
+	}
+
+	// codex P2 (PR #58): evict synthetic anchors the server invalidated as a
+	// side effect of an event write (createMapEvent returns their ids). No
+	// network call — the rows are already gone server-side; this only keeps
+	// the local cache consistent so projectState doesn't pick a stale anchor.
+	// Honors lastLoadedMapId like the mutation paths above.
+	function dropLocal(mapId: string, anchorIds: string[]): void {
+		if (anchorIds.length === 0) return;
+		if (lastLoadedMapId !== mapId) return;
+		const drop = new Set(anchorIds);
+		store.update((rows) => rows.filter((r) => !drop.has(r.id)));
 	}
 
 	function reset(): void {
@@ -115,6 +153,7 @@ function createMapAnchorsStore() {
 		create,
 		update,
 		delete: remove,
+		dropLocal,
 		reset
 	};
 }

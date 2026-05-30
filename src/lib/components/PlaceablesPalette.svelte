@@ -118,6 +118,11 @@
 		background: var(--color-panel, rgba(0, 0, 0, 0.6));
 		border-top: 1px solid var(--color-border, #333);
 		font-size: 12px;
+		/* Sit above the MapSidebar (z-index:100). The sidebar is absolutely
+		   positioned and would otherwise paint over this bottom-of-column
+		   rail, swallowing chip clicks on its right end. */
+		position: relative;
+		z-index: 150;
 	}
 	.palette-header {
 		display: flex;

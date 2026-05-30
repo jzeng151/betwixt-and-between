@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
 import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
+import { validateStyleInData } from '$lib/server/style-validation.js';
 import {
 	recomputeAllIntervals,
 	recomputeIntervalsForAct,
@@ -34,6 +35,9 @@ export const POST: RequestHandler = async (event) => {
 	const userId = getUserId(event);
 	const body = await event.request.json();
 	const { type, name, data, parentId, position } = body;
+
+	// Slice 3 T24 — validate data.style on create.
+	validateStyleInData(data, 'entity.data');
 
 	if (!type || !EntityType.includes(type)) {
 		error(400, 'Invalid entity type');

@@ -20,6 +20,17 @@
 	} from './pixi-context.js';
 	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
+	import { resolveStyle, GLOBAL_STYLE_DEFAULT } from '$lib/features/map/style-cascade.js';
+	import { layerVisibility } from '$lib/features/map/layer-prefs-store.js';
+
+	// Visual fallback gate: when the cascade returns GLOBAL_STYLE_DEFAULT's
+	// color (i.e. neither STYLE_DEFAULTS nor entity.data.style set one),
+	// fall through to the legacy getEntityTypeColor so existing entities
+	// without an explicit style still render in their per-type palette.
+	const GLOBAL_DEFAULT_COLOR = GLOBAL_STYLE_DEFAULT.color;
+
+	// Slice 3 E4 — layer toggle.
+	const visible = layerVisibility('placements');
 	import type { MapPlacement } from '$lib/types/map-placement.js';
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { WorldMap } from './types.js';
@@ -28,6 +39,8 @@
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
 	type PixiGraphics = import('pixi.js').Graphics;
+	type PixiSprite = import('pixi.js').Sprite;
+	type PixiTexture = import('pixi.js').Texture;
 	type FederatedPointerEvent = import('pixi.js').FederatedPointerEvent;
 
 	let {
@@ -37,6 +50,7 @@
 		entities,
 		isInScope = null,
 		armedPlaceableId = null,
+		brushActive = false,
 		onOpenEntity,
 		onDeletePlacement,
 		onCanvasClick
@@ -56,6 +70,9 @@
 		// matches MapStage.svelte's onCanvasClick contract so WorldMap can
 		// reuse handleCanvasClick unchanged.
 		armedPlaceableId?: string | null;
+		// codex P2: when brush mode is active, suppress marker pointer
+		// interaction so painting over a placement doesn't also open/delete it.
+		brushActive?: boolean;
 		onOpenEntity: (id: string) => void;
 		onDeletePlacement: (id: string) => void;
 		onCanvasClick?: (fx: number, fy: number) => void;
@@ -124,16 +141,36 @@
 		return placementsAtPlayhead(placements, playhead);
 	});
 
+	// /review adversarial — entities.find() inside the per-placement loop
+	// is O(P*E) per $effect tick. Memoize as a Map once per entities
+	// snapshot.
+	let entityById = $derived.by<Map<string, Entity>>(() => {
+		const m = new Map<string, Entity>();
+		for (const e of entities) m.set(e.id, e);
+		return m;
+	});
+
+	// codex P2 (PR #58): monotonic render token. Icon textures load
+	// asynchronously; if this effect re-runs (and destroys the current markers)
+	// while a load is in flight, the resolved sprite must NOT be added to a
+	// torn-down marker. Each effect run bumps this; in-flight loads capture the
+	// value at dispatch and abort on resolution if it has advanced.
+	let renderGeneration = 0;
+
 	$effect(() => {
 		const app = stageCtx.app;
 		const viewport = stageCtx.viewport;
 		if (!app || !PIXI || !viewport) return;
 		if (!activeMap?.width || !activeMap?.height) return;
 
+		const generation = ++renderGeneration;
+
 		if (!layer) {
 			layer = new PIXI.Container();
 			viewport.addChild(layer);
 		}
+		// Slice 3 E4 — apply user visibility toggle.
+		layer.visible = $visible;
 
 		for (const child of layer.removeChildren()) {
 			child.destroy();
@@ -145,11 +182,27 @@
 		const mapH = activeMap.height;
 
 		for (const placement of activePlacements) {
-			const placeable = entities.find((e) => e.id === placement.placeableId);
+			const placeable = entityById.get(placement.placeableId);
 			if (!placeable) continue;
 			const cx = placement.x * mapW;
 			const cy = placement.y * mapH;
-			const fill = parseHex(getEntityTypeColor(placeable.type));
+
+			// Slice 3 T9 + B6 — style cascade resolved per-placement at
+			// render. GLOBAL ⊕ STYLE_DEFAULTS[type] ⊕ entity.data.style.
+			// Color falls through getEntityTypeColor as a baseline if
+			// neither STYLE_DEFAULTS nor an instance override set one
+			// — getEntityTypeColor returns the legacy per-type palette
+			// so visuals don't regress for entities without explicit
+			// styles. resolveStyle's color is preferred; the legacy is
+			// the fallback for type defaults the new const doesn't list.
+			// codex P2 (PR #58): pass the per-placement style override
+			// (placement.data.style) so an instance customization wins over
+			// the entity-level style instead of being silently ignored.
+			const resolved = resolveStyle(placeable, placement.data?.style);
+			const fillColor =
+				resolved.color === GLOBAL_DEFAULT_COLOR
+					? parseHex(getEntityTypeColor(placeable.type))
+					: parseHex(resolved.color);
 
 			// T9 follow-up: scope-based dim. The placeable entity is in
 			// scope when its intervals contain the playhead (or playhead is
@@ -157,16 +210,28 @@
 			// scope"). Out-of-scope placements stay visible but fade so
 			// the canvas isn't visually noisy with off-scene markers.
 			const inScope = isInScope ? isInScope(placeable.id) : true;
-			const fillAlpha = inScope ? 1 : 0.3;
-			const strokeAlpha = inScope ? 0.6 : 0.2;
+			// Compose scope dim with per-instance opacity. resolved.opacity
+			// is the cascade's full chain; scope is the temporal dim.
+			const fillAlpha = (inScope ? 1 : 0.3) * resolved.opacity;
+			const strokeAlpha = (inScope ? 0.6 : 0.2) * resolved.opacity;
 
-			const g: PixiGraphics = new PIXI.Graphics();
-			g.circle(cx, cy, 8)
-				.fill({ color: fill, alpha: fillAlpha })
-				.stroke({ color: 0x000000, width: 1.5, alpha: strokeAlpha });
-			g.eventMode = 'static';
-			g.cursor = 'pointer';
-			g.on('pointerover', (e: FederatedPointerEvent) => {
+			// Sprite radius scales with cascade.scale. Base radius 8.
+			const radius = 8 * resolved.scale;
+
+			// Marker is a Container that owns the hit area + interaction, so the
+			// visual (circle fallback OR icon sprite) can swap without losing
+			// pointer handlers. codex P2 (PR #58): resolved.icon is now honored.
+			const marker: PixiContainer = new PIXI.Container();
+			// codex P2: while brushing, markers are non-interactive so a paint
+			// stroke over a placement doesn't also fire its open/delete tap.
+			// Reading brushActive here makes this effect rebuild markers when the
+			// brush toggles.
+			marker.eventMode = brushActive ? 'none' : 'static';
+			marker.cursor = brushActive ? 'default' : 'pointer';
+			// Stable hit area on the container — independent of which child
+			// visual is shown (the circle may be hidden once an icon loads).
+			marker.hitArea = new PIXI.Circle(cx, cy, radius);
+			marker.on('pointerover', (e: FederatedPointerEvent) => {
 				const { x, y } = clientXY(e);
 				tooltip = {
 					x,
@@ -174,10 +239,10 @@
 					text: `${placeable.name} (${placeable.type})`
 				};
 			});
-			g.on('pointerout', () => {
+			marker.on('pointerout', () => {
 				tooltip = null;
 			});
-			g.on('pointertap', (e: FederatedPointerEvent) => {
+			marker.on('pointertap', (e: FederatedPointerEvent) => {
 				if (e.button !== 0) return;
 				e.stopPropagation();
 				const { x, y } = clientXY(e);
@@ -191,9 +256,62 @@
 					placeableName: placeable.name
 				};
 			});
-			layer.addChild(g);
+
+			const g: PixiGraphics = new PIXI.Graphics();
+			g.circle(cx, cy, radius)
+				.fill({ color: fillColor, alpha: fillAlpha })
+				.stroke({ color: 0x000000, width: 1.5, alpha: strokeAlpha });
+			marker.addChild(g);
+			layer.addChild(marker);
+
+			// codex P2 (PR #58): an accepted per-placement/entity icon override
+			// now renders. The circle stays as the visual while the texture
+			// loads and as the fallback if the load fails; on success the icon
+			// sprite overlays it and the circle is hidden.
+			if (resolved.icon) {
+				void loadIconSprite(resolved.icon, cx, cy, radius, fillAlpha, marker, g, generation);
+			}
 		}
 	});
+
+	// codex P2 (PR #58): load a placement's icon-override texture and overlay it
+	// as a sprite, sized to the marker diameter and dimmed to the resolved
+	// alpha. Generation-guarded (see renderGeneration) so a load resolving after
+	// the render effect re-ran doesn't attach to a destroyed marker. On a load
+	// failure (bad URL, CORS/CSP, decode error) the circle fallback simply
+	// stays — the override is best-effort, never blocking.
+	async function loadIconSprite(
+		url: string,
+		cx: number,
+		cy: number,
+		radius: number,
+		alpha: number,
+		marker: PixiContainer,
+		circle: PixiGraphics,
+		generation: number
+	): Promise<void> {
+		if (!PIXI) return;
+		let texture: PixiTexture;
+		try {
+			texture = await PIXI.Assets.load(url);
+		} catch {
+			return; // keep the circle fallback
+		}
+		// Effect re-ran (markers destroyed) or layer torn down while loading.
+		if (generation !== renderGeneration || !layer) return;
+		const sprite: PixiSprite = new PIXI.Sprite(texture);
+		sprite.anchor.set(0.5);
+		sprite.position.set(cx, cy);
+		// Fit the icon to the marker diameter; cascade.scale is already in radius.
+		sprite.width = radius * 2;
+		sprite.height = radius * 2;
+		sprite.alpha = alpha;
+		// The marker Container owns hit-testing via hitArea; the sprite must not
+		// intercept events or it would shadow the container's handlers.
+		sprite.eventMode = 'none';
+		circle.visible = false;
+		marker.addChild(sprite);
+	}
 
 	const menuItems = $derived(
 		menu

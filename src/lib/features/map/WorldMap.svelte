@@ -21,6 +21,8 @@
 	import MapToolbar from '$lib/features/map/MapToolbar.svelte';
 	import PixiStage from '$lib/features/map/PixiStage.svelte';
 	import PixiBackgroundLayer from '$lib/features/map/PixiBackgroundLayer.svelte';
+	import PixiGridLayer from '$lib/features/map/PixiGridLayer.svelte';
+	import PixiTerrainLayer from '$lib/features/map/PixiTerrainLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
@@ -29,11 +31,22 @@
 	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
 	import { mapAnchorsStore } from '$lib/features/map/map-anchors-store.js';
 	import { mapEventsStore } from '$lib/features/map/map-events-store.js';
+	import { layerPrefs } from '$lib/features/map/layer-prefs-store.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
+	import BrushPalette from '$lib/components/BrushPalette.svelte';
+	import AssetLibrary from '$lib/components/AssetLibrary.svelte';
+	import { ASSET_DRAG_MIME } from '$lib/components/asset-drag.js';
+	import PixiBrushLayer from '$lib/features/map/PixiBrushLayer.svelte';
+	import type { BiomeKind } from '$lib/features/map/projection.js';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
 
-	let { entityId = $bindable<string | undefined>(undefined) }: { entityId?: string } = $props();
+	// windowId is this WorldMap instance's window id (from WindowManager). Two
+	// world-map windows can coexist (the default `world-map` plus a location-
+	// specific `world-map-<entityId>`), so the keyboard-shortcut handler scopes
+	// to THIS window's id, not just appId — otherwise one Ctrl+Z would undo in
+	// every open map instance.
+	let { entityId = $bindable<string | undefined>(undefined), windowId = undefined }: { entityId?: string; windowId?: string } = $props();
 
 	// armed placeable id (chip selected in PlaceablesPalette). When non-null,
 	// the next click on the Pixi canvas creates a placement at the clicked
@@ -45,7 +58,101 @@
 	$effect(() => {
 		if (!activeMap?.locationId || !hasImage) armedPlaceableId = null;
 	});
+
+	// Slice 3 T5 — brush authoring state. When `brushActive` is true,
+	// PixiBrushLayer captures pointer events and paints cells. Mutually
+	// exclusive with armedPlaceableId (you can't be placing and painting
+	// at the same time — both take the canvas pointer).
+	let brushActive = $state(false);
+	let brushBiome = $state<BiomeKind>('plains');
+	let brushSize = $state<1 | 3 | 5>(1);
+	$effect(() => {
+		// Disable brush if the active map can't host paint (no image,
+		// no canvas dimensions). Auto-unarm so the user doesn't get
+		// stuck in a no-op brush state.
+		if (!activeMap || !activeMap.width || !activeMap.height) brushActive = false;
+	});
+	$effect(() => {
+		// Cross-exclusion: arming a placement disables the brush, and
+		// vice versa. Paint-and-place at the same time would conflict
+		// on the pointer.
+		if (brushActive && armedPlaceableId !== null) armedPlaceableId = null;
+	});
 	let placementError = $state('');
+	// In-flight flag for the per-map placements fetch (see the placements
+	// loader effect below). Read by the `mapLoading` overlay gate.
+	let placementsLoading = $state(false);
+
+	// Slice 3 — undo/redo for map events (brush strokes, region transfers).
+	// The store + /events/undo endpoint existed but nothing in the UI called
+	// them. canUndo follows the live event log; canRedo follows the client
+	// redo stack the store maintains.
+	const mapEventsRedoStack = mapEventsStore.redoStack;
+	let canUndo = $derived($mapEventsStore.length > 0);
+	let canRedo = $derived($mapEventsRedoStack.length > 0);
+
+	async function handleUndo() {
+		if (!activeMapId) return;
+		// codex P2: block undo while the map is loading. On a map switch
+		// activeMapId flips before mapEventsStore.load() clears the old map's
+		// rows, so canUndo can read true from the PREVIOUS map while the overlay
+		// is up — and undo would POST /events/undo against the NEW map, deleting
+		// its latest event. mapLoading stays true until anchors/events settle.
+		if (mapLoading) return;
+		try {
+			await mapEventsStore.undo(activeMapId);
+		} catch (err) {
+			console.error('Undo failed:', err);
+		}
+	}
+	async function handleRedo() {
+		if (!activeMapId) return;
+		if (mapLoading) return;
+		try {
+			await mapEventsStore.redo(activeMapId);
+		} catch (err) {
+			console.error('Redo failed:', err);
+		}
+	}
+
+	// Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z or Ctrl+Y = redo. Scoped to the
+	// focused World Map window so the shortcut doesn't undo map events while
+	// the user is working in another app, and ignored while typing in a field.
+	function handleMapKeydown(e: KeyboardEvent) {
+		if (!activeMapId) return;
+		if (mapLoading) return; // codex P2: don't undo/redo against a still-loading map
+		// Scope to THIS window instance. Multiple world-map windows can be open
+		// (default + location-specific), each with its own handler + activeMapId;
+		// comparing the focused window's id (not just appId) ensures only the
+		// focused map undoes/redoes. Falls back to appId when windowId is unset.
+		const focused = windowStore.focusedWindow();
+		if (windowId ? focused?.id !== windowId : focused?.appId !== 'world-map') return;
+		const target = e.target as HTMLElement | null;
+		if (
+			target &&
+			(target.tagName === 'INPUT' ||
+				target.tagName === 'TEXTAREA' ||
+				target.isContentEditable)
+		)
+			return;
+		if (!(e.metaKey || e.ctrlKey)) return;
+		const key = e.key.toLowerCase();
+		if (key === 'z' && !e.shiftKey) {
+			e.preventDefault();
+			void handleUndo();
+		} else if ((key === 'z' && e.shiftKey) || key === 'y') {
+			e.preventDefault();
+			void handleRedo();
+		}
+	}
+
+	// Slice 3 T8' (codex P2) — the live pixi-viewport, handed up from
+	// PixiStage. The AssetLibrary drop handler is a DOM listener outside the
+	// Pixi stage context, so it can't call getLocalPosition(viewport) the way
+	// the click-to-place path does; it uses this reference to convert the
+	// drop's screen coords → world coords through the pan/zoom transform.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let pixiViewport = $state<any>(null);
 
 	// UI state
 	let activeMapId = $state<string | null>(null);
@@ -164,6 +271,13 @@
 	// window would persist null faction_ids. Track factionsLoaded so the
 	// dataLoading prop reflects all three sources.
 	let factionsLoaded = $state(false);
+	// Bounded "settled" flags (success OR failure) for the loading overlay.
+	// Distinct from the *Healthy/*Loaded flags above, which stay false on error
+	// (to keep writes gated): these flip true once the load SETTLES so the
+	// overlay can't get stuck on a failed load. See `mapLoading`.
+	let factionsSettled = $state(false);
+	let anchorsEventsSettled = $state(false);
+	let regionsSettled = $state(false);
 
 	onMount(() => {
 		worldMapStore.loadMaps();
@@ -183,6 +297,9 @@
 			})
 			.catch((err) => {
 				console.error('Failed to load factions:', err);
+			})
+			.finally(() => {
+				factionsSettled = true;
 			});
 	});
 
@@ -242,11 +359,20 @@
 		if (!id) {
 			mapAnchorsStore.reset();
 			mapEventsStore.reset();
+			layerPrefs.reset();
 			projectionCtxHealthy = false;
+			anchorsEventsSettled = false;
 			return;
 		}
 		let cancelled = false;
 		projectionCtxHealthy = false;
+		anchorsEventsSettled = false;
+		// Slice 3 E2 — layer prefs are independent of anchors/events; load
+		// in parallel. Failure is non-blocking (store returns defaults).
+		void layerPrefs.load(id).catch((err) => {
+			if (cancelled) return;
+			console.error('Failed to load layer prefs:', err);
+		});
 		void Promise.all([mapAnchorsStore.load(id), mapEventsStore.load(id)])
 			.then(() => {
 				if (cancelled) return;
@@ -266,6 +392,12 @@
 				console.error('Failed to load anchors/events:', err);
 				mapAnchorsStore.reset();
 				mapEventsStore.reset();
+			})
+			.finally(() => {
+				// Bounded settle for the overlay — true on success OR failure so
+				// the overlay never sticks. Guarded by cancelled so a stale load
+				// can't clear the overlay for a newer map.
+				if (!cancelled) anchorsEventsSettled = true;
 			});
 		return () => {
 			cancelled = true;
@@ -293,6 +425,23 @@
 	// map that actually has regions.
 	let dataLoading = $derived(
 		!projectionCtxHealthy || !factionsLoaded || !mapRegionsHealthy
+	);
+
+	// Bug 2 — the saved layer config AND the placements load on their own
+	// fetches a beat after the map mounts, so layers flashed/popped in. The
+	// layer-vis store hides layers while prefs load; here we cover the canvas
+	// with an explicit loading state until BOTH the layer-prefs round-trip and
+	// the placements load have settled, so nothing pops in afterward. Both
+	// inputs are bounded (layer-prefs leaves 'loading' on success/error;
+	// placementsLoading is cleared in .finally()), so the overlay can't stick.
+	// `placementsLoading` is declared with the placements loader below.
+	let mapLoading = $derived(
+		activeMapId != null &&
+			($layerPrefs.status === 'loading' ||
+				!anchorsEventsSettled ||
+				!regionsSettled ||
+				!factionsSettled ||
+				(activeMap?.locationId != null && placementsLoading))
 	);
 
 	// Codex P2 on PR #55 (commits 4ccb183 + da20221): regions and
@@ -394,19 +543,101 @@
 		void createPlacementAt(placeableId, fx, fy);
 	}
 
-	async function createPlacementAt(placeableId: string, x: number, y: number) {
+	async function createPlacementAt(
+		placeableId: string,
+		x: number,
+		y: number,
+		options: { sourceAssetId?: string } = {}
+	) {
 		placementError = '';
 		try {
+			// Slice 3 T17 — source_asset_id stored in placement.data.
+			// Click-to-place path (PlaceablesPalette) leaves it undefined;
+			// drag-drop path (AssetLibrary) passes it through. Slice 4's
+			// sync-from-template button reads this field to look up the
+			// asset entity.
+			const data = options.sourceAssetId
+				? { source_asset_id: options.sourceAssetId }
+				: undefined;
 			await placementsStore.create({
 				placeableId,
 				locationId: activeMap?.locationId ?? null,
 				mapId: activeMap?.id ?? null,
 				x,
-				y
+				y,
+				...(data ? { data } : {})
 			});
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
 		}
+	}
+
+	// Slice 3 T8' — drop handler for AssetLibrary drags. Pixi canvas
+	// lives inside PixiStage's pixi-stage div; we wrap the stage with
+	// listeners. dragover must preventDefault so the drop event fires.
+	function handleAssetDragOver(e: DragEvent): void {
+		if (!e.dataTransfer) return;
+		// Accept only our custom MIME type. Files / text / images get
+		// the "no drop" cursor — the user can't accidentally place from
+		// an OS file drag.
+		if (!Array.from(e.dataTransfer.types).includes(ASSET_DRAG_MIME)) return;
+		// Block the drop if the active map can't host a placement (no
+		// linked Location → no anchor for the placement to bind to), or while
+		// the map is still loading (codex P2: a placement POST during the
+		// placements GET can be clobbered when the in-flight load replaces the
+		// store with pre-drop rows). Drops bubble through the loading overlay to
+		// this handler, so guard here too.
+		if (!activeMap?.locationId || mapLoading) {
+			e.dataTransfer.dropEffect = 'none';
+			return;
+		}
+		e.preventDefault();
+		e.dataTransfer.dropEffect = 'copy';
+	}
+
+	function handleAssetDrop(e: DragEvent): void {
+		if (!e.dataTransfer) return;
+		const assetId = e.dataTransfer.getData(ASSET_DRAG_MIME);
+		if (!assetId) return;
+		if (!activeMap?.width || !activeMap?.height || !activeMap?.locationId) return;
+		// codex P2: ignore drops while the map is still loading — a placement
+		// POST mid-load can be overwritten by the in-flight placements GET.
+		if (mapLoading) return;
+		e.preventDefault();
+		// Codex /review P2 — drop coords must reference the actual Pixi
+		// canvas, not the .pixi-drop-target wrapper. When the wrapper is
+		// letterboxed (wide map in a tall viewport, or extra chrome
+		// inside the flex column), wrapper.boundingClientRect is larger
+		// than the canvas and fx/fy land off-image. Query the inner
+		// <canvas> element so the rect matches the rendered map area.
+		const target = e.currentTarget as HTMLElement;
+		const canvas = target.querySelector('canvas');
+		const rect = (canvas ?? target).getBoundingClientRect();
+		// Guard against zero-area target (unmounted between dragover and drop).
+		if (rect.width <= 0 || rect.height <= 0) return;
+		let fx: number;
+		let fy: number;
+		// Codex P2 — when the viewport has been panned/zoomed, the cursor's
+		// position in the visible canvas is NOT the underlying world
+		// coordinate. Convert through the pixi-viewport transform (same world
+		// space the click-to-place path reaches via getLocalPosition) so the
+		// placement lands where the user dropped on the MAP, not on screen.
+		// screenWidth/Height track activeMap dimensions (PixiStage keeps them
+		// in sync), so map CSS position → viewport screen space → world.
+		if (pixiViewport && typeof pixiViewport.toWorld === 'function') {
+			const screenX = ((e.clientX - rect.left) / rect.width) * pixiViewport.screenWidth;
+			const screenY = ((e.clientY - rect.top) / rect.height) * pixiViewport.screenHeight;
+			const world = pixiViewport.toWorld(screenX, screenY);
+			fx = world.x / activeMap.width;
+			fy = world.y / activeMap.height;
+		} else {
+			// No viewport yet (race) — fall back to the linear mapping, which
+			// is exact at the identity transform (no pan/zoom).
+			fx = (e.clientX - rect.left) / rect.width;
+			fy = (e.clientY - rect.top) / rect.height;
+		}
+		if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
+		void createPlacementAt(assetId, fx, fy, { sourceAssetId: assetId });
 	}
 
 	async function deletePlacement(id: string) {
@@ -423,6 +654,12 @@
 	// projection is keyed on location_id so a variant swap doesn't drop the
 	// placements. Loads on map change; per-tick rendering filters in-memory
 	// via PlacementLayer (no DB roundtrip on tick).
+	// Bug 2 (placeables) — placements load on their own fetch, separate from
+	// the layer-prefs round-trip, so the on-canvas markers popped in a beat
+	// after the map appeared. `placementsLoading` (declared up top, near the
+	// other UI state) tracks the in-flight load so the loading overlay can stay
+	// up until they land. Bounded: cleared in .finally() and on the
+	// no-location branch, so it never sticks.
 	$effect(() => {
 		const locId = activeMap?.locationId;
 		if (!locId) {
@@ -430,9 +667,20 @@
 			// rather than issuing a request the server would reject as invalid
 			// UUID syntax (locationId column is uuid, no sentinel works).
 			placementsStore.reset();
+			placementsLoading = false;
 			return;
 		}
-		void placementsStore.load({ locationId: locId });
+		placementsLoading = true;
+		let cancelled = false;
+		void placementsStore
+			.load({ locationId: locId })
+			.catch((err) => console.error('Failed to load placements:', err))
+			.finally(() => {
+				if (!cancelled) placementsLoading = false;
+			});
+		return () => {
+			cancelled = true;
+		};
 	});
 
 	// ── Auto-select map ────────────────────────────────────────────────────
@@ -610,16 +858,22 @@
 	async function switchMap(mapId: string) {
 		activeMapId = mapId;
 		mapRegionsHealthy = false;
+		regionsSettled = false;
 		try {
 			await worldMapStore.loadMapRegions(mapId);
 			// Only mark healthy if THIS switchMap call is still the active
 			// one. A rapid switch A → B could leave switchMap(A) resolving
 			// after switchMap(B) started; checking activeMapId avoids
 			// flipping healthy on stale data.
-			if (activeMapId === mapId) mapRegionsHealthy = true;
+			if (activeMapId === mapId) {
+				mapRegionsHealthy = true;
+				regionsSettled = true;
+			}
 		} catch (err) {
 			console.error('Failed to load regions for map:', mapId, err);
-			// Stay unhealthy — dataLoading remains true, blocking writes.
+			// Stay unhealthy — dataLoading remains true, blocking writes — but
+			// mark settled so the loading overlay doesn't stick on error.
+			if (activeMapId === mapId) regionsSettled = true;
 		}
 	}
 
@@ -716,11 +970,16 @@
 		const map = await worldMapStore.createMap('New Map');
 		activeMapId = map.id;
 		mapRegionsHealthy = false;
+		regionsSettled = false;
 		try {
 			await worldMapStore.loadMapRegions(map.id);
-			if (activeMapId === map.id) mapRegionsHealthy = true;
+			if (activeMapId === map.id) {
+				mapRegionsHealthy = true;
+				regionsSettled = true;
+			}
 		} catch (err) {
 			console.error('Failed to load regions for new map:', err);
+			if (activeMapId === map.id) regionsSettled = true;
 		}
 	}
 
@@ -751,13 +1010,21 @@
 		const nextId = $worldMaps.find((m) => m.id !== oldId)?.id ?? null;
 		activeMapId = nextId;
 		mapRegionsHealthy = false;
+		regionsSettled = false;
 		if (nextId) {
 			try {
 				await worldMapStore.loadMapRegions(nextId);
-				if (activeMapId === nextId) mapRegionsHealthy = true;
+				if (activeMapId === nextId) {
+					mapRegionsHealthy = true;
+					regionsSettled = true;
+				}
 			} catch (err) {
 				console.error('Failed to load regions for switched map:', err);
+				if (activeMapId === nextId) regionsSettled = true;
 			}
+		} else {
+			// No map left to show — nothing to wait for.
+			regionsSettled = true;
 		}
 		deleting = false;
 	}
@@ -956,6 +1223,8 @@
 
 </script>
 
+<svelte:window onkeydown={handleMapKeydown} />
+
 {#if !hasMaps}
 	<!-- Empty state: no maps -->
 	<div class="empty-state">
@@ -1010,9 +1279,30 @@
 				<button type="button" onclick={() => (toolbarNewLocationError = '')}>✕</button>
 			</div>
 		{/if}
-		<PixiStage {activeMap}>
+		<!-- Slice 3 T8' drop target. Wraps PixiStage so AssetLibrary drags
+		     can drop onto the canvas. dragover preventDefault enables drop;
+		     ASSET_DRAG_MIME filter rejects accidental file drops. -->
+		<div
+			class="pixi-drop-target"
+			role="region"
+			aria-label="Map canvas drop zone"
+			ondragover={handleAssetDragOver}
+			ondrop={handleAssetDrop}
+		>
+		{#if mapLoading}
+			<!-- Bug 2: cover the canvas while the saved layer config AND the
+			     placements load, so the user sees an intentional loading state
+			     instead of layers/markers flashing or popping in. -->
+			<div class="map-loading-overlay" role="status" aria-live="polite">
+				<span class="map-loading-spinner" aria-hidden="true"></span>
+				<span class="map-loading-text">Loading map…</span>
+			</div>
+		{/if}
+		<PixiStage {activeMap} onViewport={(vp) => (pixiViewport = vp)}>
 			{#snippet children()}
 				<PixiBackgroundLayer {activeMap} />
+				<PixiGridLayer {activeMap} />
+				<PixiTerrainLayer {activeMap} cells={renderedState?.cells ?? []} />
 				<PixiRegionLayer
 					regions={scopedRegions}
 					{renderedState}
@@ -1043,6 +1333,7 @@
 					entities={$entities}
 					isInScope={$isInScope}
 					armedPlaceableId={pixiDrawingActive ? null : armedPlaceableId}
+					brushActive={brushActive}
 					onOpenEntity={(id) => windowStore.open('entity-detail', id)}
 					onDeletePlacement={(id) => void deletePlacement(id)}
 					onCanvasClick={handleCanvasClick}
@@ -1050,11 +1341,33 @@
 				<PixiPolygonDraw
 					bind:active={pixiDrawingActive}
 					seedPoint={pixiDrawSeed}
+					{activeMap}
 					onCommit={handlePixiPolygonCommit}
 					onCancel={cancelPixiDraw}
 				/>
+				<!-- Slice 3 T5 — brush layer. Active only when the user enters
+				     brush mode via BrushPalette. Captures pointer events on
+				     the viewport when active. Inactive: zero overhead, no
+				     listeners attached.
+				     codex P2: suspend the brush while a polygon is being drawn
+				     (pixiDrawingActive) — otherwise each left-click that places
+				     a vertex also drives the brush pointer path and paints a
+				     paint_cells stroke at that vertex. One-way prop (the layer
+				     only reads `active`; BrushPalette owns brushActive).
+				     codex P2 (PR #58): also suspend while dataLoading — a paint
+				     POST that lands while mapEventsStore.load is in flight would
+				     be clobbered when load() replaces the store with its stale
+				     pre-stroke rows. Same guard the snapshot/ownership writes
+				     use. -->
+				<PixiBrushLayer
+					active={brushActive && !pixiDrawingActive && !dataLoading}
+					{activeMap}
+					biome={brushBiome}
+					size={brushSize}
+				/>
 			{/snippet}
 		</PixiStage>
+		</div>
 		{#if pixiDrawingActive}
 			<!-- T8 drawing-mode status overlay. 9px Inter uppercase tracked
 			     per Variant A/D from docs/plans/world-map-v3-slice-2-plan.md. -->
@@ -1062,17 +1375,40 @@
 				DRAWING · ESC TO EXIT · DBL-CLICK OR SNAP TO CLOSE
 			</div>
 		{/if}
-		<MapSidebar />
+		<MapSidebar {activeMapId} />
 		{#if hasImage && activeMap?.locationId}
 			<!-- PlaceablesPalette: armed chip → PixiPlacementLayer's stage-
 			     level pointertap → handleCanvasClick → create placement. -->
 			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
+			<!-- Slice 3 T8' asset library — drag source for placements.
+			     Drop target lives on the pixi-drop-target wrapper above. -->
+			<AssetLibrary />
 			{#if placementError}
 				<div class="placement-error" role="alert">
 					{placementError}
 					<button type="button" onclick={() => (placementError = '')}>✕</button>
 				</div>
 			{/if}
+		{/if}
+		{#if hasImage}
+			<!-- Slice 3 T5 brush palette. codex P2 (PR #58): gated on
+			     hasImage only, NOT on a linked Location — terrain painting
+			     needs just the map image + grid. Duplicated maps keep
+			     locationId: null, so Location-gating this hid the brush on
+			     clones. Toggling brush ON disarms any placement chip
+			     (cross-exclusion in $effect above). -->
+			<BrushPalette
+				active={brushActive}
+				biome={brushBiome}
+				size={brushSize}
+				canUndo={canUndo && !mapLoading}
+				canRedo={canRedo && !mapLoading}
+				onSetActive={(a) => (brushActive = a)}
+				onSetBiome={(b) => (brushBiome = b)}
+				onSetSize={(s) => (brushSize = s)}
+				onUndo={handleUndo}
+				onRedo={handleRedo}
+			/>
 		{/if}
 		{#if !hasImage}
 			<div class="upload-area">
@@ -1678,6 +2014,49 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		/* Sit above the MapSidebar (z-index:100) — these error toasts render
+		   in the bottom-of-column flow alongside the palettes, so the
+		   absolutely-positioned sidebar would otherwise paint over them. */
+		position: relative;
+		z-index: 150;
+	}
+	/* Slice 3 T8' drop target wraps the Pixi canvas. Must have a real box
+	   so getBoundingClientRect() in the drop handler returns the canvas
+	   area for pixel → fractional conversion. Inherits the same flex
+	   behavior PixiStage had as a direct child. */
+	.pixi-drop-target {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		/* Anchor for the absolutely-positioned loading overlay (bug 2). */
+		position: relative;
+	}
+	.map-loading-overlay {
+		position: absolute;
+		inset: 0;
+		z-index: 200;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 10px;
+		background: var(--color-surface, #1a1a1a);
+		color: var(--color-text-muted, #888);
+		font-size: 13px;
+	}
+	.map-loading-spinner {
+		width: 22px;
+		height: 22px;
+		border: 2px solid color-mix(in srgb, var(--color-text-muted, #888) 35%, transparent);
+		border-top-color: var(--color-accent, #c8942a);
+		border-radius: 50%;
+		animation: map-loading-spin 0.7s linear infinite;
+	}
+	@keyframes map-loading-spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 	.placement-error button {
 		background: transparent;

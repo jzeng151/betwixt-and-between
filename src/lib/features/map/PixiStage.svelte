@@ -32,10 +32,17 @@
 
 	let {
 		activeMap,
-		children
+		children,
+		onViewport
 	}: {
 		activeMap: WorldMap | null;
 		children?: Snippet;
+		// Hands the pixi-viewport up to the parent (which sits outside the
+		// stage context) so DOM-level handlers like the AssetLibrary drop
+		// can convert screen coords → world coords through the same pan/zoom
+		// transform the Pixi layers use. Called with null on teardown.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		onViewport?: (viewport: any | null) => void;
 	} = $props();
 
 	let canvasContainer = $state<HTMLDivElement | null>(null);
@@ -110,6 +117,7 @@
 
 				stageCtx.app = newApp;
 				stageCtx.viewport = viewport;
+				onViewport?.(viewport);
 				ready = true;
 			} catch (err) {
 				if (cancelled) return;
@@ -121,6 +129,7 @@
 			cancelled = true;
 			stageCtx.app = null;
 			stageCtx.viewport = null;
+			onViewport?.(null);
 			if (app) {
 				try {
 					app.destroy(true, {

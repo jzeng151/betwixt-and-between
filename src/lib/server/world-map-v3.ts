@@ -15,20 +15,37 @@
 
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { error } from '@sveltejs/kit';
-import { factions, mapAnchors, mapEvents, worldMaps } from './db/schema.js';
+import {
+	factions,
+	mapAnchors,
+	mapEvents,
+	worldMaps,
+	worldMapLayerPrefs
+} from './db/schema.js';
 import { assertSourceEventIdIsEvent } from './intervals/polymorphic-fk.js';
 import type { Db } from './intervals.js';
 import {
+	BIOMES,
 	EVENT_KINDS,
+	PAINT_CELLS_MAX_PER_EVENT,
 	type AnchorState,
+	type BiomeKind,
 	type EventKind,
+	type PaintCellsPayload,
 	type TransferRegionPayload
 } from '$lib/features/map/projection.js';
 
 // Re-export the shared event-payload type so callers that only depend on the
 // server module don't have to reach across into projection.ts.
-export { EVENT_KINDS };
-export type { EventKind, TransferRegionPayload };
+export { BIOMES, EVENT_KINDS, PAINT_CELLS_MAX_PER_EVENT };
+export type { BiomeKind, EventKind, PaintCellsPayload, TransferRegionPayload };
+
+// Slice 3 outside-voice A2 + B7 — auto-anchor fires after K non-undone
+// paint_cells events accumulate since the last anchor on a map. Bounds
+// projection cost between sparse user-authored anchors. Synthetic anchors
+// are marked is_synthetic=true (drizzle/0019) and bypassed by undo's
+// dependent-event prompt (A9).
+const AUTO_ANCHOR_K = 20;
 
 // CSS hex color: 3-digit (#abc), 4-digit (#abcd / rgba shorthand), 6-digit
 // (#aabbcc), or 8-digit (#aabbccdd / rgba). 5- and 7-digit hex are not
@@ -386,6 +403,14 @@ function validateAnchorStateShape(state: unknown): asserts state is AnchorState 
 	if ('chains' in s && s.chains !== undefined && !Array.isArray(s.chains)) {
 		error(400, 'state_jsonb.chains must be an array if present');
 	}
+	// Slice 3 T2 — cells must be an array if present. Default of [] is
+	// applied by createMapAnchor/updateMapAnchor before INSERT (see below).
+	// Per-cell shape/biome/bounds validation runs in those write paths via
+	// assertCellsInBounds (codex P2 — anchor POST/PATCH are client-write
+	// boundaries, not just internal snapshots of a validated event chain).
+	if ('cells' in s && s.cells !== undefined && !Array.isArray(s.cells)) {
+		error(400, 'state_jsonb.cells must be an array if present');
+	}
 }
 
 async function validateAnchorStateOwnership(
@@ -452,6 +477,48 @@ export type AnchorInput = {
 // that captures the playhead's tPosition directly; Slice 2's auto-anchor
 // will re-introduce an FK-based helper when it actually has a caller.)
 
+/**
+ * Validate a cells array against a map's grid: each entry an object with
+ * integer x/y inside [0, gridX) × [0, gridY) and a known biome. Shared by
+ * the paint_cells event validator and the authored-anchor write path
+ * (codex P2 — anchor POST/PATCH are client-write boundaries too, so a
+ * direct snapshot can't be trusted to carry only already-validated cells).
+ */
+function assertCellsInBounds(cells: unknown, gridX: number, gridY: number, label: string): void {
+	if (!Array.isArray(cells)) error(400, `${label} cells must be an array`);
+	for (let i = 0; i < cells.length; i++) {
+		const cell = cells[i] as { x?: unknown; y?: unknown; biome?: unknown } | null;
+		if (!cell || typeof cell !== 'object') error(400, `${label} cells[${i}] must be an object`);
+		if (typeof cell.x !== 'number' || !Number.isInteger(cell.x)) {
+			error(400, `${label} cells[${i}].x must be an integer`);
+		}
+		if (typeof cell.y !== 'number' || !Number.isInteger(cell.y)) {
+			error(400, `${label} cells[${i}].y must be an integer`);
+		}
+		if (cell.x < 0 || cell.x >= gridX) {
+			error(400, `${label} cells[${i}].x out of bounds [0, ${gridX})`);
+		}
+		if (cell.y < 0 || cell.y >= gridY) {
+			error(400, `${label} cells[${i}].y out of bounds [0, ${gridY})`);
+		}
+		if (!(BIOMES as readonly string[]).includes(cell.biome as BiomeKind)) {
+			error(400, `${label} cells[${i}].biome must be one of ${BIOMES.join('|')}`);
+		}
+	}
+}
+
+/**
+ * Load a map's grid dimensions (caller must have asserted ownership).
+ */
+async function loadGridDims(db: Db, worldMapId: string): Promise<{ x: number; y: number }> {
+	const [map] = await db
+		.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY })
+		.from(worldMaps)
+		.where(eq(worldMaps.id, worldMapId));
+	if (!map) error(404, 'world_map not found');
+	return map;
+}
+
 export async function createMapAnchor(
 	db: Db,
 	userId: string,
@@ -468,27 +535,67 @@ export async function createMapAnchor(
 	validateAnchorStateShape(input.stateJsonb);
 	await validateAnchorStateOwnership(db, userId, worldMapId, input.stateJsonb);
 
-	try {
-		const [row] = await db
-			.insert(mapAnchors)
-			.values({
-				worldMapId,
-				tPosition: input.tPosition,
-				stateJsonb: input.stateJsonb
-			})
-			.returning();
-		return row;
-	} catch (err) {
-		// Unique violation on (world_map_id, t_position) when an anchor
-		// already exists at this T — surface as 409 so the UI can offer
-		// "edit existing anchor" instead of silently failing. Drizzle +
-		// PGlite both wrap the original Postgres error in `.cause`, so we
-		// check both levels.
-		if (isUniqueViolation(err)) {
-			error(409, 'An anchor already exists at this t_position');
+	// Slice 3 invariant: every map_anchors.state_jsonb has the cells key.
+	// Client-authored anchor snapshots (right-click "snapshot world state
+	// here") may omit cells — default to []. Keeps the PR A invariant test
+	// green for any authoring path.
+	const normalizedState: AnchorState = {
+		...input.stateJsonb,
+		cells: input.stateJsonb.cells ?? []
+	};
+	// codex P2: anchor POST is a client-write boundary — validate cell
+	// shape/biome/bounds the same way paint_cells does, so a direct snapshot
+	// can't persist off-grid terrain that projection would draw and
+	// grid-shrink checks would treat as real.
+	const grid = await loadGridDims(db, worldMapId);
+	assertCellsInBounds(normalizedState.cells, grid.x, grid.y, 'anchor state_jsonb');
+
+	// codex P2: a synthetic anchor (server cache row) may already sit at this
+	// T after ~20 paints at the current playhead. It is NOT authored state,
+	// so drop synthetic anchors at/after this T BEFORE inserting — otherwise
+	// the unique constraint rejects the user's authored snapshot with a 409.
+	// This also clears stale downstream synthetic anchors that froze the old
+	// base. A real authored anchor at this T survives (synthetic-only delete)
+	// and still yields the 409 below.
+	//
+	// codex P2 (PR #58): the invalidate + insert run under the SAME world_maps
+	// row lock createMapEvent holds for paint writes. Without it, a paint can
+	// land between the synthetic delete and the authored insert and
+	// re-materialize a synthetic anchor from the OLD base — leaving the
+	// authored anchor shadowed by a stale snapshot at/after its T. The lock
+	// serializes the two; the transaction also rolls the invalidate back if the
+	// insert 409s, so a duplicate-T failure doesn't strip synthetic anchors.
+	return await db.transaction(async (tx) => {
+		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+		// codex P2: re-validate anchor cell bounds UNDER the lock (concurrent grid-shrink
+		// PATCH holds the same world_maps FOR UPDATE lock and may commit after the
+		// pre-transaction loadGridDims).
+		const [lockedGrid] = await tx.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY }).from(worldMaps).where(eq(worldMaps.id, worldMapId));
+		if (!lockedGrid) error(404, 'world_map not found');
+		assertCellsInBounds(normalizedState.cells, lockedGrid.x, lockedGrid.y, 'anchor state_jsonb');
+		await invalidateSyntheticAnchorsAtOrAfter(tx, worldMapId, input.tPosition);
+		try {
+			const [row] = await tx
+				.insert(mapAnchors)
+				.values({
+					worldMapId,
+					tPosition: input.tPosition,
+					stateJsonb: normalizedState
+				})
+				.returning();
+			return row;
+		} catch (err) {
+			// Unique violation on (world_map_id, t_position) when an anchor
+			// already exists at this T — surface as 409 so the UI can offer
+			// "edit existing anchor" instead of silently failing. Drizzle +
+			// PGlite both wrap the original Postgres error in `.cause`, so we
+			// check both levels.
+			if (isUniqueViolation(err)) {
+				error(409, 'An anchor already exists at this t_position');
+			}
+			throw err;
 		}
-		throw err;
-	}
+	});
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -539,25 +646,62 @@ export async function updateMapAnchor(
 	if ('stateJsonb' in patch) {
 		validateAnchorStateShape(patch.stateJsonb);
 		await validateAnchorStateOwnership(db, userId, worldMapId, patch.stateJsonb as AnchorState);
-		updates.stateJsonb = patch.stateJsonb;
+		// Slice 3 invariant: cells key must be present. PATCH callers can
+		// omit it; default to [] to match createMapAnchor's normalization.
+		const incoming = patch.stateJsonb as AnchorState;
+		updates.stateJsonb = { ...incoming, cells: incoming.cells ?? [] };
+		// codex P2: client-write boundary — validate cell shape/biome/bounds.
+		const grid = await loadGridDims(db, worldMapId);
+		assertCellsInBounds(
+			(updates.stateJsonb as AnchorState).cells,
+			grid.x,
+			grid.y,
+			'anchor state_jsonb'
+		);
 	}
 
 	if (Object.keys(updates).length === 0) {
 		error(400, 'No updatable fields supplied');
 	}
 
+	// codex P2: invalidate synthetic anchors at/after the earliest of the
+	// old/new t_position BEFORE the update — both to clear stale frozen bases
+	// and so PATCHing the t_position onto a synthetic-occupied slot replaces
+	// that cache row instead of colliding with it. A real authored anchor at
+	// the target T survives (synthetic-only delete) and still 409s below.
+	const affectedT = Math.min(
+		existing.tPosition,
+		(updates.tPosition as number | undefined) ?? existing.tPosition
+	);
+
+	// codex P2 (PR #58): invalidate + update under the same world_maps row lock
+	// paint writes take, so a concurrent paint can't re-materialize a synthetic
+	// anchor from the old base between the delete and the update and shadow the
+	// edited anchor.
 	let row: typeof mapAnchors.$inferSelect | undefined;
 	try {
-		[row] = await db
-			.update(mapAnchors)
-			.set(updates)
-			.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
-			.returning();
+		row = await db.transaction(async (tx) => {
+			await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+			// codex P2: re-validate anchor cell bounds UNDER the lock when stateJsonb is
+			// patched (same race as createMapAnchor / paint_cells).
+			if ('stateJsonb' in patch) {
+				const [lockedGrid] = await tx.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY }).from(worldMaps).where(eq(worldMaps.id, worldMapId));
+				if (!lockedGrid) error(404, 'world_map not found');
+				assertCellsInBounds((updates.stateJsonb as AnchorState).cells, lockedGrid.x, lockedGrid.y, 'anchor state_jsonb');
+			}
+			await invalidateSyntheticAnchorsAtOrAfter(tx, worldMapId, affectedT);
+			const [updatedRow] = await tx
+				.update(mapAnchors)
+				.set(updates)
+				.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
+				.returning();
+			return updatedRow;
+		});
 	} catch (err) {
 		// Same UNIQUE (world_map_id, t_position) collision shape as
-		// createMapAnchor — PATCHing tPosition onto an occupied slot lands
-		// here. Surface 409 so the UI can offer "edit the existing anchor"
-		// instead of seeing an opaque 500.
+		// createMapAnchor — PATCHing tPosition onto an anchor-occupied slot
+		// lands here. Surface 409 so the UI can offer "edit the existing
+		// anchor" instead of seeing an opaque 500.
 		if (isUniqueViolation(err)) {
 			error(409, 'An anchor already exists at this t_position');
 		}
@@ -587,11 +731,21 @@ export async function deleteMapAnchor(
 	if (!Number.isFinite(existing.tPosition)) {
 		error(422, 'Cannot delete the baseline anchor — it tracks canonical region geometry');
 	}
-	const deleted = await db
-		.delete(mapAnchors)
-		.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
-		.returning();
-	if (deleted.length === 0) error(404, 'Anchor not found');
+	// codex P2 (PR #58): delete + invalidate under the same world_maps row lock
+	// paint writes take, so a concurrent paint can't slip a synthetic anchor in
+	// between the delete and the invalidation and survive it, shadowing the
+	// post-delete base.
+	await db.transaction(async (tx) => {
+		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+		const deleted = await tx
+			.delete(mapAnchors)
+			.where(and(eq(mapAnchors.id, anchorId), eq(mapAnchors.worldMapId, worldMapId)))
+			.returning();
+		if (deleted.length === 0) error(404, 'Anchor not found');
+		// Removing an authored anchor changes the base for projections at/after
+		// its T — drop synthetic anchors that froze the old base there.
+		await invalidateSyntheticAnchorsAtOrAfter(tx, worldMapId, existing.tPosition);
+	});
 }
 
 // ── Event CRUD ──────────────────────────────────────────────────────────────
@@ -601,6 +755,12 @@ export type EventInput = {
 	kind: EventKind;
 	payloadJsonb: unknown;
 	sourceEventId?: string | null;
+	// Slice 3 outside-voice B5 — chunked-stroke grouping. Client generates
+	// one UUIDv4 per brush stroke; every chunked paint_cells event in that
+	// stroke carries the same commandId. Undo treats rows sharing a
+	// commandId as one logical command. NULL = standalone event (legacy:
+	// transfer_region, manual anchors). Stored in map_events.command_id.
+	commandId?: string | null;
 };
 
 async function validateEventPayload(
@@ -638,6 +798,40 @@ async function validateEventPayload(
 			.where(and(eq(factions.id, p.new_faction_id), eq(factions.userId, userId)));
 		if (!faction) error(400, 'new_faction_id not found');
 	}
+	if (kind === 'paint_cells') {
+		const p = payload as Partial<PaintCellsPayload>;
+		if (!Array.isArray(p.cells)) {
+			error(400, 'paint_cells payload.cells must be an array');
+		}
+		if (p.cells.length === 0) {
+			error(400, 'paint_cells payload.cells must be non-empty');
+		}
+		// Outside-voice A3: hard reject above the 256-cell cap. Client
+		// chunks at this boundary; bigger payloads here mean a non-stock
+		// client or a replay attempting to dodge chunking. Either way,
+		// reject — auto-anchor sizing assumes the cap holds.
+		if (p.cells.length > PAINT_CELLS_MAX_PER_EVENT) {
+			error(
+				400,
+				`paint_cells payload.cells exceeds cap of ${PAINT_CELLS_MAX_PER_EVENT} cells per event`
+			);
+		}
+		// Grid bounds come from world_maps.grid_cells_x/y (Slice 3 T1';
+		// drizzle/0018). assertMapOwnership upstream guarantees this map
+		// belongs to userId, so the single-row read is safe.
+		const [map] = await db
+			.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY })
+			.from(worldMaps)
+			.where(eq(worldMaps.id, worldMapId));
+		if (!map) error(404, 'world_map not found');
+		assertCellsInBounds(p.cells, map.x, map.y, 'paint_cells');
+		// command_complete is optional; when omitted, the auto-anchor
+		// path (T22) treats the event as a single-event stroke (eligible
+		// to trigger an anchor write). When present, must be a boolean.
+		if (p.command_complete !== undefined && typeof p.command_complete !== 'boolean') {
+			error(400, 'paint_cells payload.command_complete must be a boolean if provided');
+		}
+	}
 }
 
 export async function createMapEvent(
@@ -645,7 +839,7 @@ export async function createMapEvent(
 	userId: string,
 	worldMapId: string,
 	input: EventInput
-): Promise<typeof mapEvents.$inferSelect> {
+): Promise<typeof mapEvents.$inferSelect & { invalidatedAnchorIds: string[] }> {
 	await assertMapOwnership(db, userId, worldMapId);
 	assertObjectBody(input);
 	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition)) {
@@ -685,17 +879,425 @@ export async function createMapEvent(
 		}
 	}
 
-	const [row] = await db
-		.insert(mapEvents)
-		.values({
+	// Slice 3 outside-voice B5 — commandId UUID format check + scope guard.
+	// Non-NULL commandId values group chunked paint_cells events; undo
+	// soft-deletes the whole group. Other kinds (transfer_region, etc.) can
+	// pass commandId through too, but in practice only brush authoring uses
+	// it. Format must be a valid UUID — assertUuid surfaces 400 on bad input.
+	let commandId: string | null = null;
+	if (input.commandId !== null && input.commandId !== undefined) {
+		if (typeof input.commandId !== 'string' || input.commandId === '') {
+			error(400, 'commandId must be a non-empty uuid string or null');
+		}
+		assertUuid(input.commandId, 'commandId');
+		commandId = input.commandId;
+	}
+
+	// Slice 3 outside-voice B7 — auto-anchor for paint_cells strokes.
+	// Wrap the INSERT + count + synthetic-anchor write in one transaction
+	// with SELECT FOR UPDATE on the world_maps row. Two concurrent
+	// paint_cells POSTs serialize on the lock; both see consistent counts.
+	return await db.transaction(async (tx) => {
+		// Lock the parent world_maps row. Cross-user safety: assertMapOwnership
+		// upstream already restricts to user-owned maps, so this is only a
+		// concurrency control between the same user's own writes.
+		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+
+		// codex P2: re-validate paint_cells bounds UNDER the lock. The
+		// validateEventPayload() bounds check above ran before this transaction;
+		// a concurrent PATCH /api/maps/:id that shrinks grid_cells_x/y can commit
+		// between that read and acquiring this lock, and the PATCH's own shrink
+		// guard can't see this not-yet-inserted cell. Grid edits take the SAME
+		// world_maps FOR UPDATE lock, so re-reading the grid here sees their
+		// committed result — an out-of-bounds paint is rejected instead of
+		// slipping terrain outside the new bounds.
+		if (input.kind === 'paint_cells') {
+			const [lockedGrid] = await tx
+				.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY })
+				.from(worldMaps)
+				.where(eq(worldMaps.id, worldMapId));
+			if (!lockedGrid) error(404, 'world_map not found');
+			assertCellsInBounds(
+				(input.payloadJsonb as Partial<PaintCellsPayload>).cells,
+				lockedGrid.x,
+				lockedGrid.y,
+				'paint_cells'
+			);
+		}
+
+		const [row] = await tx
+			.insert(mapEvents)
+			.values({
+				worldMapId,
+				tPosition: input.tPosition,
+				kind: input.kind,
+				payloadJsonb: input.payloadJsonb,
+				sourceEventId: input.sourceEventId ?? null,
+				commandId
+			})
+			.returning();
+
+		// codex P2: a synthetic anchor at a LATER t_position froze a snapshot
+		// that didn't include this event. projectState picks that anchor and
+		// excludes events with t_position <= anchorT, so a retroactive or
+		// same-T paint, or a transfer_region at T <= the anchor's T, would be
+		// silently hidden. Drop synthetic anchors at/after this event's T so a
+		// freshly-authored event isn't shadowed by a stale cache row. Runs
+		// before the auto-anchor write below, which re-materializes a correct
+		// snapshot when the stroke completes. Forward painting (the common
+		// case) advances T past every synthetic anchor, so this is a no-op
+		// there; only retroactive/same-T edits pay the re-fold cost.
+		//
+		// codex P2 (PR #58): the deleted synthetic-anchor ids ride back on
+		// the response so the client can evict them from mapAnchorsStore.
+		// Otherwise the /events response returns only the new event, the
+		// client appends it but keeps the now-stale synthetic anchor, and
+		// projectState still picks that anchor — hiding the just-authored
+		// retroactive/same-T change until a full reload.
+		const invalidatedAnchorIds = await invalidateSyntheticAnchorsAtOrAfter(
+			tx,
 			worldMapId,
-			tPosition: input.tPosition,
-			kind: input.kind,
-			payloadJsonb: input.payloadJsonb,
-			sourceEventId: input.sourceEventId ?? null
+			input.tPosition
+		);
+
+		if (input.kind === 'paint_cells') {
+			await maybeWriteAutoAnchor(tx, worldMapId, input, commandId);
+		}
+
+		return { ...row, invalidatedAnchorIds };
+	});
+}
+
+/**
+ * Slice 3 B7 — auto-anchor write logic.
+ *
+ * Conditions to fire (all must hold):
+ *   1. Counter: count(map_events on this map WHERE kind='paint_cells'
+ *      AND undone_at IS NULL AND created_at > last anchor's created_at)
+ *      >= AUTO_ANCHOR_K.
+ *   2. Stroke complete: commandId IS NULL (standalone single-event stroke)
+ *      OR payload.command_complete === true (the last chunk of a
+ *      multi-event stroke). Never split mid-stroke.
+ *
+ * Snapshot: t_position = MAX(t_position) over the in-flight paint_cells
+ * events (the events that will be summarized). state_jsonb is derived from
+ * the latest anchor's state_jsonb with the recent paint_cells events
+ * folded into cells[]. Other keys (regions, artifacts, chains) pass through
+ * unchanged — paint_cells doesn't touch them.
+ *
+ * Synchronization: caller already holds FOR UPDATE on the world_maps row,
+ * so two concurrent POSTs serialize and only one fires the anchor write.
+ * The other observes the new anchor on its own count query (created_at >
+ * new anchor's created_at means count restarts at 0).
+ */
+async function maybeWriteAutoAnchor(
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	tx: any,
+	worldMapId: string,
+	input: EventInput,
+	commandId: string | null
+): Promise<void> {
+	const payload = input.payloadJsonb as Partial<PaintCellsPayload> | null;
+	const strokeComplete =
+		commandId === null || (payload != null && payload.command_complete === true);
+	if (!strokeComplete) return;
+
+	// Find the latest existing anchor (user OR synthetic). Created_at is the
+	// commit-time discriminator; t_position is the snapshot time which can
+	// differ. We want the most recently WRITTEN anchor, not the most
+	// time-advanced one.
+	const [latestAnchor] = await tx
+		.select({ id: mapAnchors.id })
+		.from(mapAnchors)
+		.where(eq(mapAnchors.worldMapId, worldMapId))
+		.orderBy(desc(mapAnchors.createdAt), desc(mapAnchors.id))
+		.limit(1);
+	// Bind the cutoff via a scalar subquery on the anchor's own row rather
+	// than a JS Date param. The neon + postgres-js drivers mis-serialize a
+	// JS Date in a raw timestamp comparison (the cursor queries below hit
+	// the same hazard and defend with tsLiteral / micro-precise text — see
+	// the comment at `tPosLiteral`). Reading created_at back out of the row
+	// avoids the JS round-trip entirely and keeps full microsecond
+	// precision. No anchor yet → every paint_cells event counts (-infinity).
+	const cutoffSql = latestAnchor
+		? sql`(SELECT created_at FROM map_anchors WHERE id = ${latestAnchor.id})`
+		: sql`'-infinity'::timestamptz`;
+
+	// Count non-undone paint_cells events committed AFTER the cutoff.
+	const countResult = await tx.execute(sql`
+		SELECT COUNT(*)::bigint AS cnt
+		FROM map_events
+		WHERE world_map_id = ${worldMapId}
+		  AND kind = 'paint_cells'
+		  AND undone_at IS NULL
+		  AND created_at > ${cutoffSql}
+	`);
+	const countRows = Array.isArray(countResult.rows)
+		? countResult.rows
+		: ((countResult as unknown) as { rows: Array<{ cnt: string | number }> }).rows ?? [];
+	const count = countRows.length > 0 ? Number(countRows[0].cnt) : 0;
+	if (count < AUTO_ANCHOR_K) return;
+
+	// Read the post-cutoff window only to learn the t_position range (maxT)
+	// and confirm there's something to snapshot. The actual fold is rebuilt
+	// from the full live log below (foldEvents) so it can't miss earlier
+	// same-T paints. ALL live event kinds are read (not just paint_cells) so
+	// transfer_region / future kinds fold forward too — filtering on kind
+	// here would lose an ownership change once this anchor shadows it.
+	const recentEvents = await tx
+		.select({
+			id: mapEvents.id,
+			tPosition: mapEvents.tPosition,
+			kind: mapEvents.kind,
+			createdAt: mapEvents.createdAt,
+			payloadJsonb: mapEvents.payloadJsonb
 		})
-		.returning();
-	return row;
+		.from(mapEvents)
+		.where(
+			and(
+				eq(mapEvents.worldMapId, worldMapId),
+				sql`${mapEvents.undoneAt} IS NULL`,
+				sql`${mapEvents.createdAt} > ${cutoffSql}`
+			)
+		);
+	if (recentEvents.length === 0) return; // belt + suspenders
+	const maxT = recentEvents.reduce(
+		(acc: number, e: { tPosition: number }) => (e.tPosition > acc ? e.tPosition : acc),
+		Number.NEGATIVE_INFINITY
+	);
+
+	// Build the snapshot to EQUAL projectState(maxT): start from the anchor
+	// strictly BEFORE maxT and fold every live event in (baseT, maxT].
+	//
+	// Why strictly before (codex P2): if we keyed off the anchor AT maxT we'd
+	// pick the very synthetic anchor we're about to replace, and folding only
+	// "events after that anchor's T" would drop the same-T repaints we're
+	// trying to bake in (the #1 data-loss case). Anchoring on the PRIOR
+	// distinct anchor and folding through maxT inclusive bakes in same-T
+	// paints, while events at or below the prior anchor's T stay shadowed by
+	// baseState — so a retroactive paint committed late at an earlier
+	// playhead doesn't leak into the snapshot.
+	const anchorsBefore = await tx
+		.select()
+		.from(mapAnchors)
+		.where(
+			and(
+				eq(mapAnchors.worldMapId, worldMapId),
+				sql`${mapAnchors.tPosition} < ${maxT}`
+			)
+		)
+		.orderBy(desc(mapAnchors.tPosition), desc(mapAnchors.createdAt), desc(mapAnchors.id))
+		.limit(1);
+	const baseAnchor = anchorsBefore[0];
+	const baseAnchorT = baseAnchor ? Number(baseAnchor.tPosition) : Number.NEGATIVE_INFINITY;
+	const baseState = (baseAnchor?.stateJsonb ?? {
+		regions: [],
+		artifacts: [],
+		chains: [],
+		cells: []
+	}) as AnchorState;
+
+	// Re-fold from the FULL live log in (baseAnchorT, maxT] rather than the
+	// cutoff window — the cutoff window can miss earlier same-T paints (folded
+	// into a prior synthetic that is no longer the base) and can include
+	// retroactive paints the base already shadows. A finite lower bound is
+	// only applied when there's a prior anchor; -Infinity baselines bind no
+	// lower bound (binding ±Infinity as a param breaks the driver).
+	const foldConds = [
+		eq(mapEvents.worldMapId, worldMapId),
+		sql`${mapEvents.undoneAt} IS NULL`,
+		sql`${mapEvents.tPosition} <= ${maxT}`
+	];
+	if (Number.isFinite(baseAnchorT)) {
+		foldConds.push(sql`${mapEvents.tPosition} > ${baseAnchorT}`);
+	}
+	const foldEvents = await tx
+		.select({
+			id: mapEvents.id,
+			tPosition: mapEvents.tPosition,
+			kind: mapEvents.kind,
+			createdAt: mapEvents.createdAt,
+			payloadJsonb: mapEvents.payloadJsonb
+		})
+		.from(mapEvents)
+		.where(and(...foldConds));
+
+	// Fold ALL recent events into the snapshot (codex P1). Order by
+	// (tPosition, created_at, id) — same rule as projection.ts. Both
+	// paint_cells (cells map, last-write-wins) and transfer_region
+	// (region faction_id mutation) are applied; unknown future kinds
+	// pass through silently. Keeps the snapshot semantically equivalent
+	// to "projectState(maxT) with the events folded in" so the post-
+	// anchor projection lookups read the correct rolling state.
+	const sortedEvents = [...foldEvents].sort(
+		(
+			a: { tPosition: number; createdAt: Date | string; id: string },
+			b: typeof a
+		) => {
+			if (a.tPosition !== b.tPosition) return a.tPosition - b.tPosition;
+			const am = a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(String(a.createdAt));
+			const bm = b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(String(b.createdAt));
+			if (am !== bm) return am - bm;
+			return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+		}
+	);
+	const cells = new Map<string, { x: number; y: number; biome: BiomeKind }>();
+	for (const cell of baseState.cells ?? []) {
+		cells.set(`${cell.x},${cell.y}`, cell);
+	}
+	// Region snapshot starts from baseAnchor and gets mutated by
+	// transfer_region events. Keep object identity per region_id so
+	// later folds find existing entries.
+	const regionsById = new Map<string, AnchorState['regions'] extends (infer R)[] | undefined ? R : never>();
+	for (const r of baseState.regions ?? []) {
+		regionsById.set(r.region_id, r);
+	}
+	for (const e of sortedEvents) {
+		const p = e.payloadJsonb as Record<string, unknown> | null;
+		if (!p || typeof p !== 'object') continue;
+		if (e.kind === 'paint_cells') {
+			const cs = (p as Partial<PaintCellsPayload>).cells;
+			if (!Array.isArray(cs)) continue;
+			for (const c of cs) {
+				if (
+					c &&
+					Number.isInteger(c.x) &&
+					Number.isInteger(c.y) &&
+					(BIOMES as readonly string[]).includes(c.biome)
+				) {
+					cells.set(`${c.x},${c.y}`, c);
+				}
+			}
+		} else if (e.kind === 'transfer_region') {
+			const regionId = (p as { region_id?: unknown }).region_id;
+			const newFactionId = (p as { new_faction_id?: unknown }).new_faction_id;
+			if (typeof regionId !== 'string' || typeof newFactionId !== 'string') {
+				continue;
+			}
+			const existing = regionsById.get(regionId);
+			if (existing) {
+				regionsById.set(regionId, { ...existing, faction_id: newFactionId });
+			} else {
+				// Region not in baseAnchor (lazy GC at render still drops
+				// unresolvable refs, but the event ownership claim is
+				// recorded here so post-anchor projection sees it).
+				regionsById.set(regionId, {
+					region_id: regionId,
+					faction_id: newFactionId
+				});
+			}
+		}
+		// Unknown kinds (Slice 2+ move_entity, Slice 5 link_chain) pass
+		// through unchanged. When added, fold them here too.
+	}
+
+	const snapshot: AnchorState = {
+		regions: Array.from(regionsById.values()),
+		artifacts: baseState.artifacts ?? [],
+		chains: baseState.chains ?? [],
+		cells: Array.from(cells.values())
+	};
+
+	// Write the synthetic anchor. The unique constraint (world_map_id,
+	// t_position) fires when an anchor already lives at maxT — common when
+	// the user keeps painting at the same playhead T after a synthetic anchor
+	// was already written there.
+	//
+	// codex P1: swallowing the conflict silently loses data — projection
+	// treats an anchor at T as the state at T and excludes events with
+	// t_position <= T, so the new same-T paint events fold into neither the
+	// stale snapshot nor the event stream and the just-painted cells vanish.
+	//
+	// codex P2 (follow-up): an in-place stateJsonb UPDATE would keep the old
+	// created_at, but the re-folded snapshot now contains events committed
+	// AFTER that created_at. invalidateSyntheticAnchorsFrom keys off
+	// (anchor.created_at >= event.created_at), so on a later undo/delete of
+	// one of those events the stale anchor would escape invalidation and keep
+	// rendering removed cells. Delete-then-insert instead: the replacement
+	// row gets a fresh created_at >= every event it folds (invalidation works)
+	// AND advances the count cutoff so we don't re-fold a growing window. The
+	// delete is scoped to is_synthetic, so a user-authored anchor at maxT is
+	// left intact and the insert below hits the constraint (swallowed) —
+	// the authored anchor stays authoritative.
+	await tx
+		.delete(mapAnchors)
+		.where(
+			and(
+				eq(mapAnchors.worldMapId, worldMapId),
+				eq(mapAnchors.tPosition, maxT),
+				eq(mapAnchors.isSynthetic, true)
+			)
+		);
+	try {
+		await tx.insert(mapAnchors).values({
+			worldMapId,
+			tPosition: maxT,
+			stateJsonb: snapshot,
+			isSynthetic: true
+		});
+	} catch (err) {
+		if (!isUniqueViolation(err)) throw err;
+		// A user-authored anchor lives at maxT — authoritative, leave it.
+	}
+}
+
+/**
+ * Delete every synthetic anchor whose frozen snapshot may have folded the
+ * event identified by `boundaryEventId`. A synthetic anchor folds events
+ * committed up to its own created_at, so any synthetic anchor created at
+ * or after the (soft-deleted) event's created_at could be holding that
+ * event's now-removed cells. Bind the boundary via a scalar subquery on
+ * the event's own row — not a JS Date param, which the neon/postgres-js
+ * drivers mis-serialize (see the comment at `tPosLiteral`). The event row
+ * is still present (soft-delete sets undone_at), so the subquery resolves.
+ * Caller must hold the world_maps FOR UPDATE lock so a concurrent paint
+ * can't re-insert a synthetic anchor between this delete and its count.
+ */
+async function invalidateSyntheticAnchorsFrom(
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	tx: any,
+	worldMapId: string,
+	boundaryEventId: string
+): Promise<void> {
+	await tx
+		.delete(mapAnchors)
+		.where(
+			and(
+				eq(mapAnchors.worldMapId, worldMapId),
+				eq(mapAnchors.isSynthetic, true),
+				sql`${mapAnchors.createdAt} >= (SELECT created_at FROM map_events WHERE id = ${boundaryEventId})`
+			)
+		);
+}
+
+/**
+ * Drop synthetic anchors at or after `tPosition` (codex P2). Each synthetic
+ * anchor freezes a copy of the rolling state inherited from the user anchor
+ * active at its t_position. When a user authors, edits, or deletes an
+ * anchor at T, every synthetic anchor at t_position >= T may have copied a
+ * now-stale base, so projection at/after those points would keep reading
+ * the frozen snapshot instead of the user's change. Deleting them forces
+ * projection to re-fold from the nearest surviving anchor; the next paint
+ * stroke past K regenerates a fresh synthetic anchor. `tPosition` is a
+ * finite JS number (validated by callers), so binding it directly is safe.
+ */
+async function invalidateSyntheticAnchorsAtOrAfter(
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	db: any,
+	worldMapId: string,
+	tPosition: number
+): Promise<string[]> {
+	const deleted = await db
+		.delete(mapAnchors)
+		.where(
+			and(
+				eq(mapAnchors.worldMapId, worldMapId),
+				eq(mapAnchors.isSynthetic, true),
+				sql`${mapAnchors.tPosition} >= ${tPosition}`
+			)
+		)
+		.returning({ id: mapAnchors.id });
+	return (deleted as Array<{ id: string }>).map((r) => r.id);
 }
 
 export async function deleteMapEvent(
@@ -712,34 +1314,53 @@ export async function deleteMapEvent(
 	// still on disk. Convert this route to a soft-delete so the audit
 	// trail stays append-only. Already-undone events return 404
 	// (idempotent — caller sees the same result as "row missing").
-	const [updated] = await db
-		.update(mapEvents)
-		.set({ undoneAt: new Date() })
-		.where(
-			and(
-				eq(mapEvents.id, eventId),
-				eq(mapEvents.worldMapId, worldMapId),
-				sql`${mapEvents.undoneAt} IS NULL`
+	await db.transaction(async (tx) => {
+		// Serialize with concurrent paints/undos on this map (same lock the
+		// paint + undo paths take) so the synthetic-anchor invalidation
+		// below can't race a paint re-inserting one.
+		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
+		const [updated] = await tx
+			.update(mapEvents)
+			.set({ undoneAt: new Date() })
+			.where(
+				and(
+					eq(mapEvents.id, eventId),
+					eq(mapEvents.worldMapId, worldMapId),
+					sql`${mapEvents.undoneAt} IS NULL`
+				)
 			)
-		)
-		.returning();
-	if (!updated) error(404, 'Event not found');
+			.returning();
+		if (!updated) error(404, 'Event not found');
+		// codex P2: a synthetic anchor may have folded this event's cells.
+		// Soft-deleting the event without invalidating those anchors leaves
+		// the terrain visible via the stale snapshot — projection can still
+		// pick the synthetic anchor. Same invalidation the undo path runs.
+		await invalidateSyntheticAnchorsFrom(tx, worldMapId, eventId);
+	});
 }
 
 /**
  * Slice 2 D3 (T7) — undo the latest live event on a map.
+ * Slice 3 B5 — group chunked-stroke events under one undo.
  *
  * Pops by commit order ((created_at DESC, id DESC)), NOT by t_position.
  * Command-stack semantics: "undo my most recent action" means the user's
  * latest edit, even when that edit landed at a t_position earlier than
  * later events.
  *
- * Soft-delete: sets undone_at = now(). The row stays in place as audit
+ * Slice 3 grouping (outside-voice B5): if the popped event has a non-NULL
+ * command_id, soft-delete ALL events on this map sharing that command_id
+ * atomically in the same transaction. Returns the array of soft-deleted
+ * rows ordered (created_at DESC, id DESC) so the client can rebuild its
+ * in-memory state in the same order it was originally written. Standalone
+ * events (command_id IS NULL) return a length-1 array.
+ *
+ * Soft-delete: sets undone_at = now(). The rows stay in place as audit
  * trail; projection + list endpoints filter on undone_at IS NULL. Redo
- * is a client-side concern — the popped event is held in the client's
- * in-memory stack and replayed via a fresh POST /events (which creates
- * a brand-new row with a new id + new created_at; original t_position
- * and payload preserved).
+ * is a client-side concern — the popped events are held in the client's
+ * in-memory stack and replayed via fresh POST /events. Grouped strokes
+ * redo with a FRESH command_id (the original is consumed; new POSTs are
+ * a new logical command).
  *
  * Cross-user: ownership of the map is asserted via assertMapOwnership;
  * attempts against another user's map surface as 404.
@@ -750,51 +1371,174 @@ export async function undoLatestMapEvent(
 	db: Db,
 	userId: string,
 	worldMapId: string
-): Promise<typeof mapEvents.$inferSelect> {
+): Promise<(typeof mapEvents.$inferSelect)[]> {
 	await assertMapOwnership(db, userId, worldMapId);
 
-	// Retry loop: two concurrent undo requests both SELECT the same latest
-	// event. One UPDATE wins (undoneAt=now); the other's UPDATE matches 0
-	// rows because the WHERE undoneAt IS NULL guard filters out the
-	// just-undone row. Without retry, the second caller gets 422 even
-	// though older live events exist — a double-click leaves the stack
-	// only half-undone. The loop re-SELECTs the next latest until either
-	// an UPDATE succeeds or the SELECT finds nothing.
-	//
-	// Cap the retries to keep this bounded under a runaway race; in
-	// practice the contention window is microseconds and a single retry
-	// resolves it.
-	for (let attempt = 0; attempt < 8; attempt++) {
-		const [latest] = await db
-			.select()
-			.from(mapEvents)
-			.where(
-				and(
-					eq(mapEvents.worldMapId, worldMapId),
-					sql`${mapEvents.undoneAt} IS NULL`
-				)
-			)
-			.orderBy(desc(mapEvents.createdAt), desc(mapEvents.id))
-			.limit(1);
-		if (!latest) error(422, 'No events to undo');
+	// /review adversarial #1 — wrap the 4-statement undo sequence in a
+	// transaction with SELECT FOR UPDATE on world_maps. Mirrors the
+	// auto-anchor pattern in createMapEvent. Two effects:
+	//  1. Crash mid-flight rolls back ALL statements (no partial state on
+	//     disk).
+	//  2. Concurrent paint_cells POSTs (which take the same FOR UPDATE
+	//     lock) serialize with this undo — eliminates the race where the
+	//     synthetic-anchor DELETE could remove an anchor a concurrent
+	//     paint POST just wrote.
+	return await db.transaction(async (tx) => {
+		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
 
-		const [updated] = await db
-			.update(mapEvents)
-			.set({ undoneAt: new Date() })
-			.where(
-				and(
-					eq(mapEvents.id, latest.id),
-					eq(mapEvents.worldMapId, worldMapId),
-					sql`${mapEvents.undoneAt} IS NULL`
+		// Retry loop: two concurrent undo requests both SELECT the same
+		// latest event. One UPDATE wins (undoneAt=now); the other's
+		// UPDATE matches 0 rows because the WHERE undoneAt IS NULL guard
+		// filters out the just-undone row. Without retry, the second
+		// caller gets 422 even though older live events exist — a
+		// double-click leaves the stack only half-undone. The loop
+		// re-SELECTs the next latest until either an UPDATE succeeds or
+		// the SELECT finds nothing.
+		//
+		// Note: post-FOR-UPDATE, this loop should rarely retry because
+		// concurrent undos on the same map now serialize. The retry is
+		// belt + suspenders for any code path that somehow bypasses the
+		// lock (currently none).
+		for (let attempt = 0; attempt < 8; attempt++) {
+			const [latest] = await tx
+				.select()
+				.from(mapEvents)
+				.where(
+					and(
+						eq(mapEvents.worldMapId, worldMapId),
+						sql`${mapEvents.undoneAt} IS NULL`
+					)
 				)
+				.orderBy(desc(mapEvents.createdAt), desc(mapEvents.id))
+				.limit(1);
+			if (!latest) error(422, 'No events to undo');
+
+			// Race-tolerant single-event UPDATE first. If the latest event
+			// has a command_id, the follow-up grouped soft-delete picks up
+			// its siblings.
+			const [updated] = await tx
+				.update(mapEvents)
+				.set({ undoneAt: new Date() })
+				.where(
+					and(
+						eq(mapEvents.id, latest.id),
+						eq(mapEvents.worldMapId, worldMapId),
+						sql`${mapEvents.undoneAt} IS NULL`
+					)
+				)
+				.returning();
+			if (!updated) continue; // Lost the race; loop.
+
+			let all: (typeof mapEvents.$inferSelect)[];
+			if (updated.commandId === null) {
+				all = [updated];
+			} else {
+				const siblings = await tx
+					.update(mapEvents)
+					.set({ undoneAt: new Date() })
+					.where(
+						and(
+							eq(mapEvents.worldMapId, worldMapId),
+							eq(mapEvents.commandId, updated.commandId),
+							sql`${mapEvents.undoneAt} IS NULL`
+						)
+					)
+					.returning();
+				all = [updated, ...siblings];
+				all.sort((a, b) => {
+					const am =
+						a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(String(a.createdAt));
+					const bm =
+						b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(String(b.createdAt));
+					if (am !== bm) return bm - am;
+					return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+				});
+			}
+
+			// Slice 3 outside-voice A9 — synthetic anchor invalidation.
+			// Inside the same transaction as the soft-delete so a concurrent
+			// paint_cells (which would also hold FOR UPDATE) cannot insert
+			// a synthetic anchor between our soft-delete and this DELETE.
+			const earliestUndone = all.reduce(
+				(acc, e) => {
+					const t =
+						e.createdAt instanceof Date ? e.createdAt.getTime() : Date.parse(String(e.createdAt));
+					return acc === null || t < acc.t ? { id: e.id, t } : acc;
+				},
+				null as { id: string; t: number } | null
+			);
+			if (earliestUndone) {
+				await invalidateSyntheticAnchorsFrom(tx, worldMapId, earliestUndone.id);
+			}
+
+			return all;
+		}
+		// Pathological contention — surface 422 rather than a 500 so the
+		// client can retry the user action.
+		error(422, 'No events to undo');
+	});
+}
+
+// ── Layer prefs (Slice 3 E1 — outside-voice A1 + B3) ────────────────────────
+//
+// world_map_layer_prefs is per-user-per-map visibility for the
+// background/grid/terrain/regions/placements layers. The table FK is
+// only on user.id and world_maps.id; the cross-user ownership
+// invariant (user_id must match world_maps.user_id) lives here, in
+// the upsert helper. Every write goes through this function; direct
+// DB inserts from anywhere else are a CLAUDE.md violation.
+//
+// Reads scope through assertMapOwnership upstream — listing prefs
+// for a map the caller doesn't own returns 404, same shape as
+// listing anchors/events.
+
+export async function listWorldMapLayerPrefs(
+	db: Db,
+	userId: string,
+	worldMapId: string
+): Promise<(typeof worldMapLayerPrefs.$inferSelect)[]> {
+	await assertMapOwnership(db, userId, worldMapId);
+	return await db
+		.select()
+		.from(worldMapLayerPrefs)
+		.where(
+			and(
+				eq(worldMapLayerPrefs.userId, userId),
+				eq(worldMapLayerPrefs.worldMapId, worldMapId)
 			)
-			.returning();
-		if (updated) return updated;
-		// Lost the race; loop and try the next latest event.
+		);
+}
+
+export async function upsertWorldMapLayerPref(
+	db: Db,
+	userId: string,
+	worldMapId: string,
+	layerKey: string,
+	visible: 0 | 1
+): Promise<typeof worldMapLayerPrefs.$inferSelect> {
+	// Cross-user invariant — codex outside-voice #15. The schema accepts
+	// (userA, mapB-owned-by-userB) inserts; the helper rejects them via
+	// assertMapOwnership which 404s on non-owned maps.
+	await assertMapOwnership(db, userId, worldMapId);
+	if (typeof layerKey !== 'string' || layerKey.length === 0 || layerKey.length > 64) {
+		error(400, 'layerKey must be a non-empty string ≤ 64 chars');
 	}
-	// Pathological contention — surface 422 rather than a 500 so the
-	// client can retry the user action.
-	error(422, 'No events to undo');
+	if (visible !== 0 && visible !== 1) {
+		error(400, 'visible must be 0 or 1 (CLAUDE.md integer convention)');
+	}
+	const [row] = await db
+		.insert(worldMapLayerPrefs)
+		.values({ userId, worldMapId, layerKey, visible })
+		.onConflictDoUpdate({
+			target: [
+				worldMapLayerPrefs.userId,
+				worldMapLayerPrefs.worldMapId,
+				worldMapLayerPrefs.layerKey
+			],
+			set: { visible }
+		})
+		.returning();
+	return row;
 }
 
 // ── Read paths (cursor pagination — Slice 2 D5) ─────────────────────────────

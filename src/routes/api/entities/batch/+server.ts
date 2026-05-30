@@ -3,6 +3,7 @@ import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
 import { getUserId, assertParentsOwned } from '$lib/server/auth-gate.js';
 import { recomputeIntervalsForAct } from '$lib/server/intervals.js';
+import { validateStyleInData } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -37,6 +38,10 @@ export const POST: RequestHandler = async (event) => {
 		if (!item.name || typeof item.name !== 'string' || item.name.trim() === '') {
 			error(400, `entities[${i}].name is required`);
 		}
+		// codex P2: batch is also an entity-create path — apply the same style
+		// whitelist as POST /api/entities so a batch payload can't persist an
+		// invalid/oversized data.style that the placement cascade later consumes.
+		validateStyleInData(item.data, `entities[${i}].data`);
 	}
 
 	if (items.length === 0) return json([], { status: 201 });

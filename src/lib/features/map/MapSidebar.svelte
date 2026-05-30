@@ -14,6 +14,45 @@
 	import { onDestroy } from 'svelte';
 	import { factions as factionsStore, type Faction } from './factions-store.js';
 	import { MAP_PALETTE, DEFAULT_FACTION_COLOR } from './color-palette.js';
+	import { layerPrefs } from './layer-prefs-store.js';
+	import { LAYER_KEYS, LAYER_LABELS, type LayerKey } from './layers.js';
+
+	// Slice 3 E3 — Layers pane. Per-user-per-map visibility toggles for
+	// the WM3 layer stack (background/grid/terrain/regions/placements).
+	// Mounts above the factions section; the active map id flows in as
+	// a prop so toggling can PATCH the correct row.
+	let { activeMapId = null }: { activeMapId?: string | null } = $props();
+
+	function isVisible(key: LayerKey): boolean {
+		const v = $layerPrefs.prefs.get(key);
+		return v === undefined ? true : v;
+	}
+
+	let layersBusy = $state<Set<string>>(new Set());
+	let layersError = $state('');
+
+	async function toggleLayer(key: LayerKey): Promise<void> {
+		if (!activeMapId) return;
+		if (layersBusy.has(key)) return;
+		// codex P2: ignore toggles while prefs are 'loading' OR 'error'. In both
+		// states the store has mapId:null, so toggle()'s optimistic update is
+		// skipped (mapId mismatch) and the success path never applies the result
+		// — the PATCH persists server-side but the canvas/sidebar stay stale
+		// until another load. The checkbox is also disabled in markup for these
+		// states; the user can reload to retry after a failed pref load.
+		if ($layerPrefs.status === 'loading' || $layerPrefs.status === 'error') return;
+		layersBusy = new Set([...layersBusy, key]);
+		layersError = '';
+		try {
+			await layerPrefs.toggle(activeMapId, key);
+		} catch (err) {
+			layersError = err instanceof Error ? err.message : String(err);
+		} finally {
+			const next = new Set(layersBusy);
+			next.delete(key);
+			layersBusy = next;
+		}
+	}
 
 	let factionList = $state<Faction[]>([]);
 	const unsub = factionsStore.subscribe((list) => {
@@ -97,9 +136,85 @@
 			deleteBusy = false;
 		}
 	}
+
+	// Faction rename + recolor. The ✎ button next to delete (or the name)
+	// opens an inline edit form: a name field + the color swatches (always
+	// visible) + Save/Cancel. Swatches just SELECT a color (preview); Save
+	// commits name + color together, which sidesteps the blur/focus races the
+	// old click-stripe-then-swatch flow needed showColorPicker to manage.
+	// is_system factions can be renamed/recolored too — only DELETE is blocked.
+	let editingFactionId = $state<string | null>(null);
+	let editName = $state('');
+	let editColor = $state('');
+	let editBusy = $state(false);
+	let editError = $state('');
+
+	function startEdit(f: Faction) {
+		editingFactionId = f.id;
+		editName = f.name;
+		editColor = f.color;
+		editError = '';
+	}
+
+	function cancelEdit() {
+		editingFactionId = null;
+		editName = '';
+		editColor = '';
+		editError = '';
+	}
+
+	async function commitEdit(f: Faction) {
+		if (editBusy) return;
+		const name = editName.trim();
+		if (!name) {
+			editError = 'Name is required';
+			return;
+		}
+		// No-op if nothing changed.
+		if (name === f.name && editColor === f.color) {
+			cancelEdit();
+			return;
+		}
+		editBusy = true;
+		editError = '';
+		try {
+			await factionsStore.update(f.id, { name, color: editColor });
+			cancelEdit();
+		} catch (err) {
+			editError = err instanceof Error ? err.message : String(err);
+		} finally {
+			editBusy = false;
+		}
+	}
 </script>
 
-<aside class="map-sidebar" aria-label="Factions">
+<aside class="map-sidebar" aria-label="Map controls">
+	{#if activeMapId}
+		<section class="layers-pane" aria-label="Layers">
+			<header class="sidebar-header">
+				<h3>Layers</h3>
+			</header>
+			<ul class="layer-list" role="list">
+				{#each LAYER_KEYS as key (key)}
+					<li class="layer-row">
+						<label>
+							<input
+								type="checkbox"
+								checked={isVisible(key)}
+								disabled={layersBusy.has(key) ||
+									$layerPrefs.status === 'loading' ||
+									$layerPrefs.status === 'error'}
+								onchange={() => void toggleLayer(key)}
+							/>
+							<span class="layer-name">{LAYER_LABELS[key]}</span>
+						</label>
+					</li>
+				{/each}
+			</ul>
+			{#if layersError}<p class="error-msg">{layersError}</p>{/if}
+		</section>
+	{/if}
+
 	<header class="sidebar-header">
 		<h3>Factions</h3>
 		{#if !creating}
@@ -146,23 +261,94 @@
 
 	<ul class="faction-list" role="list">
 		{#each factionList as faction (faction.id)}
-			<li class="faction-row">
-				<span class="faction-stripe" style="background: {faction.color}" aria-hidden="true"></span>
-				<span class="faction-name" title={faction.name}>{faction.name}</span>
-				{#if faction.isSystem}
-					<!-- Slice 2 D1: system Neutral faction is the fallback ownership
-					     target for un-faction-ed regions. Delete would orphan every
-					     region resolving through it. UI hides the affordance; server
-					     also returns 422 on DELETE attempts (defense in depth). -->
-					<span class="system-badge" title="System faction — cannot be deleted">SYSTEM</span>
+			<li class="faction-row" class:editing={editingFactionId === faction.id}>
+				{#if editingFactionId === faction.id}
+					<!-- Inline edit form: name field + color swatches (always
+					     shown) + Save/Cancel. Swatches select a color (preview on
+					     the live stripe); Save commits name + color together. -->
+					<div class="faction-edit">
+						<div class="faction-edit-row">
+							<span
+								class="faction-stripe"
+								style="background: {editColor}"
+								aria-hidden="true"
+							></span>
+							<!-- svelte-ignore a11y_autofocus -->
+							<input
+								type="text"
+								class="faction-name-input"
+								bind:value={editName}
+								autofocus
+								disabled={editBusy}
+								onkeydown={(e) => {
+									if (e.key === 'Enter') void commitEdit(faction);
+									if (e.key === 'Escape') cancelEdit();
+								}}
+							/>
+						</div>
+						<div class="color-swatches" aria-label="Faction color">
+							{#each MAP_PALETTE as c (c)}
+								<button
+									type="button"
+									class="color-swatch"
+									class:selected={editColor === c}
+									style="background: {c}"
+									aria-label={`Color ${c}`}
+									onclick={() => (editColor = c)}
+									disabled={editBusy}
+								></button>
+							{/each}
+						</div>
+						{#if editError}<p class="error-msg">{editError}</p>{/if}
+						<div class="edit-actions">
+							<button
+								type="button"
+								class="btn-secondary"
+								onclick={cancelEdit}
+								disabled={editBusy}>Cancel</button
+							>
+							<button
+								type="button"
+								class="btn-primary"
+								onclick={() => void commitEdit(faction)}
+								disabled={editBusy}>{editBusy ? 'Saving…' : 'Save'}</button
+							>
+						</div>
+					</div>
 				{:else}
+					<span
+						class="faction-stripe"
+						style="background: {faction.color}"
+						aria-hidden="true"
+					></span>
 					<button
 						type="button"
-						class="btn-icon btn-danger"
-						aria-label="Delete {faction.name}"
-						title="Delete"
-						onclick={() => void startDelete(faction)}
-					>×</button>
+						class="faction-name faction-name-button"
+						title={`Edit "${faction.name}"`}
+						onclick={() => startEdit(faction)}
+					>{faction.name}</button>
+					<button
+						type="button"
+						class="btn-icon"
+						aria-label="Edit {faction.name}"
+						title="Rename / recolor"
+						onclick={() => startEdit(faction)}
+					>✎</button>
+					{#if faction.isSystem}
+						<!-- Slice 2 D1: system Neutral faction is the fallback ownership
+						     target for un-faction-ed regions. Delete would orphan every
+						     region resolving through it. UI hides the affordance; server
+						     also returns 422 on DELETE attempts (defense in depth). -->
+						<span class="system-badge" title="System faction — cannot be deleted">SYSTEM</span>
+					{:else}
+						<button
+							type="button"
+							class="btn-icon btn-danger"
+							aria-label="Delete {faction.name}"
+							title="Delete"
+							onclick={() => void startDelete(faction)}
+						>×</button>
+					{/if}
 				{/if}
 			</li>
 		{/each}
@@ -205,13 +391,48 @@
 {/if}
 
 <style>
+	/* Slice 3 E3 — Layers pane. Sits above factions in the sidebar. */
+	.layers-pane {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding-bottom: 6px;
+		border-bottom: 1px solid var(--color-border);
+		margin-bottom: 4px;
+	}
+	.layer-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.layer-row label {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		cursor: pointer;
+		padding: 2px 0;
+		color: var(--color-text);
+	}
+	.layer-row input[type='checkbox'] {
+		cursor: pointer;
+	}
+	.layer-row .layer-name {
+		font-size: 11px;
+	}
+
 	.map-sidebar {
 		position: absolute;
 		top: 48px;
 		right: 8px;
 		bottom: 8px;
 		width: 200px;
-		z-index: 900;
+		/* Below the bottom palettes (placeables/asset/brush) so it doesn't
+		   cover them, but still above the Pixi canvas. The toolbar stays at
+		   1000. */
+		z-index: 100;
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
@@ -223,7 +444,11 @@
 		padding: 8px 10px;
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 		font-size: 12px;
-		overflow: hidden;
+		/* Scroll the whole sidebar when Layers + Factions exceed the height
+		   between top:48px and bottom:8px (the faction list already scrolls
+		   internally; this catches the combined overflow). */
+		overflow-y: auto;
+		overflow-x: hidden;
 	}
 	.sidebar-header {
 		display: flex;
@@ -296,6 +521,47 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		color: var(--color-text);
+	}
+	/* Slice 3 F2 — name turns into a click target in display mode. Looks
+	   identical to the span until hover. */
+	.faction-name-button {
+		background: transparent;
+		border: none;
+		padding: 0;
+		text-align: left;
+		cursor: text;
+		font: inherit;
+	}
+	.faction-name-button:hover {
+		color: var(--color-accent, #c8942a);
+	}
+	.faction-row.editing {
+		/* The edit form stacks (name row → swatches → actions), so the row
+		   becomes a full-width block instead of a single horizontal line. */
+		align-items: stretch;
+		flex-direction: column;
+		gap: 6px;
+		padding: 6px;
+		border: 1px dashed var(--color-border);
+	}
+	.faction-edit {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.faction-edit-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.faction-edit-row .faction-name-input {
+		flex: 1;
+		min-width: 0;
+	}
+	.edit-actions {
+		display: flex;
+		gap: 6px;
+		justify-content: flex-end;
 	}
 	.empty-row {
 		color: var(--color-text-muted);
