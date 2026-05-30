@@ -19,6 +19,15 @@ export type Entity = {
 
 function createEntityStore() {
 	const { subscribe, set, update } = writable<Entity[]>([]);
+	// Per-entity update sequence. updateEntity applies an optimistic merge then
+	// installs the PATCH response; without sequencing, two edits to the same row
+	// racing on the wire can land out of order — e.g. a style save and an
+	// adjacent is_asset toggle both send full `data`, and a slow earlier
+	// response reinstalls a server row missing the other edit's field until a
+	// reload (Codex P2, PR #59). Track the newest in-flight seq per id and only
+	// apply the server row / roll back if our call is still the latest for it.
+	let updateSeq = 0;
+	const latestUpdate = new Map<string, number>();
 
 	async function load() {
 		const res = await fetch('/api/entities');
@@ -94,6 +103,8 @@ function createEntityStore() {
 		}
 	): Promise<Entity> {
 		const optimistic = patch;
+		const seq = ++updateSeq;
+		latestUpdate.set(id, seq);
 		update((all) =>
 			all.map((e) =>
 				e.id === id
@@ -116,10 +127,19 @@ function createEntityStore() {
 			body: JSON.stringify(patch)
 		});
 		if (!res.ok) {
-			await load();
+			// Only roll back via load() if a newer edit hasn't superseded ours —
+			// otherwise the reload would discard the newer optimistic value too.
+			if (latestUpdate.get(id) === seq) {
+				latestUpdate.delete(id);
+				await load();
+			}
 			throw new Error(await res.text());
 		}
 		const updated: Entity = await res.json();
+		// Drop the server row if a newer edit to this row was issued meanwhile;
+		// installing it would clobber the newer optimistic value until reload.
+		if (latestUpdate.get(id) !== seq) return updated;
+		latestUpdate.delete(id);
 		update((all) => all.map((e) => (e.id === id ? updated : e)));
 		// Position/parentId changes on Act/Scene cascade to intervals on the
 		// server (sibling reorder + recompute, or scene cross-act move). Keep
