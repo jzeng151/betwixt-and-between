@@ -181,13 +181,30 @@ export const PATCH: RequestHandler = async (event) => {
 					sql`SELECT id FROM world_maps WHERE id = ${event.params.id} FOR UPDATE`
 				);
 
+				// codex P2: re-read the grid UNDER the lock. `existing` came from a
+				// pre-transaction read, so a concurrent grid change (e.g. another
+				// form switching square→hex with a paint under the new grid) could
+				// commit before this PATCH gets the lock — a stale gridType would
+				// make the change-detection below false and skip the terrain guard.
+				// Decide off the locked current values.
+				const lockedRes = await tx.execute(
+					sql`SELECT grid_type AS "gridType", grid_cells_x AS "gridCellsX", grid_cells_y AS "gridCellsY" FROM world_maps WHERE id = ${event.params.id}`
+				);
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const locked = (((lockedRes as any).rows ?? lockedRes) as Array<{
+					gridType: string;
+					gridCellsX: number;
+					gridCellsY: number;
+				}>)[0];
+				if (!locked) error(404, 'world_map not found');
+
 				// gridType change reinterprets the same stored (x,y) cell keys
 				// under a different geometry (square cells vs hex axial), so
 				// existing terrain would move/distort. Reject once any non-erased
 				// terrain exists. Events are temporal — a painted-then-erased cell
 				// still renders at an intermediate playhead — so scan all live
 				// paint_cells events + anchor snapshots, treating 'unset' as absent.
-				if ('gridType' in body && body.gridType !== existing.gridType) {
+				if ('gridType' in body && body.gridType !== locked.gridType) {
 					const terrain = await tx.execute(sql`
 						SELECT 1 AS hit FROM (
 							SELECT c->>'biome' AS biome
@@ -218,9 +235,9 @@ export const PATCH: RequestHandler = async (event) => {
 				// non-'unset' paint_cells interval (or anchor cell) is out of
 				// bounds, regardless of a later erase. Growth is always safe.
 				if ('gridCellsX' in body || 'gridCellsY' in body) {
-					const newCellsX = (updates.gridCellsX as number | undefined) ?? existing.gridCellsX;
-					const newCellsY = (updates.gridCellsY as number | undefined) ?? existing.gridCellsY;
-					if (newCellsX < existing.gridCellsX || newCellsY < existing.gridCellsY) {
+					const newCellsX = (updates.gridCellsX as number | undefined) ?? locked.gridCellsX;
+					const newCellsY = (updates.gridCellsY as number | undefined) ?? locked.gridCellsY;
+					if (newCellsX < locked.gridCellsX || newCellsY < locked.gridCellsY) {
 						const oob = await tx.execute(sql`
 							SELECT 1 AS hit FROM (
 								SELECT (c->>'x')::int AS x, (c->>'y')::int AS y, c->>'biome' AS biome
