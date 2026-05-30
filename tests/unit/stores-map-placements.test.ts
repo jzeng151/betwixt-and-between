@@ -39,6 +39,11 @@ function placement(partial: Partial<MapPlacement> & { id: string }): MapPlacemen
 }
 
 beforeEach(async () => {
+	// Clear any in-flight update bookkeeping leaked by a prior test that fired
+	// update() against a never-resolving fetch (the singleton store persists
+	// across tests, so a pending PATCH chain would otherwise gate this test's
+	// first update() and stall its fetch).
+	mapPlacements.reset();
 	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([placement({ id: 'p1' })])) as unknown as typeof fetch;
 	await mapPlacements.load({ locationId: 'loc-1' });
 });
@@ -81,53 +86,66 @@ describe('mapPlacements.update — optimistic', () => {
 	});
 });
 
-describe('mapPlacements.update — stale PATCH sequencing (Codex P2)', () => {
-	it('a slow earlier PATCH does not overwrite a newer edit on the same row', async () => {
-		// Two edits to p1. The FIRST PATCH is held open and resolves AFTER the
-		// second one has already installed its server row. Without per-id
-		// sequencing, the stale first response would clobber the newer edit.
+describe('mapPlacements.update — per-placement PATCH serialization (Codex P2)', () => {
+	const tick = () => new Promise((r) => setTimeout(r, 0));
+
+	it('does not send the second PATCH until the first resolves (in-order on the wire)', async () => {
+		// Two rapid edits to p1. The first PATCH is held open; the second must
+		// NOT hit the API until the first completes, so the server can never
+		// receive them out of order (which would persist the older data).
+		const bodies: unknown[] = [];
 		let resolveFirst!: () => void;
 		const firstServer = placement({ id: 'p1', data: { style: { color: '#aaaaaa' } } });
-		const secondServer = placement({ id: 'p1', data: { style: { color: '#bbbbbb' } } });
-		globalThis.fetch = vi
-			.fn()
-			.mockImplementationOnce(
-				() =>
-					new Promise<Response>((res) => {
-						resolveFirst = () => res(makeResponse(firstServer));
-					})
-			)
-			.mockResolvedValueOnce(makeResponse(secondServer)) as unknown as typeof fetch;
+		const secondServer = placement({ id: 'p1', data: { style: { color: '#aaaaaa', scale: 2 } } });
+		globalThis.fetch = vi.fn((_url: string, opts: { body: string }) => {
+			bodies.push(JSON.parse(opts.body));
+			if (bodies.length === 1) {
+				return new Promise<Response>((res) => {
+					resolveFirst = () => res(makeResponse(firstServer));
+				});
+			}
+			return Promise.resolve(makeResponse(secondServer));
+		}) as unknown as typeof fetch;
 
 		const first = mapPlacements.update('p1', { data: { style: { color: '#aaaaaa' } } });
-		const second = mapPlacements.update('p1', { data: { style: { color: '#bbbbbb' } } });
-		await second; // newer edit resolves first and installs #bbbbbb
-		resolveFirst(); // stale earlier PATCH now resolves
-		await first;
+		const second = mapPlacements.update('p1', { data: { style: { color: '#aaaaaa', scale: 2 } } });
 
+		await tick();
+		expect(bodies).toHaveLength(1); // second PATCH is queued, not yet sent
+
+		resolveFirst();
+		await first;
+		await second;
+
+		expect(bodies).toHaveLength(2); // second sent only after the first finished
 		const row = get(mapPlacements).find((p) => p.id === 'p1');
-		expect(row?.data).toEqual({ style: { color: '#bbbbbb' } });
+		expect(row?.data).toEqual({ style: { color: '#aaaaaa', scale: 2 } });
 	});
 
-	it('a failed earlier PATCH does not revert a newer successful edit', async () => {
-		let rejectFirst!: () => void;
+	it('a failed earlier PATCH does not block or revert a newer queued edit', async () => {
 		const secondServer = placement({ id: 'p1', data: { style: { color: '#bbbbbb' } } });
-		globalThis.fetch = vi
-			.fn()
-			.mockImplementationOnce(
-				() =>
-					new Promise<Response>((_res, rej) => {
-						rejectFirst = () => rej(new Error('boom'));
-					})
-			)
-			.mockResolvedValueOnce(makeResponse(secondServer)) as unknown as typeof fetch;
+		let rejectFirst!: () => void;
+		const bodies: unknown[] = [];
+		globalThis.fetch = vi.fn((_url: string, opts: { body: string }) => {
+			bodies.push(JSON.parse(opts.body));
+			if (bodies.length === 1) {
+				return new Promise<Response>((_res, rej) => {
+					rejectFirst = () => rej(new Error('boom'));
+				});
+			}
+			return Promise.resolve(makeResponse(secondServer));
+		}) as unknown as typeof fetch;
 
 		const first = mapPlacements.update('p1', { data: { style: { color: '#aaaaaa' } } });
 		const second = mapPlacements.update('p1', { data: { style: { color: '#bbbbbb' } } });
-		await second;
+
+		await tick();
 		rejectFirst();
 		await expect(first).rejects.toThrow();
+		await second;
 
+		// The newer edit still ran (after the failed one drained) and its value
+		// stands — the failed earlier PATCH neither reverted nor blocked it.
 		const row = get(mapPlacements).find((p) => p.id === 'p1');
 		expect(row?.data).toEqual({ style: { color: '#bbbbbb' } });
 	});

@@ -30,6 +30,14 @@ function createPlacementsStore() {
 	// server row / revert if our call is still the latest for that id (Codex P2).
 	let updateSeq = 0;
 	const latestUpdate = new Map<string, number>();
+	// Per-placement PATCH chain. Multiple style edits to one placement (e.g. a
+	// color pick then a scale/opacity-slider drag) each send a full `data`
+	// object; if they raced on the wire they could reach the API out of order
+	// and the DATABASE would keep the older `data` even though the store shows
+	// the newer — the newer style then disappears on the next reload (Codex P2).
+	// Chain each PATCH behind the previous one for the same id so requests are
+	// submitted, and thus applied server-side, in call order.
+	const updateChains = new Map<string, Promise<unknown>>();
 
 	async function load(filters?: {
 		locationId?: string;
@@ -86,16 +94,30 @@ function createPlacementsStore() {
 				return { ...p, ...payload } as MapPlacement;
 			})
 		);
-		try {
+
+		// Serialize the network write behind any in-flight PATCH for this same
+		// placement so requests reach the API in submission order (Codex P2 —
+		// see updateChains). The optimistic merge above already ran synchronously,
+		// so the UI stays instant; only the fetch is gated.
+		const prior = updateChains.get(id) ?? Promise.resolve();
+		const run = (async () => {
+			await prior.catch(() => {});
 			const res = await fetch(`/api/map-placements/${id}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload)
 			});
 			if (!res.ok) throw new Error(await errorMessage(res));
-			const updated: MapPlacement = await res.json();
+			return (await res.json()) as MapPlacement;
+		})();
+		// Park a non-rejecting handle as the chain tail so the next edit waits
+		// for us regardless of our outcome.
+		updateChains.set(id, run.catch(() => {}));
+
+		try {
+			const updated = await run;
 			// Only install the server row if no newer edit to this row was issued
-			// meanwhile — otherwise a slow earlier PATCH would clobber it.
+			// meanwhile — otherwise an earlier queued response would clobber it.
 			if (latestUpdate.get(id) === seq) {
 				placements.update((all) => all.map((p) => (p.id === id ? updated : p)));
 			}
@@ -109,7 +131,11 @@ function createPlacementsStore() {
 			}
 			throw err;
 		} finally {
-			if (latestUpdate.get(id) === seq) latestUpdate.delete(id);
+			// Whoever is still the latest owns cleanup of both maps for this id.
+			if (latestUpdate.get(id) === seq) {
+				latestUpdate.delete(id);
+				updateChains.delete(id);
+			}
 		}
 	}
 
@@ -121,6 +147,11 @@ function createPlacementsStore() {
 
 	function reset(): void {
 		loadToken++;
+		// Drop any in-flight per-placement update bookkeeping: a stale chain or
+		// seq from the previous map/location context must not gate or clobber
+		// edits made after the switch.
+		latestUpdate.clear();
+		updateChains.clear();
 		placements.set([]);
 	}
 
