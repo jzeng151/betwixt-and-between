@@ -147,11 +147,13 @@ function createPlacementsStore() {
 
 	function reset(): void {
 		loadToken++;
-		// Drop any in-flight per-placement update bookkeeping: a stale chain or
-		// seq from the previous map/location context must not gate or clobber
-		// edits made after the switch.
-		latestUpdate.clear();
-		updateChains.clear();
+		// Do NOT clear updateChains/latestUpdate here. An in-flight PATCH for a
+		// placement must keep gating a later edit to that SAME placement even
+		// across a context switch (map with no linked location → reset → return
+		// and re-edit the same placement), or the newer PATCH would be sent
+		// unchained and a stale earlier request could still reach the API last
+		// and overwrite the DB until reload (Codex P2). Each entry self-cleans in
+		// update()'s finally when its latest update settles.
 		placements.set([]);
 	}
 
