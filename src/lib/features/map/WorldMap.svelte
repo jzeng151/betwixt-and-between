@@ -28,6 +28,7 @@
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import { projectState, type ProjectionContext, type RenderedState } from '$lib/features/map/projection.js';
+	import { computeCanvasMode } from '$lib/features/map/canvas-mode.js';
 	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
 	import { mapAnchorsStore } from '$lib/features/map/map-anchors-store.js';
 	import { mapEventsStore } from '$lib/features/map/map-events-store.js';
@@ -164,6 +165,17 @@
 	// tool). Both reset on commit / cancel / map switch.
 	let pixiDrawingActive = $state(false);
 	let pixiDrawSeed = $state<{ x: number; y: number } | null>(null);
+	// Slice 4 T7 — single source of truth for the active canvas interaction
+	// mode, derived from the gesture flags (which stay child-owned). Gates read
+	// `canvasMode` instead of re-deriving the precedence inline; PR-F adds
+	// 'move'. See canvas-mode.ts for the priority cascade.
+	let canvasMode = $derived(
+		computeCanvasMode({
+			drawing: pixiDrawingActive,
+			brushing: brushActive,
+			armed: armedPlaceableId !== null
+		})
+	);
 	// codex PR review iter 7: reset polygon-draw state when the user
 	// switches maps via the toolbar. Without this, vertices placed on
 	// map A linger after switchMap → committing on map B saves the
@@ -535,10 +547,14 @@
 	}
 
 	function handleCanvasClick(fx: number, fy: number) {
+		// Slice 4 T7: only the place-armed mode consumes a canvas tap. Gate on
+		// the same load condition the drop path uses (handleAssetDrop) — a
+		// placement POST landing mid-load can be clobbered when the in-flight
+		// placements GET replaces the store with its pre-create rows.
+		const placeableId = armedPlaceableId;
+		if (canvasMode !== 'place-armed' || mapLoading || placeableId === null) return;
 		// Disarm synchronously before the await so a quick second click can't
 		// fire createPlacementAt twice while the POST is in flight.
-		if (!armedPlaceableId) return;
-		const placeableId = armedPlaceableId;
 		armedPlaceableId = null;
 		void createPlacementAt(placeableId, fx, fy);
 	}
@@ -1323,7 +1339,7 @@
 					placements={$placementsStore}
 					entities={$entities}
 					isInScope={$isInScope}
-					armedPlaceableId={pixiDrawingActive ? null : armedPlaceableId}
+					armedPlaceableId={canvasMode === 'place-armed' ? armedPlaceableId : null}
 					brushActive={brushActive}
 					onOpenEntity={(id) => windowStore.open('entity-detail', id)}
 					onDeletePlacement={(id) => void deletePlacement(id)}
@@ -1351,7 +1367,7 @@
 				     pre-stroke rows. Same guard the snapshot/ownership writes
 				     use. -->
 				<PixiBrushLayer
-					active={brushActive && !pixiDrawingActive && !dataLoading}
+					active={canvasMode === 'brush' && !dataLoading}
 					{activeMap}
 					biome={brushBiome}
 					size={brushSize}
