@@ -28,6 +28,12 @@ function createMapAnchorsStore() {
 	// content. Each load() records its target; on response, we no-op the
 	// store.set() if the target changed during the await.
 	let lastLoadedMapId: string | null = null;
+	// codex P2: monotonic load token. lastLoadedMapId only distinguishes
+	// DIFFERENT maps; two same-map loads (resyncAfterWrite fires one per
+	// authored-anchor write) could resolve out of order and let an older load
+	// overwrite the store with a stale anchor set. Each load captures a token
+	// and only commits if it is still the latest.
+	let loadToken = 0;
 
 	// Pages through /api/maps/[id]/anchors until next_cursor is null.
 	// Projection requires the complete ordered stream so loadAll-on-mount
@@ -36,6 +42,8 @@ function createMapAnchorsStore() {
 	// abandon the in-progress load (Codex P1 on PR #55).
 	async function load(mapId: string): Promise<void> {
 		lastLoadedMapId = mapId;
+		const token = ++loadToken;
+		const stale = () => lastLoadedMapId !== mapId || token !== loadToken;
 		const collected: MapAnchor[] = [];
 		let cursor: string | null = null;
 		do {
@@ -43,14 +51,14 @@ function createMapAnchorsStore() {
 				? `/api/maps/${mapId}/anchors?after=${encodeURIComponent(cursor)}`
 				: `/api/maps/${mapId}/anchors`;
 			const res = await fetch(url);
-			if (lastLoadedMapId !== mapId) return;
+			if (stale()) return;
 			if (!res.ok) throw new Error(`Failed to load anchors: ${await errorMessage(res)}`);
 			const body = (await res.json()) as { rows: MapAnchor[]; next_cursor: string | null };
-			if (lastLoadedMapId !== mapId) return;
+			if (stale()) return;
 			collected.push(...body.rows);
 			cursor = body.next_cursor;
 		} while (cursor != null);
-		if (lastLoadedMapId !== mapId) return;
+		if (stale()) return;
 		store.set(collected);
 	}
 

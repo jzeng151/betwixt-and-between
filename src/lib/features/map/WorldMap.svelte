@@ -1333,6 +1333,7 @@
 					entities={$entities}
 					isInScope={$isInScope}
 					armedPlaceableId={pixiDrawingActive ? null : armedPlaceableId}
+					brushActive={brushActive}
 					onOpenEntity={(id) => windowStore.open('entity-detail', id)}
 					onDeletePlacement={(id) => void deletePlacement(id)}
 					onCanvasClick={handleCanvasClick}

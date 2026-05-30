@@ -50,6 +50,7 @@
 		entities,
 		isInScope = null,
 		armedPlaceableId = null,
+		brushActive = false,
 		onOpenEntity,
 		onDeletePlacement,
 		onCanvasClick
@@ -69,6 +70,9 @@
 		// matches MapStage.svelte's onCanvasClick contract so WorldMap can
 		// reuse handleCanvasClick unchanged.
 		armedPlaceableId?: string | null;
+		// codex P2: when brush mode is active, suppress marker pointer
+		// interaction so painting over a placement doesn't also open/delete it.
+		brushActive?: boolean;
 		onOpenEntity: (id: string) => void;
 		onDeletePlacement: (id: string) => void;
 		onCanvasClick?: (fx: number, fy: number) => void;
@@ -218,8 +222,12 @@
 			// visual (circle fallback OR icon sprite) can swap without losing
 			// pointer handlers. codex P2 (PR #58): resolved.icon is now honored.
 			const marker: PixiContainer = new PIXI.Container();
-			marker.eventMode = 'static';
-			marker.cursor = 'pointer';
+			// codex P2: while brushing, markers are non-interactive so a paint
+			// stroke over a placement doesn't also fire its open/delete tap.
+			// Reading brushActive here makes this effect rebuild markers when the
+			// brush toggles.
+			marker.eventMode = brushActive ? 'none' : 'static';
+			marker.cursor = brushActive ? 'default' : 'pointer';
 			// Stable hit area on the container — independent of which child
 			// visual is shown (the circle may be hidden once an icon loads).
 			marker.hitArea = new PIXI.Circle(cx, cy, radius);
