@@ -21,6 +21,7 @@
 	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 	import { resolveStyle, GLOBAL_STYLE_DEFAULT } from '$lib/features/map/style-cascade.js';
+	import { easeToward } from '$lib/features/map/ease.js';
 	import { layerVisibility } from '$lib/features/map/layer-prefs-store.js';
 
 	// Visual fallback gate: when the cascade returns GLOBAL_STYLE_DEFAULT's
@@ -83,6 +84,19 @@
 
 	let PIXI = $state<PixiModule | null>(null);
 	let layer: PixiContainer | null = null;
+
+	// Slice 4 PR-E (DS3) — per-type hover: a size pulse (scale → 1.15) plus a
+	// glow halo in the marker's RESOLVED color (not the amber accent, which is
+	// reserved for active/armed/selected). No pixi-filters dependency: the glow
+	// is a low-alpha halo circle drawn behind the marker; both ease toward their
+	// hover targets via the ticker. Eased frame-rate-independently with a ~55ms
+	// time constant so the pulse settles in ~160ms.
+	const HOVER_SCALE = 1.15;
+	const GLOW_PAD = 8; // px halo radius beyond the marker, at base scale
+	const GLOW_ALPHA = 0.45;
+	const HOVER_TAU_MS = 55;
+	type HoverAnim = { halo: PixiGraphics; scaleTarget: number; haloTarget: number };
+	const hoverAnim = new WeakMap<PixiContainer, HoverAnim>();
 
 	type MenuState = {
 		x: number;
@@ -248,6 +262,19 @@
 			// Stable hit area on the container — independent of which child
 			// visual is shown (the circle may be hidden once an icon loads).
 			marker.hitArea = new PIXI.Circle(cx, cy, radius);
+			// PR-E: pivot+position at the marker centre so the hover pulse scales
+			// about the centre while children stay drawn at their (cx, cy) coords.
+			marker.pivot.set(cx, cy);
+			marker.position.set(cx, cy);
+
+			// PR-E: glow halo (behind the marker), resolved-color, hidden until
+			// hover. Added first so it paints under the circle / icon.
+			const halo: PixiGraphics = new PIXI.Graphics();
+			halo.circle(cx, cy, radius + GLOW_PAD).fill({ color: fillColor, alpha: 1 });
+			halo.alpha = 0;
+			marker.addChild(halo);
+			hoverAnim.set(marker, { halo, scaleTarget: 1, haloTarget: 0 });
+
 			marker.on('pointerover', (e: FederatedPointerEvent) => {
 				const { x, y } = clientXY(e);
 				tooltip = {
@@ -255,9 +282,22 @@
 					y,
 					text: `${placeable.name} (${placeable.type})`
 				};
+				const st = hoverAnim.get(marker);
+				if (st) {
+					st.scaleTarget = HOVER_SCALE;
+					// Compose the glow with the same scope-dim × opacity as the
+					// marker fill, so a faded out-of-scope marker doesn't flash a
+					// full-strength glow on hover.
+					st.haloTarget = GLOW_ALPHA * fillAlpha;
+				}
 			});
 			marker.on('pointerout', () => {
 				tooltip = null;
+				const st = hoverAnim.get(marker);
+				if (st) {
+					st.scaleTarget = 1;
+					st.haloTarget = 0;
+				}
 			});
 			marker.on('pointertap', (e: FederatedPointerEvent) => {
 				if (e.button !== 0) return;
@@ -329,6 +369,33 @@
 		circle.visible = false;
 		marker.addChild(sprite);
 	}
+
+	// PR-E hover animation loop. One ticker for the layer eases every marker
+	// toward its hover target (scale + halo alpha). Frame-rate-independent ease
+	// (k = 1 − e^(−Δt/τ)) so it settles in ~160ms regardless of refresh rate.
+	$effect(() => {
+		const app = stageCtx.app;
+		if (!app || !PIXI) return;
+		const tick = () => {
+			if (!layer) return;
+			const dt = app.ticker.deltaMS;
+			for (const child of layer.children) {
+				const st = hoverAnim.get(child as PixiContainer);
+				if (!st) continue;
+				const m = child as PixiContainer;
+				m.scale.set(easeToward(m.scale.x, st.scaleTarget, dt, HOVER_TAU_MS));
+				st.halo.alpha = easeToward(st.halo.alpha, st.haloTarget, dt, HOVER_TAU_MS);
+			}
+		};
+		app.ticker.add(tick);
+		return () => {
+			try {
+				app.ticker.remove(tick);
+			} catch (_) {
+				/* app destroyed first */
+			}
+		};
+	});
 
 	const menuItems = $derived(
 		menu
