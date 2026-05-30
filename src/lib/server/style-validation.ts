@@ -20,13 +20,13 @@
 // PATCH/POST handlers and let it propagate.
 
 import { error } from '@sveltejs/kit';
+// Slice 4 PR-C — bounds live in a shared declaration-only module so the client
+// StyleEditor and this server validator can't drift. (world-map-v3.ts keeps its
+// own HEX_COLOR_RE for region colors; out of scope here.)
+import { HEX_COLOR_RE, STYLE_BOUNDS } from '$lib/style-bounds.js';
 
-// Same regex as world-map-v3.ts HEX_COLOR_RE — keep them in sync. CSS
-// accepts 3/4/6/8 hex digits; 5 and 7 are not valid.
-const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
-
-const ALLOWED_KEYS = new Set(['color', 'icon', 'scale', 'opacity']);
-const MAX_STYLE_BYTES = 4 * 1024;
+const ALLOWED_KEYS = new Set<string>(STYLE_BOUNDS.keys);
+const MAX_STYLE_BYTES = STYLE_BOUNDS.maxBytes;
 
 /**
  * Validate a single style override object. Throws 400 on any
@@ -73,15 +73,17 @@ export function validateStyleOverride(raw: unknown, path: string): void {
 
 	if ('scale' in obj && obj.scale !== undefined) {
 		const v = obj.scale;
-		if (typeof v !== 'number' || !Number.isFinite(v) || v < 0.1 || v > 10) {
-			error(400, `${path}.scale must be a number in [0.1, 10]`);
+		const { min, max } = STYLE_BOUNDS.scale;
+		if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) {
+			error(400, `${path}.scale must be a number in [${min}, ${max}]`);
 		}
 	}
 
 	if ('opacity' in obj && obj.opacity !== undefined) {
 		const v = obj.opacity;
-		if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) {
-			error(400, `${path}.opacity must be a number in [0, 1]`);
+		const { min, max } = STYLE_BOUNDS.opacity;
+		if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) {
+			error(400, `${path}.opacity must be a number in [${min}, ${max}]`);
 		}
 	}
 }

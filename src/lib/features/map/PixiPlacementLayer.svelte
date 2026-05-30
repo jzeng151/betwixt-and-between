@@ -35,6 +35,7 @@
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { WorldMap } from './types.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
+	import PlacementStylePopover from '$lib/features/map/PlacementStylePopover.svelte';
 
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
@@ -93,6 +94,12 @@
 	};
 	let menu = $state<MenuState | null>(null);
 	let tooltip = $state<{ x: number; y: number; text: string } | null>(null);
+	// Slice 4 PR-C — per-placement style popover, opened from the marker menu's
+	// "Edit style" item. Holds the anchor coords + the ids to look up; the
+	// placement/placeable objects are derived so the popover tracks live edits.
+	let styleTarget = $state<{ x: number; y: number; placementId: string; placeableId: string } | null>(
+		null
+	);
 
 	onMount(() => {
 		let cancelled = false;
@@ -149,6 +156,16 @@
 		for (const e of entities) m.set(e.id, e);
 		return m;
 	});
+
+	// Slice 4 PR-C — resolve the style-popover target objects (declared after
+	// entityById so the lookup has it in scope). Derived so the popover tracks
+	// live edits to the placement / entity while open.
+	const styleTargetPlacement = $derived(
+		styleTarget ? (placements.find((p) => p.id === styleTarget!.placementId) ?? null) : null
+	);
+	const styleTargetPlaceable = $derived(
+		styleTarget ? (entityById.get(styleTarget!.placeableId) ?? null) : null
+	);
 
 	// codex P2 (PR #58): monotonic render token. Icon textures load
 	// asynchronously; if this effect re-runs (and destroys the current markers)
@@ -324,6 +341,18 @@
 						}
 					},
 					{
+						label: 'Edit style',
+						icon: '🎨',
+						onSelect: () => {
+							styleTarget = {
+								x: menu!.x,
+								y: menu!.y,
+								placementId: menu!.placementId,
+								placeableId: menu!.placeableId
+							};
+						}
+					},
+					{
 						label: 'Delete placement',
 						icon: '🗑',
 						onSelect: () => {
@@ -397,6 +426,15 @@
 
 {#if menu}
 	<ContextMenu items={menuItems} x={menu.x} y={menu.y} onClose={() => (menu = null)} />
+{/if}
+{#if styleTarget && styleTargetPlacement && styleTargetPlaceable}
+	<PlacementStylePopover
+		placement={styleTargetPlacement}
+		placeable={styleTargetPlaceable}
+		x={styleTarget.x}
+		y={styleTarget.y}
+		onClose={() => (styleTarget = null)}
+	/>
 {/if}
 {#if tooltip}
 	<div

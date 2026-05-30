@@ -53,6 +53,8 @@
 	import CharacterWikiEditor from '$lib/features/character/CharacterWikiEditor.svelte';
 	import EditableField from './EditableField.svelte';
 	import NotesSection from './NotesSection.svelte';
+	import StyleEditor from './StyleEditor.svelte';
+	import { resolveStyle, type StyleOverride } from '$lib/features/map/style-cascade.js';
 
 	interface Props {
 		entityId: string | null;
@@ -156,6 +158,37 @@
 		return () => window.removeEventListener('resize', onResize);
 	});
 	const bodyRows = $derived(viewportWidth < 640 ? 4 : 8);
+
+	// Slice 4 PR-C — entity-level STYLE section (placeable types only: the
+	// cascade only renders Character / Artifact / Item as map markers).
+	const PLACEABLE_TYPES = ['Character', 'Artifact', 'Item'];
+	const isPlaceable = $derived(!!entity && PLACEABLE_TYPES.includes(entity.type));
+	const styleValue = $derived(((entity?.data?.style ?? {}) as StyleOverride));
+	// The cascade baseline WITHOUT this entity's override (GLOBAL ⊕ TYPE), shown
+	// as the StyleEditor placeholders so a cleared field falls back visibly.
+	const inheritedStyle = $derived(entity ? resolveStyle({ ...entity, data: {} }) : null);
+	// is_asset defaults true; only an explicit `false` opts the entity out.
+	const inPalette = $derived(
+		entity ? (entity.data as Record<string, unknown>)?.is_asset !== false : true
+	);
+
+	async function persistStyle(next: StyleOverride) {
+		if (!entity) return;
+		const data = { ...(entity.data as Record<string, unknown>) };
+		// Drop the key entirely when the override is empty so it inherits.
+		if (Object.keys(next).length === 0) delete data.style;
+		else data.style = next;
+		await entities.updateEntity(entity.id, { data });
+	}
+
+	async function setInPalette(v: boolean) {
+		if (!entity) return;
+		const data = { ...(entity.data as Record<string, unknown>) };
+		// Default is true → omit the key when shown; persist `false` to opt out.
+		if (v) delete data.is_asset;
+		else data.is_asset = false;
+		await entities.updateEntity(entity.id, { data });
+	}
 
 	async function rename(newName: string) {
 		if (!entity) return;
@@ -284,6 +317,26 @@
 			     the schema before its editor lands. -->
 			<div class="entity-detail-stub">
 				Editor for {entity.type} entities lives in its dedicated app for now.
+			</div>
+		{/if}
+
+		{#if isPlaceable && mode !== 'view' && inheritedStyle}
+			<!-- Slice 4 PR-C — marker style + palette membership. Edit-mode only;
+			     edits propagate to every placement of this entity (reference
+			     model). Per-placement overrides live in the map marker popover. -->
+			<div class="entity-detail-style" data-testid="entity-style-section">
+				<hr class="body-divider" />
+				<p class="body-eyebrow">Style</p>
+				<StyleEditor value={styleValue} inherited={inheritedStyle} onChange={persistStyle} />
+				<label class="is-asset-toggle">
+					<input
+						type="checkbox"
+						data-testid="is-asset-toggle"
+						checked={inPalette}
+						onchange={(e) => setInPalette((e.currentTarget as HTMLInputElement).checked)}
+					/>
+					Show in placeables palette
+				</label>
 			</div>
 		{/if}
 
@@ -461,6 +514,21 @@
 	   structured-fields editor branch with a hairline divider + 'BODY'
 	   eyebrow. Note skips both (no structured fields above). Locked
 	   in /plan-design-review Pass 1 + Pass 7b. */
+	.entity-detail-style {
+		padding: 0 18px;
+	}
+	.is-asset-toggle {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 10px;
+		font-size: 11px;
+		color: var(--color-text, #e8e0d0);
+		cursor: pointer;
+	}
+	.is-asset-toggle input {
+		accent-color: var(--color-accent, #c8942a);
+	}
 	.entity-detail-body {
 		padding: 14px 18px;
 	}
