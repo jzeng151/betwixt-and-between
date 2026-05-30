@@ -202,50 +202,69 @@ describe('entities.updateEntity', () => {
 		expect(all.find((e) => e.id === 'e2')!.name).toBe('Two');
 	});
 
-	// Codex P2 (PR #59): per-id PATCH-response sequencing. Two full-`data` edits
-	// to one row (e.g. a style save then an adjacent is_asset toggle) can race;
-	// a slow earlier response must not reinstall a row missing the newer field.
-	it('a slow earlier PATCH does not overwrite a newer edit on the same row', async () => {
+	// Codex P2 (PR #59 follow-up): per-entity PATCH serialization. Two full-`data`
+	// edits to one entity (e.g. a style save then an adjacent is_asset toggle)
+	// must not race on the wire — the second PATCH is chained behind the first so
+	// requests reach the API in call order and the DB can't keep the older `data`.
+	const tick = () => new Promise((r) => setTimeout(r, 0));
+
+	it('does not send the second data PATCH until the first resolves (in-order)', async () => {
+		const bodies: unknown[] = [];
 		let resolveFirst!: () => void;
 		const firstServer = entity({ id: 'e1', name: 'Old', type: 'Character', data: { style: { color: '#aaa' } } });
 		const secondServer = entity({ id: 'e1', name: 'Old', type: 'Character', data: { style: { color: '#aaa' }, is_asset: false } });
-		globalThis.fetch = vi
-			.fn()
-			.mockImplementationOnce(
-				() => new Promise<Response>((res) => { resolveFirst = () => res(makeResponse(firstServer)); })
-			)
-			.mockResolvedValueOnce(makeResponse(secondServer)) as unknown as typeof fetch;
+		globalThis.fetch = vi.fn((url: string, opts: { body: string }) => {
+			if (url.startsWith('/api/entities/')) {
+				bodies.push(JSON.parse(opts.body));
+				if (bodies.length === 1) {
+					return new Promise<Response>((res) => { resolveFirst = () => res(makeResponse(firstServer)); });
+				}
+				return Promise.resolve(makeResponse(secondServer));
+			}
+			return Promise.resolve(makeResponse([])); // any load()
+		}) as unknown as typeof fetch;
 
 		const first = entities.updateEntity('e1', { data: { style: { color: '#aaa' } } });
 		const second = entities.updateEntity('e1', { data: { style: { color: '#aaa' }, is_asset: false } });
-		await second; // newer edit installs the row carrying both fields
-		resolveFirst(); // stale earlier PATCH resolves last
-		await first;
 
-		// The store keeps the newer row — the stale first response is dropped.
+		await tick();
+		expect(bodies).toHaveLength(1); // second PATCH queued, not yet sent
+
+		resolveFirst();
+		await first;
+		await second;
+
+		expect(bodies).toHaveLength(2); // second sent only after the first finished
 		expect(get(entities)[0].data).toEqual({ style: { color: '#aaa' }, is_asset: false });
 	});
 
-	it('a failed earlier PATCH does not reload-revert a newer successful edit', async () => {
+	it('a failed earlier PATCH does not block or reload-revert a newer queued edit', async () => {
+		const bodies: unknown[] = [];
 		let rejectFirst!: () => void;
 		const secondServer = entity({ id: 'e1', name: 'Old', type: 'Character', data: { is_asset: false } });
-		const fetchMock = vi
-			.fn()
-			.mockImplementationOnce(
-				() => new Promise<Response>((_res, rej) => { rejectFirst = () => rej(new Error('boom')); })
-			)
-			.mockResolvedValueOnce(makeResponse(secondServer));
-		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		globalThis.fetch = vi.fn((url: string, opts: { body: string }) => {
+			if (url.startsWith('/api/entities/')) {
+				bodies.push(JSON.parse(opts.body));
+				if (bodies.length === 1) {
+					return new Promise<Response>((_res, rej) => { rejectFirst = () => rej(new Error('boom')); });
+				}
+				return Promise.resolve(makeResponse(secondServer));
+			}
+			return Promise.resolve(makeResponse([])); // a load() reload, if any
+		}) as unknown as typeof fetch;
 
 		const first = entities.updateEntity('e1', { data: { style: { color: '#aaa' } } });
 		const second = entities.updateEntity('e1', { data: { is_asset: false } });
-		await second;
+
+		await tick();
 		rejectFirst();
 		await expect(first).rejects.toThrow();
+		await second;
 
-		// The failed earlier call must NOT trigger a load() reload (which would
-		// clobber the newer optimistic value); only PATCH×2 were issued.
-		expect(fetchMock).toHaveBeenCalledTimes(2);
+		// The newer edit ran after the failed one drained; its value stands and
+		// the failed earlier PATCH did not reload-revert it. Only the 2 PATCHes
+		// were issued — no /api/entities reload.
+		expect(bodies).toHaveLength(2);
 		expect(get(entities)[0].data).toEqual({ is_asset: false });
 	});
 });

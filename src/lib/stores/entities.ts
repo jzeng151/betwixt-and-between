@@ -28,6 +28,14 @@ function createEntityStore() {
 	// apply the server row / roll back if our call is still the latest for it.
 	let updateSeq = 0;
 	const latestUpdate = new Map<string, number>();
+	// Per-entity PATCH chain. Like the placement store, multiple edits to one
+	// entity's `data` (e.g. a style save then an adjacent is_asset toggle) each
+	// send a full `data` object; the latestUpdate guard only suppresses applying
+	// a stale response locally — it does NOT stop the requests racing on the
+	// wire, so the DATABASE could keep the older `data` and the newer field
+	// disappears on reload (Codex P2). Chain each PATCH behind the prior in-flight
+	// one for the same id so requests reach the API in call order.
+	const updateChains = new Map<string, Promise<unknown>>();
 
 	async function load() {
 		const res = await fetch('/api/entities');
@@ -121,25 +129,41 @@ function createEntityStore() {
 			)
 		);
 
-		const res = await fetch(`/api/entities/${id}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(patch)
-		});
-		if (!res.ok) {
+		// Serialize the network write behind any in-flight PATCH for this same
+		// entity so requests reach the API in submission order (see updateChains).
+		// The optimistic merge above already ran synchronously, so the UI stays
+		// instant; only the fetch is gated.
+		const prior = updateChains.get(id) ?? Promise.resolve();
+		const run = (async () => {
+			await prior.catch(() => {});
+			const res = await fetch(`/api/entities/${id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(patch)
+			});
+			if (!res.ok) throw new Error(await res.text());
+			return (await res.json()) as Entity;
+		})();
+		updateChains.set(id, run.catch(() => {}));
+
+		let updated: Entity;
+		try {
+			updated = await run;
+		} catch (err) {
 			// Only roll back via load() if a newer edit hasn't superseded ours —
 			// otherwise the reload would discard the newer optimistic value too.
 			if (latestUpdate.get(id) === seq) {
 				latestUpdate.delete(id);
+				updateChains.delete(id);
 				await load();
 			}
-			throw new Error(await res.text());
+			throw err;
 		}
-		const updated: Entity = await res.json();
 		// Drop the server row if a newer edit to this row was issued meanwhile;
 		// installing it would clobber the newer optimistic value until reload.
 		if (latestUpdate.get(id) !== seq) return updated;
 		latestUpdate.delete(id);
+		updateChains.delete(id);
 		update((all) => all.map((e) => (e.id === id ? updated : e)));
 		// Position/parentId changes on Act/Scene cascade to intervals on the
 		// server (sibling reorder + recompute, or scene cross-act move). Keep
