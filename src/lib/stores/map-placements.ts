@@ -61,15 +61,38 @@ function createPlacementsStore() {
 	}
 
 	async function update(id: string, payload: UpdatePlacementPayload): Promise<MapPlacement> {
-		const res = await fetch(`/api/map-placements/${id}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(payload)
-		});
-		if (!res.ok) throw new Error(await errorMessage(res));
-		const updated: MapPlacement = await res.json();
-		placements.update((all) => all.map((p) => (p.id === id ? updated : p)));
-		return updated;
+		// Optimistic merge: apply the payload to the matching row before the
+		// PATCH resolves so consumers — and the NEXT edit's merge base — see the
+		// change immediately. Without this, rapid multi-field edits from the
+		// StyleEditor (e.g. pick a color, then move a slider before the first
+		// PATCH returns) re-derived from a stale row and dropped the earlier key
+		// (Codex P2). Revert on failure so a rejected PATCH doesn't leave the
+		// store ahead of the server.
+		let prev: MapPlacement | undefined;
+		placements.update((all) =>
+			all.map((p) => {
+				if (p.id !== id) return p;
+				prev = p;
+				return { ...p, ...payload } as MapPlacement;
+			})
+		);
+		try {
+			const res = await fetch(`/api/map-placements/${id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload)
+			});
+			if (!res.ok) throw new Error(await errorMessage(res));
+			const updated: MapPlacement = await res.json();
+			placements.update((all) => all.map((p) => (p.id === id ? updated : p)));
+			return updated;
+		} catch (err) {
+			if (prev) {
+				const restore = prev;
+				placements.update((all) => all.map((p) => (p.id === id ? restore : p)));
+			}
+			throw err;
+		}
 	}
 
 	async function remove(id: string): Promise<void> {

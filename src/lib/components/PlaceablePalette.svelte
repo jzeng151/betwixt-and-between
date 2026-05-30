@@ -54,6 +54,16 @@
 			.sort((a, b) => a.name.localeCompare(b.name))
 	);
 
+	// Codex P2: if the armed entity drops out of the list (e.g. it was opted out
+	// via data.is_asset=false from the sidebar/popover), clear the arm so the map
+	// doesn't stay in place-armed mode with no visible chip and place the
+	// now-hidden entity on the next canvas tap.
+	$effect(() => {
+		if (armedId !== null && !placeables.some((p) => p.id === armedId)) {
+			onArm(null);
+		}
+	});
+
 	function toggleArm(id: string) {
 		onArm(armedId === id ? null : id);
 	}

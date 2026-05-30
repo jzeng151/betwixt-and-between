@@ -65,6 +65,11 @@
 			if (!panelEl) return;
 			const target = e.target as Node | null;
 			if (target && panelEl.contains(target)) return;
+			// Codex P2: the StyleEditor's color/icon fields commit on blur, but
+			// this pointerdown fires before the focused input blurs. Blur it
+			// first so a typed-but-uncommitted draft is persisted, not discarded.
+			const active = document.activeElement;
+			if (active instanceof HTMLElement && panelEl.contains(active)) active.blur();
 			onClose();
 		}
 		window.addEventListener('pointerdown', onPointerDown);

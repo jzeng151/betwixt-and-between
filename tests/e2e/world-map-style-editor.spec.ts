@@ -142,3 +142,58 @@ test('placement popover writes a per-instance style override', async ({ page, re
 	const knightRow = ents.find((e) => e.id === knight.id);
 	expect(knightRow?.data?.style).toBeUndefined();
 });
+
+test('popover commits a typed hex when dismissed by clicking outside (Codex P2)', async ({
+	page,
+	request
+}) => {
+	await clearAll(request);
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+
+	const loc = await (
+		await request.post('/api/entities', { data: { type: 'Location', name: 'Blur Realm' } })
+	).json();
+	const knight = await (
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Blur Knight' } })
+	).json();
+	const map = await (await request.post('/api/maps', { data: { name: 'Blur Test' } })).json();
+	await request.patch(`/api/maps/${map.id}`, {
+		data: { baseImageUrl: 'about:blank', width: 640, height: 480, locationId: loc.id }
+	});
+	await request.post('/api/map-placements', {
+		data: { placeableId: knight.id, locationId: loc.id, mapId: map.id, x: 0.5, y: 0.5 }
+	});
+
+	await page.goto('/app');
+	await page.click('button[title="World Map"]');
+	const mapWin = page.locator('.window[aria-label="World Map"]');
+	await mapWin.locator('button[aria-label="Maximize"]').click();
+	const canvas = mapWin.locator('.pixi-stage canvas');
+	await expect(canvas).toBeVisible({ timeout: 10000 });
+
+	const box = await canvas.boundingBox();
+	if (!box) throw new Error('no canvas box');
+	await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+	await page.locator('.context-menu-item', { hasText: 'Edit style' }).click();
+	const popover = page.locator('.placement-style-popover[role="dialog"]');
+	await expect(popover).toBeVisible({ timeout: 5000 });
+
+	// Type a hex into the color field — it commits on BLUR, not per keystroke.
+	await popover.locator('#se-color').fill('#abcdef');
+	// Dismiss by clicking outside (top-left corner, away from the popover).
+	await page.mouse.click(5, 5);
+	await expect(popover).toBeHidden();
+
+	// The typed-but-not-Enter'd draft was committed by the blur-before-close fix.
+	await expect
+		.poll(
+			async () => {
+				const rows: Array<{ data?: { style?: { color?: string } } }> = await (
+					await request.get(`/api/map-placements?locationId=${loc.id}`)
+				).json();
+				return rows[0]?.data?.style?.color;
+			},
+			{ timeout: 8000 }
+		)
+		.toBe('#abcdef');
+});

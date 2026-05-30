@@ -146,4 +146,20 @@ describe('PlaceablePalette — D3 is_asset opt-out', () => {
 		expect(container.querySelectorAll('button.chip')).toHaveLength(0);
 		expect(getByText(/No placeables yet/i)).toBeTruthy();
 	});
+
+	it('clears the arm when the armed entity is no longer in the list (Codex P2)', async () => {
+		// Armed entity is opted out (is_asset=false) so it drops from the list.
+		await loadFixture([makeEntity('hidden', 'Hidden One', 'Artifact', { is_asset: false })]);
+		const onArm = vi.fn();
+		render(PlaceablePalette, { props: { armedId: 'hidden', onArm } });
+		// The mount effect should detect the armed id is absent and clear it.
+		expect(onArm).toHaveBeenCalledWith(null);
+	});
+
+	it('does NOT clear the arm when the armed entity is present', async () => {
+		await loadFixture([makeEntity('alice', 'Alice')]);
+		const onArm = vi.fn();
+		render(PlaceablePalette, { props: { armedId: 'alice', onArm } });
+		expect(onArm).not.toHaveBeenCalled();
+	});
 });
