@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.1.0] - 2026-05-30
+
+World Map v3 Slice 4 (part 1) — marker styling, a unified placeables palette, and hover feedback. Movement playback (the rest of Slice 4) ships separately.
+
+### Added
+
+- Style a map marker's color, icon, scale, and opacity. Edit it once on the entity (every placement of that entity updates) or override a single placement from its marker menu's "Edit style" popover. Cleared fields fall back to the inherited default.
+- Hovering a marker now pulses it and adds a soft glow in the marker's own color, so it's clear what you're pointing at.
+- A "Show in placeables palette" toggle on placeable entities controls whether they appear in the palette.
+
+### Changed
+
+- The two separate placeables rails (click-to-place and drag-to-place) are now one palette. Each chip both arms for click-to-place and works as a drag source, and the palette shows a clear empty state when there's nothing to place.
+
+### Fixed
+
+- Opting an entity out of the library (`is_asset = false`) now removes it from placement everywhere — previously it still showed in the click-to-place list.
+- Placing from the palette now respects the active tool: you can no longer drop a marker while painting terrain or drawing a region, and dropping a chip clears any pending click-to-place selection.
+- Dropped the unused `source_asset_id` field from placements (it never carried information under the reference model).
+
 ## [0.8.0.0] - 2026-05-29
 
 World Map v3 Slice 3 — terrain authoring, asset library, layers, and faction editing.
