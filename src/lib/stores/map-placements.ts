@@ -22,6 +22,14 @@ function createPlacementsStore() {
 	// longer matches the latest load(), and treat reset() as a load too so
 	// a quick locId → null → locId swap can't be resurrected by a stale fetch.
 	let loadToken = 0;
+	// Per-placement update sequence. update() applies an optimistic merge then
+	// installs the PATCH response; without sequencing, two edits to the same row
+	// racing on the wire can land out of order — an earlier PATCH resolving after
+	// a later one, or failing after the later one succeeded — and revert the newer
+	// edit until reload. Track the newest in-flight seq per id and only apply the
+	// server row / revert if our call is still the latest for that id (Codex P2).
+	let updateSeq = 0;
+	const latestUpdate = new Map<string, number>();
 
 	async function load(filters?: {
 		locationId?: string;
@@ -68,6 +76,8 @@ function createPlacementsStore() {
 		// PATCH returns) re-derived from a stale row and dropped the earlier key
 		// (Codex P2). Revert on failure so a rejected PATCH doesn't leave the
 		// store ahead of the server.
+		const seq = ++updateSeq;
+		latestUpdate.set(id, seq);
 		let prev: MapPlacement | undefined;
 		placements.update((all) =>
 			all.map((p) => {
@@ -84,14 +94,22 @@ function createPlacementsStore() {
 			});
 			if (!res.ok) throw new Error(await errorMessage(res));
 			const updated: MapPlacement = await res.json();
-			placements.update((all) => all.map((p) => (p.id === id ? updated : p)));
+			// Only install the server row if no newer edit to this row was issued
+			// meanwhile — otherwise a slow earlier PATCH would clobber it.
+			if (latestUpdate.get(id) === seq) {
+				placements.update((all) => all.map((p) => (p.id === id ? updated : p)));
+			}
 			return updated;
 		} catch (err) {
-			if (prev) {
+			// Same guard on revert: if a newer edit superseded ours, leave its
+			// optimistic value in place rather than reverting to our stale prev.
+			if (latestUpdate.get(id) === seq && prev) {
 				const restore = prev;
 				placements.update((all) => all.map((p) => (p.id === id ? restore : p)));
 			}
 			throw err;
+		} finally {
+			if (latestUpdate.get(id) === seq) latestUpdate.delete(id);
 		}
 	}
 

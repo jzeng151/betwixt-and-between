@@ -59,6 +59,14 @@
 		emit(next);
 	}
 
+	// The marker renderer (PixiPlacementLayer.parseHex) draws only opaque RGB:
+	// it ignores any alpha channel and reads transparency from the separate
+	// opacity control. So accept only 3-/6-digit hex here even though the shared
+	// HEX_COLOR_RE also allows 4-/8-digit alpha for other call sites (region
+	// fills) — otherwise a saved marker would render opaque and mismatch this
+	// preview (Codex P2).
+	const MARKER_HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
 	function commitHex() {
 		const v = hexDraft.trim();
 		if (v === '') {
@@ -68,6 +76,10 @@
 		}
 		if (!HEX_COLOR_RE.test(v)) {
 			hexError = 'Enter a hex color like #aabbcc';
+			return;
+		}
+		if (!MARKER_HEX_RE.test(v)) {
+			hexError = 'Marker colors are opaque — set transparency with the opacity slider';
 			return;
 		}
 		hexError = '';

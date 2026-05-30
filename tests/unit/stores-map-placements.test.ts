@@ -80,3 +80,55 @@ describe('mapPlacements.update — optimistic', () => {
 		expect(row).toEqual(server);
 	});
 });
+
+describe('mapPlacements.update — stale PATCH sequencing (Codex P2)', () => {
+	it('a slow earlier PATCH does not overwrite a newer edit on the same row', async () => {
+		// Two edits to p1. The FIRST PATCH is held open and resolves AFTER the
+		// second one has already installed its server row. Without per-id
+		// sequencing, the stale first response would clobber the newer edit.
+		let resolveFirst!: () => void;
+		const firstServer = placement({ id: 'p1', data: { style: { color: '#aaaaaa' } } });
+		const secondServer = placement({ id: 'p1', data: { style: { color: '#bbbbbb' } } });
+		globalThis.fetch = vi
+			.fn()
+			.mockImplementationOnce(
+				() =>
+					new Promise<Response>((res) => {
+						resolveFirst = () => res(makeResponse(firstServer));
+					})
+			)
+			.mockResolvedValueOnce(makeResponse(secondServer)) as unknown as typeof fetch;
+
+		const first = mapPlacements.update('p1', { data: { style: { color: '#aaaaaa' } } });
+		const second = mapPlacements.update('p1', { data: { style: { color: '#bbbbbb' } } });
+		await second; // newer edit resolves first and installs #bbbbbb
+		resolveFirst(); // stale earlier PATCH now resolves
+		await first;
+
+		const row = get(mapPlacements).find((p) => p.id === 'p1');
+		expect(row?.data).toEqual({ style: { color: '#bbbbbb' } });
+	});
+
+	it('a failed earlier PATCH does not revert a newer successful edit', async () => {
+		let rejectFirst!: () => void;
+		const secondServer = placement({ id: 'p1', data: { style: { color: '#bbbbbb' } } });
+		globalThis.fetch = vi
+			.fn()
+			.mockImplementationOnce(
+				() =>
+					new Promise<Response>((_res, rej) => {
+						rejectFirst = () => rej(new Error('boom'));
+					})
+			)
+			.mockResolvedValueOnce(makeResponse(secondServer)) as unknown as typeof fetch;
+
+		const first = mapPlacements.update('p1', { data: { style: { color: '#aaaaaa' } } });
+		const second = mapPlacements.update('p1', { data: { style: { color: '#bbbbbb' } } });
+		await second;
+		rejectFirst();
+		await expect(first).rejects.toThrow();
+
+		const row = get(mapPlacements).find((p) => p.id === 'p1');
+		expect(row?.data).toEqual({ style: { color: '#bbbbbb' } });
+	});
+});

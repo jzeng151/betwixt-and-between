@@ -56,6 +56,21 @@ describe('StyleEditor — hex validation', () => {
 		expect(onChange).toHaveBeenCalledWith({ color: '#abcdef' });
 	});
 
+	it('rejects an alpha hex (4-/8-digit) and points at the opacity slider', async () => {
+		// HEX_COLOR_RE accepts 4-/8-digit alpha hex (region fills use it), but the
+		// marker renderer (PixiPlacementLayer.parseHex) strips alpha, so the editor
+		// rejects it here rather than silently rendering an opaque marker (Codex P2).
+		const onChange = vi.fn();
+		const { container, getByRole } = render(StyleEditor, {
+			props: { value: {}, inherited: INHERITED, onChange }
+		});
+		const hex = container.querySelector('#se-color') as HTMLInputElement;
+		await fireEvent.input(hex, { target: { value: '#ff000080' } });
+		await fireEvent.blur(hex);
+		expect(getByRole('alert').textContent).toMatch(/opacity/i);
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
 	it('empty hex on blur clears the override (inherits)', async () => {
 		const onChange = vi.fn();
 		const { container } = render(StyleEditor, {
