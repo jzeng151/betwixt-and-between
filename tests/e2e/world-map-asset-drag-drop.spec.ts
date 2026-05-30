@@ -106,3 +106,52 @@ test('drag an asset chip onto the canvas creates a placement (no source_asset_id
 	expect(after[0].y).toBeGreaterThan(0);
 	expect(after[0].y).toBeLessThan(1);
 });
+
+test('click-to-arm a palette chip, then tap the canvas, creates a placement (T7 place-armed gate)', async ({
+	page,
+	request
+}) => {
+	// Covers the click-to-place path the T7 CanvasMode rewrite gates on
+	// (handleCanvasClick fires only when canvasMode === 'place-armed' && !mapLoading).
+	await clearAll(request);
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+
+	const loc = await (
+		await request.post('/api/entities', { data: { type: 'Location', name: 'Click Realm' } })
+	).json();
+	await request.post('/api/entities', { data: { type: 'Character', name: 'Armed Knight' } });
+	const map = await (await request.post('/api/maps', { data: { name: 'Click Test' } })).json();
+	await request.patch(`/api/maps/${map.id}`, {
+		data: { baseImageUrl: 'about:blank', width: 640, height: 480, locationId: loc.id }
+	});
+
+	await page.goto('/app');
+	await page.click('button[title="World Map"]');
+	const win = page.locator('.window[aria-label="World Map"]');
+	await win.locator('button[aria-label="Maximize"]').click();
+	const canvas = win.locator('.pixi-stage canvas');
+	await expect(canvas).toBeVisible({ timeout: 10000 });
+
+	// Arm the chip (click-to-arm → canvasMode becomes 'place-armed').
+	const chip = win.locator('[data-testid="placeable-palette"] .chip', { hasText: 'Armed Knight' });
+	await expect(chip).toBeVisible();
+	await chip.click();
+	await expect(chip).toHaveAttribute('aria-pressed', 'true');
+
+	// Tap the canvas centre → handleCanvasClick creates a placement.
+	const box = await canvas.boundingBox();
+	if (!box) throw new Error('no canvas box');
+	await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+	await expect
+		.poll(
+			async () => {
+				const rows: Array<{ id: string }> = await (
+					await request.get(`/api/map-placements?locationId=${loc.id}`)
+				).json();
+				return rows.length;
+			},
+			{ timeout: 8000 }
+		)
+		.toBe(1);
+});
