@@ -1,5 +1,5 @@
 // Slice 3 T8' — shared constant for the HTML5 drag-drop MIME type used
-// by AssetLibrary (drag source) and WorldMap (drop target). One source
+// by PlaceablePalette (drag source) and WorldMap (drop target). One source
 // of truth so the strings can't drift.
 //
 // The custom MIME type means accidental file drops or text drags don't

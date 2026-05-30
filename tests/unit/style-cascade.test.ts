@@ -144,6 +144,23 @@ describe('resolveStyle cascade', () => {
 		expect(style.color).toBe(STYLE_DEFAULTS.Artifact!.color); // neither set → type default
 	});
 
+	// codex P2 (PR #59): the marker renderer now trusts resolved.color directly
+	// (no GLOBAL_DEFAULT_COLOR sentinel branch), so the cascade must preserve an
+	// explicit neutral (#9ca3af) override rather than letting it read as "unset"
+	// and render the entity's type color. Pins both the entity- and placement-
+	// level neutral override.
+	it('preserves an explicit neutral (#9ca3af) at the entity level', () => {
+		const style = resolveStyle(
+			mk({ type: 'Character', data: { style: { color: '#9ca3af' } } })
+		);
+		expect(style.color).toBe('#9ca3af'); // NOT the Character type blue
+	});
+
+	it('preserves an explicit neutral (#9ca3af) at the placement level', () => {
+		const style = resolveStyle(mk({ type: 'Character' }), { color: '#9ca3af' });
+		expect(style.color).toBe('#9ca3af');
+	});
+
 	it('absent placementStyle leaves the entity-level cascade unchanged', () => {
 		const entity = mk({ type: 'Character', data: { style: { color: '#abcdef' } } });
 		expect(resolveStyle(entity, undefined)).toEqual(resolveStyle(entity));

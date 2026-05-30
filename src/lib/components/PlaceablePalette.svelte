@@ -1,24 +1,32 @@
 <script lang="ts">
 	/**
-	 * PlaceablesPalette — chip rail of placeable entities (Character / Artifact /
-	 * Item) used by the WorldMap to drop placements onto the active map.
+	 * PlaceablePalette — Slice 4 PR-D. The single placeables palette, merging the
+	 * former PlaceablesPalette (click-to-arm) and AssetLibrary (drag-to-drop) into
+	 * one chip rail. Each chip supports BOTH affordances:
 	 *
-	 * Interaction model: click a chip → component arms it (highlighted) and
-	 * dispatches `arm` with the chip's entity id. Parent (WorldMap) listens for
-	 * the next map click and POSTs a placement at the clicked fractional coords.
-	 * Click the armed chip again → dispatches `arm` with null → cancel.
+	 *   - click → arms the chip (keyboard- and touch-accessible); the parent
+	 *     (WorldMap) places it on the next canvas tap. Click the armed chip again
+	 *     to cancel.
+	 *   - drag → drag source carrying `application/x-betwixt-asset`; WorldMap's
+	 *     drop handler creates a placement at the dropped point. Mouse-only, so
+	 *     click-to-arm remains the accessible path.
 	 *
-	 * The palette also exposes "+ New" affordances for the placeable
-	 * artifact-likes (Artifact / Item) so authors can mint one inline without
-	 * leaving the map. New Characters are still authored in the Characters app.
+	 * Membership (D3 fix): one source list, filtered to PlaceableEntityType
+	 * (Character / Artifact / Item — the polymorphic FK constraint on
+	 * map_placements.placeable_id) AND `data.is_asset !== false`. Setting
+	 * `data.is_asset = false` now removes an entity from the palette entirely —
+	 * the old PlaceablesPalette ignored the flag, so "remove from library" leaked
+	 * the entity back into the click-to-place list.
 	 *
-	 * `Door` was cut by the 2026-05-20 audit (Step 5.5,
-	 * drizzle/0011_data_model_cleanup.sql) — see schema.ts comment.
+	 * Inline `+ Artifact` / `+ Item` mint a placeable without leaving the map
+	 * (new Characters are authored in the Characters app).
 	 */
 	import { entities } from '$lib/stores/entities.js';
 	import { windowStore } from '$lib/os/windows-store.js';
 	import { pendingEditMode } from '$lib/components/EntityDetail.svelte';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
+	import { ASSET_DRAG_MIME } from './asset-drag.js';
+	import type { Entity } from '$lib/stores/entities.js';
 	import type { EntityType } from '$lib/server/db/schema.js';
 
 	interface Props {
@@ -31,15 +39,46 @@
 
 	let busy = $state(false);
 	let createError = $state('');
+	let draggingId = $state<string | null>(null);
 
 	let placeables = $derived(
 		$entities
-			.filter((e) => PLACEABLE_TYPES.includes(e.type))
+			.filter((e) => {
+				if (!PLACEABLE_TYPES.includes(e.type)) return false;
+				// D3: opt-out via data.is_asset === false. Default true. Applied to
+				// the single list so click-to-place respects it too (the old
+				// PlaceablesPalette didn't, leaking opted-out entities).
+				const flag = (e.data ?? {})['is_asset'];
+				return flag !== false;
+			})
 			.sort((a, b) => a.name.localeCompare(b.name))
 	);
 
+	// Codex P2: if the armed entity drops out of the list (e.g. it was opted out
+	// via data.is_asset=false from the sidebar/popover), clear the arm so the map
+	// doesn't stay in place-armed mode with no visible chip and place the
+	// now-hidden entity on the next canvas tap.
+	$effect(() => {
+		if (armedId !== null && !placeables.some((p) => p.id === armedId)) {
+			onArm(null);
+		}
+	});
+
 	function toggleArm(id: string) {
 		onArm(armedId === id ? null : id);
+	}
+
+	function onDragStart(e: DragEvent, entity: Entity): void {
+		if (!e.dataTransfer) return;
+		e.dataTransfer.effectAllowed = 'copy';
+		e.dataTransfer.setData(ASSET_DRAG_MIME, entity.id);
+		// Plain-text fallback for dev tools / accidental drops outside our handler.
+		e.dataTransfer.setData('text/plain', `betwixt-asset:${entity.id}`);
+		draggingId = entity.id;
+	}
+
+	function onDragEnd(): void {
+		draggingId = null;
 	}
 
 	async function createNew(type: 'Artifact' | 'Item') {
@@ -47,13 +86,9 @@
 		busy = true;
 		createError = '';
 		try {
-			// `Untitled <Type>` placeholder reads as in-progress rather than broken
-			// when the new row briefly appears in other lists (Wiki, Story Graph)
-			// before the user types a real name. Editor opens with name field
-			// focused + text selected so first keystroke replaces the placeholder.
+			// `Untitled <Type>` reads as in-progress rather than broken when the new
+			// row briefly appears in other lists before the user types a real name.
 			const created = await entities.createEntity(type, `Untitled ${type}`);
-			// Flag for edit-mode-on-mount, then open. EntityDetail consumes the
-			// id on mount and lands in edit mode with the name input selected.
 			pendingEditMode.add(created.id);
 			windowStore.open('entity-detail', created.id);
 			onArm(created.id);
@@ -65,14 +100,16 @@
 	}
 </script>
 
-<div class="placeables-palette" data-testid="placeables-palette">
+<div class="placeable-palette" data-testid="placeable-palette">
 	<div class="palette-header">
 		<span class="palette-title">Placeables</span>
 		<span class="palette-hint">
-			{#if armedId}
+			{#if draggingId}
+				drop on the map to place
+			{:else if armedId}
 				click on map to place
 			{:else}
-				click a chip, then click the map
+				click or drag a chip onto the map
 			{/if}
 		</span>
 	</div>
@@ -83,10 +120,14 @@
 				<button
 					class="chip"
 					class:armed={armedId === p.id}
+					class:dragging={draggingId === p.id}
 					aria-pressed={armedId === p.id}
 					style="--type-color: {getEntityTypeColor(p.type)}"
+					draggable="true"
+					ondragstart={(e) => onDragStart(e, p)}
+					ondragend={onDragEnd}
 					onclick={() => toggleArm(p.id)}
-					title={`${p.type} — click to arm placement`}
+					title={`${p.type} — click to arm, or drag onto the map`}
 					type="button"
 				>
 					<span class="chip-stripe" aria-hidden="true"></span>
@@ -94,7 +135,9 @@
 				</button>
 			{/each}
 			{#if placeables.length === 0}
-				<span class="empty">No Characters / Artifacts / Items yet.</span>
+				<span class="empty">
+					No placeables yet. Create a Character, Artifact, or Item to place it here.
+				</span>
 			{/if}
 		</div>
 
@@ -110,7 +153,7 @@
 </div>
 
 <style>
-	.placeables-palette {
+	.placeable-palette {
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
@@ -161,12 +204,22 @@
 		background: var(--color-bg, #1a1a1a);
 		color: var(--color-text, #ddd);
 		font-size: 11px;
-		cursor: pointer;
+		cursor: grab;
 	}
-	.chip:hover { border-color: var(--type-color); }
+	.chip:hover {
+		border-color: var(--type-color);
+	}
+	.chip:active {
+		cursor: grabbing;
+	}
 	.chip.armed {
 		border-color: var(--type-color);
 		background: color-mix(in srgb, var(--type-color) 25%, transparent);
+		box-shadow: 0 0 0 1px var(--type-color);
+	}
+	.chip.dragging {
+		opacity: 0.6;
+		border-color: var(--type-color);
 		box-shadow: 0 0 0 1px var(--type-color);
 	}
 	.chip-stripe {
@@ -193,7 +246,10 @@
 		color: var(--color-text, #ddd);
 		border-color: var(--color-accent, #e8a838);
 	}
-	.palette-new button:disabled { opacity: 0.5; cursor: wait; }
+	.palette-new button:disabled {
+		opacity: 0.5;
+		cursor: wait;
+	}
 	.empty {
 		color: var(--color-text-muted, #888);
 		font-style: italic;

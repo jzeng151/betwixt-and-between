@@ -19,15 +19,9 @@
 		type PixiStageContext
 	} from './pixi-context.js';
 	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
-	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
-	import { resolveStyle, GLOBAL_STYLE_DEFAULT } from '$lib/features/map/style-cascade.js';
+	import { resolveStyle } from '$lib/features/map/style-cascade.js';
+	import { easeToward } from '$lib/features/map/ease.js';
 	import { layerVisibility } from '$lib/features/map/layer-prefs-store.js';
-
-	// Visual fallback gate: when the cascade returns GLOBAL_STYLE_DEFAULT's
-	// color (i.e. neither STYLE_DEFAULTS nor entity.data.style set one),
-	// fall through to the legacy getEntityTypeColor so existing entities
-	// without an explicit style still render in their per-type palette.
-	const GLOBAL_DEFAULT_COLOR = GLOBAL_STYLE_DEFAULT.color;
 
 	// Slice 3 E4 — layer toggle.
 	const visible = layerVisibility('placements');
@@ -35,6 +29,7 @@
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { WorldMap } from './types.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
+	import PlacementStylePopover from '$lib/features/map/PlacementStylePopover.svelte';
 
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
@@ -83,6 +78,19 @@
 	let PIXI = $state<PixiModule | null>(null);
 	let layer: PixiContainer | null = null;
 
+	// Slice 4 PR-E (DS3) — per-type hover: a size pulse (scale → 1.15) plus a
+	// glow halo in the marker's RESOLVED color (not the amber accent, which is
+	// reserved for active/armed/selected). No pixi-filters dependency: the glow
+	// is a low-alpha halo circle drawn behind the marker; both ease toward their
+	// hover targets via the ticker. Eased frame-rate-independently with a ~55ms
+	// time constant so the pulse settles in ~160ms.
+	const HOVER_SCALE = 1.15;
+	const GLOW_PAD = 8; // px halo radius beyond the marker, at base scale
+	const GLOW_ALPHA = 0.45;
+	const HOVER_TAU_MS = 55;
+	type HoverAnim = { halo: PixiGraphics; scaleTarget: number; haloTarget: number };
+	const hoverAnim = new WeakMap<PixiContainer, HoverAnim>();
+
 	type MenuState = {
 		x: number;
 		y: number;
@@ -93,6 +101,12 @@
 	};
 	let menu = $state<MenuState | null>(null);
 	let tooltip = $state<{ x: number; y: number; text: string } | null>(null);
+	// Slice 4 PR-C — per-placement style popover, opened from the marker menu's
+	// "Edit style" item. Holds the anchor coords + the ids to look up; the
+	// placement/placeable objects are derived so the popover tracks live edits.
+	let styleTarget = $state<{ x: number; y: number; placementId: string; placeableId: string } | null>(
+		null
+	);
 
 	onMount(() => {
 		let cancelled = false;
@@ -150,6 +164,16 @@
 		return m;
 	});
 
+	// Slice 4 PR-C — resolve the style-popover target objects (declared after
+	// entityById so the lookup has it in scope). Derived so the popover tracks
+	// live edits to the placement / entity while open.
+	const styleTargetPlacement = $derived(
+		styleTarget ? (placements.find((p) => p.id === styleTarget!.placementId) ?? null) : null
+	);
+	const styleTargetPlaceable = $derived(
+		styleTarget ? (entityById.get(styleTarget!.placeableId) ?? null) : null
+	);
+
 	// codex P2 (PR #58): monotonic render token. Icon textures load
 	// asynchronously; if this effect re-runs (and destroys the current markers)
 	// while a load is in flight, the resolved sprite must NOT be added to a
@@ -188,21 +212,16 @@
 			const cy = placement.y * mapH;
 
 			// Slice 3 T9 + B6 — style cascade resolved per-placement at
-			// render. GLOBAL ⊕ STYLE_DEFAULTS[type] ⊕ entity.data.style.
-			// Color falls through getEntityTypeColor as a baseline if
-			// neither STYLE_DEFAULTS nor an instance override set one
-			// — getEntityTypeColor returns the legacy per-type palette
-			// so visuals don't regress for entities without explicit
-			// styles. resolveStyle's color is preferred; the legacy is
-			// the fallback for type defaults the new const doesn't list.
-			// codex P2 (PR #58): pass the per-placement style override
-			// (placement.data.style) so an instance customization wins over
-			// the entity-level style instead of being silently ignored.
+			// render. GLOBAL ⊕ STYLE_DEFAULTS[type] ⊕ entity.data.style ⊕
+			// placement.data.style (codex P2, PR #58: the per-placement
+			// override is the top layer so an instance customization wins).
+			// resolved.color is authoritative — resolveStyle already supplies
+			// the per-type default when no override is set, so we trust it
+			// directly. The old sentinel branch re-applied the type color when
+			// resolved.color happened to equal the neutral global default,
+			// which clobbered an explicitly-chosen neutral swatch (codex P2).
 			const resolved = resolveStyle(placeable, placement.data?.style);
-			const fillColor =
-				resolved.color === GLOBAL_DEFAULT_COLOR
-					? parseHex(getEntityTypeColor(placeable.type))
-					: parseHex(resolved.color);
+			const fillColor = parseHex(resolved.color);
 
 			// T9 follow-up: scope-based dim. The placeable entity is in
 			// scope when its intervals contain the playhead (or playhead is
@@ -231,6 +250,19 @@
 			// Stable hit area on the container — independent of which child
 			// visual is shown (the circle may be hidden once an icon loads).
 			marker.hitArea = new PIXI.Circle(cx, cy, radius);
+			// PR-E: pivot+position at the marker centre so the hover pulse scales
+			// about the centre while children stay drawn at their (cx, cy) coords.
+			marker.pivot.set(cx, cy);
+			marker.position.set(cx, cy);
+
+			// PR-E: glow halo (behind the marker), resolved-color, hidden until
+			// hover. Added first so it paints under the circle / icon.
+			const halo: PixiGraphics = new PIXI.Graphics();
+			halo.circle(cx, cy, radius + GLOW_PAD).fill({ color: fillColor, alpha: 1 });
+			halo.alpha = 0;
+			marker.addChild(halo);
+			hoverAnim.set(marker, { halo, scaleTarget: 1, haloTarget: 0 });
+
 			marker.on('pointerover', (e: FederatedPointerEvent) => {
 				const { x, y } = clientXY(e);
 				tooltip = {
@@ -238,9 +270,22 @@
 					y,
 					text: `${placeable.name} (${placeable.type})`
 				};
+				const st = hoverAnim.get(marker);
+				if (st) {
+					st.scaleTarget = HOVER_SCALE;
+					// Compose the glow with the same scope-dim × opacity as the
+					// marker fill, so a faded out-of-scope marker doesn't flash a
+					// full-strength glow on hover.
+					st.haloTarget = GLOW_ALPHA * fillAlpha;
+				}
 			});
 			marker.on('pointerout', () => {
 				tooltip = null;
+				const st = hoverAnim.get(marker);
+				if (st) {
+					st.scaleTarget = 1;
+					st.haloTarget = 0;
+				}
 			});
 			marker.on('pointertap', (e: FederatedPointerEvent) => {
 				if (e.button !== 0) return;
@@ -313,6 +358,33 @@
 		marker.addChild(sprite);
 	}
 
+	// PR-E hover animation loop. One ticker for the layer eases every marker
+	// toward its hover target (scale + halo alpha). Frame-rate-independent ease
+	// (k = 1 − e^(−Δt/τ)) so it settles in ~160ms regardless of refresh rate.
+	$effect(() => {
+		const app = stageCtx.app;
+		if (!app || !PIXI) return;
+		const tick = () => {
+			if (!layer) return;
+			const dt = app.ticker.deltaMS;
+			for (const child of layer.children) {
+				const st = hoverAnim.get(child as PixiContainer);
+				if (!st) continue;
+				const m = child as PixiContainer;
+				m.scale.set(easeToward(m.scale.x, st.scaleTarget, dt, HOVER_TAU_MS));
+				st.halo.alpha = easeToward(st.halo.alpha, st.haloTarget, dt, HOVER_TAU_MS);
+			}
+		};
+		app.ticker.add(tick);
+		return () => {
+			try {
+				app.ticker.remove(tick);
+			} catch (_) {
+				/* app destroyed first */
+			}
+		};
+	});
+
 	const menuItems = $derived(
 		menu
 			? [
@@ -321,6 +393,18 @@
 						icon: '↗',
 						onSelect: () => {
 							onOpenEntity(menu!.placeableId);
+						}
+					},
+					{
+						label: 'Edit style',
+						icon: '🎨',
+						onSelect: () => {
+							styleTarget = {
+								x: menu!.x,
+								y: menu!.y,
+								placementId: menu!.placementId,
+								placeableId: menu!.placeableId
+							};
 						}
 					},
 					{
@@ -397,6 +481,15 @@
 
 {#if menu}
 	<ContextMenu items={menuItems} x={menu.x} y={menu.y} onClose={() => (menu = null)} />
+{/if}
+{#if styleTarget && styleTargetPlacement && styleTargetPlaceable}
+	<PlacementStylePopover
+		placement={styleTargetPlacement}
+		placeable={styleTargetPlaceable}
+		x={styleTarget.x}
+		y={styleTarget.y}
+		onClose={() => (styleTarget = null)}
+	/>
 {/if}
 {#if tooltip}
 	<div

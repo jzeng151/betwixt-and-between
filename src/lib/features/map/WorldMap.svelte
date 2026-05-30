@@ -28,14 +28,14 @@
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import { projectState, type ProjectionContext, type RenderedState } from '$lib/features/map/projection.js';
+	import { computeCanvasMode } from '$lib/features/map/canvas-mode.js';
 	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
 	import { mapAnchorsStore } from '$lib/features/map/map-anchors-store.js';
 	import { mapEventsStore } from '$lib/features/map/map-events-store.js';
 	import { layerPrefs } from '$lib/features/map/layer-prefs-store.js';
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
-	import PlaceablesPalette from '$lib/components/PlaceablesPalette.svelte';
+	import PlaceablePalette from '$lib/components/PlaceablePalette.svelte';
 	import BrushPalette from '$lib/components/BrushPalette.svelte';
-	import AssetLibrary from '$lib/components/AssetLibrary.svelte';
 	import { ASSET_DRAG_MIME } from '$lib/components/asset-drag.js';
 	import PixiBrushLayer from '$lib/features/map/PixiBrushLayer.svelte';
 	import type { BiomeKind } from '$lib/features/map/projection.js';
@@ -48,7 +48,7 @@
 	// every open map instance.
 	let { entityId = $bindable<string | undefined>(undefined), windowId = undefined }: { entityId?: string; windowId?: string } = $props();
 
-	// armed placeable id (chip selected in PlaceablesPalette). When non-null,
+	// armed placeable id (chip selected in PlaceablePalette). When non-null,
 	// the next click on the Pixi canvas creates a placement at the clicked
 	// fractional coords for this entity.
 	let armedPlaceableId = $state<string | null>(null);
@@ -147,7 +147,7 @@
 	}
 
 	// Slice 3 T8' (codex P2) — the live pixi-viewport, handed up from
-	// PixiStage. The AssetLibrary drop handler is a DOM listener outside the
+	// PixiStage. The palette drop handler is a DOM listener outside the
 	// Pixi stage context, so it can't call getLocalPosition(viewport) the way
 	// the click-to-place path does; it uses this reference to convert the
 	// drop's screen coords → world coords through the pan/zoom transform.
@@ -164,6 +164,17 @@
 	// tool). Both reset on commit / cancel / map switch.
 	let pixiDrawingActive = $state(false);
 	let pixiDrawSeed = $state<{ x: number; y: number } | null>(null);
+	// Slice 4 T7 — single source of truth for the active canvas interaction
+	// mode, derived from the gesture flags (which stay child-owned). Gates read
+	// `canvasMode` instead of re-deriving the precedence inline; PR-F adds
+	// 'move'. See canvas-mode.ts for the priority cascade.
+	let canvasMode = $derived(
+		computeCanvasMode({
+			drawing: pixiDrawingActive,
+			brushing: brushActive,
+			armed: armedPlaceableId !== null
+		})
+	);
 	// codex PR review iter 7: reset polygon-draw state when the user
 	// switches maps via the toolbar. Without this, vertices placed on
 	// map A linger after switchMap → committing on map B saves the
@@ -535,44 +546,39 @@
 	}
 
 	function handleCanvasClick(fx: number, fy: number) {
+		// Slice 4 T7: only the place-armed mode consumes a canvas tap. Gate on
+		// the same load condition the drop path uses (handleAssetDrop) — a
+		// placement POST landing mid-load can be clobbered when the in-flight
+		// placements GET replaces the store with its pre-create rows.
+		const placeableId = armedPlaceableId;
+		if (canvasMode !== 'place-armed' || mapLoading || placeableId === null) return;
 		// Disarm synchronously before the await so a quick second click can't
 		// fire createPlacementAt twice while the POST is in flight.
-		if (!armedPlaceableId) return;
-		const placeableId = armedPlaceableId;
 		armedPlaceableId = null;
 		void createPlacementAt(placeableId, fx, fy);
 	}
 
-	async function createPlacementAt(
-		placeableId: string,
-		x: number,
-		y: number,
-		options: { sourceAssetId?: string } = {}
-	) {
+	async function createPlacementAt(placeableId: string, x: number, y: number) {
 		placementError = '';
 		try {
-			// Slice 3 T17 — source_asset_id stored in placement.data.
-			// Click-to-place path (PlaceablesPalette) leaves it undefined;
-			// drag-drop path (AssetLibrary) passes it through. Slice 4's
-			// sync-from-template button reads this field to look up the
-			// asset entity.
-			const data = options.sourceAssetId
-				? { source_asset_id: options.sourceAssetId }
-				: undefined;
+			// Slice 4 PR-A (D1 reference model): a placement references the
+			// existing entity directly, so the old `source_asset_id` provenance
+			// field was always equal to placeableId and carried no information.
+			// Both the click-to-place and drag-drop paths now create a plain
+			// placement; per-instance differences live in placement.data.style.
 			await placementsStore.create({
 				placeableId,
 				locationId: activeMap?.locationId ?? null,
 				mapId: activeMap?.id ?? null,
 				x,
-				y,
-				...(data ? { data } : {})
+				y
 			});
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
 		}
 	}
 
-	// Slice 3 T8' — drop handler for AssetLibrary drags. Pixi canvas
+	// Slice 3 T8' — drop handler for placeable-palette drags. Pixi canvas
 	// lives inside PixiStage's pixi-stage div; we wrap the stage with
 	// listeners. dragover must preventDefault so the drop event fires.
 	function handleAssetDragOver(e: DragEvent): void {
@@ -582,12 +588,15 @@
 		// an OS file drag.
 		if (!Array.from(e.dataTransfer.types).includes(ASSET_DRAG_MIME)) return;
 		// Block the drop if the active map can't host a placement (no
-		// linked Location → no anchor for the placement to bind to), or while
+		// linked Location → no anchor for the placement to bind to), while
 		// the map is still loading (codex P2: a placement POST during the
 		// placements GET can be clobbered when the in-flight load replaces the
-		// store with pre-drop rows). Drops bubble through the loading overlay to
+		// store with pre-drop rows), or while a pointer-owning mode is active
+		// (Slice 4 T7: brush/draw own the canvas — HTML5 drag is a separate
+		// event stream, so the drop must respect the same CanvasMode invariant
+		// the click path does). Drops bubble through the loading overlay to
 		// this handler, so guard here too.
-		if (!activeMap?.locationId || mapLoading) {
+		if (!activeMap?.locationId || mapLoading || canvasMode === 'brush' || canvasMode === 'draw') {
 			e.dataTransfer.dropEffect = 'none';
 			return;
 		}
@@ -600,6 +609,11 @@
 		const assetId = e.dataTransfer.getData(ASSET_DRAG_MIME);
 		if (!assetId) return;
 		if (!activeMap?.width || !activeMap?.height || !activeMap?.locationId) return;
+		// Slice 4 T7: the drop path respects the same CanvasMode gate as the
+		// click path (handleCanvasClick). brush/draw own the pointer; a drop
+		// arriving via the separate HTML5 drag stream must not place a marker
+		// mid-brush/draw.
+		if (canvasMode === 'brush' || canvasMode === 'draw') return;
 		// codex P2: ignore drops while the map is still loading — a placement
 		// POST mid-load can be overwritten by the in-flight placements GET.
 		if (mapLoading) return;
@@ -637,7 +651,11 @@
 			fy = (e.clientY - rect.top) / rect.height;
 		}
 		if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
-		void createPlacementAt(assetId, fx, fy, { sourceAssetId: assetId });
+		// Slice 4 T7: a drop completes a placement, so clear any pending
+		// click-to-place arm — otherwise dropping chip B while chip A is armed
+		// would leave A armed and the next plain canvas tap would place it too.
+		armedPlaceableId = null;
+		void createPlacementAt(assetId, fx, fy);
 	}
 
 	async function deletePlacement(id: string) {
@@ -1279,7 +1297,7 @@
 				<button type="button" onclick={() => (toolbarNewLocationError = '')}>✕</button>
 			</div>
 		{/if}
-		<!-- Slice 3 T8' drop target. Wraps PixiStage so AssetLibrary drags
+		<!-- Slice 3 T8' drop target. Wraps PixiStage so palette chip drags
 		     can drop onto the canvas. dragover preventDefault enables drop;
 		     ASSET_DRAG_MIME filter rejects accidental file drops. -->
 		<div
@@ -1332,7 +1350,7 @@
 					placements={$placementsStore}
 					entities={$entities}
 					isInScope={$isInScope}
-					armedPlaceableId={pixiDrawingActive ? null : armedPlaceableId}
+					armedPlaceableId={canvasMode === 'place-armed' ? armedPlaceableId : null}
 					brushActive={brushActive}
 					onOpenEntity={(id) => windowStore.open('entity-detail', id)}
 					onDeletePlacement={(id) => void deletePlacement(id)}
@@ -1360,7 +1378,7 @@
 				     pre-stroke rows. Same guard the snapshot/ownership writes
 				     use. -->
 				<PixiBrushLayer
-					active={brushActive && !pixiDrawingActive && !dataLoading}
+					active={canvasMode === 'brush' && !dataLoading}
 					{activeMap}
 					biome={brushBiome}
 					size={brushSize}
@@ -1377,12 +1395,11 @@
 		{/if}
 		<MapSidebar {activeMapId} />
 		{#if hasImage && activeMap?.locationId}
-			<!-- PlaceablesPalette: armed chip → PixiPlacementLayer's stage-
-			     level pointertap → handleCanvasClick → create placement. -->
-			<PlaceablesPalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
-			<!-- Slice 3 T8' asset library — drag source for placements.
-			     Drop target lives on the pixi-drop-target wrapper above. -->
-			<AssetLibrary />
+			<!-- Slice 4 PR-D — single placeables palette. Each chip is both a
+			     click-to-arm target (armed chip → PixiPlacementLayer pointertap →
+			     handleCanvasClick → create placement) and a drag source (drop
+			     target lives on the pixi-drop-target wrapper above). -->
+			<PlaceablePalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
 				<div class="placement-error" role="alert">
 					{placementError}

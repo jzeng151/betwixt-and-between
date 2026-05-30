@@ -201,6 +201,53 @@ describe('entities.updateEntity', () => {
 		const all = get(entities);
 		expect(all.find((e) => e.id === 'e2')!.name).toBe('Two');
 	});
+
+	// Codex P2 (PR #59): per-id PATCH-response sequencing. Two full-`data` edits
+	// to one row (e.g. a style save then an adjacent is_asset toggle) can race;
+	// a slow earlier response must not reinstall a row missing the newer field.
+	it('a slow earlier PATCH does not overwrite a newer edit on the same row', async () => {
+		let resolveFirst!: () => void;
+		const firstServer = entity({ id: 'e1', name: 'Old', type: 'Character', data: { style: { color: '#aaa' } } });
+		const secondServer = entity({ id: 'e1', name: 'Old', type: 'Character', data: { style: { color: '#aaa' }, is_asset: false } });
+		globalThis.fetch = vi
+			.fn()
+			.mockImplementationOnce(
+				() => new Promise<Response>((res) => { resolveFirst = () => res(makeResponse(firstServer)); })
+			)
+			.mockResolvedValueOnce(makeResponse(secondServer)) as unknown as typeof fetch;
+
+		const first = entities.updateEntity('e1', { data: { style: { color: '#aaa' } } });
+		const second = entities.updateEntity('e1', { data: { style: { color: '#aaa' }, is_asset: false } });
+		await second; // newer edit installs the row carrying both fields
+		resolveFirst(); // stale earlier PATCH resolves last
+		await first;
+
+		// The store keeps the newer row — the stale first response is dropped.
+		expect(get(entities)[0].data).toEqual({ style: { color: '#aaa' }, is_asset: false });
+	});
+
+	it('a failed earlier PATCH does not reload-revert a newer successful edit', async () => {
+		let rejectFirst!: () => void;
+		const secondServer = entity({ id: 'e1', name: 'Old', type: 'Character', data: { is_asset: false } });
+		const fetchMock = vi
+			.fn()
+			.mockImplementationOnce(
+				() => new Promise<Response>((_res, rej) => { rejectFirst = () => rej(new Error('boom')); })
+			)
+			.mockResolvedValueOnce(makeResponse(secondServer));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const first = entities.updateEntity('e1', { data: { style: { color: '#aaa' } } });
+		const second = entities.updateEntity('e1', { data: { is_asset: false } });
+		await second;
+		rejectFirst();
+		await expect(first).rejects.toThrow();
+
+		// The failed earlier call must NOT trigger a load() reload (which would
+		// clobber the newer optimistic value); only PATCH×2 were issued.
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(get(entities)[0].data).toEqual({ is_asset: false });
+	});
 });
 
 // =============================================================================

@@ -463,12 +463,13 @@ describe('POST/PATCH invalid bounds surface as 400 (Codex #1)', () => {
 	});
 });
 
-// Slice 3 PR D
-describe('Slice 3 D4 — drag-drop source_asset_id round-trip', () => {
-	it('stores data.source_asset_id on a placement created via drag-drop', async () => {
-		// The drop handler in WorldMap.svelte calls placementsStore.create
-		// with data: { source_asset_id: asset.id }. This test exercises the
-		// server-side acceptance of that payload shape.
+// Slice 4 PR-A — the `source_asset_id` provenance field was dropped (D1
+// reference model: a placement references the entity directly, so the field
+// was always == placeableId). The placements endpoint still round-trips an
+// arbitrary `data` jsonb object, which Slice 4 PR-C uses for per-instance
+// `data.style`. This pins that generic capability.
+describe('Slice 4 — placement.data jsonb round-trip', () => {
+	it('round-trips an arbitrary data jsonb object on create', async () => {
 		const loc = await seedLocation();
 		const ch = await seedCharacter();
 		const map = await seedMap('M', loc.id);
@@ -480,39 +481,13 @@ describe('Slice 3 D4 — drag-drop source_asset_id round-trip', () => {
 					mapId: map.id,
 					x: 0.5,
 					y: 0.5,
-					data: { source_asset_id: ch.id }
+					data: { label: 'east gate' }
 				}
 			})
 		);
 		expect(res.status).toBe(201);
 		const body = await readJson(res);
-		expect(body.data).toEqual({ source_asset_id: ch.id });
-	});
-
-	it('round-trips source_asset_id even when it points at a different entity', async () => {
-		// Slice 4 will care about whether placeable_id and source_asset_id
-		// differ (sync-from-template uses source_asset_id). For Slice 3
-		// the field is opaque; this test just pins persistence.
-		const loc = await seedLocation();
-		const a = await seedCharacter('A');
-		const b = await seedCharacter('B');
-		const map = await seedMap('M', loc.id);
-		const res = await CREATE_PLACEMENT(
-			mkEvent({
-				body: {
-					placeableId: a.id,
-					locationId: loc.id,
-					mapId: map.id,
-					x: 0.5,
-					y: 0.5,
-					data: { source_asset_id: b.id }
-				}
-			})
-		);
-		expect(res.status).toBe(201);
-		const body = await readJson(res);
-		expect(body.placeableId).toBe(a.id);
-		expect(body.data.source_asset_id).toBe(b.id);
+		expect(body.data).toEqual({ label: 'east gate' });
 	});
 });
 

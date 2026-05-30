@@ -38,7 +38,7 @@
 		activeMap: WorldMap | null;
 		children?: Snippet;
 		// Hands the pixi-viewport up to the parent (which sits outside the
-		// stage context) so DOM-level handlers like the AssetLibrary drop
+		// stage context) so DOM-level handlers like the palette chip drop
 		// can convert screen coords → world coords through the same pan/zoom
 		// transform the Pixi layers use. Called with null on teardown.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -2,7 +2,7 @@
 	/**
 	 * BrushPalette — Slice 3 T5 brush UX.
 	 *
-	 * Lives below the canvas alongside PlaceablesPalette. Three pieces:
+	 * Lives below the canvas alongside PlaceablePalette. Three pieces:
 	 *
 	 *   1. Mode toggle: enter/exit brush mode. While active, pointer events
 	 *      on the canvas paint cells (via PixiBrushLayer). Mutually
