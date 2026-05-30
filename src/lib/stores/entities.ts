@@ -159,19 +159,29 @@ function createEntityStore() {
 			}
 			throw err;
 		}
-		// Drop the server row if a newer edit to this row was issued meanwhile;
-		// installing it would clobber the newer optimistic value until reload.
-		if (latestUpdate.get(id) !== seq) return updated;
+		// Whether THIS patch was a structural Act/Scene change that the server
+		// recomputes interval bounds for. Captured before the supersede check so a
+		// later non-structural edit (e.g. a rename) can't make us skip the refresh.
+		const wasStructural =
+			(patch.position !== undefined || patch.parentId !== undefined) &&
+			(updated.type === 'Act' || updated.type === 'Scene');
+
+		// If a newer edit to this row was issued meanwhile, don't install our
+		// server row (it would clobber the newer optimistic value). But still
+		// refresh intervals if our patch was structural — the server already
+		// recomputed bounds, and the superseding edit (a rename) won't have, so
+		// the timeline would otherwise stay stale until a full reload (Codex P2).
+		if (latestUpdate.get(id) !== seq) {
+			if (wasStructural) await intervalsStore.load();
+			return updated;
+		}
 		latestUpdate.delete(id);
 		updateChains.delete(id);
 		update((all) => all.map((e) => (e.id === id ? updated : e)));
 		// Position/parentId changes on Act/Scene cascade to intervals on the
 		// server (sibling reorder + recompute, or scene cross-act move). Keep
 		// the intervals store in sync.
-		if (
-			(patch.position !== undefined || patch.parentId !== undefined) &&
-			(updated.type === 'Act' || updated.type === 'Scene')
-		) {
+		if (wasStructural) {
 			await intervalsStore.load();
 		}
 		return updated;

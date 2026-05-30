@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { entities, type Entity } from '../../src/lib/stores/entities.js';
+import { intervals as intervalsStore } from '../../src/lib/features/timeline/intervals-store.js';
 
 // =============================================================================
 // Helpers
@@ -266,6 +267,43 @@ describe('entities.updateEntity', () => {
 		// were issued — no /api/entities reload.
 		expect(bodies).toHaveLength(2);
 		expect(get(entities)[0].data).toEqual({ is_asset: false });
+	});
+
+	it('refreshes intervals for a structural PATCH even when a later edit supersedes it', async () => {
+		// Codex P2: an Act reorder followed by a quick rename before the reorder
+		// PATCH responds. The reorder recomputed interval bounds server-side, so
+		// intervalsStore.load() must still run even though the rename supersedes
+		// the row locally — otherwise the timeline stays stale until a reload.
+		const seed = [entity({ id: 'a1', name: 'Act', type: 'Act', data: {} })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seed)) as unknown as typeof fetch;
+		await entities.load();
+
+		const intervalsLoad = vi.spyOn(intervalsStore, 'load').mockResolvedValue(undefined);
+		const reorderServer = entity({ id: 'a1', name: 'Act', type: 'Act', position: 2, data: {} });
+		const renameServer = entity({ id: 'a1', name: 'Renamed', type: 'Act', position: 2, data: {} });
+		let resolveReorder!: () => void;
+		const responses: Array<Promise<Response>> = [
+			new Promise<Response>((res) => { resolveReorder = () => res(makeResponse(reorderServer)); }),
+			Promise.resolve(makeResponse(renameServer))
+		];
+		let i = 0;
+		globalThis.fetch = vi.fn((url: string) =>
+			url === '/api/entities/a1' ? responses[i++] : Promise.resolve(makeResponse([]))
+		) as unknown as typeof fetch;
+
+		// Both calls stamp their seq synchronously, so rename (issued second) is
+		// already the "latest" before anything resolves — the reorder is
+		// superseded. rename's PATCH is chained behind reorder's, so resolve
+		// reorder first, then await both.
+		const reorder = entities.updateEntity('a1', { position: 2 });
+		const rename = entities.updateEntity('a1', { name: 'Renamed' });
+		resolveReorder();
+		await reorder; // superseded, but structural → still refreshes intervals
+		await rename;
+
+		// The superseded reorder still triggered an interval refresh.
+		expect(intervalsLoad).toHaveBeenCalled();
+		intervalsLoad.mockRestore();
 	});
 });
 
