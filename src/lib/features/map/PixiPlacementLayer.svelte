@@ -19,16 +19,9 @@
 		type PixiStageContext
 	} from './pixi-context.js';
 	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
-	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
-	import { resolveStyle, GLOBAL_STYLE_DEFAULT } from '$lib/features/map/style-cascade.js';
+	import { resolveStyle } from '$lib/features/map/style-cascade.js';
 	import { easeToward } from '$lib/features/map/ease.js';
 	import { layerVisibility } from '$lib/features/map/layer-prefs-store.js';
-
-	// Visual fallback gate: when the cascade returns GLOBAL_STYLE_DEFAULT's
-	// color (i.e. neither STYLE_DEFAULTS nor entity.data.style set one),
-	// fall through to the legacy getEntityTypeColor so existing entities
-	// without an explicit style still render in their per-type palette.
-	const GLOBAL_DEFAULT_COLOR = GLOBAL_STYLE_DEFAULT.color;
 
 	// Slice 3 E4 — layer toggle.
 	const visible = layerVisibility('placements');
@@ -219,21 +212,16 @@
 			const cy = placement.y * mapH;
 
 			// Slice 3 T9 + B6 — style cascade resolved per-placement at
-			// render. GLOBAL ⊕ STYLE_DEFAULTS[type] ⊕ entity.data.style.
-			// Color falls through getEntityTypeColor as a baseline if
-			// neither STYLE_DEFAULTS nor an instance override set one
-			// — getEntityTypeColor returns the legacy per-type palette
-			// so visuals don't regress for entities without explicit
-			// styles. resolveStyle's color is preferred; the legacy is
-			// the fallback for type defaults the new const doesn't list.
-			// codex P2 (PR #58): pass the per-placement style override
-			// (placement.data.style) so an instance customization wins over
-			// the entity-level style instead of being silently ignored.
+			// render. GLOBAL ⊕ STYLE_DEFAULTS[type] ⊕ entity.data.style ⊕
+			// placement.data.style (codex P2, PR #58: the per-placement
+			// override is the top layer so an instance customization wins).
+			// resolved.color is authoritative — resolveStyle already supplies
+			// the per-type default when no override is set, so we trust it
+			// directly. The old sentinel branch re-applied the type color when
+			// resolved.color happened to equal the neutral global default,
+			// which clobbered an explicitly-chosen neutral swatch (codex P2).
 			const resolved = resolveStyle(placeable, placement.data?.style);
-			const fillColor =
-				resolved.color === GLOBAL_DEFAULT_COLOR
-					? parseHex(getEntityTypeColor(placeable.type))
-					: parseHex(resolved.color);
+			const fillColor = parseHex(resolved.color);
 
 			// T9 follow-up: scope-based dim. The placeable entity is in
 			// scope when its intervals contain the playhead (or playhead is
