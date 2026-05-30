@@ -155,3 +155,86 @@ test('click-to-arm a palette chip, then tap the canvas, creates a placement (T7 
 		)
 		.toBe(1);
 });
+
+test('dropping a chip clears a pending click-to-place arm (T7 drop gate)', async ({
+	page,
+	request
+}) => {
+	await clearAll(request);
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+
+	const loc = await (
+		await request.post('/api/entities', { data: { type: 'Location', name: 'Arm Realm' } })
+	).json();
+	const b = await (
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Knight B' } })
+	).json();
+	await request.post('/api/entities', { data: { type: 'Character', name: 'Knight A' } });
+	const map = await (await request.post('/api/maps', { data: { name: 'Arm Test' } })).json();
+	await request.patch(`/api/maps/${map.id}`, {
+		data: { baseImageUrl: 'about:blank', width: 640, height: 480, locationId: loc.id }
+	});
+
+	await page.goto('/app');
+	await page.click('button[title="World Map"]');
+	const win = page.locator('.window[aria-label="World Map"]');
+	await win.locator('button[aria-label="Maximize"]').click();
+	await expect(win.locator('.pixi-stage canvas')).toBeVisible({ timeout: 10000 });
+
+	const palette = win.locator('[data-testid="placeable-palette"]');
+	const chipA = palette.locator('.chip', { hasText: 'Knight A' });
+	await chipA.click();
+	await expect(chipA).toHaveAttribute('aria-pressed', 'true');
+
+	// Drag the OTHER chip onto the canvas.
+	const chipB = palette.locator('.chip', { hasText: 'Knight B' });
+	await html5Drag(page, chipB, win.locator('.pixi-drop-target'));
+
+	// B is placed, and the drop cleared A's arm.
+	await expect
+		.poll(async () => {
+			const rows: Array<{ placeableId: string }> = await (
+				await request.get(`/api/map-placements?locationId=${loc.id}`)
+			).json();
+			return rows.length;
+		})
+		.toBe(1);
+	const rows: Array<{ placeableId: string }> = await (
+		await request.get(`/api/map-placements?locationId=${loc.id}`)
+	).json();
+	expect(rows[0].placeableId).toBe(b.id);
+	await expect(chipA).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('a drop during brush mode is rejected (T7 drop gate)', async ({ page, request }) => {
+	await clearAll(request);
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+
+	const loc = await (
+		await request.post('/api/entities', { data: { type: 'Location', name: 'Brush Realm' } })
+	).json();
+	await request.post('/api/entities', { data: { type: 'Character', name: 'Brush Knight' } });
+	const map = await (await request.post('/api/maps', { data: { name: 'Brush Drop Test' } })).json();
+	await request.patch(`/api/maps/${map.id}`, {
+		data: { baseImageUrl: 'about:blank', width: 640, height: 480, locationId: loc.id }
+	});
+
+	await page.goto('/app');
+	await page.click('button[title="World Map"]');
+	const win = page.locator('.window[aria-label="World Map"]');
+	await win.locator('button[aria-label="Maximize"]').click();
+	await expect(win.locator('.pixi-stage canvas')).toBeVisible({ timeout: 10000 });
+
+	// Enter brush mode → canvasMode === 'brush' owns the pointer.
+	await win.locator('[data-testid="brush-palette"] button[aria-pressed]').first().click();
+
+	const chip = win.locator('[data-testid="placeable-palette"] .chip', { hasText: 'Brush Knight' });
+	await html5Drag(page, chip, win.locator('.pixi-drop-target'));
+
+	// The drop is rejected mid-brush — no placement created. Give it a beat.
+	await page.waitForTimeout(1500);
+	const rows: Array<{ id: string }> = await (
+		await request.get(`/api/map-placements?locationId=${loc.id}`)
+	).json();
+	expect(rows).toHaveLength(0);
+});

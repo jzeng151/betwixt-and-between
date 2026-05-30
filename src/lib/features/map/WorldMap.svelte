@@ -588,12 +588,15 @@
 		// an OS file drag.
 		if (!Array.from(e.dataTransfer.types).includes(ASSET_DRAG_MIME)) return;
 		// Block the drop if the active map can't host a placement (no
-		// linked Location → no anchor for the placement to bind to), or while
+		// linked Location → no anchor for the placement to bind to), while
 		// the map is still loading (codex P2: a placement POST during the
 		// placements GET can be clobbered when the in-flight load replaces the
-		// store with pre-drop rows). Drops bubble through the loading overlay to
+		// store with pre-drop rows), or while a pointer-owning mode is active
+		// (Slice 4 T7: brush/draw own the canvas — HTML5 drag is a separate
+		// event stream, so the drop must respect the same CanvasMode invariant
+		// the click path does). Drops bubble through the loading overlay to
 		// this handler, so guard here too.
-		if (!activeMap?.locationId || mapLoading) {
+		if (!activeMap?.locationId || mapLoading || canvasMode === 'brush' || canvasMode === 'draw') {
 			e.dataTransfer.dropEffect = 'none';
 			return;
 		}
@@ -606,6 +609,11 @@
 		const assetId = e.dataTransfer.getData(ASSET_DRAG_MIME);
 		if (!assetId) return;
 		if (!activeMap?.width || !activeMap?.height || !activeMap?.locationId) return;
+		// Slice 4 T7: the drop path respects the same CanvasMode gate as the
+		// click path (handleCanvasClick). brush/draw own the pointer; a drop
+		// arriving via the separate HTML5 drag stream must not place a marker
+		// mid-brush/draw.
+		if (canvasMode === 'brush' || canvasMode === 'draw') return;
 		// codex P2: ignore drops while the map is still loading — a placement
 		// POST mid-load can be overwritten by the in-flight placements GET.
 		if (mapLoading) return;
@@ -643,6 +651,10 @@
 			fy = (e.clientY - rect.top) / rect.height;
 		}
 		if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
+		// Slice 4 T7: a drop completes a placement, so clear any pending
+		// click-to-place arm — otherwise dropping chip B while chip A is armed
+		// would leave A armed and the next plain canvas tap would place it too.
+		armedPlaceableId = null;
 		void createPlacementAt(assetId, fx, fy);
 	}
 
