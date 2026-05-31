@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.2.0] - 2026-05-31
+
+Fixes three World Map optimistic-concurrency races surfaced in review of #59.
+
+### Fixed
+
+- Rapid style edits to one map placement (e.g. pick a color, then drag the scale/opacity slider) are now sent in order — each save waits for the prior in-flight one for the same placement — so the server can't persist an older value and drop the newer style on reload.
+- Changing an entity's style and immediately toggling "Show in placeables palette" no longer clobbers one edit with the other; the same per-record ordering now applies to entity `data` writes.
+- Placement edits survive a map/location switch: switching to a map with no linked location no longer drops an in-flight save's ordering guard, so returning and re-editing the same placement can't be overtaken by the earlier request and overwritten.
+- The timeline stays current after a reordered Act or Scene is quickly renamed — a structural reorder refreshes the timeline even when a later edit to the same entity lands first, instead of leaving stale bars until a full reload.
+
 ## [0.8.1.0] - 2026-05-30
 
 World Map v3 Slice 4 (part 1) — marker styling, a unified placeables palette, and hover feedback. Movement playback (the rest of Slice 4) ships separately.
