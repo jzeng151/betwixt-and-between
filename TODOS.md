@@ -147,6 +147,19 @@ Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qo
 
 - [ ] **T9-prefs — Promote second client preference into the prefs store.** `src/lib/stores/preferences.ts` foundation shipped v0.1.3 (localStorage, schema-version migrations, defensive load). Per the original T9 spec, items to home here once they exist as second/third entries: hard/soft edge filter toggle, scrubber label format (decimal vs act-name), ghost trail opacity. **Action:** audit current preferences keys vs the planned list; promote anything still component-local; close out T9 once the store has the spotlight settings on it.
 
+### Freeform whiteboard ("white board")
+
+- [ ] **White board — freeform Excalidraw-like infinite-canvas brainstorming surface.** A pannable/zoomable
+  blank canvas (dotted/grid background) for loose ideation that sits *alongside* the structured
+  data layers, not inside them. Place freeform elements — sticky notes, text, pen/ink strokes,
+  shapes, images — and, crucially, drop in *live* references to existing entities (a Character,
+  a map, a graph) that stay interactive (click-through to open). For grouping, a "frame/section"
+  that moves its contents as one unit. This is the loose, pre-structure scratch space the app
+  currently lacks: today's only freeform-ish surface is graph node-position persistence
+  (`window_canvas_state` / `canvas_positions`), which is layout state for the relationship graph,
+  not a blank board. Scope a proper design pass (element model, persistence shape, whether entity
+  embeds are read-only chips vs. live mini-editors) before scheduling.
+
 ### Search
 
 - [ ] **T16 — Cmd-K full-body search index.** Extend the (yet-to-ship) Cmd-K Fuse.js index to include `entities.data.body_md`. Trade-off: ~10× index size growth (10k × 1KB ≈ 10MB), first-keypress latency. **Depends on:** Cmd-K shipping. Defer body-content path until names+types+note-titles index ships and feedback shows it's not enough.
