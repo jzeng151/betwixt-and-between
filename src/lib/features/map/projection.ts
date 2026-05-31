@@ -115,12 +115,13 @@ export type ProjectionAnchor = {
 // `EVENT_KINDS` and `EventKind` live here (not in src/lib/server/) so the
 // client store and the server validator share one source of truth without
 // the client crossing the server-only-import barrier (CLAUDE.md trust
-// boundary). Adding `move_entity`/`link_chain` in Slice 2 means updating:
+// boundary). Adding a kind (`link_chain` etc.) means updating:
 //   1. this array
 //   2. src/lib/server/world-map-v3.ts validateEventPayload's switch
-//   3. projection.ts's applyTransferRegion fold (or its successor)
+//   3. projection.ts's fold (applyTransferRegion / applyPaintCells / the
+//      Slice 4 movement fold)
 
-export const EVENT_KINDS = ['transfer_region', 'paint_cells'] as const;
+export const EVENT_KINDS = ['transfer_region', 'paint_cells', 'move_entity'] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
 export type TransferRegionPayload = {
@@ -140,6 +141,25 @@ export type PaintCellsPayload = {
 	// auto-anchor logic doesn't fire mid-stroke. Single-event strokes
 	// either set it true or omit it (defaults to true server-side).
 	command_complete?: boolean;
+};
+
+// Slice 4 PR-F (D5) — continuous-movement event. Each event is ONE keyframe:
+// the moving unit's position at this event's t_position. The moving unit is a
+// `map_placements` row (the instance), NOT the entity — an entity placed twice
+// yields two placements and two independent movers, so the payload keys on
+// `placement_id`, deliberately diverging from design-doc:246's `target_entity_id`.
+//
+// Projection interpolates between adjacent keyframes for the same placement_id
+// (prev ≤ T, next > T) using `tween`. Keyframes never enter anchor state_jsonb
+// (PR-F D-PRF-1): movement is sourced from placements + the live event log only.
+// `position` is normalized fractional [0,1] coords, same convention as
+// map_placements.x/y (design-doc § Coordinate system).
+export type EaseKind = 'linear' | 'ease_in_out';
+
+export type MoveEntityPayload = {
+	placement_id: string;
+	position: { x: number; y: number };
+	tween: EaseKind;
 };
 
 // Slice 3 D3 — biome enum, hardcoded for the MVP. User-defined biomes
