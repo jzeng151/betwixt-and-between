@@ -1191,7 +1191,8 @@ async function maybeWriteAutoAnchor(
 		regions: [],
 		artifacts: [],
 		chains: [],
-		cells: []
+		cells: [],
+		artifactOverrides: new Map()
 	}) as AnchorState;
 
 	// Re-fold from the FULL live log in (baseAnchorT, maxT] rather than the

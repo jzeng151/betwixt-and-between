@@ -418,7 +418,7 @@
 	let renderedState = $derived.by<RenderedState | null>(() => {
 		if (!projectionCtx) return null;
 		const t = $playhead ?? Number.NEGATIVE_INFINITY;
-		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx);
+		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore);
 	});
 
 	// Combined readiness signal piped through to PixiRegionLayer as
