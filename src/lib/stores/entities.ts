@@ -172,6 +172,10 @@ function createEntityStore() {
 		// recomputed bounds, and the superseding edit (a rename) won't have, so
 		// the timeline would otherwise stay stale until a full reload (Codex P2).
 		if (latestUpdate.get(id) !== seq) {
+			// Safe to load even if the superseding edit also refreshes: intervals
+			// is a global store with its own loadToken, so concurrent loads can't
+			// clobber a newer view and the latest response wins. Worst case is one
+			// redundant fetch when two structural edits race — never stale data.
 			if (wasStructural) await intervalsStore.load();
 			return updated;
 		}
