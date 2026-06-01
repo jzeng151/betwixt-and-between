@@ -1,19 +1,14 @@
 <script lang="ts">
 	/**
-	 * BrushPalette — Slice 3 T5 brush UX.
+	 * BrushPalette — Slice 3 T5 brush UX. Slice 4 PR-F (DS4): now a detail panel
+	 * shown only when the Brush tool is active (MapToolSelector owns on/off, and
+	 * hosts undo/redo). Two pieces:
 	 *
-	 * Lives below the canvas alongside PlaceablePalette. Three pieces:
-	 *
-	 *   1. Mode toggle: enter/exit brush mode. While active, pointer events
-	 *      on the canvas paint cells (via PixiBrushLayer). Mutually
-	 *      exclusive with placement arming (orchestrator handles the cross-
-	 *      exclusion).
-	 *
-	 *   2. Biome picker: chip rail with one chip per BIOMES enum value.
+	 *   1. Biome picker: chip rail with one chip per BIOMES enum value.
 	 *      Eraser is biome='unset' rendered with a distinct (red dashed
 	 *      border + ⌀ glyph) style so it's visually a tool, not a biome.
 	 *
-	 *   3. Size selector: three buttons (1, 3, 5 cell radius). Matches the
+	 *   2. Size selector: three buttons (1, 3, 5 cell radius). Matches the
 	 *      design-doc thread #4 prior (1/3/5 — no continuous slider for
 	 *      Slice 3 MVP).
 	 *
@@ -25,29 +20,12 @@
 	import { BIOME_STYLES } from '$lib/features/map/biome-textures.js';
 
 	interface Props {
-		active: boolean;
 		biome: BiomeKind;
 		size: 1 | 3 | 5;
-		canUndo?: boolean;
-		canRedo?: boolean;
-		onSetActive: (active: boolean) => void;
 		onSetBiome: (biome: BiomeKind) => void;
 		onSetSize: (size: 1 | 3 | 5) => void;
-		onUndo?: () => void;
-		onRedo?: () => void;
 	}
-	let {
-		active,
-		biome,
-		size,
-		canUndo = false,
-		canRedo = false,
-		onSetActive,
-		onSetBiome,
-		onSetSize,
-		onUndo,
-		onRedo
-	}: Props = $props();
+	let { biome, size, onSetBiome, onSetSize }: Props = $props();
 
 	// Paintable biomes first; 'unset' (eraser) rendered as a separate
 	// affordance to the right so it visually reads as a tool.
@@ -62,27 +40,10 @@
 <div class="brush-palette" data-testid="brush-palette">
 	<div class="palette-header">
 		<span class="palette-title">Brush</span>
-		<span class="palette-hint">
-			{#if active}
-				drag on map to paint · Shift on vertices = snap
-			{:else}
-				click the toggle to start painting
-			{/if}
-		</span>
+		<span class="palette-hint">drag on map to paint · Shift on vertices = snap</span>
 	</div>
 
 	<div class="palette-body">
-		<button
-			type="button"
-			class="mode-toggle"
-			class:armed={active}
-			aria-pressed={active}
-			onclick={() => onSetActive(!active)}
-			title={active ? 'Exit brush mode' : 'Enter brush mode'}
-		>
-			{active ? 'Brush ON' : 'Brush'}
-		</button>
-
 		<div class="biome-chips" aria-label="Biome">
 			{#each PAINTABLE_BIOMES as b (b)}
 				<button
@@ -124,27 +85,6 @@
 					{s}
 				</button>
 			{/each}
-		</div>
-
-		<div class="history-controls" aria-label="History">
-			<button
-				type="button"
-				class="history-button"
-				disabled={!canUndo}
-				onclick={() => onUndo?.()}
-				title="Undo (Ctrl/Cmd+Z)"
-			>
-				↶ Undo
-			</button>
-			<button
-				type="button"
-				class="history-button"
-				disabled={!canRedo}
-				onclick={() => onRedo?.()}
-				title="Redo (Ctrl/Cmd+Shift+Z)"
-			>
-				↷ Redo
-			</button>
 		</div>
 	</div>
 </div>
@@ -189,22 +129,6 @@
 		flex-wrap: wrap;
 		gap: 8px;
 		align-items: center;
-	}
-	.mode-toggle {
-		padding: 4px 10px;
-		border-radius: 4px;
-		border: 1px solid var(--color-border, #333);
-		background: var(--color-bg, #1a1a1a);
-		color: var(--color-text, #ddd);
-		font-size: 11px;
-		font-weight: 600;
-		cursor: pointer;
-		min-width: 70px;
-	}
-	.mode-toggle.armed {
-		border-color: var(--color-accent, #c8942a);
-		background: color-mix(in srgb, var(--color-accent, #c8942a) 25%, transparent);
-		color: var(--color-text, #fff);
 	}
 	.biome-chips {
 		display: flex;
@@ -279,26 +203,5 @@
 	.size-button.armed {
 		border-color: var(--color-accent, #c8942a);
 		background: color-mix(in srgb, var(--color-accent, #c8942a) 25%, transparent);
-	}
-	.history-controls {
-		display: flex;
-		gap: 4px;
-	}
-	.history-button {
-		padding: 4px 8px;
-		border-radius: 4px;
-		border: 1px solid var(--color-border, #333);
-		background: var(--color-bg, #1a1a1a);
-		color: var(--color-text, #ddd);
-		font-size: 11px;
-		font-weight: 600;
-		cursor: pointer;
-	}
-	.history-button:hover:not(:disabled) {
-		border-color: var(--color-accent, #c8942a);
-	}
-	.history-button:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
 	}
 </style>

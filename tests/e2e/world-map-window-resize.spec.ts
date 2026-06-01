@@ -31,7 +31,9 @@ test('world map window resizes from the bottom edge (under the palettes) and rig
 	await page.click('button[title="World Map"]');
 	const win = page.locator('.window[aria-label="World Map"]');
 	await expect(win).toBeVisible();
-	await expect(win.locator('[data-testid="brush-palette"]')).toBeVisible({ timeout: 10000 });
+	// The unified tool bar (DS4) is the always-present bottom chrome now; the
+	// brush palette only shows under the Brush tool. Wait on the tool bar.
+	await expect(win.locator('[data-testid="map-tool-selector"]')).toBeVisible({ timeout: 10000 });
 
 	const before = await win.boundingBox();
 	if (!before) throw new Error('no box');

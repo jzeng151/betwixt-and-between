@@ -27,8 +27,14 @@
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
-	import { projectState, type ProjectionContext, type RenderedState } from '$lib/features/map/projection.js';
-	import { computeCanvasMode } from '$lib/features/map/canvas-mode.js';
+	import MapToolSelector from '$lib/features/map/MapToolSelector.svelte';
+	import {
+		projectState,
+		type ProjectionContext,
+		type RenderedState,
+		type ArtifactPosition
+	} from '$lib/features/map/projection.js';
+	import { computeCanvasMode, type MapTool } from '$lib/features/map/canvas-mode.js';
 	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
 	import { mapAnchorsStore } from '$lib/features/map/map-anchors-store.js';
 	import { mapEventsStore } from '$lib/features/map/map-events-store.js';
@@ -48,35 +54,39 @@
 	// every open map instance.
 	let { entityId = $bindable<string | undefined>(undefined), windowId = undefined }: { entityId?: string; windowId?: string } = $props();
 
+	// Slice 4 PR-F (DS4) — the unified tool selector's active tool is the single
+	// source of truth for which authoring mode the canvas is in. brush/place/move
+	// are mutually exclusive by construction (one tool at a time), which retires
+	// the hand-rolled cross-exclusion effects the per-flag model needed.
+	let activeTool = $state<MapTool>('select');
+	// Brush/move are thin derivations of the active tool; the rest of the
+	// component still reads these names. 'place' stays distinct from
+	// 'place-armed': the Place tool reveals the palette, but the canvas only
+	// enters place-armed mode once a chip is actually armed (armedPlaceableId).
+	let brushActive = $derived(activeTool === 'brush');
+	let moveActive = $derived(activeTool === 'move');
+	let brushBiome = $state<BiomeKind>('plains');
+	let brushSize = $state<1 | 3 | 5>(1);
+
 	// armed placeable id (chip selected in PlaceablePalette). When non-null,
 	// the next click on the Pixi canvas creates a placement at the clicked
 	// fractional coords for this entity.
 	let armedPlaceableId = $state<string | null>(null);
-	// Disarm if the palette goes away (active map loses its Location anchor or
-	// switches to one without an image). Prevents a stale arm from creating a
-	// placement with locationId=null after the palette unmounts.
+	// Arming only ever happens under the Place tool; leaving Place (or losing the
+	// Location/image the palette needs) clears any stale arm so the next canvas
+	// tap can't drop a placement with locationId=null after the palette unmounts.
 	$effect(() => {
-		if (!activeMap?.locationId || !hasImage) armedPlaceableId = null;
+		if (activeTool !== 'place' || !activeMap?.locationId || !hasImage) armedPlaceableId = null;
 	});
 
-	// Slice 3 T5 — brush authoring state. When `brushActive` is true,
-	// PixiBrushLayer captures pointer events and paints cells. Mutually
-	// exclusive with armedPlaceableId (you can't be placing and painting
-	// at the same time — both take the canvas pointer).
-	let brushActive = $state(false);
-	let brushBiome = $state<BiomeKind>('plains');
-	let brushSize = $state<1 | 3 | 5>(1);
+	// Fall back to Select when the active map can't host the current tool, so the
+	// user is never stuck in a no-op mode. Brush needs canvas dimensions; Place
+	// and Move act on Location-scoped placements so they need a linked Location.
 	$effect(() => {
-		// Disable brush if the active map can't host paint (no image,
-		// no canvas dimensions). Auto-unarm so the user doesn't get
-		// stuck in a no-op brush state.
-		if (!activeMap || !activeMap.width || !activeMap.height) brushActive = false;
-	});
-	$effect(() => {
-		// Cross-exclusion: arming a placement disables the brush, and
-		// vice versa. Paint-and-place at the same time would conflict
-		// on the pointer.
-		if (brushActive && armedPlaceableId !== null) armedPlaceableId = null;
+		const canPaint = !!(activeMap?.width && activeMap?.height);
+		const canPlaceOrMove = !!(activeMap?.locationId && hasImage);
+		if (activeTool === 'brush' && !canPaint) activeTool = 'select';
+		if ((activeTool === 'place' || activeTool === 'move') && !canPlaceOrMove) activeTool = 'select';
 	});
 	let placementError = $state('');
 	// In-flight flag for the per-map placements fetch (see the placements
@@ -115,6 +125,130 @@
 		}
 	}
 
+	// Slice 4 PR-F (DS4) — author a move_entity keyframe at the current playhead.
+	// Shared by the Move-tool drag (PixiPlacementLayer) and keyboard nudge. Uses
+	// the same optimistic events-store create path as brush/region writes; the
+	// projection then folds the keyframe into a position override on the next tick
+	// so the marker lands at the committed point. The server validates the
+	// placement_id by Location scope and rejects out-of-window keyframes (D-PRF-8/9);
+	// surface any rejection in the existing placement-error banner.
+	async function handleMoveCommit(placementId: string, x: number, y: number) {
+		if (!activeMapId || mapLoading) return;
+		const tPosition = $playhead ?? 0;
+		try {
+			await mapEventsStore.create(activeMapId, {
+				tPosition,
+				kind: 'move_entity',
+				payloadJsonb: { placement_id: placementId, position: { x, y }, tween: 'ease_in_out' }
+			});
+			moveAnnouncement = `Moved to ${(x * 100).toFixed(0)}%, ${(y * 100).toFixed(0)}% at T ${tPosition.toFixed(3)}`;
+		} catch (err) {
+			placementError = err instanceof Error ? err.message : String(err);
+		}
+	}
+	// ARIA live-region text announcing the most recent move-keyframe commit
+	// (DS4 a11y). Read by the visually-hidden status node in the template.
+	let moveAnnouncement = $state('');
+
+	// Slice 4 PR-F (DS4) — keyboard move authoring. Clicking a marker in Move mode
+	// selects it for nudging (no drag); arrow keys adjust the pending fractional
+	// position, Enter commits a keyframe at the playhead, Escape cancels. The
+	// pending position is previewed on the marker via movePreview below.
+	let moveKbSelection = $state<{ id: string; name: string; x: number; y: number } | null>(null);
+	// Leaving Move mode drops any keyboard selection.
+	$effect(() => {
+		if (!moveActive) moveKbSelection = null;
+	});
+
+	function handleMoveSelect(placementId: string) {
+		const pl = $placementsStore.find((p) => p.id === placementId);
+		if (!pl) return;
+		// Seed the nudge from the placement's CURRENT rendered position (the
+		// movement override if it has one at this T, else its static baseline).
+		const ov = renderedState?.artifactOverrides.get(placementId);
+		const ent = $entities.find((e) => e.id === pl.placeableId);
+		moveKbSelection = {
+			id: placementId,
+			name: ent?.name ?? 'placement',
+			x: ov ? ov.x : pl.x,
+			y: ov ? ov.y : pl.y
+		};
+	}
+
+	// Returns true if the key was a move-nudge key (so the caller stops here).
+	function handleMoveKeydown(e: KeyboardEvent): boolean {
+		if (!moveKbSelection) return false;
+		const sel = moveKbSelection;
+		// Shift = coarse 10× step (DS4). Fractional [0,1] units.
+		const step = e.shiftKey ? 0.1 : 0.01;
+		const clamp = (v: number) => Math.min(1, Math.max(0, v));
+		switch (e.key) {
+			case 'ArrowLeft':
+				e.preventDefault();
+				moveKbSelection = { ...sel, x: clamp(sel.x - step) };
+				return true;
+			case 'ArrowRight':
+				e.preventDefault();
+				moveKbSelection = { ...sel, x: clamp(sel.x + step) };
+				return true;
+			case 'ArrowUp':
+				e.preventDefault();
+				moveKbSelection = { ...sel, y: clamp(sel.y - step) };
+				return true;
+			case 'ArrowDown':
+				e.preventDefault();
+				moveKbSelection = { ...sel, y: clamp(sel.y + step) };
+				return true;
+			case 'Enter':
+				e.preventDefault();
+				void handleMoveCommit(sel.id, sel.x, sel.y);
+				moveKbSelection = null;
+				return true;
+			case 'Escape':
+				e.preventDefault();
+				moveKbSelection = null;
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	// Position overrides handed to PixiPlacementLayer: the projection's committed
+	// movement overrides, plus the live keyboard-nudge preview for the selected
+	// placement so its marker tracks the pending position before commit.
+	let movePreview = $derived.by<Map<string, ArtifactPosition>>(() => {
+		const base = renderedState?.artifactOverrides ?? new Map<string, ArtifactPosition>();
+		if (!moveKbSelection) return base;
+		const merged = new Map(base);
+		merged.set(moveKbSelection.id, { x: moveKbSelection.x, y: moveKbSelection.y });
+		return merged;
+	});
+
+	// Committed move_entity keyframe positions per placement_id, sorted by
+	// t_position — feeds the Move-tool amber path (DS4). Malformed payloads are
+	// skipped (lazy-GC, matching the projection fold's tolerance).
+	let moveKeyframes = $derived.by<Map<string, ArtifactPosition[]>>(() => {
+		const byPlacement = new Map<string, Array<{ t: number; x: number; y: number }>>();
+		for (const ev of $mapEventsStore) {
+			if (ev.kind !== 'move_entity') continue;
+			const p = ev.payloadJsonb as { placement_id?: unknown; position?: { x?: unknown; y?: unknown } };
+			const pid = p?.placement_id;
+			const pos = p?.position;
+			if (typeof pid !== 'string' || !pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') {
+				continue;
+			}
+			const arr = byPlacement.get(pid) ?? [];
+			arr.push({ t: ev.tPosition, x: pos.x, y: pos.y });
+			byPlacement.set(pid, arr);
+		}
+		const result = new Map<string, ArtifactPosition[]>();
+		for (const [pid, arr] of byPlacement) {
+			arr.sort((a, b) => a.t - b.t);
+			result.set(pid, arr.map((k) => ({ x: k.x, y: k.y })));
+		}
+		return result;
+	});
+
 	// Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z or Ctrl+Y = redo. Scoped to the
 	// focused World Map window so the shortcut doesn't undo map events while
 	// the user is working in another app, and ignored while typing in a field.
@@ -135,6 +269,11 @@
 				target.isContentEditable)
 		)
 			return;
+		// Slice 4 PR-F (DS4) — Move-tool keyboard nudge. Window-scoped (same as
+		// undo/redo) so the focused map handles arrows/Enter/Escape when a marker
+		// is selected, without a focusable canvas proxy. Runs before the
+		// meta/ctrl guard since the nudge keys carry no modifier.
+		if (moveActive && moveKbSelection && handleMoveKeydown(e)) return;
 		if (!(e.metaKey || e.ctrlKey)) return;
 		const key = e.key.toLowerCase();
 		if (key === 'z' && !e.shiftKey) {
@@ -172,7 +311,8 @@
 		computeCanvasMode({
 			drawing: pixiDrawingActive,
 			brushing: brushActive,
-			armed: armedPlaceableId !== null
+			armed: armedPlaceableId !== null,
+			moving: moveActive
 		})
 	);
 	// codex PR review iter 7: reset polygon-draw state when the user
@@ -1352,7 +1492,11 @@
 					isInScope={$isInScope}
 					armedPlaceableId={canvasMode === 'place-armed' ? armedPlaceableId : null}
 					brushActive={brushActive}
-					artifactOverrides={renderedState?.artifactOverrides ?? new Map()}
+					artifactOverrides={movePreview}
+					moveMode={canvasMode === 'move'}
+					moveKeyframes={moveKeyframes}
+					onMoveCommit={(id, x, y) => void handleMoveCommit(id, x, y)}
+					onMoveSelect={handleMoveSelect}
 					onOpenEntity={(id) => windowStore.open('entity-detail', id)}
 					onDeletePlacement={(id) => void deletePlacement(id)}
 					onCanvasClick={handleCanvasClick}
@@ -1395,11 +1539,46 @@
 			</div>
 		{/if}
 		<MapSidebar {activeMapId} />
-		{#if hasImage && activeMap?.locationId}
+		{#if hasImage}
+			<!-- Slice 4 PR-F (DS4) — unified tool bar. Single entry point for
+			     Select/Brush/Place/Move; the palettes below are detail panels
+			     shown only when their tool is active. Place/Move act on
+			     Location-scoped placements so they're disabled without a Location. -->
+			<MapToolSelector
+				tool={activeTool}
+				onSelect={(t) => (activeTool = t)}
+				placeEnabled={!!activeMap?.locationId}
+				moveEnabled={!!activeMap?.locationId}
+				canUndo={canUndo && !mapLoading}
+				canRedo={canRedo && !mapLoading}
+				onUndo={handleUndo}
+				onRedo={handleRedo}
+			/>
+		{/if}
+		<!-- DS4 a11y — announces move-keyframe commits (drag or keyboard nudge) to
+		     screen readers. Always present so the live region exists before its
+		     text changes. -->
+		<div class="map-move-announcer" role="status" aria-live="polite">{moveAnnouncement}</div>
+		{#if hasImage && moveActive}
+			<!-- DS4 keyboard a11y — status hint for the Move tool. The nudge keys
+			     (arrows / Shift+arrows / Enter / Escape) are handled window-scoped
+			     in handleMapKeydown when a marker is selected; this panel just
+			     surfaces the current selection + key affordances. -->
+			<div class="map-move-keyboard" role="status">
+				{#if moveKbSelection}
+					Nudging <strong>{moveKbSelection.name}</strong> · {(moveKbSelection.x * 100).toFixed(0)}%,
+					{(moveKbSelection.y * 100).toFixed(0)}% · arrows to move (Shift = 10×) · Enter commits · Esc cancels
+				{:else}
+					Drag a marker to move it, or click one to nudge it with the keyboard.
+				{/if}
+			</div>
+		{/if}
+		{#if activeTool === 'place' && hasImage && activeMap?.locationId}
 			<!-- Slice 4 PR-D — single placeables palette. Each chip is both a
 			     click-to-arm target (armed chip → PixiPlacementLayer pointertap →
 			     handleCanvasClick → create placement) and a drag source (drop
-			     target lives on the pixi-drop-target wrapper above). -->
+			     target lives on the pixi-drop-target wrapper above). PR-F: shown
+			     only under the Place tool (DS4). -->
 			<PlaceablePalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 			{#if placementError}
 				<div class="placement-error" role="alert">
@@ -1408,24 +1587,15 @@
 				</div>
 			{/if}
 		{/if}
-		{#if hasImage}
-			<!-- Slice 3 T5 brush palette. codex P2 (PR #58): gated on
-			     hasImage only, NOT on a linked Location — terrain painting
-			     needs just the map image + grid. Duplicated maps keep
-			     locationId: null, so Location-gating this hid the brush on
-			     clones. Toggling brush ON disarms any placement chip
-			     (cross-exclusion in $effect above). -->
+		{#if activeTool === 'brush' && hasImage}
+			<!-- Slice 3 T5 brush palette. PR-F (DS4): shown only under the Brush
+			     tool — the unified tool bar owns on/off + undo/redo, so this panel
+			     carries just the biome picker + size selector. -->
 			<BrushPalette
-				active={brushActive}
 				biome={brushBiome}
 				size={brushSize}
-				canUndo={canUndo && !mapLoading}
-				canRedo={canRedo && !mapLoading}
-				onSetActive={(a) => (brushActive = a)}
 				onSetBiome={(b) => (brushBiome = b)}
 				onSetSize={(s) => (brushSize = s)}
-				onUndo={handleUndo}
-				onRedo={handleRedo}
 			/>
 		{/if}
 		{#if !hasImage}
@@ -2037,6 +2207,31 @@
 		   absolutely-positioned sidebar would otherwise paint over them. */
 		position: relative;
 		z-index: 150;
+	}
+	/* DS4 a11y — visually-hidden ARIA live region for move-keyframe commits. */
+	.map-move-announcer {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+		border: 0;
+	}
+	/* DS4 — Move-tool status hint, in the bottom-of-column flow with the palettes. */
+	.map-move-keyboard {
+		padding: 6px 10px;
+		font-size: 11px;
+		color: var(--color-text-muted, #aaa);
+		background: var(--color-panel, rgba(0, 0, 0, 0.6));
+		border-top: 1px solid var(--color-border, #333);
+		position: relative;
+		z-index: 150;
+	}
+	.map-move-keyboard strong {
+		color: var(--color-text, #ddd);
 	}
 	/* Slice 3 T8' drop target wraps the Pixi canvas. Must have a real box
 	   so getBoundingClientRect() in the drop handler returns the canvas

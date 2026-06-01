@@ -48,6 +48,10 @@
 		armedPlaceableId = null,
 		brushActive = false,
 		artifactOverrides = new Map(),
+		moveMode = false,
+		moveKeyframes = new Map(),
+		onMoveCommit,
+		onMoveSelect,
 		onOpenEntity,
 		onDeletePlacement,
 		onCanvasClick
@@ -77,6 +81,22 @@
 		// position. projection.ts owns the fold; this layer keeps owning identity/
 		// style/window/interaction. Empty map when nothing moves.
 		artifactOverrides?: Map<string, ArtifactPosition>;
+		// Slice 4 PR-F (DS4) — Move tool active. Markers become draggable (cursor
+		// grab); a drag authors a move_entity keyframe at the playhead via
+		// onMoveCommit. The marker-tap context menu is suppressed in this mode.
+		moveMode?: boolean;
+		// Slice 4 PR-F (DS4) — committed move_entity keyframe positions per
+		// placement_id, sorted by t_position. In Move mode the layer draws a faint
+		// amber path from each placement's baseline through its keyframes so the
+		// authored motion is visible. Empty/absent → no path.
+		moveKeyframes?: Map<string, ArtifactPosition[]>;
+		// Fired on drag release with the dropped fractional [0,1] position. The
+		// parent POSTs the move_entity event; the projection override then repaints
+		// the marker at the committed/interpolated position on the next tick.
+		onMoveCommit?: (placementId: string, x: number, y: number) => void;
+		// Fired when a marker is clicked (not dragged) in Move mode — selects it for
+		// keyboard nudging (DS4 a11y). The parent owns the keyboard interaction.
+		onMoveSelect?: (placementId: string) => void;
 		onOpenEntity: (id: string) => void;
 		onDeletePlacement: (id: string) => void;
 		onCanvasClick?: (fx: number, fy: number) => void;
@@ -86,6 +106,22 @@
 
 	let PIXI = $state<PixiModule | null>(null);
 	let layer: PixiContainer | null = null;
+
+	// Slice 4 PR-F (DS4) — Move-tool drag state. Set on a marker pointerdown while
+	// moveMode is on; the dragged marker follows the cursor and a dashed ghost
+	// line runs from its baseline to the cursor until release. baseline is the
+	// marker's canvas-pixel origin at grab time (the ghost anchor); the live Pixi
+	// position is mutated directly during the drag (not via reactive state, so the
+	// marker-rebuild effect doesn't fire mid-gesture). ghost is a persistent
+	// Graphics added to the layer at grab time and destroyed on release.
+	type DragState = {
+		placementId: string;
+		marker: PixiContainer;
+		baselineCx: number;
+		baselineCy: number;
+	};
+	let drag: DragState | null = null;
+	let ghost: PixiGraphics | null = null;
 
 	// Slice 4 PR-E (DS3) — per-type hover: a size pulse (scale → 1.15) plus a
 	// glow halo in the marker's RESOLVED color (not the amber accent, which is
@@ -197,6 +233,9 @@
 		if (!activeMap?.width || !activeMap?.height) return;
 
 		const generation = ++renderGeneration;
+		// Capture moveMode for the closures below; reading it here also makes this
+		// effect rebuild markers (grab cursor + drag handler) when the tool toggles.
+		const inMoveMode = moveMode;
 
 		if (!layer) {
 			layer = new PIXI.Container();
@@ -251,6 +290,23 @@
 			// Sprite radius scales with cascade.scale. Base radius 8.
 			const radius = 8 * resolved.scale;
 
+			// Slice 4 PR-F (DS4) — in Move mode, draw a faint amber path from the
+			// placement's static baseline through its committed keyframes so the
+			// authored motion is visible. Drawn before the marker so it paints
+			// underneath. Baseline (static x,y) is the position before the first
+			// keyframe, matching the projection's clamp-before-first behavior.
+			if (inMoveMode) {
+				const kfs = moveKeyframes.get(placement.id);
+				if (kfs && kfs.length > 0) {
+					const path = new PIXI.Graphics();
+					path.moveTo(placement.x * mapW, placement.y * mapH);
+					for (const kf of kfs) path.lineTo(kf.x * mapW, kf.y * mapH);
+					path.stroke({ color: GHOST_COLOR, width: 1.5, alpha: 0.4 });
+					path.eventMode = 'none';
+					layer.addChild(path);
+				}
+			}
+
 			// Marker is a Container that owns the hit area + interaction, so the
 			// visual (circle fallback OR icon sprite) can swap without losing
 			// pointer handlers. codex P2 (PR #58): resolved.icon is now honored.
@@ -260,7 +316,7 @@
 			// Reading brushActive here makes this effect rebuild markers when the
 			// brush toggles.
 			marker.eventMode = brushActive ? 'none' : 'static';
-			marker.cursor = brushActive ? 'default' : 'pointer';
+			marker.cursor = brushActive ? 'default' : inMoveMode ? 'grab' : 'pointer';
 			// Stable hit area on the container — independent of which child
 			// visual is shown (the circle may be hidden once an icon loads).
 			marker.hitArea = new PIXI.Circle(cx, cy, radius);
@@ -303,6 +359,8 @@
 			});
 			marker.on('pointertap', (e: FederatedPointerEvent) => {
 				if (e.button !== 0) return;
+				// In Move mode a click is the start of a drag, not a menu open.
+				if (inMoveMode) return;
 				e.stopPropagation();
 				const { x, y } = clientXY(e);
 				tooltip = null;
@@ -315,6 +373,17 @@
 					placeableName: placeable.name
 				};
 			});
+
+			// Slice 4 PR-F (DS4) — Move tool: grab a marker to drag it. The drag
+			// itself is tracked on the viewport (pointermove/up) so it keeps
+			// following the cursor outside the marker's hit area; see startDrag.
+			if (inMoveMode) {
+				marker.on('pointerdown', (e: FederatedPointerEvent) => {
+					if (e.button !== 0) return;
+					e.stopPropagation();
+					startDrag(placement.id, marker, cx, cy);
+				});
+			}
 
 			const g: PixiGraphics = new PIXI.Graphics();
 			g.circle(cx, cy, radius)
@@ -332,6 +401,116 @@
 			}
 		}
 	});
+
+	// Slice 4 PR-F (DS4) — Move-tool drag. Grab handles pointerdown on a marker;
+	// the move/release are tracked on the viewport so the marker keeps following
+	// the cursor even when it leaves the marker's small hit area. The viewport's
+	// pan-on-drag plugin is paused for the duration so panning doesn't fight the
+	// drag (same approach as PixiBrushLayer). Direct Pixi mutation (no reactive
+	// state) keeps the marker-rebuild effect from firing mid-gesture.
+	const GHOST_COLOR = 0xc8942a; // amber accent
+	const DRAG_THRESHOLD_PX = 4; // a sub-threshold drag is a click, not a move
+
+	function startDrag(placementId: string, marker: PixiContainer, cx: number, cy: number): void {
+		const viewport = stageCtx.viewport;
+		if (!viewport || !PIXI || drag) return;
+		drag = { placementId, marker, baselineCx: cx, baselineCy: cy };
+		marker.cursor = 'grabbing';
+		ghost = new PIXI.Graphics();
+		if (layer) layer.addChild(ghost);
+		pauseViewportDrag(viewport, true);
+		viewport.on('pointermove', onDragMove);
+		viewport.on('pointerup', endDrag);
+		viewport.on('pointerupoutside', endDrag);
+	}
+
+	function onDragMove(e: FederatedPointerEvent): void {
+		const viewport = stageCtx.viewport;
+		if (!drag || !viewport) return;
+		if (drag.marker.destroyed) {
+			cleanupDrag();
+			return;
+		}
+		const local = e.getLocalPosition(viewport);
+		// Pivot stays at the baseline, so setting position moves the children to
+		// the cursor's world position 1:1.
+		drag.marker.position.set(local.x, local.y);
+		if (ghost && !ghost.destroyed) {
+			ghost.clear();
+			drawDashedLine(ghost, drag.baselineCx, drag.baselineCy, local.x, local.y);
+		}
+	}
+
+	function endDrag(e: FederatedPointerEvent): void {
+		const viewport = stageCtx.viewport;
+		const captured = drag;
+		if (!captured) return;
+		let committed: { x: number; y: number } | null = null;
+		if (viewport && activeMap?.width && activeMap?.height && !captured.marker.destroyed) {
+			const local = e.getLocalPosition(viewport);
+			const moved = Math.hypot(local.x - captured.baselineCx, local.y - captured.baselineCy);
+			if (moved >= DRAG_THRESHOLD_PX) {
+				const fx = Math.min(1, Math.max(0, local.x / activeMap.width));
+				const fy = Math.min(1, Math.max(0, local.y / activeMap.height));
+				committed = { x: fx, y: fy };
+			} else {
+				// Treat as a click — snap the marker back and select it for keyboard
+				// nudging instead of authoring a near-zero-distance keyframe.
+				captured.marker.position.set(captured.baselineCx, captured.baselineCy);
+				onMoveSelect?.(captured.placementId);
+			}
+		}
+		cleanupDrag();
+		if (committed) onMoveCommit?.(captured.placementId, committed.x, committed.y);
+	}
+
+	function cleanupDrag(): void {
+		const viewport = stageCtx.viewport;
+		if (drag && !drag.marker.destroyed) drag.marker.cursor = moveMode ? 'grab' : 'pointer';
+		if (ghost) {
+			try {
+				if (!ghost.destroyed) ghost.destroy();
+			} catch (_) {
+				/* layer torn down first */
+			}
+			ghost = null;
+		}
+		if (viewport) {
+			try {
+				viewport.off('pointermove', onDragMove);
+				viewport.off('pointerup', endDrag);
+				viewport.off('pointerupoutside', endDrag);
+			} catch (_) {
+				/* viewport torn down */
+			}
+			pauseViewportDrag(viewport, false);
+		}
+		drag = null;
+	}
+
+	// Optional-chained so a mocked viewport without a plugin manager is a no-op
+	// in tests (mirrors PixiBrushLayer's drag-plugin pause/resume).
+	function pauseViewportDrag(viewport: unknown, pause: boolean): void {
+		const vp = viewport as { plugins?: { pause(n: string): void; resume(n: string): void } };
+		if (pause) vp.plugins?.pause('drag');
+		else vp.plugins?.resume('drag');
+	}
+
+	function drawDashedLine(g: PixiGraphics, x0: number, y0: number, x1: number, y1: number): void {
+		const dash = 6;
+		const gap = 4;
+		const dist = Math.hypot(x1 - x0, y1 - y0);
+		if (dist < 1) return;
+		const ux = (x1 - x0) / dist;
+		const uy = (y1 - y0) / dist;
+		for (let d = 0; d < dist; d += dash + gap) {
+			const s = d;
+			const e = Math.min(d + dash, dist);
+			g.moveTo(x0 + ux * s, y0 + uy * s);
+			g.lineTo(x0 + ux * e, y0 + uy * e);
+		}
+		g.stroke({ color: GHOST_COLOR, width: 1.5, alpha: 0.85 });
+	}
 
 	// codex P2 (PR #58): load a placement's icon-override texture and overlay it
 	// as a sprite, sized to the marker diameter and dimmed to the resolved
@@ -482,6 +661,9 @@
 	});
 
 	onDestroy(() => {
+		// Detach any in-flight move-drag handlers + resume viewport pan before the
+		// layer (and its ghost) is torn down.
+		cleanupDrag();
 		if (layer) {
 			try {
 				layer.destroy({ children: true });

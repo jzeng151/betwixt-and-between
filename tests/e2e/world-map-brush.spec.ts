@@ -68,12 +68,12 @@ test('paint a stroke on the canvas, then grouped-undo reverts every painted cell
 	const canvas = win.locator('.pixi-stage canvas');
 	await expect(canvas).toBeVisible({ timeout: 10000 });
 
-	// Enter brush mode. (Default size 1; a multi-cell drag still paints
-	// several distinct cells. The size selector sits under the right
-	// sidebar at wide layouts, so we don't touch it here.)
+	// Enter brush mode via the unified tool bar (DS4). The brush palette
+	// (biome/size) appears as a detail panel once Brush is active. (Default
+	// size 1; a multi-cell drag still paints several distinct cells.)
+	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Brush' }).click();
 	const palette = win.locator('[data-testid="brush-palette"]');
-	await palette.locator('.mode-toggle').click();
-	await expect(palette.locator('.mode-toggle')).toHaveText('Brush ON');
+	await expect(palette).toBeVisible();
 
 	// Drag a stroke across the canvas interior (left of the right-side
 	// sidebar). Pixi's federated pointer system picks up these real DOM
