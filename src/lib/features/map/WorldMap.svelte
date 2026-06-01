@@ -1352,6 +1352,7 @@
 					isInScope={$isInScope}
 					armedPlaceableId={canvasMode === 'place-armed' ? armedPlaceableId : null}
 					brushActive={brushActive}
+					artifactOverrides={renderedState?.artifactOverrides ?? new Map()}
 					onOpenEntity={(id) => windowStore.open('entity-detail', id)}
 					onDeletePlacement={(id) => void deletePlacement(id)}
 					onCanvasClick={handleCanvasClick}

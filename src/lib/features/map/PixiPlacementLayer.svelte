@@ -19,6 +19,7 @@
 		type PixiStageContext
 	} from './pixi-context.js';
 	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
+	import type { ArtifactPosition } from '$lib/features/map/projection.js';
 	import { resolveStyle } from '$lib/features/map/style-cascade.js';
 	import { easeToward } from '$lib/features/map/ease.js';
 	import { layerVisibility } from '$lib/features/map/layer-prefs-store.js';
@@ -46,6 +47,7 @@
 		isInScope = null,
 		armedPlaceableId = null,
 		brushActive = false,
+		artifactOverrides = new Map(),
 		onOpenEntity,
 		onDeletePlacement,
 		onCanvasClick
@@ -68,6 +70,13 @@
 		// codex P2: when brush mode is active, suppress marker pointer
 		// interaction so painting over a placement doesn't also open/delete it.
 		brushActive?: boolean;
+		// Slice 4 PR-F (D-PRF-3/4) — movement engine position overrides, keyed by
+		// placement_id. Movers-only: a placement with ≥1 move_entity keyframe that
+		// is active at the playhead appears here with its interpolated (x,y); we
+		// draw it there instead of its static x,y. Everyone else is absent → static
+		// position. projection.ts owns the fold; this layer keeps owning identity/
+		// style/window/interaction. Empty map when nothing moves.
+		artifactOverrides?: Map<string, ArtifactPosition>;
 		onOpenEntity: (id: string) => void;
 		onDeletePlacement: (id: string) => void;
 		onCanvasClick?: (fx: number, fy: number) => void;
@@ -208,8 +217,13 @@
 		for (const placement of activePlacements) {
 			const placeable = entityById.get(placement.placeableId);
 			if (!placeable) continue;
-			const cx = placement.x * mapW;
-			const cy = placement.y * mapH;
+			// Slice 4 PR-F (D-PRF-4) — movement override wins over the static x,y.
+			// Reading artifactOverrides here (it changes identity each playhead
+			// tick) keeps this rebuild effect re-running on scrub so the marker
+			// glides along the interpolated path.
+			const override = artifactOverrides.get(placement.id);
+			const cx = (override ? override.x : placement.x) * mapW;
+			const cy = (override ? override.y : placement.y) * mapH;
 
 			// Slice 3 T9 + B6 — style cascade resolved per-placement at
 			// render. GLOBAL ⊕ STYLE_DEFAULTS[type] ⊕ entity.data.style ⊕
