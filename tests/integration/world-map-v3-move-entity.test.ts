@@ -6,7 +6,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as schema from '../../src/lib/server/db/schema.js';
-import { createMapEvent } from '../../src/lib/server/world-map-v3.js';
+import { createMapEvent, undoLatestMapEvent, listMapEvents } from '../../src/lib/server/world-map-v3.js';
 import type { Db } from '../../src/lib/server/intervals.js';
 
 // Slice 4 PR-F (D5) — move_entity validator coverage.
@@ -291,5 +291,47 @@ describe('move_entity validator — window (D-PRF-9)', () => {
 				payloadJsonb: validPayload(windowedId)
 			})
 		).rejects.toThrow();
+	});
+});
+
+// D-PRF-11 — move_entity reuses /events/undo as-is (no keyframe-dependency
+// subsystem). Undo soft-deletes the latest live event; the live list (which the
+// projection folds) drops it, and prev/next re-span lazily at fold time. Here we
+// pin the server path: author → the keyframe is live → undo → it's gone from the
+// live set, and undoing on an empty history is a clean no-op.
+describe('move_entity undo (D-PRF-11)', () => {
+	async function liveMoveCount(): Promise<number> {
+		const { rows } = await listMapEvents(serverDb(), userId, worldMapId, {});
+		return rows.filter((r) => r.kind === 'move_entity').length;
+	}
+
+	it('author then undo removes the keyframe from the live set', async () => {
+		await createMapEvent(serverDb(), userId, worldMapId, {
+			tPosition: 3,
+			kind: 'move_entity',
+			payloadJsonb: validPayload(placementId)
+		});
+		expect(await liveMoveCount()).toBe(1);
+
+		const undone = await undoLatestMapEvent(serverDb(), userId, worldMapId);
+		expect(undone.map((e) => e.kind)).toContain('move_entity');
+		expect(await liveMoveCount()).toBe(0);
+	});
+
+	it('undo of a middle keyframe leaves the others live (LIFO pop of the latest)', async () => {
+		// Three keyframes for the default-window placement at distinct T.
+		for (const t of [2, 4, 6]) {
+			await createMapEvent(serverDb(), userId, worldMapId, {
+				tPosition: t,
+				kind: 'move_entity',
+				payloadJsonb: validPayload(placementId)
+			});
+		}
+		expect(await liveMoveCount()).toBe(3);
+		// Undo pops the most recently committed keyframe; the other two survive
+		// and the projection re-spans across them (verified at the fold in the
+		// projection-movement unit suite).
+		await undoLatestMapEvent(serverDb(), userId, worldMapId);
+		expect(await liveMoveCount()).toBe(2);
 	});
 });

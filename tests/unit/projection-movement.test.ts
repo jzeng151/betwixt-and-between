@@ -210,4 +210,39 @@ describe('projectState movement fold — artifactOverrides', () => {
 		const s = projectState(10, [], [bad], emptyCtx, [placement({ id: PL_A })]);
 		expect(s.artifactOverrides.has(PL_A)).toBe(false);
 	});
+
+	// D-PRF-11: undo soft-deletes a keyframe, so the fold simply sees the
+	// surviving subset and the adjacent keyframes lazily re-span. These model
+	// undo as "the undone event is absent from the event array" — exactly what
+	// listMapEvents (undoneAt IS NULL) hands the projection after an undo. The
+	// invariant under test is re-span + finiteness (no NaN), not a specific value.
+	it('undo a MIDDLE keyframe → adjacent keyframes re-span (finite, repositioned)', () => {
+		const k1 = moveEvent('k1', 0, PL_A, 0, 0);
+		const k2 = moveEvent('k2', 5, PL_A, 0.2, 0.2);
+		const k3 = moveEvent('k3', 10, PL_A, 1, 1);
+		const pl = [placement({ id: PL_A })];
+		// With the middle keyframe, T=7.5 is on the k2→k3 segment (u=0.5).
+		const withMiddle = projectState(7.5, [], [k1, k2, k3], emptyCtx, pl).artifactOverrides.get(PL_A)!;
+		expect(withMiddle.x).toBeCloseTo(0.6, 10);
+		// Undo k2 → T=7.5 now spans k1→k3 directly (u=0.75). Different position,
+		// still finite — the tween silently re-spanned.
+		const afterUndo = projectState(7.5, [], [k1, k3], emptyCtx, pl).artifactOverrides.get(PL_A)!;
+		expect(afterUndo.x).toBeCloseTo(0.75, 10);
+		expect(Number.isFinite(afterUndo.x)).toBe(true);
+		expect(afterUndo.x).not.toBeCloseTo(withMiddle.x, 5);
+	});
+
+	it('undo the PREV keyframe of an active tween → marker falls back to baseline (finite)', () => {
+		const k1 = moveEvent('k1', 0, PL_A, 0, 0);
+		const k2 = moveEvent('k2', 10, PL_A, 1, 1);
+		const pl = [placement({ id: PL_A, x: 0.42, y: 0.42 })];
+		// Mid-tween at T=5 → halfway between k1 and k2.
+		const before = projectState(5, [], [k1, k2], emptyCtx, pl).artifactOverrides.get(PL_A)!;
+		expect(before.x).toBeCloseTo(0.5, 10);
+		// Undo k1 (the prev of the active tween) → T=5 is now before the only
+		// remaining keyframe (k2) → clamp to baseline, finite (no NaN, no crash).
+		const after = projectState(5, [], [k2], emptyCtx, pl).artifactOverrides.get(PL_A)!;
+		expect(after).toEqual({ x: 0.42, y: 0.42 });
+		expect(Number.isFinite(after.x)).toBe(true);
+	});
 });
