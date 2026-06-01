@@ -237,6 +237,13 @@
 		// effect rebuild markers (grab cursor + drag handler) when the tool toggles.
 		const inMoveMode = moveMode;
 
+		// A reactive change (playhead, placements, override map, style, tool) rebuilds
+		// every marker below — which would destroy the marker + ghost out from under
+		// an in-flight drag while the viewport pointer listeners + paused pan plugin
+		// stayed live until the next pointer event (codex P1). Cancel the drag here
+		// first so cleanup is synchronous with the teardown, not deferred.
+		if (drag) cleanupDrag();
+
 		if (!layer) {
 			layer = new PIXI.Container();
 			viewport.addChild(layer);

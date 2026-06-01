@@ -6,6 +6,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as schema from '../../src/lib/server/db/schema.js';
+import { and, eq } from 'drizzle-orm';
 import { createMapEvent, undoLatestMapEvent, listMapEvents } from '../../src/lib/server/world-map-v3.js';
 import type { Db } from '../../src/lib/server/intervals.js';
 
@@ -333,5 +334,31 @@ describe('move_entity undo (D-PRF-11)', () => {
 		// projection-movement unit suite).
 		await undoLatestMapEvent(serverDb(), userId, worldMapId);
 		expect(await liveMoveCount()).toBe(2);
+	});
+});
+
+// D-PRF-1 — movement lives in placements + live events ONLY; it is NEVER baked
+// into synthetic anchor state_jsonb. The whole override-map design rests on this:
+// if move_entity triggered auto-anchoring, a baked anchor could carry a stale
+// position (the entity_id/placement_id mismatch the design rejected). Pin it.
+describe('move_entity does not auto-anchor (D-PRF-1)', () => {
+	async function syntheticAnchorCount(): Promise<number> {
+		const rows = await db
+			.select()
+			.from(schema.mapAnchors)
+			.where(and(eq(schema.mapAnchors.worldMapId, worldMapId), eq(schema.mapAnchors.isSynthetic, true)));
+		return rows.length;
+	}
+
+	it('authoring several move_entity keyframes creates zero synthetic anchors', async () => {
+		expect(await syntheticAnchorCount()).toBe(0);
+		for (const t of [1, 2, 3, 4]) {
+			await createMapEvent(serverDb(), userId, worldMapId, {
+				tPosition: t,
+				kind: 'move_entity',
+				payloadJsonb: validPayload(placementId)
+			});
+		}
+		expect(await syntheticAnchorCount()).toBe(0);
 	});
 });

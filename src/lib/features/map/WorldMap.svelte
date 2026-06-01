@@ -134,6 +134,13 @@
 	// surface any rejection in the existing placement-error banner.
 	async function handleMoveCommit(placementId: string, x: number, y: number) {
 		if (!activeMapId || mapLoading) return;
+		// Author at the current playhead, defaulting to 0 when idle. When the
+		// playhead is null the projection renders at -∞ (before any keyframe →
+		// baseline), so a freshly-authored keyframe would briefly snap back. We
+		// scrub to the committed T after a null-playhead commit so the marker stays
+		// at the dropped position — the auto-scrub effect's one-shot gate can't be
+		// relied on (it no-ops once consumed). (code-reviewer MEDIUM.)
+		const wasNull = $playhead == null;
 		const tPosition = $playhead ?? 0;
 		try {
 			await mapEventsStore.create(activeMapId, {
@@ -141,6 +148,7 @@
 				kind: 'move_entity',
 				payloadJsonb: { placement_id: placementId, position: { x, y }, tween: 'ease_in_out' }
 			});
+			if (wasNull) playhead.scrubTo(tPosition);
 			moveAnnouncement = `Moved to ${(x * 100).toFixed(0)}%, ${(y * 100).toFixed(0)}% at T ${tPosition.toFixed(3)}`;
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
@@ -1559,6 +1567,16 @@
 		     screen readers. Always present so the live region exists before its
 		     text changes. -->
 		<div class="map-move-announcer" role="status" aria-live="polite">{moveAnnouncement}</div>
+		<!-- Tool-independent error banner. Placement creation AND move-keyframe
+		     commits both write placementError; rendering it here (not inside the
+		     Place palette) keeps move-commit rejections visible under the Move
+		     tool too (codex P2). -->
+		{#if placementError}
+			<div class="placement-error" role="alert">
+				{placementError}
+				<button type="button" onclick={() => (placementError = '')}>✕</button>
+			</div>
+		{/if}
 		{#if hasImage && moveActive}
 			<!-- DS4 keyboard a11y — status hint for the Move tool. The nudge keys
 			     (arrows / Shift+arrows / Enter / Escape) are handled window-scoped
@@ -1580,12 +1598,6 @@
 			     target lives on the pixi-drop-target wrapper above). PR-F: shown
 			     only under the Place tool (DS4). -->
 			<PlaceablePalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
-			{#if placementError}
-				<div class="placement-error" role="alert">
-					{placementError}
-					<button type="button" onclick={() => (placementError = '')}>✕</button>
-				</div>
-			{/if}
 		{/if}
 		{#if activeTool === 'brush' && hasImage}
 			<!-- Slice 3 T5 brush palette. PR-F (DS4): shown only under the Brush
