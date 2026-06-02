@@ -22,7 +22,7 @@
 // No POST/DELETE: GET lazily creates the row, PATCH covers all mutation.
 // Profile create/switch/delete arrives with workspace profiles (Phase 3).
 
-import { json } from '@sveltejs/kit';
+import { json, error } from '@sveltejs/kit';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { getActivePreferences, patchPreferences } from '$lib/server/user-preferences.js';
 import type { RequestHandler } from './$types';
@@ -40,11 +40,18 @@ export const GET: RequestHandler = async (event) => {
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	const body = (await event.request.json()) as {
-		set?: Record<string, unknown>;
-		unset?: string[];
-		version?: number;
-	};
+	// Malformed JSON (or a non-object literal like `null`/`42`) must surface as
+	// the contract's 400, not an unhandled 500 — patchPreferences can only run its
+	// 400 validation once we have an object to read set/unset/version from (codex).
+	let body: { set?: Record<string, unknown>; unset?: string[]; version?: number };
+	try {
+		body = (await event.request.json()) as typeof body;
+	} catch {
+		error(400, 'request body must be valid JSON');
+	}
+	if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+		error(400, 'request body must be a JSON object');
+	}
 	// patchPreferences validates the patch shape + version (400) and enforces
 	// optimistic concurrency (409). We pass body fields through verbatim.
 	const result = await patchPreferences(

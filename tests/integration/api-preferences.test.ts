@@ -73,6 +73,20 @@ describe('/api/preferences', () => {
 		).rejects.toMatchObject({ status: 400 });
 	});
 
+	it('PATCH with malformed JSON → 400 (not 500)', async () => {
+		await route.GET(mkEvent());
+		const ev = mkEvent();
+		ev.request.json = async () => {
+			throw new SyntaxError('Unexpected token');
+		};
+		await expect(route.PATCH(ev)).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('PATCH with a non-object body (null) → 400 (not 500)', async () => {
+		await route.GET(mkEvent());
+		await expect(route.PATCH(mkEvent(null))).rejects.toMatchObject({ status: 400 });
+	});
+
 	it('PATCH with a stale version → 409', async () => {
 		await route.GET(mkEvent());
 		await route.PATCH(mkEvent({ set: { appearance: { theme: 'light' } }, version: 1 })); // → v2

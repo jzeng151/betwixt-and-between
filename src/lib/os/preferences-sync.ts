@@ -206,8 +206,14 @@ export async function hydratePreferences(): Promise<void> {
 			accumulate({ set: { schemaVersion: PREFERENCES_CODE_MAX_VERSION, ...delta }, unset: [] });
 		}
 	}
-	// Re-apply un-synced local edits onto the fresh server base.
-	preferences.set(reapplyOntoBase(merged));
+	// Re-apply un-synced local edits onto the fresh server base. `editor` prefs
+	// are local-only by design (Settings writes them via setPreference, never the
+	// sync path), so a server blob that lacks them — or holds stale defaults —
+	// must not reset the user's editor toggle and then persist that reset back to
+	// localStorage via the store subscription. Preserve the local editor branch
+	// across every hydrate (codex).
+	const localEditor = get(preferences).editor;
+	preferences.set({ ...reapplyOntoBase(merged), editor: localEditor });
 	hydrating = false;
 	if (hasPending()) {
 		scheduleFlush();
@@ -245,6 +251,11 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 		clearTimeout(timer);
 		timer = null;
 	}
+	if (retryTimer) {
+		clearTimeout(retryTimer);
+		retryTimer = null;
+	}
+	retryBackoffMs = RETRY_BASE_MS;
 	pending = { set: {}, unset: [] };
 	serverVersion = 0;
 	inFlight = false;
@@ -252,6 +263,12 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 		_status.set('offline');
 		return;
 	}
+	// Switching accounts: discard the previous user's local store BEFORE hydrating.
+	// Otherwise the first-login reconcile would diff the prior account's prefs
+	// against defaults and PATCH them into the new account's freshly-created row
+	// (cross-user write, codex). Resetting to defaults makes that diff empty; the
+	// new user's own row (if initialized) overwrites this on hydrate.
+	preferences.set({ ...PREFERENCES_DEFAULTS });
 	await hydratePreferences();
 }
 

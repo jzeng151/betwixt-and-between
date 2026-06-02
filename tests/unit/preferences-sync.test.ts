@@ -399,4 +399,48 @@ describe('T4 auth transitions', () => {
 		expect(calls.filter((c) => c.method === 'GET')).toHaveLength(2);
 		expect(__getServerVersionForTesting()).toBe(5);
 	});
+
+	it('switching to a user with a fresh (uninitialized) row does NOT leak the prior user prefs (codex)', async () => {
+		// Previous account's prefs are in the store (as if loaded from a shared
+		// browser localStorage). The new account's row is freshly created.
+		preferences.set({
+			...get(preferences),
+			appearance: { ...get(preferences).appearance, theme: 'light', accentColor: '#abc123' }
+		});
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, initialized: false })
+				: fakeRes(200, { version: 2 })
+		);
+		await onAuthChange('switch');
+		await __flushForTesting();
+		// No PATCH carrying the prior user's theme/accent into the new user's row.
+		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+		// New account sees defaults, not the previous user's customizations.
+		expect(get(preferences).appearance.accentColor).not.toBe('#abc123');
+	});
+});
+
+describe('T4 editor prefs are local-only across hydrate (codex)', () => {
+	it('preserves the local editor branch when an initialized server row lacks it', async () => {
+		// User toggled editor off locally (setPreference, never synced) on an
+		// already-initialized row whose server blob carries no editor subtree.
+		preferences.set({
+			...get(preferences),
+			editor: { ...get(preferences).editor, linkPreviewEnabled: false }
+		});
+		mockFetch(() =>
+			fakeRes(200, {
+				data: { schemaVersion: 4, appearance: { theme: 'dark' } },
+				version: 3,
+				initialized: true
+			})
+		);
+		await hydratePreferences();
+		// Local editor toggle survives — not reset to the default (true).
+		expect(get(preferences).editor.linkPreviewEnabled).toBe(false);
+		// And it was not pushed to the server (local-only).
+		await __flushForTesting();
+		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+	});
 });

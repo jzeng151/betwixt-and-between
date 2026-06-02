@@ -22,6 +22,8 @@ Settings customization (Phase 1) — your colors and theme now save to your acco
 - Upgrading no longer wipes your saved settings: the first time you sign in after this release, theme/accent/editor preferences already saved in your browser are migrated up to your account instead of being overwritten by defaults.
 - A preference change made while the server is briefly unreachable (network blip, transient 5xx, or an expired session) is now retried in the background until it lands, instead of being silently dropped and surviving only in this browser.
 - Editing the "Note of" swatch in Relationship colors no longer recolors Note entities — it shared the Note entity's color and leaked across groups, so it's been removed from the relationship palette (note edges still render in the Note color).
+- The Editor → link-preview toggle now sticks across reloads instead of occasionally resetting itself after your colors had been saved to your account.
+- Switching accounts in the same browser no longer copies the previous user's theme/colors into the new account on its first sign-in.
 
 ## [0.8.3.0] - 2026-06-01
 
