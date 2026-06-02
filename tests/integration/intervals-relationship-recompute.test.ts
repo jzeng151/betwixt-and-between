@@ -82,6 +82,35 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 		expect(iv.endPosition).toBeCloseTo(2.0, 9);
 	});
 
+	it('orphaned relationship (act anchors nulled, stale positions left) is cleared to timeless', async () => {
+		// Slice 5 PR-D / Codex P2. When an Act holding BOTH act anchors of a
+		// scoped caused_by edge is plain-deleted, ON DELETE SET NULL nulls the
+		// FKs but leaves start/end_position holding the deleted Act's story-time.
+		// recomputeAllIntervals must clear those positions so the edge reverts to
+		// timeless — otherwise isCausalEdgeClickable (which only checks
+		// startPosition != null) keeps it jumpable and leaks the deleted timing.
+		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+
+		// Simulate the post-cascade state: caused_by scoped to act0 but its act
+		// FKs already nulled (as ON DELETE SET NULL would leave them), with the
+		// stale positions still present.
+		await db.insert(relationships).values({ userId,
+			fromId: alice,
+			toId: bob.id,
+			type: 'caused_by',
+			startActId: null,
+			endActId: null,
+			startPosition: 0.0,
+			endPosition: 1.0
+		});
+
+		await recomputeAllIntervals(db, userId);
+
+		const [rel] = await db.select().from(relationships).where(eq(relationships.fromId, alice));
+		expect(rel.startPosition).toBeNull();
+		expect(rel.endPosition).toBeNull();
+	});
+
 	it('CRITICAL regression: transaction failure rolls back both interval and relationship positions', async () => {
 		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
 

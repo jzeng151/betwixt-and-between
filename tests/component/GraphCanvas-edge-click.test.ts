@@ -28,9 +28,9 @@ const nodes = [
 ];
 
 const initialPositions = {
-	cause: { x: 0, y: 0 },
-	effect: { x: 200, y: 0 },
-	other: { x: 0, y: 200 }
+	cause: { x: 0, y: 0, w: 120, h: 32 },
+	effect: { x: 200, y: 0, w: 120, h: 32 },
+	other: { x: 0, y: 200, w: 120, h: 32 }
 };
 
 function renderCanvas(onEdgeClick: (id: string) => void) {
@@ -39,10 +39,10 @@ function renderCanvas(onEdgeClick: (id: string) => void) {
 			nodes,
 			edges: [
 				// Scoped, non-mystery caused_by → clickable.
-				{ id: 'edge-clickable', fromId: 'effect', toId: 'cause', clickable: true },
+				{ id: 'edge-clickable', fromId: 'effect', toId: 'cause', color: '#888', label: '', dimmed: false, clickable: true },
 				// Same shape but clickable false (the mystery / unscoped case as
 				// the host would compute it) → must NOT jump.
-				{ id: 'edge-blocked', fromId: 'effect', toId: 'other', clickable: false }
+				{ id: 'edge-blocked', fromId: 'effect', toId: 'other', color: '#888', label: '', dimmed: false, clickable: false }
 			],
 			dimmedNodes: new Set<string>(),
 			initialPositions,

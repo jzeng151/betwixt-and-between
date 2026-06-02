@@ -494,13 +494,22 @@ export async function resolveRelationshipBounds(
  * internal — only `recomputeAllIntervals` above triggers it today.
  */
 async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<number> {
+	// Two row classes need a visit:
+	//   (a) act-anchored rows — re-derive their position from the live anchor.
+	//   (b) orphaned rows — act FKs both null (the anchoring Act was deleted, so
+	//       ON DELETE SET NULL fired) but start/end_position still hold the
+	//       deleted Act's stale story-time. resolveRelationshipBounds returns
+	//       null/null for these, and the change-detection below clears them.
+	//       Without this, the edge stays "clickable" (isCausalEdgeClickable only
+	//       checks startPosition != null) and jump-to-cause leaks a deleted Act's
+	//       timing for an otherwise now-timeless link (Codex P2, Slice 5 PR-D).
 	const rows = await db
 		.select()
 		.from(relationships)
 		.where(
 			and(
 				eq(relationships.userId, userId),
-				sql`(${relationships.startActId} IS NOT NULL OR ${relationships.endActId} IS NOT NULL)`
+				sql`(${relationships.startActId} IS NOT NULL OR ${relationships.endActId} IS NOT NULL OR ${relationships.startPosition} IS NOT NULL OR ${relationships.endPosition} IS NOT NULL)`
 			)
 		);
 
