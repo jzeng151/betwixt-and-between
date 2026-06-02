@@ -58,8 +58,9 @@
   // clears the scene (see the onchange handlers below). Setting
   // start-scene === end-scene === sceneX yields the [sceneX.start, sceneX.end)
   // window — i.e. "visible only during scene X" (ADR 0006 scope model).
-  let startScenes = $derived(scenes.filter((s) => s.actId === editStartActId));
-  let endScenes = $derived(scenes.filter((s) => s.actId === editEndActId));
+  const scenesForAct = (actId: string) => scenes.filter((s) => s.actId === actId);
+  let startScenes = $derived(scenesForAct(editStartActId));
+  let endScenes = $derived(scenesForAct(editEndActId));
   let saving = $state(false);
   let saveError = $state('');
 
@@ -185,7 +186,7 @@
         <option value="">Always visible</option>
         {#each acts as act, i}
           <option value={i}>{act.name}</option>
-          {#each scenes.filter((s) => s.actId === act.id) as scene}
+          {#each scenesForAct(act.id) as scene}
             <option value={scene.position}>  ↳ {scene.name}</option>
           {/each}
         {/each}

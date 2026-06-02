@@ -199,7 +199,10 @@
         startPosition: r.startPosition,
         endPosition: r.endPosition,
         mysteryMode: mystery,
-        ghostMode
+        ghostMode,
+        // WM3 Slice 5 (D5): only scoped caused_by edges jump on click; the
+        // pointer-cursor affordance is gated to them (jumpToCause no-ops the rest).
+        clickable: r.type === 'caused_by' && r.startPosition != null
       });
     }
     // Alias edges: dashed "aka" line per pair where both endpoints are visible

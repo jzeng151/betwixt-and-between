@@ -57,6 +57,10 @@
 		mysteryMode?: boolean;
 		/** Edge is outside the current temporal window (±2 acts). 'past' = ended, 'future' = not yet started. */
 		ghostMode?: 'past' | 'future' | null;
+		/** Host signals this edge does something on left-click (WM3 Slice 5: a
+		 *  scoped caused_by edge that jumps the playhead). Drives the pointer
+		 *  cursor so the affordance only appears where the click actually acts. */
+		clickable?: boolean;
 	}
 
 	export interface NodeOverlayContext {
@@ -613,7 +617,7 @@
 				stroke-width="10"
 				stroke-opacity="0"
 				pointer-events="stroke"
-				class:edge-clickable={onEdgeClick != null}
+				class:edge-clickable={onEdgeClick != null && edge.clickable}
 				oncontextmenu={(e) => onEdgeContextMenuHandler(e, edge.id)}
 				onclick={(e) => onEdgeClickHandler(e, edge.id)}
 				onpointerdown={(e) => e.stopPropagation()}
