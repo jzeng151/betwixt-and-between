@@ -34,6 +34,28 @@ describe('T2 getActivePreferences', () => {
 		expect(a.profileId).toMatch(/^[0-9a-f-]{36}$/);
 	});
 
+	it('marks initialized:false on a fresh row, true after the first PATCH', async () => {
+		const fresh = await getActivePreferences(db, userId);
+		expect(fresh.initialized).toBe(false);
+
+		await patchPreferences(db, userId, { set: { appearance: { theme: 'light' } } }, fresh.version);
+
+		const after = await getActivePreferences(db, userId);
+		expect(after.initialized).toBe(true);
+	});
+
+	it('keeps initialized true (marker not bumped) across later PATCHes', async () => {
+		const fresh = await getActivePreferences(db, userId);
+		await patchPreferences(db, userId, { set: { appearance: { theme: 'light' } } }, fresh.version);
+		const r = await patchPreferences(
+			db,
+			userId,
+			{ set: { appearance: { accentColor: '#abcdef' } } },
+			2
+		);
+		expect(r.initialized).toBe(true);
+	});
+
 	it('returns the same row on repeat access (no duplicate active rows)', async () => {
 		const a = await getActivePreferences(db, userId);
 		const b = await getActivePreferences(db, userId);

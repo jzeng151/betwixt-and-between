@@ -19,9 +19,19 @@ const base: Appearance = { theme: 'dark', accentColor: '#c8942a' };
 describe('T6 settings-colors model', () => {
 	it('builds swatches for all three groups', () => {
 		expect(swatchesForGroup('entity').length).toBe(8); // 8 EntityTypes
-		expect(swatchesForGroup('relationship').length).toBe(8); // 8 RelationshipTypes
+		// 8 RelationshipTypes minus note_of (its var is the Note ENTITY var, so
+		// customizing it would leak into the Entity group — excluded, codex).
+		expect(swatchesForGroup('relationship').length).toBe(7);
 		expect(swatchesForGroup('role').length).toBe(6); // 6 CHARACTER_ROLES
-		expect(COLOR_SWATCHES.length).toBe(22);
+		expect(COLOR_SWATCHES.length).toBe(21);
+	});
+
+	it('excludes note_of from relationship swatches (no Entity-group color leak)', () => {
+		expect(swatchesForGroup('relationship').find((s) => s.key === 'note_of')).toBeUndefined();
+		// And nothing else maps to the Note entity var via the relationship group.
+		expect(
+			swatchesForGroup('relationship').some((s) => s.cssVar === 'var(--color-type-note)')
+		).toBe(false);
 	});
 
 	it('humanizes relationship labels and keeps the default var token', () => {

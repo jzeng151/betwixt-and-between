@@ -255,6 +255,127 @@ describe('T4 dirty-before-hydrate', () => {
 	});
 });
 
+describe('T4 first-login reconcile (codex)', () => {
+	it('pushes localStorage prefs up on a fresh (uninitialized) row instead of clobbering', async () => {
+		// Prefs loaded from localStorage land in the STORE but not in `pending`
+		// (they never went through applyPreferencePatch) — the exact shape of an
+		// existing user upgrading to server-backed prefs.
+		preferences.set({
+			...get(preferences),
+			appearance: { ...get(preferences).appearance, theme: 'light', accentColor: '#abc123' }
+		});
+
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, initialized: false })
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences();
+
+		// Preserved, NOT overwritten by the empty server row's defaults.
+		expect(get(preferences).appearance).toMatchObject({ theme: 'light', accentColor: '#abc123' });
+		// And migrated up to the now-claimed server row.
+		await __flushForTesting();
+		const patch = calls.find((c) => c.method === 'PATCH');
+		expect(patch?.body.set.appearance).toMatchObject({ theme: 'light', accentColor: '#abc123' });
+		expect(__getServerVersionForTesting()).toBe(2);
+	});
+
+	it('pushes only deltas from defaults (untouched keys keep tracking defaults)', async () => {
+		preferences.set({
+			...get(preferences),
+			appearance: { ...get(preferences).appearance, accentColor: '#abc123' } // only accent changed
+		});
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, initialized: false })
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences();
+		await __flushForTesting();
+		const patch = calls.find((c) => c.method === 'PATCH');
+		// Only the user's actual deviation is sent — not theme (still default).
+		expect(patch?.body.set.appearance).toEqual({ accentColor: '#abc123' });
+	});
+
+	it('does not push when local equals defaults (brand-new user)', async () => {
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, initialized: false })
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences();
+		await __flushForTesting();
+		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+	});
+
+	it('does not reconcile when the server row is already initialized', async () => {
+		preferences.set({
+			...get(preferences),
+			appearance: { ...get(preferences).appearance, accentColor: '#abc123' }
+		});
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, {
+						data: { schemaVersion: 4, appearance: { theme: 'light' } },
+						version: 5,
+						initialized: true
+					})
+				: fakeRes(200, { version: 6 })
+		);
+		await hydratePreferences();
+		await __flushForTesting();
+		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+		expect(get(preferences).appearance.theme).toBe('light');
+	});
+});
+
+describe('T4 transient-failure retry (codex)', () => {
+	it('requeues and retries on a 5xx — the edit is not dropped', async () => {
+		mockFetch((c) => {
+			if (c.method === 'GET') return fakeRes(200, { data: {}, version: 1, initialized: true });
+			const patchCount = calls.filter((x) => x.method === 'PATCH').length;
+			return patchCount === 1 ? fakeRes(503, {}) : fakeRes(200, { version: 2 });
+		});
+		await hydratePreferences();
+		applyPreferencePatch({ set: { appearance: { accentColor: '#ff0000' } } });
+		await __flushForTesting(); // PATCH#1 → 503 → requeue + scheduleRetry
+		await __flushForTesting(); // PATCH#2 → 200 v2 (the retry path's work)
+		expect(__getServerVersionForTesting()).toBe(2);
+		const last = calls.filter((c) => c.method === 'PATCH').at(-1);
+		expect(last?.body.set.appearance.accentColor).toBe('#ff0000');
+	});
+
+	it('requeues and retries on a 401 (session expired mid-session)', async () => {
+		mockFetch((c) => {
+			if (c.method === 'GET') return fakeRes(200, { data: {}, version: 1, initialized: true });
+			const patchCount = calls.filter((x) => x.method === 'PATCH').length;
+			return patchCount === 1 ? fakeRes(401, {}) : fakeRes(200, { version: 2 });
+		});
+		await hydratePreferences();
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
+		await __flushForTesting(); // 401 → requeue (not dropped)
+		await __flushForTesting(); // retry → success
+		expect(__getServerVersionForTesting()).toBe(2);
+		expect(calls.filter((c) => c.method === 'PATCH').at(-1)?.body.set.appearance.theme).toBe(
+			'light'
+		);
+	});
+
+	it('drops the patch on a 400 (bad patch) without retrying', async () => {
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, initialized: true })
+				: fakeRes(400, {})
+		);
+		await hydratePreferences();
+		applyPreferencePatch({ set: { appearance: { accentColor: '#ff0000' } } });
+		await __flushForTesting(); // PATCH → 400 → dropped
+		await __flushForTesting(); // nothing pending → no retry
+		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+	});
+});
+
 describe('T4 auth transitions', () => {
 	it('logout stops pending writes', async () => {
 		mockFetch((c) =>

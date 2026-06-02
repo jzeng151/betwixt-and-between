@@ -50,6 +50,37 @@ export function deepMerge<T>(base: T, over: unknown): T {
 }
 
 /**
+ * Return the subset of `over` whose leaves differ from `base`, as a nested
+ * partial object suitable for a {set} patch. Plain objects recurse (a subtree
+ * with no differing leaves is omitted entirely); arrays and primitives compare
+ * by JSON-equality and are taken wholesale when they differ. Keys present in
+ * `over` but absent from `base` are included (base treated as `{}`). Skips
+ * prototype-pollution keys.
+ *
+ * First-login reconciliation (T4, codex): push only a user's actual deviations
+ * from defaults up to a freshly-created server row, instead of freezing the
+ * whole default blob — so keys the user never touched keep tracking future
+ * default changes across releases.
+ */
+export function diffFromBase(base: unknown, over: unknown): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	if (!isPlainObject(over)) return out;
+	const baseObj = isPlainObject(base) ? base : {};
+	for (const key of Object.keys(over)) {
+		if (PROTO_POLLUTION_KEYS.has(key)) continue;
+		const overVal = over[key];
+		const baseVal = baseObj[key];
+		if (isPlainObject(overVal)) {
+			const sub = diffFromBase(baseVal, overVal);
+			if (Object.keys(sub).length > 0) out[key] = sub;
+		} else if (JSON.stringify(overVal) !== JSON.stringify(baseVal)) {
+			out[key] = overVal;
+		}
+	}
+	return out;
+}
+
+/**
  * Returns true if a dotted path is well-formed for unset: non-empty, ≤ 8
  * segments, every segment non-empty and not a prototype-pollution key.
  */

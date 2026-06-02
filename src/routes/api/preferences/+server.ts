@@ -31,7 +31,10 @@ export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
 	const active = await getActivePreferences(db, userId);
-	return json({ data: active.data, version: active.version });
+	// `initialized` lets the client distinguish a freshly lazy-created row (never
+	// written) from one that already holds the user's prefs — the first-login
+	// reconcile signal (T4, codex). False → client migrates localStorage up.
+	return json({ data: active.data, version: active.version, initialized: active.initialized });
 };
 
 export const PATCH: RequestHandler = async (event) => {

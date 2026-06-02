@@ -21,8 +21,12 @@
 
 import { get, writable, type Readable } from 'svelte/store';
 import { preferences, migrateAndMerge, PreferencesVersionError, versionError } from './preferences-store.js';
-import { deepMerge, applyUnset, isPlainObject } from '../preferences-merge.js';
-import { PREFERENCES_CODE_MAX_VERSION, type Preferences } from '../types/preferences.js';
+import { deepMerge, applyUnset, isPlainObject, diffFromBase } from '../preferences-merge.js';
+import {
+	PREFERENCES_CODE_MAX_VERSION,
+	PREFERENCES_DEFAULTS,
+	type Preferences
+} from '../types/preferences.js';
 
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error' | 'stale-app';
 
@@ -40,6 +44,14 @@ let inFlight = false;
 let hydrating = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
+// Transient-failure retry (network down / 5xx / session-expired): the optimistic
+// edit is already applied locally; we requeue it and retry with capped backoff so
+// it eventually reaches the server without a fresh user edit. Reset on any success.
+const RETRY_BASE_MS = 2000;
+const RETRY_MAX_MS = 30000;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryBackoffMs = RETRY_BASE_MS;
+
 const _status = writable<SyncStatus>('idle');
 export const preferencesSyncStatus: Readable<SyncStatus> = { subscribe: _status.subscribe };
 
@@ -53,6 +65,9 @@ export function __setDebounceForTesting(ms: number): void {
 export function __resetSyncForTesting(): void {
 	if (timer) clearTimeout(timer);
 	timer = null;
+	if (retryTimer) clearTimeout(retryTimer);
+	retryTimer = null;
+	retryBackoffMs = RETRY_BASE_MS;
 	serverVersion = 0;
 	pending = { set: {}, unset: [] };
 	inFlight = false;
@@ -160,7 +175,7 @@ export async function hydratePreferences(): Promise<void> {
 		_status.set('error');
 		return;
 	}
-	const body = (await res.json()) as { data: unknown; version: number };
+	const body = (await res.json()) as { data: unknown; version: number; initialized?: boolean };
 	let merged: Preferences;
 	try {
 		merged = migrateAndMerge(body.data);
@@ -177,6 +192,20 @@ export async function hydratePreferences(): Promise<void> {
 		throw e;
 	}
 	serverVersion = body.version;
+	// First-login reconcile (codex): a freshly lazy-created server row
+	// (`initialized === false`) has never absorbed this user's localStorage prefs
+	// (theme/accent/editor toggles saved before server-backing existed). Pushing
+	// the server defaults onto the store here would clobber them — and the store's
+	// subscribe-to-self would persist that loss back to localStorage. Instead,
+	// queue the user's actual deviations-from-defaults as a pending patch so they
+	// (a) win in reapplyOntoBase below and (b) flush up to the now-claimed row.
+	// Only deltas, so keys the user never touched keep tracking future defaults.
+	if (body.initialized === false) {
+		const delta = diffFromBase(PREFERENCES_DEFAULTS, get(preferences));
+		if (Object.keys(delta).length > 0) {
+			accumulate({ set: { schemaVersion: PREFERENCES_CODE_MAX_VERSION, ...delta }, unset: [] });
+		}
+	}
 	// Re-apply un-synced local edits onto the fresh server base.
 	preferences.set(reapplyOntoBase(merged));
 	hydrating = false;
@@ -235,8 +264,35 @@ function scheduleFlush(): void {
 	}, debounceMs);
 }
 
+/**
+ * Schedule a retry of the requeued patch after a transient failure (network /
+ * 5xx / session-expired). Capped exponential backoff so a sustained outage does
+ * not hammer the server; a single pending retry at a time. Reset to base on the
+ * next successful flush. Without this, a drained patch that hit a transient
+ * failure would sit in `pending` forever unless the user happened to make
+ * another edit (codex).
+ */
+function scheduleRetry(): void {
+	if (retryTimer) return;
+	retryTimer = setTimeout(() => {
+		retryTimer = null;
+		void flush();
+	}, retryBackoffMs);
+	retryBackoffMs = Math.min(retryBackoffMs * 2, RETRY_MAX_MS);
+}
+
+/** 4xx (except auth) means the patch itself is bad — retrying can't fix it. */
+function isClientPatchError(status: number): boolean {
+	return status === 400 || status === 422;
+}
+
 async function flush(): Promise<void> {
 	if (inFlight || hydrating || serverVersion === 0 || !hasPending()) return;
+	// We are flushing now — cancel any scheduled retry so it doesn't double-fire.
+	if (retryTimer) {
+		clearTimeout(retryTimer);
+		retryTimer = null;
+	}
 	const patch = drainPending();
 	inFlight = true;
 	_status.set('syncing');
@@ -249,10 +305,12 @@ async function flush(): Promise<void> {
 			body: JSON.stringify({ set: patch.set, unset: patch.unset, version: serverVersion })
 		});
 	} catch {
-		// Network failure — requeue and back off; a later edit / hydrate retries.
+		// Network failure — requeue and retry with backoff so the edit isn't
+		// stranded in localStorage until the user happens to edit again (codex).
 		requeue(patch);
 		inFlight = false;
 		_status.set('offline');
+		scheduleRetry();
 		return;
 	}
 
@@ -266,15 +324,27 @@ async function flush(): Promise<void> {
 		return;
 	}
 	if (!res.ok) {
-		// 400 etc. — the patch is bad; drop it (do not loop) and surface error.
+		if (isClientPatchError(res.status)) {
+			// 400 / 422 — the patch is bad; drop it (looping can't fix it) and
+			// surface error.
+			inFlight = false;
+			_status.set('error');
+			return;
+		}
+		// Transient: 5xx server error, 408/429 throttling, or 401 session-expired.
+		// The optimistic edit already shows locally; requeue + retry so it reaches
+		// the server once the server recovers / the session is refreshed (codex).
+		requeue(patch);
 		inFlight = false;
-		_status.set('error');
+		_status.set('offline');
+		scheduleRetry();
 		return;
 	}
 
 	const body = (await res.json()) as { version: number };
 	serverVersion = body.version;
 	inFlight = false;
+	retryBackoffMs = RETRY_BASE_MS; // recovered — reset backoff
 	if (hasPending()) {
 		scheduleFlush();
 	} else {

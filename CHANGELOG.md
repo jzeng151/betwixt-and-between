@@ -17,6 +17,12 @@ Settings customization (Phase 1) — your colors and theme now save to your acco
 
 - Theme and accent color now persist to your account (previously localStorage-only). Signed-out use still works locally.
 
+### Fixed
+
+- Upgrading no longer wipes your saved settings: the first time you sign in after this release, theme/accent/editor preferences already saved in your browser are migrated up to your account instead of being overwritten by defaults.
+- A preference change made while the server is briefly unreachable (network blip, transient 5xx, or an expired session) is now retried in the background until it lands, instead of being silently dropped and surviving only in this browser.
+- Editing the "Note of" swatch in Relationship colors no longer recolors Note entities — it shared the Note entity's color and leaked across groups, so it's been removed from the relationship palette (note edges still render in the Note color).
+
 ## [0.8.3.0] - 2026-06-01
 
 World Map v3 Slice 4 (part 2) — movement. Markers can now move over story-time, completing the Slice 4 authoring story begun in 0.8.1.0.

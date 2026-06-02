@@ -39,9 +39,18 @@ describe('/api/preferences', () => {
 		userId = (await seedTestUser(db)).id;
 	});
 
-	it('GET lazily creates Default and returns {data:{}, version:1}', async () => {
+	it('GET lazily creates Default and returns {data:{}, version:1, initialized:false}', async () => {
 		const body = await readJson(await route.GET(mkEvent()));
-		expect(body).toEqual({ data: {}, version: 1 });
+		// initialized:false → a fresh row the client never wrote; signals the
+		// first-login reconcile path (codex).
+		expect(body).toEqual({ data: {}, version: 1, initialized: false });
+	});
+
+	it('GET returns initialized:true after the first PATCH', async () => {
+		await route.GET(mkEvent()); // lazy-create v1 (initialized:false)
+		await route.PATCH(mkEvent({ set: { appearance: { theme: 'light' } }, version: 1 }));
+		const body = await readJson(await route.GET(mkEvent()));
+		expect(body.initialized).toBe(true);
 	});
 
 	it('PATCH set merges, bumps version, and persists across GET', async () => {

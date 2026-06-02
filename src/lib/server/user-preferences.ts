@@ -46,6 +46,14 @@ export interface ActivePreferences {
 	name: string;
 	data: Record<string, unknown>;
 	version: number;
+	/**
+	 * True once this user's preferences have been written by the client at least
+	 * once (`initialized_from_client_at` is set). False on a freshly lazy-created
+	 * Default row — the signal the client uses to migrate existing localStorage
+	 * prefs up instead of being overwritten by server defaults (first-login
+	 * reconcile, codex).
+	 */
+	initialized: boolean;
 }
 
 /**
@@ -75,7 +83,8 @@ async function selectActive(db: Db, userId: string): Promise<ActivePreferences |
 			profileId: userPreferences.profileId,
 			name: userPreferences.name,
 			data: userPreferences.data,
-			version: userPreferences.version
+			version: userPreferences.version,
+			initializedFromClientAt: userPreferences.initializedFromClientAt
 		})
 		.from(userPreferences)
 		.where(and(eq(userPreferences.userId, userId), eq(userPreferences.isActive, 1)))
@@ -85,7 +94,8 @@ async function selectActive(db: Db, userId: string): Promise<ActivePreferences |
 		profileId: row.profileId,
 		name: row.name,
 		data: (row.data ?? {}) as Record<string, unknown>,
-		version: row.version
+		version: row.version,
+		initialized: row.initializedFromClientAt != null
 	};
 }
 
@@ -112,7 +122,15 @@ export async function patchPreferences(
 
 	const updated = await db
 		.update(userPreferences)
-		.set({ data: merged, version: sql`${userPreferences.version} + 1` })
+		// Stamp initialized_from_client_at on the FIRST client write (COALESCE
+		// keeps it stable thereafter) — the durable first-login-reconcile marker.
+		// Not updated_at/created_at, so explicit set is allowed (CLAUDE.md trigger
+		// convention covers only the timestamp pair the trigger maintains).
+		.set({
+			data: merged,
+			version: sql`${userPreferences.version} + 1`,
+			initializedFromClientAt: sql`coalesce(${userPreferences.initializedFromClientAt}, now())`
+		})
 		.where(
 			and(
 				eq(userPreferences.userId, userId),
@@ -129,7 +147,15 @@ export async function patchPreferences(
 		error(409, 'preferences version is stale; re-fetch and retry');
 	}
 
-	return { profileId: active.profileId, name: active.name, data: merged, version: updated[0].version };
+	// A successful write always sets the marker (COALESCE above), so the row is
+	// initialized from here on.
+	return {
+		profileId: active.profileId,
+		name: active.name,
+		data: merged,
+		version: updated[0].version,
+		initialized: true
+	};
 }
 
 // ── validation ──────────────────────────────────────────────────────────────

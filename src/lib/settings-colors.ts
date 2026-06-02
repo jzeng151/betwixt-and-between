@@ -44,14 +44,22 @@ export const COLOR_SWATCHES: ColorSwatch[] = [
 			cssVar: ENTITY_TYPE_COLOR_VAR[key as keyof typeof ENTITY_TYPE_COLOR_VAR]
 		})
 	),
-	...Object.keys(REL_COLOR).map(
-		(key): ColorSwatch => ({
-			group: 'relationship',
-			key,
-			label: humanize(key),
-			cssVar: REL_COLOR[key as keyof typeof REL_COLOR]
-		})
-	),
+	// `note_of` is intentionally excluded: its token is `--color-type-note` (the
+	// Note ENTITY var, not a `--color-rel-*` var), so customizing it here would
+	// recolor Note chips/nodes and the Entity-group Note swatch — a Relationship
+	// edit leaking into the Entity group (codex). It's already excluded from the
+	// authoring picker (REL_TYPES) for a related reason; a per-type rel var for
+	// note edges would be a separate refactor.
+	...Object.keys(REL_COLOR)
+		.filter((key) => key !== 'note_of')
+		.map(
+			(key): ColorSwatch => ({
+				group: 'relationship',
+				key,
+				label: humanize(key),
+				cssVar: REL_COLOR[key as keyof typeof REL_COLOR]
+			})
+		),
 	...CHARACTER_ROLES.map(
 		(role): ColorSwatch => ({
 			group: 'role',
