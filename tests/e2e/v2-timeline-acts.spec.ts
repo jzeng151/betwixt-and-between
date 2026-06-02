@@ -127,7 +127,7 @@ test.describe('Timeline — bar rendering', () => {
 		await expect(lines).toHaveCount(2);
 	});
 
-	test('tooltip shows on bar hover and on keyboard focus', async ({ page, request }) => {
+	test('tooltip shows on bar hover; bar carries an accessible label', async ({ page, request }) => {
 		const a0 = await (
 			await request.post('/api/entities', { data: { type: 'Act', name: 'A', position: 0 } })
 		).json();
@@ -141,27 +141,22 @@ test.describe('Timeline — bar rendering', () => {
 		const win = await openTimeline(page);
 		const wrapper = win.locator('.bar-wrapper').first();
 
-		const tooltipText = await wrapper.getAttribute('data-tooltip');
-		expect(tooltipText).toContain('Ellie');
+		// Accessibility: the SVG bar exposes the tooltip text as its aria-label
+		// (use:tooltip replaced the old data-tooltip / ::before mechanism).
+		await expect(wrapper.locator('svg.interval-bar')).toHaveAttribute(
+			'aria-label',
+			/Ellie/
+		);
 
-		// Hover → ::before opacity transitions to 1 (give the 0.15s transition time to settle)
+		// Hover → the action appends a .tl-bar-tooltip element to document.body.
 		await wrapper.hover();
-		await expect(async () => {
-			const op = await wrapper.evaluate(
-				(el) => window.getComputedStyle(el, '::before').opacity
-			);
-			expect(Number(op)).toBeGreaterThan(0.95);
-		}).toPass({ timeout: 1500 });
+		const tip = page.locator('.tl-bar-tooltip');
+		await expect(tip).toBeVisible({ timeout: 1500 });
+		await expect(tip).toContainText('Ellie');
 
-		// Park pointer outside, then keyboard-focus the bar — :focus-within fires the same fade
+		// Move the pointer away → tooltip is removed (mouseleave).
 		await win.locator('.palette').hover();
-		await wrapper.locator('svg.interval-bar').focus();
-		await expect(async () => {
-			const op = await wrapper.evaluate(
-				(el) => window.getComputedStyle(el, '::before').opacity
-			);
-			expect(Number(op)).toBeGreaterThan(0.95);
-		}).toPass({ timeout: 1500 });
+		await expect(page.locator('.tl-bar-tooltip')).toHaveCount(0, { timeout: 1500 });
 	});
 
 	test('width breakpoints: wide bar shows name, narrow hides note, tiny hides name', async ({
