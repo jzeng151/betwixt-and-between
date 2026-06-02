@@ -17,56 +17,33 @@ async function openTimeline(page: Page) {
 	return win;
 }
 
-test.describe('V2 Editor pop-out + mutex (D2 + D3)', () => {
+// Acts/Scenes/Events route directly to a standalone 'entity-detail' window
+// (Issue 19A). The legacy in-Timeline side panel + "↗ Move to window" affordance
+// was retired (onMoveToWindow is no longer wired). What remains, and what this
+// spec covers, is the windowing + mutex behavior: one window per entity, focus
+// the existing one on re-click, multiple entities coexist.
+test.describe('V2 Editor windowing + mutex (D2 + D3)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
 	});
 
-	test('"↗ Move to window" shows inline confirmation; Cancel keeps the side panel open', async ({
+	test('clicking an act opens a standalone editor window (not an in-Timeline panel)', async ({
 		page,
 		request
 	}) => {
-		const a = await (
-			await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } })
-		).json();
+		await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } });
 
 		const win = await openTimeline(page);
 		await win.locator('.act-col-header').first().click();
 
-		const panel = win.locator('.entity-detail');
-		await win.locator(".entity-detail-host button.popout-btn").click();
-
-		const confirm = win.locator('.entity-detail-host .popout-confirm');
-		await expect(confirm).toBeVisible();
-		await expect(confirm).toContainText(/Move to standalone window/i);
-
-		await confirm.locator('button', { hasText: /cancel/i }).click();
-		// Side panel still open, no pop-out window opened
-		await expect(panel).toBeVisible();
-		await expect(page.locator(`.window[aria-label="${a.name}"]`)).toHaveCount(0);
-	});
-
-	test('Confirm pop-out: side panel closes and a standalone window opens for that act', async ({
-		page,
-		request
-	}) => {
-		const a = await (
-			await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } })
-		).json();
-
-		const win = await openTimeline(page);
-		await win.locator('.act-col-header').first().click();
-
-		const panel = win.locator('.entity-detail');
-		await win.locator(".entity-detail-host button.popout-btn").click();
-		await win.locator('.entity-detail-host .popout-confirm button', { hasText: /^move$/i }).click();
-
-		// Pop-out window opens, side panel closes
-		await expect(page.locator(`.window[aria-label="Act A"]`)).toBeVisible();
+		// A standalone window opens for the act…
+		await expect(page.locator('.window[aria-label="Act A"]')).toBeVisible();
+		await expect(page.locator('.window[aria-label="Act A"] .entity-detail-host')).toBeVisible();
+		// …and there is no legacy side panel inside the Timeline window.
 		await expect(win.locator('.entity-detail')).toHaveCount(0);
 	});
 
-	test('Multiple pop-outs for different acts coexist', async ({ page, request }) => {
+	test('multiple acts each open their own window, coexisting', async ({ page, request }) => {
 		const a = await (
 			await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } })
 		).json();
@@ -75,21 +52,9 @@ test.describe('V2 Editor pop-out + mutex (D2 + D3)', () => {
 		).json();
 
 		const win = await openTimeline(page);
-
-		// Pop out Act A
 		await win.locator(`.act-col-header[data-entity-id="${a.id}"]`).click();
-		await win.locator('.entity-detail-host button.popout-btn').click();
-		await win
-			.locator('.entity-detail-host .popout-confirm button', { hasText: /^move$/i })
-			.click();
 		await expect(page.locator('.window[aria-label="Act A"]')).toBeVisible();
-
-		// Pop out Act B
 		await win.locator(`.act-col-header[data-entity-id="${b.id}"]`).click();
-		await win.locator('.entity-detail-host button.popout-btn').click();
-		await win
-			.locator('.entity-detail-host .popout-confirm button', { hasText: /^move$/i })
-			.click();
 		await expect(page.locator('.window[aria-label="Act B"]')).toBeVisible();
 
 		// Both windows present at once
@@ -97,35 +62,31 @@ test.describe('V2 Editor pop-out + mutex (D2 + D3)', () => {
 		await expect(page.locator('.window[aria-label="Act B"]')).toBeVisible();
 	});
 
-	test('Clicking an act with an existing pop-out focuses the pop-out (mutex per D2/2B-i)', async ({
+	test('re-clicking an open act focuses its window instead of opening a duplicate (mutex)', async ({
 		page,
 		request
 	}) => {
-		const a = await (
-			await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } })
-		).json();
+		await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } });
 
 		const win = await openTimeline(page);
-
-		// Open + pop out Act A
 		await win.locator('.act-col-header').first().click();
-		await win.locator('.entity-detail-host button.popout-btn').click();
-		await win
-			.locator('.entity-detail-host .popout-confirm button', { hasText: /^move$/i })
-			.click();
 
 		const popout = page.locator('.window[aria-label="Act A"]');
 		await expect(popout).toBeVisible();
 		const initialZ = await popout.evaluate((el) => Number((el as HTMLElement).style.zIndex || '0'));
 
-		// Click the act in the timeline header — should focus the existing pop-out
-		// rather than open the side panel.
+		// Click the same act again — mutex: focus the existing window, no second one.
 		await win.locator('.act-col-header').first().click();
 
-		// Side panel must NOT have re-opened
-		await expect(win.locator('.entity-detail')).toHaveCount(0);
-		// Pop-out z-index increased (focused)
+		await expect(page.locator('.window[aria-label="Act A"]')).toHaveCount(1);
 		const newZ = await popout.evaluate((el) => Number((el as HTMLElement).style.zIndex || '0'));
-		expect(newZ).toBeGreaterThan(initialZ);
+		expect(newZ).toBeGreaterThanOrEqual(initialZ);
+		// The act window is the focused (top-most) window.
+		const maxZ = await page
+			.locator('.window')
+			.evaluateAll((els) =>
+				Math.max(...els.map((e) => Number((e as HTMLElement).style.zIndex || '0')))
+			);
+		expect(newZ).toBe(maxZ);
 	});
 });
