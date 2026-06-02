@@ -86,8 +86,12 @@ test.describe('Playhead scrubber', () => {
 		await page.mouse.click(rowsBox.x + rowsBox.width * 0.75, rowsBox.y + 30);
 		await page.waitForTimeout(100);
 
-		// Toolbar shows updated T
-		await expect(win.locator('.scrub-toggle')).toContainText("Time = 1.5");
+		// Playhead landed at T ≈ 1.5 (the toggle no longer shows the decimal Time;
+		// read it off the PlayheadOverlay's aria-valuenow instead).
+		await expect(async () => {
+			const t = Number(await win.locator('.playhead').getAttribute('aria-valuenow'));
+			expect(t).toBeCloseTo(1.5, 1);
+		}).toPass({ timeout: 2000 });
 		// Overlay positioned in right half of the track
 		const overlayBox = await win.locator('.playhead').boundingBox();
 		if (!overlayBox) throw new Error('overlay');
@@ -126,7 +130,10 @@ test.describe('Playhead scrubber', () => {
 			clientY: rowsBox.y + 30
 		});
 		// Confirm the scrub registered before checking Story Graph state
-		await expect(tlWin.locator('.scrub-toggle')).toContainText('Time = 0.50');
+		await expect(async () => {
+			const t = Number(await tlWin.locator('.playhead').getAttribute('aria-valuenow'));
+			expect(t).toBeCloseTo(0.5, 1);
+		}).toPass({ timeout: 2000 });
 
 		// Damien dimmed, Ellie not
 		const ellieNode = sgWin.locator('.node').filter({ hasText: 'Ellie' });
@@ -141,41 +148,18 @@ test.describe('Playhead scrubber', () => {
 			clientX: rowsBox.x + rowsBox.width * 0.75,
 			clientY: rowsBox.y + 30
 		});
-		await expect(tlWin.locator('.scrub-toggle')).toContainText('Time = 1.50');
+		await expect(async () => {
+			const t = Number(await tlWin.locator('.playhead').getAttribute('aria-valuenow'));
+			expect(t).toBeCloseTo(1.5, 1);
+		}).toPass({ timeout: 2000 });
 		await expect(ellieNode).toHaveClass(/node-out-of-scope/);
 		await expect(damienNode).not.toHaveClass(/node-out-of-scope/);
 	});
 
-	test('World Map locations dim when their linked entities are out of scope', async ({
-		page,
-		request
-	}) => {
-		await seed(request);
-		const tlWin = await openTimeline(page);
-
-		await page.click('button[title="World Map"]');
-		const wmWin = page.locator('.window[aria-label="World Map"]');
-		await expect(wmWin).toBeVisible();
-
-		// Idle — neither location dimmed
-		await expect(wmWin.locator('.loc-card.out-of-scope')).toHaveCount(0);
-
-		// Scrub to T = 0.5 → Ellie active → Castle in-scope, Forest dimmed
-		await tlWin.locator('.scrub-toggle').click();
-		const rowsBox = await tlWin.locator('.rows').boundingBox();
-		if (!rowsBox) throw new Error('rows box');
-		await page.mouse.click(rowsBox.x + rowsBox.width * 0.25, rowsBox.y + 30);
-		await page.waitForTimeout(150);
-
-		const castle = wmWin.locator('.loc-card').filter({ hasText: 'Castle' });
-		const forest = wmWin.locator('.loc-card').filter({ hasText: 'Forest' });
-		await expect(forest).toHaveClass(/out-of-scope/);
-		await expect(castle).not.toHaveClass(/out-of-scope/);
-
-		// Scrub to T = 1.5 → swap
-		await page.mouse.click(rowsBox.x + rowsBox.width * 0.75, rowsBox.y + 30);
-		await page.waitForTimeout(150);
-		await expect(castle).toHaveClass(/out-of-scope/);
-		await expect(forest).not.toHaveClass(/out-of-scope/);
-	});
+	// Removed: 'World Map locations dim when their linked entities are out of scope'.
+	// The card-based World Map (.loc-card) was replaced by World Map v3, where
+	// out-of-scope dimming lives in the Pixi canvas layers (PixiRegionLayer /
+	// PixiPlacementLayer) and has no DOM class to assert against. A v3 map-dim
+	// e2e would need pixel/canvas inspection and seeded map regions+placements —
+	// tracked separately, not a DOM selector port.
 });
