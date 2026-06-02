@@ -24,6 +24,7 @@ Settings customization (Phase 1) — your colors and theme now save to your acco
 - Editing the "Note of" swatch in Relationship colors no longer recolors Note entities — it shared the Note entity's color and leaked across groups, so it's been removed from the relationship palette (note edges still render in the Note color).
 - The Editor → link-preview toggle now sticks across reloads instead of occasionally resetting itself after your colors had been saved to your account.
 - Switching accounts in the same browser no longer copies the previous user's theme/colors into the new account on its first sign-in.
+- Role color overrides now also apply to the character editor's role badges (previously only the detail header picked them up), and a Relationship color edit no longer tints those badges.
 
 ## [0.8.3.0] - 2026-06-01
 

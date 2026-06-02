@@ -192,6 +192,11 @@ export async function hydratePreferences(): Promise<void> {
 		throw e;
 	}
 	serverVersion = body.version;
+	// A current server blob hydrated cleanly — if a too-new localStorage payload
+	// had tripped downgrade protection at boot, clear it now so localStorage
+	// write-through resumes and the stale payload stops re-firing every reload
+	// (codex). No-op on the happy path (already null).
+	versionError.set(null);
 	// First-login reconcile (codex): a freshly lazy-created server row
 	// (`initialized === false`) has never absorbed this user's localStorage prefs
 	// (theme/accent/editor toggles saved before server-backing existed). Pushing
@@ -203,7 +208,10 @@ export async function hydratePreferences(): Promise<void> {
 	if (body.initialized === false) {
 		const delta = diffFromBase(PREFERENCES_DEFAULTS, get(preferences));
 		if (Object.keys(delta).length > 0) {
-			accumulate({ set: { schemaVersion: PREFERENCES_CODE_MAX_VERSION, ...delta }, unset: [] });
+			// Stamp schemaVersion AFTER spreading delta: a legacy cache can carry an
+			// older schemaVersion in the diff, and letting it win would initialize the
+			// server row below code-max and strand future migrations (codex).
+			accumulate({ set: { ...delta, schemaVersion: PREFERENCES_CODE_MAX_VERSION }, unset: [] });
 		}
 	}
 	// Re-apply un-synced local edits onto the fresh server base. `editor` prefs

@@ -12,6 +12,7 @@ import { get } from 'svelte/store';
 import {
 	preferences,
 	versionError,
+	PreferencesVersionError,
 	__setStorageForTesting,
 	__reloadFromStorageForTesting
 } from '../../src/lib/os/preferences-store.js';
@@ -418,6 +419,50 @@ describe('T4 auth transitions', () => {
 		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
 		// New account sees defaults, not the previous user's customizations.
 		expect(get(preferences).appearance.accentColor).not.toBe('#abc123');
+	});
+});
+
+describe('T4 reconcile schema-version stamp (codex)', () => {
+	it('always stamps code-max schemaVersion even when the local cache carries an older one', async () => {
+		// Local store from a stale cache: schemaVersion below code-max plus a real
+		// deviation, so diffFromBase includes schemaVersion in the delta.
+		preferences.set({
+			...get(preferences),
+			schemaVersion: 0,
+			appearance: { ...get(preferences).appearance, accentColor: '#abc123' }
+		});
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, initialized: false })
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences();
+		await __flushForTesting();
+		const patch = calls.find((c) => c.method === 'PATCH');
+		// The reconcile must not initialize the server row below code-max.
+		expect(patch?.body.set.schemaVersion).toBe(PREFERENCES_CODE_MAX_VERSION);
+		expect(patch?.body.set.appearance.accentColor).toBe('#abc123');
+	});
+});
+
+describe('T4 downgrade-state recovery on hydrate (codex)', () => {
+	it('clears versionError after a clean server hydrate so localStorage writes resume', async () => {
+		// Boot tripped downgrade protection from a too-new localStorage payload.
+		versionError.set(new PreferencesVersionError(99, PREFERENCES_CODE_MAX_VERSION));
+		expect(get(versionError)).not.toBeNull();
+		mockFetch(() =>
+			fakeRes(200, { data: { schemaVersion: 4, appearance: { theme: 'dark' } }, version: 3, initialized: true })
+		);
+		await hydratePreferences();
+		expect(get(versionError)).toBeNull();
+	});
+
+	it('still surfaces stale-app when the SERVER blob is newer than code (no false clear)', async () => {
+		mockFetch(() =>
+			fakeRes(200, { data: { schemaVersion: PREFERENCES_CODE_MAX_VERSION + 5 }, version: 9, initialized: true })
+		);
+		await hydratePreferences();
+		expect(get(versionError)).not.toBeNull();
 	});
 });
 
