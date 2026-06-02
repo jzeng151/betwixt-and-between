@@ -96,6 +96,24 @@ function accumulate(patch: PendingPatch): void {
 	}
 }
 
+/**
+ * Re-insert an OLDER (already-drained) patch BENEATH the current pending edits.
+ * `accumulate` assumes its argument is NEWER than pending (it merges on top);
+ * the flush failure paths (409 / network) need the mirror: a patch that was in
+ * flight is older than any edit the user made meanwhile, so it must lose on
+ * conflict. We achieve newer-on-top by laying the old patch down first, then
+ * replaying the captured-newer edits over it — reusing accumulate's set/unset
+ * cancellation so there is no second merge implementation to keep in sync.
+ * Without this, re-merging the old patch on top silently reverted the user's
+ * most recent edit (lost update).
+ */
+function requeue(patch: PendingPatch): void {
+	const newer = pending;
+	pending = { set: {}, unset: [] };
+	accumulate(patch); // older, underneath
+	accumulate(newer); // newer, on top — wins on conflict
+}
+
 function hasPending(): boolean {
 	return Object.keys(pending.set).length > 0 || pending.unset.length > 0;
 }
@@ -232,7 +250,7 @@ async function flush(): Promise<void> {
 		});
 	} catch {
 		// Network failure — requeue and back off; a later edit / hydrate retries.
-		accumulate(patch);
+		requeue(patch);
 		inFlight = false;
 		_status.set('offline');
 		return;
@@ -241,7 +259,7 @@ async function flush(): Promise<void> {
 	if (res.status === 409) {
 		// Stale version — another writer won. Requeue our patch, re-hydrate the
 		// base (which re-applies the requeued patch on top), then retry.
-		accumulate(patch);
+		requeue(patch);
 		inFlight = false;
 		await hydratePreferences();
 		if (hasPending()) scheduleFlush();

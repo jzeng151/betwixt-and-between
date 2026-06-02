@@ -166,6 +166,67 @@ describe('T4 409 reconciliation', () => {
 		expect(lastPatch?.body.version).toBe(2); // retried against the fresh base
 		expect(lastPatch?.body.set.appearance.accentColor).toBe('#abcdef');
 	});
+
+	it('keeps the newer edit when one lands DURING an in-flight PATCH that 409s', async () => {
+		// Regression: the requeue path must lay the drained (older) patch BENEATH
+		// the edit that accumulated while it was in flight, not on top — otherwise
+		// the user's most recent color silently reverts (lost update). Here RED is
+		// in flight when the user picks BLUE; PATCH#1 then 409s. BLUE must win.
+		let injected = false;
+		mockFetch((c) => {
+			if (c.method === 'GET') {
+				const getCount = calls.filter((x) => x.method === 'GET').length;
+				return getCount === 1
+					? fakeRes(200, { data: {}, version: 1 })
+					: fakeRes(200, { data: { schemaVersion: 4 }, version: 2 });
+			}
+			const patchCount = calls.filter((x) => x.method === 'PATCH').length;
+			if (patchCount === 1) {
+				if (!injected) {
+					injected = true; // newer edit lands mid-flight
+					applyPreferencePatch({ set: { appearance: { accentColor: '#0000ff' } } });
+				}
+				return fakeRes(409, {});
+			}
+			return fakeRes(200, { version: 3 });
+		});
+
+		await hydratePreferences(); // v1
+		applyPreferencePatch({ set: { appearance: { accentColor: '#ff0000' } } }); // RED
+		await __flushForTesting(); // PATCH#1(RED) → inject BLUE → 409 → requeue → re-hydrate
+		await __flushForTesting(); // PATCH#2(BLUE) → 200 v3
+
+		expect(get(preferences).appearance.accentColor).toBe('#0000ff'); // BLUE survived
+		const lastPatch = calls.filter((c) => c.method === 'PATCH').at(-1);
+		expect(lastPatch?.body.set.appearance.accentColor).toBe('#0000ff');
+		expect(__getServerVersionForTesting()).toBe(3);
+	});
+
+	it('keeps the newer edit when one lands DURING an in-flight PATCH that fails (network)', async () => {
+		// Same inversion guard for the network-failure requeue branch.
+		let injected = false;
+		mockFetch((c) => {
+			if (c.method === 'GET') return fakeRes(200, { data: {}, version: 1 });
+			const patchCount = calls.filter((x) => x.method === 'PATCH').length;
+			if (patchCount === 1) {
+				if (!injected) {
+					injected = true;
+					applyPreferencePatch({ set: { appearance: { accentColor: '#0000ff' } } });
+				}
+				throw new Error('network down'); // fetch rejects → catch → requeue
+			}
+			return fakeRes(200, { version: 2 });
+		});
+
+		await hydratePreferences(); // v1
+		applyPreferencePatch({ set: { appearance: { accentColor: '#ff0000' } } }); // RED
+		await __flushForTesting(); // PATCH#1(RED) → inject BLUE → throw → requeue → offline
+		await __flushForTesting(); // PATCH#2(BLUE) → 200 v2
+
+		expect(get(preferences).appearance.accentColor).toBe('#0000ff');
+		const lastPatch = calls.filter((c) => c.method === 'PATCH').at(-1);
+		expect(lastPatch?.body.set.appearance.accentColor).toBe('#0000ff'); // not reverted to RED
+	});
 });
 
 describe('T4 dirty-before-hydrate', () => {

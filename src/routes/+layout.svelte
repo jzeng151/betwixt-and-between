@@ -31,6 +31,14 @@
 			}
 		}
 		applyPaletteVars(appearance);
+		// Drop the SSR-inlined override block now that applyPaletteVars has set the
+		// live inline custom-properties (which out-rank it). No flash — the inline
+		// props already carry the colors — and it stops a later in-session reset
+		// from cascading back to the stale cookie value instead of the app.css
+		// default. Idempotent: getElementById returns null after the first removal.
+		if (typeof document !== 'undefined') {
+			document.getElementById('palette-ssr')?.remove();
+		}
 		// Mirror the resolved palette to a cookie so the server hook can inline
 		// it for a no-flash first paint on the next navigation/reload (T5b 3C/6A).
 		if (typeof document !== 'undefined') {
