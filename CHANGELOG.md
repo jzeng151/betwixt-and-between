@@ -26,6 +26,7 @@ Settings customization (Phase 1) — your colors and theme now save to your acco
 - On a shared browser, one account's saved theme/colors are no longer imported into a different account on first sign-in. The local preferences cache is now scoped to the signed-in user, so a different user's cached prefs are neither migrated up nor shown.
 - Role color overrides now also apply to the character editor's role badges (previously only the detail header picked them up), and a Relationship color edit no longer tints those badges.
 - Relationship colors that share one underlying color (e.g. "Located at" and "Part of") are now a single swatch, so you can't set two values where only one would actually render.
+- Color customization now reaches the relationship chips in the wiki/relationship lists and the `[[link]]` preview chips shown while editing — previously those surfaces used their own hardcoded colors, so some swatches didn't recolor them and others recolored them incorrectly.
 
 ## [0.8.4.0] - 2026-06-02
 

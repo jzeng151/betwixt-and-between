@@ -287,10 +287,13 @@ export async function hydratePreferences(): Promise<void> {
 	}
 
 	if (foreignCache) {
-		// Discard the other user's local store: take the server base only. `editor`
-		// is local-only and does not carry across users either; `pending` is empty
-		// on a fresh load, so reapplyOntoBase is just the migrated server base.
-		preferences.set(reapplyOntoBase(merged));
+		// Discard the other user's local store entirely, INCLUDING any pending edits
+		// the new user made before the GET resolved (Settings can render during that
+		// window, and a reset/swatch click there was computed against the foreign
+		// values). Keeping them would write the previous user's prefs into this
+		// account. Drop pending and take the migrated server base only (codex).
+		pending = { set: {}, unset: [] };
+		preferences.set(merged);
 	} else {
 		// Re-apply un-synced local edits onto the fresh server base. `editor` prefs
 		// are local-only by design (Settings writes them via setPreference, never
@@ -456,12 +459,16 @@ async function flush(): Promise<void> {
 	}
 
 	if (res.status === 409) {
-		// Stale version — another writer won. Requeue our patch, re-hydrate the
-		// base (which re-applies the requeued patch on top), then retry.
+		// Stale version — another writer won. Requeue our patch and re-hydrate the
+		// base. Do NOT schedule a flush here: re-flushing while serverVersion is the
+		// SAME stale value that just 409'd would loop (another 409). On a successful
+		// rehydrate, hydratePreferences' own tail schedules the flush against the
+		// fresh version; on a transient hydrate failure it schedules a hydrate retry
+		// that will flush once it succeeds. Either way the retry waits for a fresh
+		// version (codex).
 		requeue(patch);
 		inFlight = false;
 		await hydratePreferences();
-		if (hasPending()) scheduleFlush();
 		return;
 	}
 	if (!res.ok) {

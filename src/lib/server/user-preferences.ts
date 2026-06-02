@@ -29,6 +29,7 @@ import type { Db } from './intervals.js';
 import { isHexColor } from './validation.js';
 import { CHARACTER_ROLES } from '../character-roles.js';
 import { deepMerge, applyUnset, isPlainObject, isSafeUnsetPath } from '../preferences-merge.js';
+import { PREFERENCES_CODE_MAX_VERSION } from '../types/preferences.js';
 
 /** Max serialized blob size. Generous for palettes + window + graph prefs; a
  *  guard against a client (or attacker) bloating the row and every SSR read. */
@@ -189,6 +190,20 @@ function validateMergedData(data: Record<string, unknown>): void {
 	const size = JSON.stringify(data).length;
 	if (size > MAX_BLOB_BYTES) {
 		error(400, `preferences blob too large (${size} > ${MAX_BLOB_BYTES} bytes)`);
+	}
+	// Reject a too-new (or non-integer) schemaVersion BEFORE the appearance check's
+	// early-return. Otherwise a client could persist e.g. { schemaVersion: 999 },
+	// which makes every later hydrate throw PreferencesVersionError, zero out
+	// serverVersion, and suppress all preference writes for that user until the row
+	// is manually repaired (codex).
+	if (data.schemaVersion !== undefined) {
+		if (
+			!Number.isInteger(data.schemaVersion) ||
+			(data.schemaVersion as number) < 1 ||
+			(data.schemaVersion as number) > PREFERENCES_CODE_MAX_VERSION
+		) {
+			error(400, `schemaVersion must be an integer between 1 and ${PREFERENCES_CODE_MAX_VERSION}`);
+		}
 	}
 	const app = data.appearance;
 	if (app === undefined) return;

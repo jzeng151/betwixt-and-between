@@ -371,6 +371,34 @@ describe('T4 user-scoped cache (codex P1)', () => {
 		expect(get(preferences).appearance.accentColor).not.toBe('#aaaaaa');
 	});
 
+	it('discards pre-hydrate pending edits when the cache is foreign (codex)', async () => {
+		__setStorageForTesting(memStorage({ [OWNER_KEY]: 'user-A' }));
+		// Foreign cache content in the store + a pre-hydrate edit by the new user
+		// (Settings can render before the GET resolves; serverVersion 0 → pending only).
+		preferences.set({
+			...get(preferences),
+			appearance: { ...get(preferences).appearance, accentColor: '#aaaaaa' }
+		});
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, {
+						data: { schemaVersion: 4, appearance: { theme: 'dark' } },
+						version: 1,
+						initialized: true,
+						userId: 'user-B'
+					})
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences();
+		await __flushForTesting();
+		// The pre-hydrate edit must NOT be written into the new user's row.
+		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+		// Store reflects the new user's server base, not the foreign edits.
+		expect(get(preferences).appearance.theme).toBe('dark');
+		expect(get(preferences).appearance.accentColor).not.toBe('#aaaaaa');
+	});
+
 	it('still reconciles when the cache is owned by the signed-in user', async () => {
 		__setStorageForTesting(memStorage({ [OWNER_KEY]: 'user-B' }));
 		preferences.set({

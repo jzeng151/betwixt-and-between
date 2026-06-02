@@ -217,6 +217,17 @@ describe('T2 patchPreferences — validation', () => {
 		await expectStatus(patchPreferences(db, userId, { unset: ['__proto__.x'] }, 1), 400);
 	});
 
+	it('rejects a too-new schemaVersion (400) so it cannot brick hydrate (codex)', async () => {
+		await expectStatus(patchPreferences(db, userId, { set: { schemaVersion: 999 } }, 1), 400);
+		await expectStatus(patchPreferences(db, userId, { set: { schemaVersion: 0 } }, 1), 400);
+		await expectStatus(patchPreferences(db, userId, { set: { schemaVersion: 1.5 } }, 1), 400);
+	});
+
+	it('accepts the current schemaVersion stamp', async () => {
+		const r = await patchPreferences(db, userId, { set: { schemaVersion: 4 } }, 1);
+		expect(r.version).toBe(2);
+	});
+
 	it('rejects an oversized blob (400)', async () => {
 		await expectStatus(
 			patchPreferences(

@@ -15,8 +15,16 @@ export type ColorGroup = 'entity' | 'relationship' | 'role';
 
 export interface ColorSwatch {
 	group: ColorGroup;
-	/** EntityType / RelationshipType / CharacterRole key. */
+	/** The representative key whose override drives this swatch's CSS var. */
 	key: string;
+	/**
+	 * ALL underlying keys this swatch controls. Usually just `[key]`, but a
+	 * collapsed relationship swatch covers every type sharing its `--color-rel-*`
+	 * token (e.g. `located_at` + `part_of`). Reads/sets/resets must span all of
+	 * them, or a stored override on a non-representative sibling becomes invisible
+	 * and un-resettable in Settings while still tinting edges (codex).
+	 */
+	keys: string[];
 	/** Human label for the row. */
 	label: string;
 	/** `var(--color-…)` token — the chip's default fill when not overridden. */
@@ -57,9 +65,10 @@ function relationshipSwatches(): ColorSwatch[] {
 	}
 	return [...byVar].map(([cssVar, keys]): ColorSwatch => ({
 		group: 'relationship',
-		// Representative key: its override drives the shared var. Storing under one
-		// key (not all) is correct because every type reading that var recolors.
+		// Representative key drives the shared var; `keys` carries every type so
+		// reads/resets cover a stored override on any of them.
 		key: keys[0],
+		keys,
 		label: keys.map(humanize).join(' / '),
 		cssVar
 	}));
@@ -70,6 +79,7 @@ export const COLOR_SWATCHES: ColorSwatch[] = [
 		(key): ColorSwatch => ({
 			group: 'entity',
 			key,
+			keys: [key],
 			label: key,
 			cssVar: ENTITY_TYPE_COLOR_VAR[key as keyof typeof ENTITY_TYPE_COLOR_VAR]
 		})
@@ -79,6 +89,7 @@ export const COLOR_SWATCHES: ColorSwatch[] = [
 		(role): ColorSwatch => ({
 			group: 'role',
 			key: role,
+			keys: [role],
 			label: role,
 			cssVar: `var(--color-role-${role.toLowerCase()})`
 		})
@@ -89,33 +100,51 @@ export function swatchesForGroup(group: ColorGroup): ColorSwatch[] {
 	return COLOR_SWATCHES.filter((s) => s.group === group);
 }
 
-/** The override hex for a swatch, or undefined if not customized. */
+/**
+ * The override hex for a swatch, or undefined if not customized. Reads across all
+ * keys the swatch controls (the representative wins; otherwise the first sibling
+ * with a stored override) so a legacy override under a collapsed sibling key is
+ * still surfaced (codex).
+ */
 export function swatchOverride(appearance: Appearance | undefined, sw: ColorSwatch): string | undefined {
 	const map = appearance?.[GROUP_MAP_KEY[sw.group]] as Record<string, string> | undefined;
-	return map?.[sw.key];
+	if (!map) return undefined;
+	for (const k of sw.keys) {
+		if (map[k] !== undefined) return map[k];
+	}
+	return undefined;
 }
 
 export function isModified(appearance: Appearance | undefined, sw: ColorSwatch): boolean {
 	return swatchOverride(appearance, sw) !== undefined;
 }
 
-/** Patch to set one swatch's color. */
-export function buildSetPatch(sw: ColorSwatch, hex: string): { set: Record<string, unknown> } {
-	return { set: { appearance: { [GROUP_MAP_KEY[sw.group]]: { [sw.key]: hex } } } };
+/**
+ * Patch to set one swatch's color. Writes the representative key and UNSETS any
+ * sibling keys so a collapsed swatch never leaves a divergent override stored on
+ * a sibling (which would still tint edges via the shared var) — set + unset
+ * together keep one authoritative value per CSS var (codex).
+ */
+export function buildSetPatch(sw: ColorSwatch, hex: string): { set: Record<string, unknown>; unset: string[] } {
+	const map = GROUP_MAP_KEY[sw.group];
+	const unset = sw.keys.filter((k) => k !== sw.key).map((k) => `appearance.${map}.${k}`);
+	return { set: { appearance: { [map]: { [sw.key]: hex } } }, unset };
 }
 
-/** Patch to reset one swatch to its default (delete the override). */
+/** Patch to reset one swatch to its default — clears EVERY key it controls. */
 export function buildUnsetPatch(sw: ColorSwatch): { unset: string[] } {
-	return { unset: [`appearance.${GROUP_MAP_KEY[sw.group]}.${sw.key}`] };
+	const map = GROUP_MAP_KEY[sw.group];
+	return { unset: sw.keys.map((k) => `appearance.${map}.${k}`) };
 }
 
-/** Patch to reset every overridden swatch in a group. */
+/** Patch to reset every overridden swatch in a group (all keys per swatch). */
 export function buildGroupResetPatch(
 	appearance: Appearance | undefined,
 	group: ColorGroup
 ): { unset: string[] } {
+	const map = GROUP_MAP_KEY[group];
 	const unset = swatchesForGroup(group)
 		.filter((s) => isModified(appearance, s))
-		.map((s) => `appearance.${GROUP_MAP_KEY[group]}.${s.key}`);
+		.flatMap((s) => s.keys.map((k) => `appearance.${map}.${k}`));
 	return { unset };
 }

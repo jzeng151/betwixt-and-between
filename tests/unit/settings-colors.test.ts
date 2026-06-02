@@ -69,20 +69,49 @@ describe('T6 settings-colors model', () => {
 		expect(swatchOverride(app, prot)).toBe('#00ff00');
 	});
 
-	it('buildSetPatch nests under the right group map', () => {
+	it('buildSetPatch nests under the right group map (no siblings → empty unset)', () => {
 		const ch = swatchesForGroup('entity').find((s) => s.key === 'Character')!;
 		expect(buildSetPatch(ch, '#abcdef')).toEqual({
-			set: { appearance: { entityTypeColors: { Character: '#abcdef' } } }
+			set: { appearance: { entityTypeColors: { Character: '#abcdef' } } },
+			unset: []
 		});
 		const rivals = swatchesForGroup('relationship').find((s) => s.key === 'rivals')!;
 		expect(buildSetPatch(rivals, '#111111')).toEqual({
-			set: { appearance: { relationshipTypeColors: { rivals: '#111111' } } }
+			set: { appearance: { relationshipTypeColors: { rivals: '#111111' } } },
+			unset: []
 		});
 	});
 
 	it('buildUnsetPatch targets the dotted override path', () => {
 		const prot = swatchesForGroup('role').find((s) => s.key === 'Protagonist')!;
 		expect(buildUnsetPatch(prot)).toEqual({ unset: ['appearance.roleColors.Protagonist'] });
+	});
+
+	it('collapsed swatch reads/sets/resets across ALL sibling keys (codex)', () => {
+		const loc = swatchesForGroup('relationship').find((s) => s.key === 'located_at')!;
+		expect(loc.keys.sort()).toEqual(['located_at', 'part_of']);
+
+		// A legacy override stored under the NON-representative sibling is surfaced.
+		const app: Appearance = { ...base, relationshipTypeColors: { part_of: '#abc123' } };
+		expect(swatchOverride(app, loc)).toBe('#abc123');
+		expect(isModified(app, loc)).toBe(true);
+
+		// Setting writes the representative AND unsets the divergent sibling.
+		expect(buildSetPatch(loc, '#ffffff')).toEqual({
+			set: { appearance: { relationshipTypeColors: { located_at: '#ffffff' } } },
+			unset: ['appearance.relationshipTypeColors.part_of']
+		});
+
+		// Reset clears every key the swatch controls.
+		expect(buildUnsetPatch(loc).unset.sort()).toEqual([
+			'appearance.relationshipTypeColors.located_at',
+			'appearance.relationshipTypeColors.part_of'
+		]);
+
+		// Group reset also clears the hidden sibling override.
+		expect(buildGroupResetPatch(app, 'relationship').unset).toContain(
+			'appearance.relationshipTypeColors.part_of'
+		);
 	});
 
 	it('buildGroupResetPatch unsets only the modified swatches in a group', () => {
