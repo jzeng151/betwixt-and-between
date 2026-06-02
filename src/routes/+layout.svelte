@@ -4,29 +4,20 @@
 	import '../app.css';
 	import { preferences } from '$lib/os/preferences-store.js';
 	import { applyPaletteVars, serializePaletteCookie } from '$lib/palette-vars.js';
-	import { hydratePreferences, preferencesUserId } from '$lib/os/preferences-sync.js';
+	import {
+		hydratePreferences,
+		preferencesUserId,
+		preferencesOwnershipResolved
+	} from '$lib/os/preferences-sync.js';
 	import { PALETTE_COOKIE } from '$lib/palette-cookie.js';
 
 	let { children } = $props();
-
-	// Gate live palette application until the first hydrate resolves cache
-	// ownership (codex P1, client-render half). The store boots from the single
-	// global `btw:preferences` key BEFORE we know who is signed in, so on a shared
-	// browser it may hold a *different* user's prefs. Applying them in the effect
-	// below would flash that user's theme/colors on the new account's first paint,
-	// before hydratePreferences reaches its foreign-cache branch. Until then we
-	// rely on the SSR-inlined palette (already owner-scoped server-side) and apply
-	// nothing live. `.finally` flips this on after the first attempt — even an
-	// offline/anonymous one — so legitimate localStorage-only users still recolor.
-	let hydrated = $state(false);
 
 	// Activate server sync on app load: pull the user's saved preferences from
 	// /api/preferences (401 → anonymous, localStorage-only). This is what makes
 	// applyPreferencePatch (Settings) persist server-side + follow across devices.
 	onMount(() => {
-		void hydratePreferences().finally(() => {
-			hydrated = true;
-		});
+		void hydratePreferences();
 	});
 
 	// Apply theme + the user's color overrides globally whenever appearance
@@ -38,9 +29,11 @@
 		const appearance = $preferences.appearance;
 		const ownerId = $preferencesUserId;
 		// Ownership not resolved yet → don't apply/mirror a possibly-foreign cache;
-		// the owner-scoped SSR inline holds the first paint. Re-runs when `hydrated`
-		// flips (and on every later appearance/owner change).
-		if (!hydrated) return;
+		// the owner-scoped SSR inline holds the first paint. This stays closed through
+		// a transient hydrate failure (unlike a plain "attempted" flag), so a failed
+		// GET on a shared browser can't flash another user's palette before the retry
+		// resolves it (codex). Re-runs when ownership resolves / appearance changes.
+		if (!$preferencesOwnershipResolved) return;
 		if (typeof document !== 'undefined') {
 			if (appearance.theme === 'light') {
 				document.documentElement.setAttribute('data-theme', 'light');

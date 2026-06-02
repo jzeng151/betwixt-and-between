@@ -75,6 +75,16 @@ export const preferencesSyncStatus: Readable<SyncStatus> = { subscribe: _status.
 const _userId = writable<string | null>(null);
 export const preferencesUserId: Readable<string | null> = { subscribe: _userId.subscribe };
 
+// True once a hydrate has reached a state where the local store is SAFE TO DISPLAY:
+// a 200 (owner-scoped / foreign discarded) or a definitive 401 (anonymous — the
+// cache is the viewer's). Deliberately stays false through a transient GET failure
+// (network / 5xx), because in that window the store may still hold another user's
+// global cache and ownership is unknown — the layout keeps the palette gate closed
+// until this flips, so a failed hydrate on a shared browser can't flash a foreign
+// palette before the retry resolves it (codex).
+const _resolved = writable<boolean>(false);
+export const preferencesOwnershipResolved: Readable<boolean> = { subscribe: _resolved.subscribe };
+
 // ── test hooks ──────────────────────────────────────────────────────────────
 export function __setFetchForTesting(f: typeof fetch): void {
 	fetchImpl = f;
@@ -96,6 +106,7 @@ export function __resetSyncForTesting(): void {
 	inFlight = false;
 	hydrating = false;
 	_userId.set(null);
+	_resolved.set(false);
 	_status.set('idle');
 }
 /** Cancel the debounce and flush synchronously (await). For tests. */
@@ -196,9 +207,11 @@ export async function hydratePreferences(): Promise<void> {
 		return;
 	}
 	if (res.status === 401) {
-		// Unauthenticated: localStorage-only contract. No server writes.
+		// Unauthenticated: localStorage-only contract. No server writes. This is a
+		// RESOLVED state — the cache is the anonymous viewer's, safe to display.
 		serverVersion = 0;
 		_userId.set(null);
+		_resolved.set(true);
 		hydrating = false;
 		_status.set('offline');
 		return;
@@ -295,6 +308,9 @@ export async function hydratePreferences(): Promise<void> {
 
 	hydrating = false;
 	hydrateBackoffMs = RETRY_BASE_MS; // recovered — reset hydrate backoff
+	// Ownership resolved (200): store is now owner-scoped / foreign cache
+	// discarded → safe to display.
+	_resolved.set(true);
 	if (hasPending()) {
 		scheduleFlush();
 	} else {
@@ -345,7 +361,14 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 	serverVersion = 0;
 	inFlight = false;
 	_userId.set(null);
+	// Close the gate until the next hydrate re-resolves ownership for the new
+	// account; the switch resets the store to defaults first, so nothing foreign
+	// is shown meanwhile.
+	_resolved.set(false);
 	if (kind === 'logout') {
+		// Logout is resolved: the local cache is the just-signed-out user's own
+		// (anonymous from here), safe to keep displaying.
+		_resolved.set(true);
 		_status.set('offline');
 		return;
 	}

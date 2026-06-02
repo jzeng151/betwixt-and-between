@@ -21,6 +21,7 @@ import {
 	applyPreferencePatch,
 	onAuthChange,
 	preferencesUserId,
+	preferencesOwnershipResolved,
 	__setFetchForTesting,
 	__resetSyncForTesting,
 	__flushForTesting,
@@ -449,6 +450,29 @@ describe('T4 transient-failure retry (codex)', () => {
 		expect(calls.filter((c) => c.method === 'PATCH').at(-1)?.body.set.appearance.theme).toBe(
 			'light'
 		);
+	});
+
+	it('keeps the ownership gate CLOSED through a transient hydrate failure, opens it on recovery (codex)', async () => {
+		let gets = 0;
+		mockFetch((c) => {
+			if (c.method === 'GET') {
+				gets++;
+				if (gets === 1) throw new Error('network down');
+				return fakeRes(200, { data: {}, version: 1, initialized: true, userId: 'u' });
+			}
+			return fakeRes(200, { version: 2 });
+		});
+		expect(get(preferencesOwnershipResolved)).toBe(false);
+		await hydratePreferences(); // fails transiently → gate must stay CLOSED
+		expect(get(preferencesOwnershipResolved)).toBe(false);
+		await hydratePreferences(); // recovery → ownership resolved → gate opens
+		expect(get(preferencesOwnershipResolved)).toBe(true);
+	});
+
+	it('opens the ownership gate on a definitive 401 (anonymous is resolved)', async () => {
+		mockFetch(() => fakeRes(401, {}));
+		await hydratePreferences();
+		expect(get(preferencesOwnershipResolved)).toBe(true);
 	});
 
 	it('recovers a transiently-failed initial hydrate and flushes stranded edits (codex)', async () => {
