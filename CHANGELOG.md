@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.3.0] - 2026-06-01
+
+World Map v3 Slice 4 (part 2) — movement. Markers can now move over story-time, completing the Slice 4 authoring story begun in 0.8.1.0.
+
+### Added
+
+- Move a map marker over time: pick the Move tool, drag a marker to a new spot, and a keyframe is recorded at the current playhead. Scrubbing the timeline glides the marker along its path between keyframes (eased), and a faint amber line traces the authored route.
+- Author movement from the keyboard for accessibility: with the Move tool active, click a marker to select it, nudge with the arrow keys (hold Shift for a larger step), Enter to commit a keyframe, Escape to cancel. A screen-reader announcement confirms each commit.
+- A unified map tool bar — Select, Brush, Place, Move — is the single place to switch tools. The active tool highlights, and Undo/Redo now live on the bar so they're reachable from every tool, not just while painting.
+
+### Changed
+
+- The Brush and Placeables panels now appear only when their tool is selected, instead of always sitting below the canvas, so the map area is less cluttered.
+
 ## [0.8.2.0] - 2026-05-31
 
 Fixes three World Map optimistic-concurrency races surfaced in review of #59.
