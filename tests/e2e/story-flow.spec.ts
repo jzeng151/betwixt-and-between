@@ -34,9 +34,11 @@ test.describe('Story flow', () => {
 		// After rename the window aria-label updates to the new name
 		const detailWin = page.locator('.window[aria-label="Elara Voss"]');
 		await expect(detailWin).toBeVisible({ timeout: 5000 });
-		// Toggle to view mode so entity-name renders as text (edit mode shows an input)
+		// Toggle to view mode so the name renders as text (edit mode shows an input)
 		await detailWin.locator('.mode-toggle').click();
-		await expect(detailWin.locator('.entity-name')).toContainText('Elara Voss', { timeout: 5000 });
+		await expect(detailWin.locator('.entity-detail-title-text')).toContainText('Elara Voss', {
+			timeout: 5000
+		});
 
 		expect(Date.now() - start).toBeLessThan(30_000);
 	});
@@ -48,7 +50,7 @@ test.describe('Story flow', () => {
 
 		// "+ New" creates "New Character" and opens the detail window in edit mode
 		await listWin.locator('button.create-btn').click();
-		const charDetail = page.locator('.char-detail');
+		const charDetail = page.locator('.entity-detail-host');
 
 		// Window opens in edit mode with forceEditing InlineEdit visible; set initial name
 		await page.locator('.inline-edit-input').fill('Original Name');
@@ -56,7 +58,9 @@ test.describe('Story flow', () => {
 
 		// Toggle to view mode so the name renders as static text, then assert
 		await charDetail.locator('.mode-toggle').click();
-		await expect(charDetail.locator('.entity-name')).toContainText('Original Name', { timeout: 5000 });
+		await expect(charDetail.locator('.entity-detail-title-text')).toContainText('Original Name', {
+			timeout: 5000
+		});
 
 		// Back to edit mode, rename, toggle back to view, assert update
 		await charDetail.locator('.mode-toggle').click();
@@ -64,7 +68,10 @@ test.describe('Story flow', () => {
 		await page.locator('.inline-edit-input').press('Enter');
 		await charDetail.locator('.mode-toggle').click();
 
-		await expect(charDetail.locator('.entity-name')).toContainText('Renamed Character', { timeout: 3000 });
+		await expect(charDetail.locator('.entity-detail-title-text')).toContainText(
+			'Renamed Character',
+			{ timeout: 3000 }
+		);
 	});
 
 	test('add event entity → Story Graph no longer shows empty overlay', async ({ page, request }) => {
