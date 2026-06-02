@@ -45,6 +45,17 @@ test('entity-type color customization persists server-side and resets to default
 	// Round-trips to the server (debounced PATCH).
 	await expect.poll(() => getCharacterColor(request), { timeout: 5000 }).toBe('#ff0000');
 
+	// No-flash SSR (T5b): the client mirrored the palette to a cookie; the
+	// server hook inlines it into the served HTML so the next load paints the
+	// custom color before hydration.
+	const palette = (await page.context().cookies()).find((c) => c.name === 'btw_palette');
+	expect(palette).toBeTruthy();
+	const ssrHtml = await (
+		await request.get('/app', { headers: { cookie: `${palette!.name}=${palette!.value}` } })
+	).text();
+	expect(ssrHtml).toContain('<style id="palette-ssr">');
+	expect(ssrHtml).toContain('--color-type-character:#ff0000');
+
 	// Prove SERVER persistence (not just localStorage cache): clear the cache,
 	// reload, and the customization re-hydrates from the server.
 	await page.evaluate(() => localStorage.removeItem('btw:preferences'));

@@ -81,6 +81,19 @@ export function paletteVarsToCss(vars: Record<string, string>): string {
 }
 
 /**
+ * Serialize an Appearance to the palette-cookie value (T5b): `{t, v}` where
+ * t = theme short-code and v = resolved overrides. The server hook
+ * (parsePaletteCookie) reads it to inline no-flash SSR vars. Client-only path
+ * (needs the color maps); the parser is pure in palette-cookie.ts.
+ */
+export function serializePaletteCookie(appearance: Appearance | undefined): string {
+	return JSON.stringify({
+		t: appearance?.theme === 'light' ? 'l' : 'd',
+		v: resolvePaletteVars(appearance)
+	});
+}
+
+/**
  * Apply overrides to documentElement, REMOVING managed vars that are no longer
  * overridden (so a reset falls back to the app.css default). Client-only;
  * no-op during SSR.

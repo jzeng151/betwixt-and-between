@@ -2,6 +2,7 @@ import { sequence } from '@sveltejs/kit/hooks';
 import { env as privateEnv } from '$env/dynamic/private';
 import { buildAuth, svelteKitHandler, type AuthEnv } from '$lib/server/auth.js';
 import { closeDb, getDb, type DbEnv } from '$lib/server/db/index.js';
+import { PALETTE_COOKIE, parsePaletteCookie, paletteCookieToCss } from '$lib/palette-cookie.js';
 import type { Handle } from '@sveltejs/kit';
 
 /**
@@ -116,4 +117,35 @@ const authHandle: Handle = async ({ event, resolve }) => {
 	}
 };
 
-export const handle: Handle = sequence(authHandle);
+/**
+ * No-flash palette SSR (Settings customization T5b, 3C/6A). Reads the
+ * `btw_palette` cookie the client mirrors on every appearance change and inlines
+ * the resolved `:root{…}` overrides + a `data-theme` attribute into the first
+ * HTML chunk, so a logged-in user's custom colors/theme are correct on the very
+ * first paint instead of flashing the app.css defaults until hydration.
+ *
+ * Runs as the innermost handle (authHandle calls resolve, which invokes this),
+ * so its transformPageChunk applies to the rendered document. The cookie is
+ * hard-sanitized in parsePaletteCookie — no arbitrary CSS can be injected.
+ */
+const paletteHandle: Handle = async ({ event, resolve }) => {
+	const parsed = parsePaletteCookie(event.cookies.get(PALETTE_COOKIE));
+	const css = paletteCookieToCss(parsed);
+	const isLight = parsed?.theme === 'light';
+	if (!css && !isLight) return resolve(event);
+
+	return resolve(event, {
+		transformPageChunk: ({ html }) => {
+			let out = html;
+			if (isLight && out.includes('<html lang="en">')) {
+				out = out.replace('<html lang="en">', '<html lang="en" data-theme="light">');
+			}
+			if (css && out.includes('</head>')) {
+				out = out.replace('</head>', `<style id="palette-ssr">${css}</style></head>`);
+			}
+			return out;
+		}
+	});
+};
+
+export const handle: Handle = sequence(authHandle, paletteHandle);

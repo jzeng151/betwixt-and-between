@@ -3,8 +3,9 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import '../app.css';
 	import { preferences } from '$lib/os/preferences-store.js';
-	import { applyPaletteVars } from '$lib/palette-vars.js';
+	import { applyPaletteVars, serializePaletteCookie } from '$lib/palette-vars.js';
 	import { hydratePreferences } from '$lib/os/preferences-sync.js';
+	import { PALETTE_COOKIE } from '$lib/palette-cookie.js';
 
 	let { children } = $props();
 
@@ -30,6 +31,12 @@
 			}
 		}
 		applyPaletteVars(appearance);
+		// Mirror the resolved palette to a cookie so the server hook can inline
+		// it for a no-flash first paint on the next navigation/reload (T5b 3C/6A).
+		if (typeof document !== 'undefined') {
+			const value = encodeURIComponent(serializePaletteCookie(appearance));
+			document.cookie = `${PALETTE_COOKIE}=${value}; path=/; max-age=31536000; samesite=lax`;
+		}
 	});
 </script>
 
