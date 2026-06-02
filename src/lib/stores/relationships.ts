@@ -19,10 +19,19 @@ export type Relationship = {
 function createRelationshipStore() {
 	const { subscribe, set, update } = writable<Relationship[]>([]);
 
+	// Monotonic load token. Structural Act/Scene edits each fire a load() after
+	// their PATCH; concurrent edits can have an earlier request resolve LAST and
+	// clobber newer positions with stale ones (the graph click-to-jump reads
+	// these bounds). Stamp each load and only commit if it's still the latest —
+	// out-of-order responses from superseded loads are dropped (Codex P2).
+	let loadSeq = 0;
+
 	async function load() {
+		const seq = ++loadSeq;
 		const res = await fetch('/api/relationships');
 		if (!res.ok) throw new Error(`relationships.load failed: ${res.status} ${await res.text()}`);
 		const data: Relationship[] = await res.json();
+		if (seq !== loadSeq) return; // a newer load() started — drop this stale result
 		set(data);
 	}
 

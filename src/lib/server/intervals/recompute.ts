@@ -520,6 +520,30 @@ async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<n
 
 	for (const row of rows) {
 		try {
+			// Partial anchor: an Act delete (ON DELETE SET NULL) nulled exactly one
+			// side of a scoped edge whose start and end acts differ (the modal lets
+			// start/end acts be chosen independently). The surviving half can no
+			// longer form a valid [start, end) scope — resolveRelationshipBounds
+			// requires both act FKs or neither — so revert the row to timeless: null
+			// the dangling anchor and clear both positions. Without this the orphaned
+			// half keeps the row in this query and resolveRelationshipBounds throws,
+			// aborting the whole Act-delete transaction (Codex P1, Slice 5 PR-D).
+			if ((row.startActId == null) !== (row.endActId == null)) {
+				await db
+					.update(relationships)
+					.set({
+						startActId: null,
+						startSceneId: null,
+						endActId: null,
+						endSceneId: null,
+						startPosition: null,
+						endPosition: null
+					})
+					.where(and(eq(relationships.id, row.id), eq(relationships.userId, userId)));
+				updated++;
+				continue;
+			}
+
 			const { startPosition, endPosition } = await resolveRelationshipBounds(
 				db,
 				{

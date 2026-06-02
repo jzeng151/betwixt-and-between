@@ -111,6 +111,37 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 		expect(rel.endPosition).toBeNull();
 	});
 
+	it('partial anchor (one act FK nulled by delete, the other surviving) reverts to timeless without throwing', async () => {
+		// Slice 5 PR-D / Codex P1. The modal lets start/end acts differ, so a
+		// caused_by edge can span act0 → act1. A plain delete of act0 nulls
+		// startActId via ON DELETE SET NULL but leaves endActId = act1. The row
+		// then has exactly one act anchor, which resolveRelationshipBounds rejects
+		// (both-or-neither) — that throw would abort the Act-delete transaction.
+		// recompute must instead revert the unscopable row to timeless.
+		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+
+		// Post-cascade partial state: startAct nulled, endAct still act1, stale
+		// positions left behind.
+		await db.insert(relationships).values({ userId,
+			fromId: alice,
+			toId: bob.id,
+			type: 'caused_by',
+			startActId: null,
+			endActId: act1,
+			startPosition: 0.0,
+			endPosition: 2.0
+		});
+
+		// Must not throw (a throw here is what aborts the delete transaction).
+		await expect(recomputeAllIntervals(db, userId)).resolves.toBeTypeOf('number');
+
+		const [rel] = await db.select().from(relationships).where(eq(relationships.fromId, alice));
+		expect(rel.startActId).toBeNull();
+		expect(rel.endActId).toBeNull();
+		expect(rel.startPosition).toBeNull();
+		expect(rel.endPosition).toBeNull();
+	});
+
 	it('CRITICAL regression: transaction failure rolls back both interval and relationship positions', async () => {
 		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
 
