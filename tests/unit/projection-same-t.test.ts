@@ -151,7 +151,8 @@ describe('projectState — same-T ordering (Δ1a-D)', () => {
 			regions: [],
 			artifacts: [],
 			cells: [],
-			artifactOverrides: new Map()
+			artifactOverrides: new Map(),
+			causalEdges: []
 		});
 	});
 

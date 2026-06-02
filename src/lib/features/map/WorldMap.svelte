@@ -6,6 +6,7 @@
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
+	import { jumpToCause } from '$lib/features/timeline/jump-to-cause.js';
 	import { get } from 'svelte/store';
 	import { windowStore } from '$lib/os/windows-store.js';
 	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
@@ -24,6 +25,7 @@
 	import PixiGridLayer from '$lib/features/map/PixiGridLayer.svelte';
 	import PixiTerrainLayer from '$lib/features/map/PixiTerrainLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
+	import PixiCausalEdgeLayer from '$lib/features/map/PixiCausalEdgeLayer.svelte';
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
@@ -563,10 +565,37 @@
 		};
 	});
 
+	// Slice 5 PR-C (D2/D5, ADR 0006) — causal-edge projection input. caused_by
+	// rows are the EventChain links; locationOf maps an Event endpoint → its
+	// Location via takes_place_at (Event AT Location, edge-policy.ts:14) so
+	// foldCausalEdges can resolve each endpoint to a region centroid on this map.
+	// Relationship is structurally assignable to ProjectionCausalEdge.
+	const causalInput = $derived.by(() => {
+		const edges = $relationships.filter((r) => r.type === 'caused_by');
+		const locationOf = new Map<string, string>();
+		for (const r of $relationships) {
+			if (r.type !== 'takes_place_at') continue;
+			// No DB uniqueness on takes_place_at: an Event can carry >1. The
+			// relationships store isn't sorted, so pick deterministically (lowest
+			// Location id) — otherwise the causal arrow's endpoint could flip
+			// between reloads on a multi-location Event.
+			const existing = locationOf.get(r.fromId);
+			if (existing === undefined || r.toId < existing) locationOf.set(r.fromId, r.toId);
+		}
+		return { edges, locationOf };
+	});
+
 	let renderedState = $derived.by<RenderedState | null>(() => {
 		if (!projectionCtx) return null;
 		const t = $playhead ?? Number.NEGATIVE_INFINITY;
-		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore);
+		return projectState(
+			t,
+			$mapAnchorsStore,
+			$mapEventsStore,
+			projectionCtx,
+			$placementsStore,
+			causalInput
+		);
 	});
 
 	// Combined readiness signal piped through to PixiRegionLayer as
@@ -1491,6 +1520,15 @@
 						}
 					}}
 					onOpenLocation={(locId) => windowStore.open('entity-detail', locId)}
+				/>
+				<!-- Slice 5 PR-C — EventChain causal edges (caused_by), over regions
+				     and under markers. Click routes through the shared jumpToCause
+				     helper (same jump as both graphs); a timeless edge click is a
+				     harmless no-op (D5). -->
+				<PixiCausalEdgeLayer
+					{activeMap}
+					causalEdges={renderedState?.causalEdges ?? []}
+					onEdgeClick={(id) => jumpToCause($relationships.find((r) => r.id === id))}
 				/>
 				<PixiPlacementLayer
 					{activeMap}
