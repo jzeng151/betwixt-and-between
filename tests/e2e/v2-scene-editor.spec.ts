@@ -17,6 +17,8 @@ async function openTimeline(page: Page) {
 	return win;
 }
 
+// Clicking a scene cell opens a standalone 'entity-detail' editor window
+// (Issue 19A); the legacy in-Timeline side panel was retired.
 test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
@@ -32,11 +34,12 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.scene-cell').first().click();
-		await win.locator('.entity-detail-host .mode-toggle').click();
+
+		const panel = page.locator('.entity-detail-host');
+		await panel.locator('.mode-toggle').click();
 
 		// POV field removed by Step 5.5 (drizzle/0011_data_model_cleanup.sql)
 		// alongside the pov_of relationship cut.
-		const panel = win.locator('.entity-detail');
 		await expect(panel).toBeVisible();
 		await expect(panel.locator('[data-field="description"]')).toBeVisible();
 		await expect(panel.locator('[data-field="goal"]')).toBeVisible();
@@ -58,10 +61,12 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.scene-cell').first().click();
-		await win.locator('.entity-detail-host .mode-toggle').click();
 
-		const goal = win
-			.locator('.entity-detail [data-field="goal"]')
+		const panel = page.locator('.entity-detail-host');
+		await panel.locator('.mode-toggle').click();
+
+		const goal = panel
+			.locator('[data-field="goal"]')
 			.locator('input.field-input, textarea.field-textarea')
 			.first();
 		await goal.fill('Establish the threat');
@@ -69,7 +74,7 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
-			const data = (ents.find((e: any) => e.id === sc.id).data ?? {});
+			const data = ents.find((e: any) => e.id === sc.id).data ?? {};
 			expect(data.goal).toBe('Establish the threat');
 		}).toPass({ timeout: 3000 });
 	});
@@ -89,28 +94,27 @@ test.describe('V2 Scene editor (T3-pulled-in + D5)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.scene-cell').first().click();
-		await win.locator('.entity-detail-host .mode-toggle').click();
 
-		const sensory = win
-			.locator('.entity-detail [data-field="sensoryAnchor"]')
+		const panel = page.locator('.entity-detail-host');
+		await panel.locator('.mode-toggle').click();
+
+		const sensory = panel
+			.locator('[data-field="sensoryAnchor"]')
 			.locator('textarea.field-textarea, input.field-input')
 			.first();
 		await sensory.fill('Smell of damp moss');
 		await sensory.blur();
 
-		const wct = win
-			.locator('.entity-detail [data-field="wordCountTarget"]')
-			.locator('input.field-input');
+		const wct = panel.locator('[data-field="wordCountTarget"]').locator('input.field-input');
 		await wct.fill('1500');
 		await wct.blur();
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
-			const data = (ents.find((e: any) => e.id === sc.id).data ?? {});
+			const data = ents.find((e: any) => e.id === sc.id).data ?? {};
 			expect(data.sensoryAnchor).toBe('Smell of damp moss');
 			// Stored as number or numeric string — accept either
 			expect(String(data.wordCountTarget)).toBe('1500');
 		}).toPass({ timeout: 3000 });
 	});
-
 });
