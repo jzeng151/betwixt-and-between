@@ -1,18 +1,35 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import favicon from '$lib/assets/favicon.svg';
 	import '../app.css';
 	import { preferences } from '$lib/os/preferences-store.js';
 	import { applyPaletteVars } from '$lib/palette-vars.js';
+	import { hydratePreferences } from '$lib/os/preferences-sync.js';
 
 	let { children } = $props();
 
-	// Live-apply the user's color overrides as --color-* on documentElement
-	// whenever appearance changes (Settings customization T5). $effect is
-	// client-only, so SSR is unaffected (no-flash SSR is T5b 3C). Consumers that
-	// read var(--color-type/rel/role-*) — graph, wiki, palette, role badges —
-	// recolor for free. Resetting an override removes the var → app.css default.
+	// Activate server sync on app load: pull the user's saved preferences from
+	// /api/preferences (401 → anonymous, localStorage-only). This is what makes
+	// applyPreferencePatch (Settings) persist server-side + follow across devices.
+	onMount(() => {
+		void hydratePreferences();
+	});
+
+	// Apply theme + the user's color overrides globally whenever appearance
+	// changes (Settings customization T5/T6). $effect is client-only, so SSR is
+	// unaffected (no-flash SSR is T5b 3C). Consumers that read
+	// var(--color-type/rel/role-*) — graph, wiki, palette, role badges — recolor
+	// for free; a reset removes the var → app.css default.
 	$effect(() => {
-		applyPaletteVars($preferences.appearance);
+		const appearance = $preferences.appearance;
+		if (typeof document !== 'undefined') {
+			if (appearance.theme === 'light') {
+				document.documentElement.setAttribute('data-theme', 'light');
+			} else {
+				document.documentElement.removeAttribute('data-theme');
+			}
+		}
+		applyPaletteVars(appearance);
 	});
 </script>
 

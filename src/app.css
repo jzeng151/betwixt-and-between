@@ -42,7 +42,7 @@
 
   /* Per-role badge colors (CharacterHeader). Own namespace so role-color
      customization is decoupled from edge colors (eng-review T1A); seeded
-     from the --color-rel-*/accent values roles previously borrowed, so the
+     from the rel-color and accent values roles previously borrowed, so the
      default appearance is unchanged. */
   --color-role-protagonist: #c8942a;  /* was --color-accent */
   --color-role-antagonist:  #ef4444;  /* was --color-rel-rival */
