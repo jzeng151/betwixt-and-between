@@ -67,7 +67,10 @@ type Fixture = {
 	anchors: ProjectionAnchor[];
 	events: ProjectionEvent[];
 	ctx: ProjectionContext;
-	expected: RenderedState;
+	// Movement (artifactOverrides) has its own dedicated tests; these golden
+	// fixtures pin the state-event projection and compare only the 5 non-movement
+	// fields (see runFixture). Omit it so the literals stay focused.
+	expected: Omit<RenderedState, 'artifactOverrides'>;
 };
 
 const FIXTURES: Fixture[] = [
@@ -399,8 +402,16 @@ describe('projection-engine fixtures (Δ1a-F, ≥10 cases)', () => {
 
 	for (const fixture of FIXTURES) {
 		it(fixture.name, () => {
-			const state = projectState(fixture.t, fixture.anchors, fixture.events, fixture.ctx);
+			const { artifactOverrides, ...state } = projectState(
+				fixture.t,
+				fixture.anchors,
+				fixture.events,
+				fixture.ctx
+			);
 			expect(state).toEqual(fixture.expected);
+			// These fixtures pass no placements, so the movement fold yields no
+			// overrides — guard that the contract addition stays inert here.
+			expect(artifactOverrides.size).toBe(0);
 		});
 	}
 });

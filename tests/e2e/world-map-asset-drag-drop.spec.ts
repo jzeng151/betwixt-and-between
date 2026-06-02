@@ -68,6 +68,8 @@ test('drag an asset chip onto the canvas creates a placement (no source_asset_id
 	await win.locator('button[aria-label="Maximize"]').click();
 	await expect(win.locator('.pixi-stage canvas')).toBeVisible({ timeout: 10000 });
 
+	// DS4: the placeable palette is a detail panel under the Place tool.
+	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Place' }).click();
 	// The asset chip in the consolidated placeable palette.
 	const chip = win.locator('[data-testid="placeable-palette"] .chip', { hasText: 'Dragged Knight' });
 	await expect(chip).toBeVisible({ timeout: 10000 });
@@ -132,6 +134,8 @@ test('click-to-arm a palette chip, then tap the canvas, creates a placement (T7 
 	const canvas = win.locator('.pixi-stage canvas');
 	await expect(canvas).toBeVisible({ timeout: 10000 });
 
+	// DS4: select the Place tool to reveal the placeable palette.
+	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Place' }).click();
 	// Arm the chip (click-to-arm → canvasMode becomes 'place-armed').
 	const chip = win.locator('[data-testid="placeable-palette"] .chip', { hasText: 'Armed Knight' });
 	await expect(chip).toBeVisible();
@@ -181,6 +185,8 @@ test('dropping a chip clears a pending click-to-place arm (T7 drop gate)', async
 	await win.locator('button[aria-label="Maximize"]').click();
 	await expect(win.locator('.pixi-stage canvas')).toBeVisible({ timeout: 10000 });
 
+	// DS4: select the Place tool to reveal the placeable palette.
+	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Place' }).click();
 	const palette = win.locator('[data-testid="placeable-palette"]');
 	const chipA = palette.locator('.chip', { hasText: 'Knight A' });
 	await chipA.click();
@@ -206,7 +212,10 @@ test('dropping a chip clears a pending click-to-place arm (T7 drop gate)', async
 	await expect(chipA).toHaveAttribute('aria-pressed', 'false');
 });
 
-test('a drop during brush mode is rejected (T7 drop gate)', async ({ page, request }) => {
+test('the placeable palette is unavailable under the Brush tool (DS4 — supersedes the T7 drop gate)', async ({
+	page,
+	request
+}) => {
 	await clearAll(request);
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 
@@ -225,14 +234,15 @@ test('a drop during brush mode is rejected (T7 drop gate)', async ({ page, reque
 	await win.locator('button[aria-label="Maximize"]').click();
 	await expect(win.locator('.pixi-stage canvas')).toBeVisible({ timeout: 10000 });
 
-	// Enter brush mode → canvasMode === 'brush' owns the pointer.
-	await win.locator('[data-testid="brush-palette"] button[aria-pressed]').first().click();
+	// Under the unified tool bar (DS4) the palettes are per-tool detail panels.
+	// Selecting Brush hides the placeable palette entirely, so a placeable drop
+	// mid-brush can't even be initiated — a stronger guarantee than the old
+	// runtime drop-rejection (which still exists in WorldMap as defense-in-depth).
+	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Brush' }).click();
+	await expect(win.locator('[data-testid="brush-palette"]')).toBeVisible();
+	await expect(win.locator('[data-testid="placeable-palette"]')).toHaveCount(0);
 
-	const chip = win.locator('[data-testid="placeable-palette"] .chip', { hasText: 'Brush Knight' });
-	await html5Drag(page, chip, win.locator('.pixi-drop-target'));
-
-	// The drop is rejected mid-brush — no placement created. Give it a beat.
-	await page.waitForTimeout(1500);
+	// And no placement exists.
 	const rows: Array<{ id: string }> = await (
 		await request.get(`/api/map-placements?locationId=${loc.id}`)
 	).json();

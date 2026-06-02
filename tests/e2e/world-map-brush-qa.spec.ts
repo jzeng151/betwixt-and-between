@@ -81,8 +81,8 @@ test('size selector is clickable and a wide drag paints many distinct cells', as
 	await expect(canvas).toBeVisible({ timeout: 10000 });
 
 	const palette = win.locator('[data-testid="brush-palette"]');
-	await palette.locator('.mode-toggle').click();
-	await expect(palette.locator('.mode-toggle')).toHaveText('Brush ON');
+	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Brush' }).click();
+	await expect(palette).toBeVisible();
 
 	// Bug 4: the size selector must be reachable. If the sidebar overlays it,
 	// this click times out with "element intercepts pointer events".
@@ -136,8 +136,8 @@ test('undo reverts a single-click paint (button) and a stroke (keyboard)', async
 	await expect(canvas).toBeVisible({ timeout: 10000 });
 
 	const palette = win.locator('[data-testid="brush-palette"]');
-	await palette.locator('.mode-toggle').click();
-	await expect(palette.locator('.mode-toggle')).toHaveText('Brush ON');
+	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Brush' }).click();
+	await expect(palette).toBeVisible();
 
 	const box = await canvas.boundingBox();
 	if (!box) throw new Error('no box');
@@ -153,7 +153,7 @@ test('undo reverts a single-click paint (button) and a stroke (keyboard)', async
 		.toBeGreaterThan(0);
 
 	// Undo via the palette button reverts the single paint.
-	await palette.locator('.history-button', { hasText: 'Undo' }).click();
+	await win.locator('[data-testid="map-tool-selector"] .history-button', { hasText: 'Undo' }).click();
 	await expect
 		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
 		.toBe(0);
@@ -176,7 +176,7 @@ test('undo reverts a single-click paint (button) and a stroke (keyboard)', async
 		.toBe(0);
 
 	// Redo via the palette button re-applies the stroke (optimistic redo).
-	await palette.locator('.history-button', { hasText: 'Redo' }).click();
+	await win.locator('[data-testid="map-tool-selector"] .history-button', { hasText: 'Redo' }).click();
 	await expect
 		.poll(async () => distinctPaintedCells(request, map.id), { timeout: 8000 })
 		.toBeGreaterThan(0);
@@ -203,7 +203,8 @@ test('spamming undo past history clears every stroke (no leftover, no race)', as
 	const canvas = win.locator('.pixi-stage canvas');
 	await expect(canvas).toBeVisible({ timeout: 10000 });
 	const palette = win.locator('[data-testid="brush-palette"]');
-	await palette.locator('.mode-toggle').click();
+	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Brush' }).click();
+	await expect(palette).toBeVisible();
 
 	const box = await canvas.boundingBox();
 	if (!box) throw new Error('no box');
@@ -261,7 +262,8 @@ test('two quick separate clicks paint two cells, not a line between them', async
 	const canvas = win.locator('.pixi-stage canvas');
 	await expect(canvas).toBeVisible({ timeout: 10000 });
 	const palette = win.locator('[data-testid="brush-palette"]');
-	await palette.locator('.mode-toggle').click();
+	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Brush' }).click();
+	await expect(palette).toBeVisible();
 
 	const box = await canvas.boundingBox();
 	if (!box) throw new Error('no box');
@@ -305,7 +307,8 @@ test('undo right after a paint (POST in flight) undoes the new stroke, not the p
 	const canvas = win.locator('.pixi-stage canvas');
 	await expect(canvas).toBeVisible({ timeout: 10000 });
 	const palette = win.locator('[data-testid="brush-palette"]');
-	await palette.locator('.mode-toggle').click();
+	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Brush' }).click();
+	await expect(palette).toBeVisible();
 
 	const box = await canvas.boundingBox();
 	if (!box) throw new Error('no box');

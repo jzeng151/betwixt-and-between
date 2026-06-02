@@ -46,6 +46,8 @@ test('STYLE section persists color + is_asset, and toggling is_asset propagates 
 	await mapWin.locator('button[aria-label="Maximize"]').click();
 	await expect(mapWin.locator('.pixi-stage canvas')).toBeVisible({ timeout: 10000 });
 
+	// DS4: the placeable palette is a detail panel under the Place tool.
+	await mapWin.locator('[data-testid="map-tool-selector"] button', { hasText: 'Place' }).click();
 	const palette = mapWin.locator('[data-testid="placeable-palette"]');
 	await expect(palette).toBeVisible();
 

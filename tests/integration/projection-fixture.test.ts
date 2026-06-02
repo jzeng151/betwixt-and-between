@@ -260,12 +260,19 @@ describe('projection determinism — fixture coverage (T10)', () => {
 		expect(r2?.color).toBe('#9ca3af'); // NEUTRAL_REGION_COLOR
 	});
 
-	it('unknown event kind (move_entity at t=12) is skipped without error', () => {
+	it('move_entity at t=12 does not affect region projection (no placements passed)', () => {
+		// PR-F: move_entity is now a KNOWN kind, but it only produces
+		// per-placement position overrides — it never touches regions/cells.
+		// This call passes no placements, so the movement fold is inert and the
+		// region projection is identical to pre-PR-F. (Movement folding has its
+		// own coverage in projection-movement.test.ts.)
 		const at12 = projectState(12, anchors, events, ctx);
 		// REGION_1 ownership at t=12: anchor-1 set A; events e3-e6 don't
 		// touch R1 again except the same-T e5/e6 (B wins). So R1 = B at
 		// any t >= 9 up to t=12 (no further R1 events).
 		const r1 = at12.regions.find((r) => r.regionId === REGION_1);
 		expect(r1?.factionId).toBe(FACTION_B);
+		// No placements → no overrides, regardless of the move_entity event.
+		expect(at12.artifactOverrides.size).toBe(0);
 	});
 });

@@ -19,6 +19,7 @@ import {
 	factions,
 	mapAnchors,
 	mapEvents,
+	mapPlacements,
 	worldMaps,
 	worldMapLayerPrefs
 } from './db/schema.js';
@@ -30,7 +31,9 @@ import {
 	PAINT_CELLS_MAX_PER_EVENT,
 	type AnchorState,
 	type BiomeKind,
+	type EaseKind,
 	type EventKind,
+	type MoveEntityPayload,
 	type PaintCellsPayload,
 	type TransferRegionPayload
 } from '$lib/features/map/projection.js';
@@ -38,7 +41,12 @@ import {
 // Re-export the shared event-payload type so callers that only depend on the
 // server module don't have to reach across into projection.ts.
 export { BIOMES, EVENT_KINDS, PAINT_CELLS_MAX_PER_EVENT };
-export type { BiomeKind, EventKind, PaintCellsPayload, TransferRegionPayload };
+export type { BiomeKind, EaseKind, EventKind, MoveEntityPayload, PaintCellsPayload, TransferRegionPayload };
+
+// Slice 4 PR-F (D5) — allowed tween curves for move_entity. Kept here as a
+// runtime Set so the validator can membership-test; the type lives in
+// projection.ts (client-shared).
+const MOVE_ENTITY_TWEENS = new Set<EaseKind>(['linear', 'ease_in_out']);
 
 // Slice 3 outside-voice A2 + B7 — auto-anchor fires after K non-undone
 // paint_cells events accumulate since the last anchor on a map. Bounds
@@ -768,7 +776,8 @@ async function validateEventPayload(
 	userId: string,
 	worldMapId: string,
 	kind: EventKind,
-	payload: unknown
+	payload: unknown,
+	tPosition: number
 ): Promise<void> {
 	if (!payload || typeof payload !== 'object') {
 		error(400, 'payload_jsonb must be an object');
@@ -832,6 +841,94 @@ async function validateEventPayload(
 			error(400, 'paint_cells payload.command_complete must be a boolean if provided');
 		}
 	}
+	if (kind === 'move_entity') {
+		await validateMoveEntityPayload(db, userId, worldMapId, payload, tPosition);
+	}
+}
+
+// Slice 4 PR-F (D5) — move_entity payload validator.
+//
+// Cross-user / cross-scope guard (PR-F D-PRF-8, the CLAUDE.md "missing JOIN is a
+// cross-user leak" class): a placement is LOCATION-scoped, not map-scoped.
+// `map_placements.map_id` is a write-time hint (ON DELETE SET NULL), NOT the
+// identity key — WorldMap loads placements by `world_maps.location_id`
+// (WorldMap.svelte `placementsStore.load({ locationId })`). So the moving
+// placement must (a) be owned by the caller AND (b) share the active map's
+// location_id. Validating against `placement.map_id == worldMapId` would be the
+// wrong scope and would let a foreign placement_id through.
+//
+// Window guard (PR-F D-PRF-9): a keyframe must belong to a moment the placement
+// actually exists. A placement carries its own active window [startPosition,
+// endPosition) (both-null = always active, mirrors placementsAtPlayhead). A
+// move_entity whose t_position falls outside that window is rejected at write so
+// the projection never has to fold a keyframe for an inactive placement.
+async function validateMoveEntityPayload(
+	db: Db,
+	userId: string,
+	worldMapId: string,
+	payload: unknown,
+	tPosition: number
+): Promise<void> {
+	const p = payload as Partial<MoveEntityPayload>;
+	assertUuid(p.placement_id, 'move_entity payload.placement_id');
+	if (typeof p.tween !== 'string' || !MOVE_ENTITY_TWEENS.has(p.tween as EaseKind)) {
+		error(400, "move_entity payload.tween must be 'linear' or 'ease_in_out'");
+	}
+	const pos = p.position as { x?: unknown; y?: unknown } | undefined;
+	if (!pos || typeof pos !== 'object' || Array.isArray(pos)) {
+		error(400, 'move_entity payload.position must be an object');
+	}
+	// Normalized fractional [0,1] coords, same range as the map_placements
+	// xy_unit_range CHECK — keep the validator and the column constraint in lockstep.
+	for (const axis of ['x', 'y'] as const) {
+		const v = pos[axis];
+		if (typeof v !== 'number' || !Number.isFinite(v)) {
+			error(400, `move_entity payload.position.${axis} must be a finite number`);
+		}
+		if (v < 0 || v > 1) {
+			error(400, `move_entity payload.position.${axis} must be within [0, 1]`);
+		}
+	}
+
+	// Resolve the active map's location. assertMapOwnership upstream already
+	// proved worldMapId belongs to userId, so this single-row read is safe.
+	const [map] = await db
+		.select({ locationId: worldMaps.locationId })
+		.from(worldMaps)
+		.where(eq(worldMaps.id, worldMapId));
+	if (!map) error(404, 'world_map not found');
+	if (map.locationId === null) {
+		// No anchor Location → the map hosts no placements at all, so no
+		// placement_id can be valid here.
+		error(400, 'world_map has no linked location; cannot host placements');
+	}
+
+	// D-PRF-8: scope through location_id + user_id, NOT map_id.
+	const [placement] = await db
+		.select({
+			startPosition: mapPlacements.startPosition,
+			endPosition: mapPlacements.endPosition
+		})
+		.from(mapPlacements)
+		.where(
+			and(
+				eq(mapPlacements.id, p.placement_id),
+				eq(mapPlacements.userId, userId),
+				eq(mapPlacements.locationId, map.locationId)
+			)
+		);
+	if (!placement) {
+		error(400, 'placement_id not found on this map');
+	}
+
+	// D-PRF-9: keyframe T must fall in the placement's active window. Both-null
+	// bounds = default window (always active); half-open [start, end) matches
+	// placementsAtPlayhead.
+	if (placement.startPosition !== null && placement.endPosition !== null) {
+		if (tPosition < placement.startPosition || tPosition >= placement.endPosition) {
+			error(400, 'move_entity t_position is outside the placement active window');
+		}
+	}
 }
 
 export async function createMapEvent(
@@ -848,7 +945,7 @@ export async function createMapEvent(
 	if (!EVENT_KINDS.includes(input.kind)) {
 		error(400, `Unknown event kind: ${input.kind}`);
 	}
-	await validateEventPayload(db, userId, worldMapId, input.kind, input.payloadJsonb);
+	await validateEventPayload(db, userId, worldMapId, input.kind, input.payloadJsonb, input.tPosition);
 
 	// source_event_id: explicit type check, not a truthy check. Codex PR54#2:
 	// `if (input.sourceEventId)` would skip validation for the empty string,
@@ -1094,7 +1191,8 @@ async function maybeWriteAutoAnchor(
 		regions: [],
 		artifacts: [],
 		chains: [],
-		cells: []
+		cells: [],
+		artifactOverrides: new Map()
 	}) as AnchorState;
 
 	// Re-fold from the FULL live log in (baseAnchorT, maxT] rather than the
