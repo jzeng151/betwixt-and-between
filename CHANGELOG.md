@@ -23,8 +23,9 @@ Settings customization (Phase 1) — your colors and theme now save to your acco
 - A preference change made while the server is briefly unreachable (network blip, transient 5xx, or an expired session) is now retried in the background until it lands, instead of being silently dropped and surviving only in this browser.
 - Editing the "Note of" swatch in Relationship colors no longer recolors Note entities — it shared the Note entity's color and leaked across groups, so it's been removed from the relationship palette (note edges still render in the Note color).
 - The Editor → link-preview toggle now sticks across reloads instead of occasionally resetting itself after your colors had been saved to your account.
-- Switching accounts in the same browser no longer copies the previous user's theme/colors into the new account on its first sign-in.
+- On a shared browser, one account's saved theme/colors are no longer imported into a different account on first sign-in. The local preferences cache is now scoped to the signed-in user, so a different user's cached prefs are neither migrated up nor shown.
 - Role color overrides now also apply to the character editor's role badges (previously only the detail header picked them up), and a Relationship color edit no longer tints those badges.
+- Relationship colors that share one underlying color (e.g. "Located at" and "Part of") are now a single swatch, so you can't set two values where only one would actually render.
 
 ## [0.8.3.0] - 2026-06-01
 

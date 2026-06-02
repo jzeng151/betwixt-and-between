@@ -39,6 +39,13 @@ import { deepMerge, isPlainObject, PROTO_POLLUTION_KEYS } from '../preferences-m
 
 const STORAGE_KEY = 'btw:preferences';
 
+// Records which signed-in user the cached blob in STORAGE_KEY belongs to, so the
+// first-login reconcile (preferences-sync.ts) can tell "this browser's prefs are
+// mine / unclaimed" from "these are a different user's, do not import them"
+// (codex P1). Kept in a SEPARATE key, not inside the synced blob, so it never
+// reaches the server or the merge/diff paths. Absent = legacy/anonymous cache.
+const OWNER_KEY = 'btw:preferences:owner';
+
 // PROTO_POLLUTION_KEYS, isPlainObject, and deepMerge now live in
 // ../preferences-merge.js (shared with the server PATCH handler) and are
 // imported above. Re-exported via __testing__ for the existing test surface.
@@ -110,6 +117,26 @@ let _storage: StorageLike | null = detectBrowserStorage();
  */
 export function __setStorageForTesting(s: StorageLike | null): void {
 	_storage = s;
+}
+
+/** The user id the cached prefs belong to, or null if unclaimed/unavailable. */
+export function getStoredOwner(storage: StorageLike | null = _storage): string | null {
+	if (!storage) return null;
+	try {
+		return storage.getItem(OWNER_KEY);
+	} catch {
+		return null;
+	}
+}
+
+/** Claim the cached prefs for `userId`. Silently no-ops without storage. */
+export function setStoredOwner(userId: string, storage: StorageLike | null = _storage): void {
+	if (!storage) return;
+	try {
+		storage.setItem(OWNER_KEY, userId);
+	} catch {
+		// Storage full / disabled — degrade silently; ownership re-stamps next hydrate.
+	}
 }
 
 /** Parse JSON without throwing. Returns null on any failure. */

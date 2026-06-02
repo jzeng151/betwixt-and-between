@@ -130,8 +130,16 @@ const authHandle: Handle = async ({ event, resolve }) => {
  */
 const paletteHandle: Handle = async ({ event, resolve }) => {
 	const parsed = parsePaletteCookie(event.cookies.get(PALETTE_COOKIE));
-	const css = paletteCookieToCss(parsed);
-	const isLight = parsed?.theme === 'light';
+	// Scope the cookie to the viewer so a shared browser doesn't inline a different
+	// account's palette on first paint (codex P1, SSR half). authHandle has already
+	// populated event.locals.user. Inline only when the cookie belongs to the
+	// current viewer: a signed-in user's cookie must carry their id; an anonymous
+	// viewer's cookie must be unscoped. On mismatch we skip the no-flash inline and
+	// the client corrects on hydrate — a brief default-paint, never the wrong user.
+	const viewer = event.locals.user?.id ?? null;
+	const ownerOk = viewer != null ? parsed?.owner === viewer : parsed?.owner == null;
+	const css = ownerOk ? paletteCookieToCss(parsed) : '';
+	const isLight = ownerOk && parsed?.theme === 'light';
 	if (!css && !isLight) return resolve(event);
 
 	return resolve(event, {

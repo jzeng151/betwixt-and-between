@@ -19,11 +19,11 @@ const base: Appearance = { theme: 'dark', accentColor: '#c8942a' };
 describe('T6 settings-colors model', () => {
 	it('builds swatches for all three groups', () => {
 		expect(swatchesForGroup('entity').length).toBe(8); // 8 EntityTypes
-		// 8 RelationshipTypes minus note_of (its var is the Note ENTITY var, so
-		// customizing it would leak into the Entity group — excluded, codex).
-		expect(swatchesForGroup('relationship').length).toBe(7);
+		// 8 RelationshipTypes − note_of (Note ENTITY var) − one collapsed pair
+		// (located_at + part_of share --color-rel-loc) = 6 (codex).
+		expect(swatchesForGroup('relationship').length).toBe(6);
 		expect(swatchesForGroup('role').length).toBe(6); // 6 CHARACTER_ROLES
-		expect(COLOR_SWATCHES.length).toBe(21);
+		expect(COLOR_SWATCHES.length).toBe(20);
 	});
 
 	it('excludes note_of from relationship swatches (no Entity-group color leak)', () => {
@@ -32,6 +32,18 @@ describe('T6 settings-colors model', () => {
 		expect(
 			swatchesForGroup('relationship').some((s) => s.cssVar === 'var(--color-type-note)')
 		).toBe(false);
+	});
+
+	it('collapses relationship types that share a CSS var into one swatch (codex)', () => {
+		const rel = swatchesForGroup('relationship');
+		// Exactly one swatch per unique --color-rel-* token.
+		const vars = rel.map((s) => s.cssVar);
+		expect(new Set(vars).size).toBe(vars.length);
+		// located_at + part_of collapse to a single --color-rel-loc control.
+		const loc = rel.filter((s) => s.cssVar === 'var(--color-rel-loc)');
+		expect(loc).toHaveLength(1);
+		expect(loc[0].label).toBe('Located at / Part of');
+		expect(loc[0].key).toBe('located_at');
 	});
 
 	it('humanizes relationship labels and keeps the default var token', () => {

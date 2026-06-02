@@ -20,6 +20,7 @@ import {
 	hydratePreferences,
 	applyPreferencePatch,
 	onAuthChange,
+	preferencesUserId,
 	__setFetchForTesting,
 	__resetSyncForTesting,
 	__flushForTesting,
@@ -39,6 +40,16 @@ function fakeRes(status: number, body: unknown): any {
 		status,
 		json: async () => body,
 		text: async () => JSON.stringify(body)
+	};
+}
+
+/** Minimal in-memory StorageLike for the owner-scoping tests. */
+function memStorage(init: Record<string, string> = {}): any {
+	const m = new Map(Object.entries(init));
+	return {
+		getItem: (k: string) => (m.has(k) ? (m.get(k) as string) : null),
+		setItem: (k: string, v: string) => void m.set(k, v),
+		removeItem: (k: string) => void m.delete(k)
 	};
 }
 
@@ -299,7 +310,7 @@ describe('T4 first-login reconcile (codex)', () => {
 		expect(patch?.body.set.appearance).toEqual({ accentColor: '#abc123' });
 	});
 
-	it('does not push when local equals defaults (brand-new user)', async () => {
+	it('marks a fresh row initialized even when local equals defaults (no appearance deltas)', async () => {
 		mockFetch((c) =>
 			c.method === 'GET'
 				? fakeRes(200, { data: {}, version: 1, initialized: false })
@@ -307,7 +318,12 @@ describe('T4 first-login reconcile (codex)', () => {
 		);
 		await hydratePreferences();
 		await __flushForTesting();
-		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+		// Still PATCHes a bare schemaVersion stamp so the server marks the row
+		// initialized (codex) — but carries no appearance overrides.
+		const patches = calls.filter((c) => c.method === 'PATCH');
+		expect(patches).toHaveLength(1);
+		expect(patches[0].body.set).toEqual({ schemaVersion: PREFERENCES_CODE_MAX_VERSION });
+		expect(patches[0].body.set.appearance).toBeUndefined();
 	});
 
 	it('does not reconcile when the server row is already initialized', async () => {
@@ -328,6 +344,78 @@ describe('T4 first-login reconcile (codex)', () => {
 		await __flushForTesting();
 		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
 		expect(get(preferences).appearance.theme).toBe('light');
+	});
+});
+
+describe('T4 user-scoped cache (codex P1)', () => {
+	const OWNER_KEY = 'btw:preferences:owner';
+
+	it('does NOT import a different user\'s cached prefs into a fresh row', async () => {
+		// Browser cache is owned by user A; user B now signs in with a fresh row.
+		__setStorageForTesting(memStorage({ [OWNER_KEY]: 'user-A' }));
+		preferences.set({
+			...get(preferences),
+			appearance: { ...get(preferences).appearance, theme: 'light', accentColor: '#aaaaaa' }
+		});
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, initialized: false, userId: 'user-B' })
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences();
+		await __flushForTesting();
+		// No PATCH carrying A's theme/accent into B's row.
+		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+		// B sees defaults, not A's customizations.
+		expect(get(preferences).appearance.accentColor).not.toBe('#aaaaaa');
+	});
+
+	it('still reconciles when the cache is owned by the signed-in user', async () => {
+		__setStorageForTesting(memStorage({ [OWNER_KEY]: 'user-B' }));
+		preferences.set({
+			...get(preferences),
+			appearance: { ...get(preferences).appearance, accentColor: '#abc123' }
+		});
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, initialized: false, userId: 'user-B' })
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences();
+		await __flushForTesting();
+		expect(calls.find((c) => c.method === 'PATCH')?.body.set.appearance.accentColor).toBe('#abc123');
+		expect(get(preferences).appearance.accentColor).toBe('#abc123');
+	});
+
+	it('exposes the signed-in user id (for the SSR palette-cookie owner) and clears it on logout', async () => {
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, initialized: true, userId: 'user-B' })
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences();
+		expect(get(preferencesUserId)).toBe('user-B');
+		await onAuthChange('logout');
+		expect(get(preferencesUserId)).toBeNull();
+	});
+
+	it('reconciles an unclaimed (legacy/anonymous) cache and stamps the owner', async () => {
+		const store = memStorage();
+		__setStorageForTesting(store);
+		preferences.set({
+			...get(preferences),
+			appearance: { ...get(preferences).appearance, accentColor: '#abc123' }
+		});
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, initialized: false, userId: 'user-B' })
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences();
+		await __flushForTesting();
+		expect(calls.find((c) => c.method === 'PATCH')?.body.set.appearance.accentColor).toBe('#abc123');
+		// Cache is now claimed for the signed-in user.
+		expect(store.getItem(OWNER_KEY)).toBe('user-B');
 	});
 });
 
@@ -415,8 +503,10 @@ describe('T4 auth transitions', () => {
 		);
 		await onAuthChange('switch');
 		await __flushForTesting();
-		// No PATCH carrying the prior user's theme/accent into the new user's row.
-		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+		// A bare schemaVersion marker PATCH may be sent, but it must NOT carry the
+		// prior user's theme/accent into the new user's row.
+		const patch = calls.find((c) => c.method === 'PATCH');
+		expect(patch?.body.set.appearance).toBeUndefined();
 		// New account sees defaults, not the previous user's customizations.
 		expect(get(preferences).appearance.accentColor).not.toBe('#abc123');
 	});

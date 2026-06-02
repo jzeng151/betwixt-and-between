@@ -21,7 +21,8 @@ describe('T5b parsePaletteCookie', () => {
 		const raw = encodeURIComponent(JSON.stringify({ t: 'l', v: { '--color-type-character': '#ff0000' } }));
 		expect(parsePaletteCookie(raw)).toEqual({
 			theme: 'light',
-			vars: { '--color-type-character': '#ff0000' }
+			vars: { '--color-type-character': '#ff0000' },
+			owner: null
 		});
 	});
 
@@ -45,18 +46,29 @@ describe('T5b parsePaletteCookie', () => {
 		);
 		expect(parsePaletteCookie(raw)).toEqual({
 			theme: 'dark',
-			vars: { '--color-type-character': '#abcdef' }
+			vars: { '--color-type-character': '#abcdef' },
+			owner: null
 		});
+	});
+
+	it('parses a valid owner id and rejects a malformed one', () => {
+		const withOwner = encodeURIComponent(JSON.stringify({ t: 'd', v: {}, u: 'user-123_AB' }));
+		expect(parsePaletteCookie(withOwner)?.owner).toBe('user-123_AB');
+		// Too long / illegal chars → dropped to null (defensive, sanitized).
+		const bad = encodeURIComponent(JSON.stringify({ t: 'd', v: {}, u: 'x'.repeat(65) }));
+		expect(parsePaletteCookie(bad)?.owner).toBeNull();
+		const evil = encodeURIComponent(JSON.stringify({ t: 'd', v: {}, u: 'a b;c' }));
+		expect(parsePaletteCookie(evil)?.owner).toBeNull();
 	});
 });
 
 describe('T5b paletteCookieToCss', () => {
 	it('builds :root block, empty when no vars or null', () => {
 		expect(paletteCookieToCss(null)).toBe('');
-		expect(paletteCookieToCss({ theme: 'dark', vars: {} })).toBe('');
-		expect(paletteCookieToCss({ theme: 'dark', vars: { '--color-accent': '#111111' } })).toBe(
-			':root{--color-accent:#111111}'
-		);
+		expect(paletteCookieToCss({ theme: 'dark', vars: {}, owner: null })).toBe('');
+		expect(
+			paletteCookieToCss({ theme: 'dark', vars: { '--color-accent': '#111111' }, owner: null })
+		).toBe(':root{--color-accent:#111111}');
 	});
 });
 
@@ -72,5 +84,13 @@ describe('T5b serialize → parse round-trip', () => {
 		expect(parsed.theme).toBe('light');
 		expect(parsed.vars['--color-accent']).toBe('#123456');
 		expect(parsed.vars['--color-type-character']).toBe('#abcdef');
+		// No owner passed → unscoped cookie.
+		expect(parsed.owner).toBeNull();
+	});
+
+	it('carries the owner id through the round-trip when provided', () => {
+		const app: Appearance = { theme: 'dark', accentColor: '#123456' };
+		const cookie = encodeURIComponent(serializePaletteCookie(app, 'user-42'));
+		expect(parsePaletteCookie(cookie)?.owner).toBe('user-42');
 	});
 });

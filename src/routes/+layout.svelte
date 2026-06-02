@@ -4,7 +4,7 @@
 	import '../app.css';
 	import { preferences } from '$lib/os/preferences-store.js';
 	import { applyPaletteVars, serializePaletteCookie } from '$lib/palette-vars.js';
-	import { hydratePreferences } from '$lib/os/preferences-sync.js';
+	import { hydratePreferences, preferencesUserId } from '$lib/os/preferences-sync.js';
 	import { PALETTE_COOKIE } from '$lib/palette-cookie.js';
 
 	let { children } = $props();
@@ -42,7 +42,10 @@
 		// Mirror the resolved palette to a cookie so the server hook can inline
 		// it for a no-flash first paint on the next navigation/reload (T5b 3C/6A).
 		if (typeof document !== 'undefined') {
-			const value = encodeURIComponent(serializePaletteCookie(appearance));
+			// Stamp the signed-in user so the SSR hook scopes this cookie to the
+			// current account (codex P1, SSR half). $preferencesUserId re-fires this
+			// effect when it resolves post-hydrate, replacing any pre-hydrate value.
+			const value = encodeURIComponent(serializePaletteCookie(appearance, $preferencesUserId));
 			document.cookie = `${PALETTE_COOKIE}=${value}; path=/; max-age=31536000; samesite=lax`;
 		}
 	});

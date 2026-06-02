@@ -33,8 +33,16 @@ export const GET: RequestHandler = async (event) => {
 	const active = await getActivePreferences(db, userId);
 	// `initialized` lets the client distinguish a freshly lazy-created row (never
 	// written) from one that already holds the user's prefs — the first-login
-	// reconcile signal (T4, codex). False → client migrates localStorage up.
-	return json({ data: active.data, version: active.version, initialized: active.initialized });
+	// reconcile signal (T4, codex). `userId` lets the client scope its localStorage
+	// cache to the signed-in user so a shared browser can't import a different
+	// user's prefs into this account (codex P1). Returning the caller's own id is
+	// not a disclosure — it's derived from their session.
+	return json({
+		data: active.data,
+		version: active.version,
+		initialized: active.initialized,
+		userId
+	});
 };
 
 export const PATCH: RequestHandler = async (event) => {

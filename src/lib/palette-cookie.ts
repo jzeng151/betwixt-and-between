@@ -21,10 +21,15 @@ export const PALETTE_COOKIE = 'btw_palette';
 export interface ParsedPaletteCookie {
 	theme: 'light' | 'dark';
 	vars: Record<string, string>;
+	/** The user id the cookie was written for, or null if unscoped/anonymous. */
+	owner: string | null;
 }
 
 const VAR_NAME_RE = /^--color-[a-z0-9-]+$/;
 const HEX_RE = /^#[0-9a-f]{3,8}$/i;
+// Owner ids are Better-Auth UUID-ish; bound length + charset so a tampered
+// cookie can't smuggle anything large/odd through the `u` field.
+const OWNER_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Parse + hard-sanitize the cookie. Returns null on absent/malformed input. */
 export function parsePaletteCookie(raw: string | undefined | null): ParsedPaletteCookie | null {
@@ -36,7 +41,7 @@ export function parsePaletteCookie(raw: string | undefined | null): ParsedPalett
 		return null;
 	}
 	if (typeof obj !== 'object' || obj === null) return null;
-	const o = obj as { t?: unknown; v?: unknown };
+	const o = obj as { t?: unknown; v?: unknown; u?: unknown };
 	const vars: Record<string, string> = {};
 	if (o.v && typeof o.v === 'object') {
 		for (const [k, val] of Object.entries(o.v as Record<string, unknown>)) {
@@ -45,7 +50,8 @@ export function parsePaletteCookie(raw: string | undefined | null): ParsedPalett
 			}
 		}
 	}
-	return { theme: o.t === 'l' ? 'light' : 'dark', vars };
+	const owner = typeof o.u === 'string' && OWNER_RE.test(o.u) ? o.u : null;
+	return { theme: o.t === 'l' ? 'light' : 'dark', vars, owner };
 }
 
 /** Build the `:root{…}` body (empty string when no vars). */

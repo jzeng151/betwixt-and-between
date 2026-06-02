@@ -35,6 +35,36 @@ function humanize(key: string): string {
 	return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/**
+ * One relationship swatch per UNIQUE `--color-rel-*` token. Several relationship
+ * types intentionally share a token (e.g. `located_at` + `part_of` → `--color-
+ * rel-loc`), and `resolvePaletteVars` can only emit one value per CSS var — so
+ * exposing them as separate, independently-editable swatches let a user pick two
+ * colors of which only one would render (codex). Collapsing to the shared token
+ * keeps the chip and the rendered edges in lockstep: the representative key's
+ * override drives the var, and every edge type reading that var recolors with it.
+ *
+ * `note_of` is excluded entirely: its token is `--color-type-note` (the Note
+ * ENTITY var), so customizing it would leak a Relationship edit into the Entity
+ * group; it's also excluded from the authoring picker (REL_TYPES).
+ */
+function relationshipSwatches(): ColorSwatch[] {
+	const byVar = new Map<string, string[]>();
+	for (const key of Object.keys(REL_COLOR)) {
+		if (key === 'note_of') continue;
+		const cssVar = REL_COLOR[key as keyof typeof REL_COLOR];
+		byVar.set(cssVar, [...(byVar.get(cssVar) ?? []), key]);
+	}
+	return [...byVar].map(([cssVar, keys]): ColorSwatch => ({
+		group: 'relationship',
+		// Representative key: its override drives the shared var. Storing under one
+		// key (not all) is correct because every type reading that var recolors.
+		key: keys[0],
+		label: keys.map(humanize).join(' / '),
+		cssVar
+	}));
+}
+
 export const COLOR_SWATCHES: ColorSwatch[] = [
 	...Object.keys(ENTITY_TYPE_COLOR_VAR).map(
 		(key): ColorSwatch => ({
@@ -44,22 +74,7 @@ export const COLOR_SWATCHES: ColorSwatch[] = [
 			cssVar: ENTITY_TYPE_COLOR_VAR[key as keyof typeof ENTITY_TYPE_COLOR_VAR]
 		})
 	),
-	// `note_of` is intentionally excluded: its token is `--color-type-note` (the
-	// Note ENTITY var, not a `--color-rel-*` var), so customizing it here would
-	// recolor Note chips/nodes and the Entity-group Note swatch — a Relationship
-	// edit leaking into the Entity group (codex). It's already excluded from the
-	// authoring picker (REL_TYPES) for a related reason; a per-type rel var for
-	// note edges would be a separate refactor.
-	...Object.keys(REL_COLOR)
-		.filter((key) => key !== 'note_of')
-		.map(
-			(key): ColorSwatch => ({
-				group: 'relationship',
-				key,
-				label: humanize(key),
-				cssVar: REL_COLOR[key as keyof typeof REL_COLOR]
-			})
-		),
+	...relationshipSwatches(),
 	...CHARACTER_ROLES.map(
 		(role): ColorSwatch => ({
 			group: 'role',

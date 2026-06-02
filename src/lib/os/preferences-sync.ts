@@ -20,7 +20,14 @@
  */
 
 import { get, writable, type Readable } from 'svelte/store';
-import { preferences, migrateAndMerge, PreferencesVersionError, versionError } from './preferences-store.js';
+import {
+	preferences,
+	migrateAndMerge,
+	PreferencesVersionError,
+	versionError,
+	getStoredOwner,
+	setStoredOwner
+} from './preferences-store.js';
 import { deepMerge, applyUnset, isPlainObject, diffFromBase } from '../preferences-merge.js';
 import {
 	PREFERENCES_CODE_MAX_VERSION,
@@ -55,6 +62,13 @@ let retryBackoffMs = RETRY_BASE_MS;
 const _status = writable<SyncStatus>('idle');
 export const preferencesSyncStatus: Readable<SyncStatus> = { subscribe: _status.subscribe };
 
+// The signed-in user id (from the last authenticated hydrate), or null when
+// anonymous / not yet hydrated. The layout stamps it into the palette cookie so
+// the SSR no-flash hook can scope that cookie to the current account and not
+// inline a different user's colors on first paint (codex P1, SSR half).
+const _userId = writable<string | null>(null);
+export const preferencesUserId: Readable<string | null> = { subscribe: _userId.subscribe };
+
 // ── test hooks ──────────────────────────────────────────────────────────────
 export function __setFetchForTesting(f: typeof fetch): void {
 	fetchImpl = f;
@@ -72,6 +86,7 @@ export function __resetSyncForTesting(): void {
 	pending = { set: {}, unset: [] };
 	inFlight = false;
 	hydrating = false;
+	_userId.set(null);
 	_status.set('idle');
 }
 /** Cancel the debounce and flush synchronously (await). For tests. */
@@ -166,6 +181,7 @@ export async function hydratePreferences(): Promise<void> {
 	if (res.status === 401) {
 		// Unauthenticated: localStorage-only contract. No server writes.
 		serverVersion = 0;
+		_userId.set(null);
 		hydrating = false;
 		_status.set('offline');
 		return;
@@ -175,7 +191,12 @@ export async function hydratePreferences(): Promise<void> {
 		_status.set('error');
 		return;
 	}
-	const body = (await res.json()) as { data: unknown; version: number; initialized?: boolean };
+	const body = (await res.json()) as {
+		data: unknown;
+		version: number;
+		initialized?: boolean;
+		userId?: string;
+	};
 	let merged: Preferences;
 	try {
 		merged = migrateAndMerge(body.data);
@@ -197,6 +218,19 @@ export async function hydratePreferences(): Promise<void> {
 	// write-through resumes and the stale payload stops re-firing every reload
 	// (codex). No-op on the happy path (already null).
 	versionError.set(null);
+	// User-scoped cache (codex P1): the store boots from the single global
+	// localStorage key BEFORE the request identifies who is signed in, so on a
+	// shared browser the *previous* user's prefs are sitting in the store. Compare
+	// the cache's recorded owner (set on a prior hydrate) to the signed-in user
+	// the server just told us. A positively-different owner means this cache is
+	// someone else's — we must neither reconcile it into this account nor display
+	// it. Unknown ids (no userId in the response, e.g. deploy skew) fall back to
+	// the prior, un-scoped behavior rather than wrongly discarding.
+	const currentUserId = typeof body.userId === 'string' ? body.userId : null;
+	_userId.set(currentUserId);
+	const storedOwner = getStoredOwner();
+	const foreignCache = currentUserId != null && storedOwner != null && storedOwner !== currentUserId;
+
 	// First-login reconcile (codex): a freshly lazy-created server row
 	// (`initialized === false`) has never absorbed this user's localStorage prefs
 	// (theme/accent/editor toggles saved before server-backing existed). Pushing
@@ -205,23 +239,40 @@ export async function hydratePreferences(): Promise<void> {
 	// queue the user's actual deviations-from-defaults as a pending patch so they
 	// (a) win in reapplyOntoBase below and (b) flush up to the now-claimed row.
 	// Only deltas, so keys the user never touched keep tracking future defaults.
-	if (body.initialized === false) {
+	// NOT for a foreign cache — that would import another user's prefs.
+	if (body.initialized === false && !foreignCache) {
 		const delta = diffFromBase(PREFERENCES_DEFAULTS, get(preferences));
-		if (Object.keys(delta).length > 0) {
-			// Stamp schemaVersion AFTER spreading delta: a legacy cache can carry an
-			// older schemaVersion in the diff, and letting it win would initialize the
-			// server row below code-max and strand future migrations (codex).
-			accumulate({ set: { ...delta, schemaVersion: PREFERENCES_CODE_MAX_VERSION }, unset: [] });
-		}
+		// Always queue at least the schemaVersion stamp — even with an empty delta —
+		// so the server marks the row initialized (its COALESCE sets
+		// initialized_from_client_at on the first write). Otherwise a default-pref
+		// new user stays initialized:false forever, and a later local-only change is
+		// re-treated as first-login state on the next hydrate (codex). Stamp
+		// schemaVersion AFTER spreading delta: a legacy cache can carry an older
+		// schemaVersion in the diff, and letting it win would initialize the row
+		// below code-max and strand future migrations (codex).
+		accumulate({ set: { ...delta, schemaVersion: PREFERENCES_CODE_MAX_VERSION }, unset: [] });
 	}
-	// Re-apply un-synced local edits onto the fresh server base. `editor` prefs
-	// are local-only by design (Settings writes them via setPreference, never the
-	// sync path), so a server blob that lacks them — or holds stale defaults —
-	// must not reset the user's editor toggle and then persist that reset back to
-	// localStorage via the store subscription. Preserve the local editor branch
-	// across every hydrate (codex).
-	const localEditor = get(preferences).editor;
-	preferences.set({ ...reapplyOntoBase(merged), editor: localEditor });
+
+	if (foreignCache) {
+		// Discard the other user's local store: take the server base only. `editor`
+		// is local-only and does not carry across users either; `pending` is empty
+		// on a fresh load, so reapplyOntoBase is just the migrated server base.
+		preferences.set(reapplyOntoBase(merged));
+	} else {
+		// Re-apply un-synced local edits onto the fresh server base. `editor` prefs
+		// are local-only by design (Settings writes them via setPreference, never
+		// the sync path), so a server blob that lacks them — or holds stale
+		// defaults — must not reset the user's editor toggle and then persist that
+		// reset back to localStorage via the store subscription. Preserve the local
+		// editor branch across hydrate (codex).
+		const localEditor = get(preferences).editor;
+		preferences.set({ ...reapplyOntoBase(merged), editor: localEditor });
+	}
+
+	// Claim the cache for the signed-in user so subsequent loads on this browser
+	// are scoped (a later different user trips `foreignCache` above).
+	if (currentUserId != null) setStoredOwner(currentUserId);
+
 	hydrating = false;
 	if (hasPending()) {
 		scheduleFlush();
@@ -267,6 +318,7 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 	pending = { set: {}, unset: [] };
 	serverVersion = 0;
 	inFlight = false;
+	_userId.set(null);
 	if (kind === 'logout') {
 		_status.set('offline');
 		return;

@@ -39,11 +39,12 @@ describe('/api/preferences', () => {
 		userId = (await seedTestUser(db)).id;
 	});
 
-	it('GET lazily creates Default and returns {data:{}, version:1, initialized:false}', async () => {
+	it('GET lazily creates Default and returns {data:{}, version:1, initialized:false, userId}', async () => {
 		const body = await readJson(await route.GET(mkEvent()));
 		// initialized:false → a fresh row the client never wrote; signals the
-		// first-login reconcile path (codex).
-		expect(body).toEqual({ data: {}, version: 1, initialized: false });
+		// first-login reconcile path (codex). userId lets the client scope its
+		// localStorage cache to the signed-in user (codex P1).
+		expect(body).toEqual({ data: {}, version: 1, initialized: false, userId });
 	});
 
 	it('GET returns initialized:true after the first PATCH', async () => {

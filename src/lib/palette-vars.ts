@@ -86,11 +86,18 @@ export function paletteVarsToCss(vars: Record<string, string>): string {
  * (parsePaletteCookie) reads it to inline no-flash SSR vars. Client-only path
  * (needs the color maps); the parser is pure in palette-cookie.ts.
  */
-export function serializePaletteCookie(appearance: Appearance | undefined): string {
-	return JSON.stringify({
+export function serializePaletteCookie(
+	appearance: Appearance | undefined,
+	ownerUserId?: string | null
+): string {
+	const payload: { t: string; v: Record<string, string>; u?: string } = {
 		t: appearance?.theme === 'light' ? 'l' : 'd',
 		v: resolvePaletteVars(appearance)
-	});
+	};
+	// Tag the cookie with the signed-in user so the SSR hook can scope it to the
+	// current account (codex P1, SSR half). Omitted when anonymous / unknown.
+	if (ownerUserId) payload.u = ownerUserId;
+	return JSON.stringify(payload);
 }
 
 /**
