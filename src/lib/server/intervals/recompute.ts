@@ -298,10 +298,16 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 	// after a scene-within-act mutation (Step 4, Codex #2). Coarse: walk the
 	// user's placement rows. Placements are expected to be few per user; the
 	// per-row recompute short-circuits when nothing drifts.
-	// Note: relationships' scene-anchored rows have the same pre-existing gap
-	// — they only refresh inside recomputeAllIntervals. Out of scope here.
 	const { recomputePlacementBoundsAll } = await import('../map-placements.js');
 	await recomputePlacementBoundsAll(db, userId);
+
+	// Scene-anchored relationships (caused_by scope) carry the same derived
+	// start/end positions and must refresh on a scene-within-act mutation too.
+	// WM3 Slice 5 PR-D wires relationship.start_position to a user-facing
+	// jump-to-cause click, so a stale value now scrubs the playhead to the
+	// wrong story-time. Coarse walk, same short-circuit-on-no-drift contract
+	// as the placement recompute above.
+	await recomputeRelationshipBoundsAll(db, userId);
 
 	return updated;
 }

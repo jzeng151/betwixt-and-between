@@ -16,7 +16,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { entities, relationships } from '../../src/lib/server/db/schema.js';
-import { recomputeAllIntervals, resolveRelationshipBounds } from '../../src/lib/server/intervals.js';
+import {
+	recomputeAllIntervals,
+	recomputeIntervalsForAct,
+	resolveRelationshipBounds
+} from '../../src/lib/server/intervals.js';
 import { isEdgeVisibleAtT } from '../../src/lib/features/timeline/playhead-store.js';
 
 type Db = Awaited<ReturnType<typeof createTestDb>>;
@@ -26,6 +30,7 @@ describe('EventChain scope — scene-equality via caused_by (Slice 5 PR-B / D3)'
 	let userId: string;
 	let act0: string;
 	let act1: string;
+	let scene0: string; // first scene under act0 → [0, 1/3) at act index 0
 	let scene1: string; // middle scene under act0 → [1/3, 2/3) at act index 0
 	let cause: string;
 	let effect: string;
@@ -53,6 +58,7 @@ describe('EventChain scope — scene-equality via caused_by (Slice 5 PR-B / D3)'
 				{ userId, type: 'Scene', name: 'S2', parentId: act0, position: 2 }
 			])
 			.returning();
+		scene0 = scenes[0].id;
 		scene1 = scenes[1].id;
 
 		// caused_by connects Event → Event (effect ← cause).
@@ -125,5 +131,38 @@ describe('EventChain scope — scene-equality via caused_by (Slice 5 PR-B / D3)'
 		// Visibility tracks the moved scene: now visible at 1.5, not at the old 0.5.
 		expect(isEdgeVisibleAtT(rel, 1.5)).toBe(true);
 		expect(isEdgeVisibleAtT(rel, 0.5)).toBe(false);
+	});
+
+	it('scene reorder WITHIN an act refreshes the caused_by window via recomputeIntervalsForAct', async () => {
+		// Regression for the cross-model adversarial finding (Slice 5 ship): a
+		// scene-within-act mutation calls recomputeIntervalsForAct, which prior
+		// to the fix refreshed intervals + placements but NOT scene-anchored
+		// relationships — leaving caused_by.start_position stale. Since PR-D
+		// wires that position to a user-facing jump-to-cause click, a stale
+		// value silently scrubbed the playhead to the wrong story-time.
+		const relId = await scopeToScene1();
+
+		// Sanity: middle of 3 scenes under act 0 → [1/3, 2/3).
+		{
+			const [rel] = await db.select().from(relationships).where(eq(relationships.id, relId));
+			expect(rel.startPosition).toBeCloseTo(1 / 3, 9);
+			expect(rel.endPosition).toBeCloseTo(2 / 3, 9);
+		}
+
+		// Reorder S1 to the front of act 0 (index 0). No Act index changes, so
+		// the route would call recomputeIntervalsForAct(act0), not recomputeAll.
+		await db.update(entities).set({ position: 0 }).where(eq(entities.id, scene1));
+		await db.update(entities).set({ position: 1 }).where(eq(entities.id, scene0));
+
+		await recomputeIntervalsForAct(db, act0, userId);
+
+		// S1 is now the first of 3 scenes → window re-derives to [0, 1/3).
+		const [rel] = await db.select().from(relationships).where(eq(relationships.id, relId));
+		expect(rel.startPosition).toBeCloseTo(0, 9);
+		expect(rel.endPosition).toBeCloseTo(1 / 3, 9);
+
+		// Jump-to-cause would now scrub to the correct new position, not the stale 1/3.
+		expect(isEdgeVisibleAtT(rel, 0.1)).toBe(true); // inside the moved window
+		expect(isEdgeVisibleAtT(rel, 0.5)).toBe(false); // old window, no longer visible
 	});
 });
