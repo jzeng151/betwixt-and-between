@@ -475,10 +475,17 @@
 		onEdgeContextMenu?.(id, e.clientX, e.clientY);
 	}
 
-	function onEdgeClickHandler(e: MouseEvent, id: string) {
+	function onEdgeClickHandler(e: MouseEvent, id: string, clickable: boolean | undefined) {
 		e.stopPropagation();
 		// A connect-drag in progress owns the next click; don't also jump.
 		if (connecting) return;
+		// Honor the same predicate as the pointer-cursor affordance. The hit-area
+		// <line> is rendered for EVERY edge (so right-click edit always works), so
+		// without this guard a left-click on the invisible hit-line of a
+		// non-clickable edge — e.g. a mystery caused_by edge — would still reach
+		// the host's jumpToCause and leak the hidden link's story-time. The
+		// `clickable` flag already encodes scoped-caused_by && !mystery (Codex P1).
+		if (!clickable) return;
 		onEdgeClick?.(id);
 	}
 
@@ -619,7 +626,7 @@
 				pointer-events="stroke"
 				class:edge-clickable={onEdgeClick != null && edge.clickable}
 				oncontextmenu={(e) => onEdgeContextMenuHandler(e, edge.id)}
-				onclick={(e) => onEdgeClickHandler(e, edge.id)}
+				onclick={(e) => onEdgeClickHandler(e, edge.id, edge.clickable)}
 				onpointerdown={(e) => e.stopPropagation()}
 			/>
 			{#if showEdgeLabels && !isMystery && !isGhost}
