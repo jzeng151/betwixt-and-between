@@ -26,3 +26,23 @@ jobs:
       # number. 1.2 MB gzipped initial; tune at end of Slice 1b.
       - run: npm run build
       - run: npm run size
+
+  # Playwright E2E. Separate job (own runner + browser install) so it parallelizes
+  # with unit tests. Gates PRs and pushes to main alongside the `test` job. The
+  # suite drives the production preview build with the BETWIXT_E2E_PGLITE bypass
+  # via playwright.config.ts → webServer.env + globalSetup (in-process PGlite on a
+  # fixed socket; no Postgres service needed). Do NOT set BETWIXT_E2E_PGLITE here —
+  # the config supplies it to the preview subprocess; the prod deploy build in
+  # deploy.yml is what must keep it empty.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install --with-deps firefox
+      - run: npm run test:e2e
