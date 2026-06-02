@@ -32,10 +32,11 @@ test.describe('V2 Edit-during-delete (D16 / 14A)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.act-col-header').first().click();
-		await win.locator('.entity-detail-host .mode-toggle').click();
+		await page.locator('.entity-detail-host .mode-toggle').click();
 
-		const synopsis = win
-			.locator('.entity-detail [data-field="synopsis"] textarea.field-textarea');
+		const synopsis = page.locator(
+			'.entity-detail-host [data-field="synopsis"] textarea.field-textarea'
+		);
 		await synopsis.fill('still typing');
 
 		// Force the DELETE to fail. The optimistic remove rolls back via
