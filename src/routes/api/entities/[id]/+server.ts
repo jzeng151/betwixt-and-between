@@ -6,7 +6,7 @@ import {
 	recomputeIntervalsForAct,
 	snapshotActOrdering
 } from '$lib/server/intervals.js';
-import { intervals as intervalsTable } from '$lib/server/db/schema.js';
+import { intervals as intervalsTable, relationships as relationshipsTable } from '$lib/server/db/schema.js';
 import { and, eq, gt, gte, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { validateStyleInData } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
@@ -245,6 +245,21 @@ export const DELETE: RequestHandler = async (event) => {
 					.update(intervalsTable)
 					.set({ endActId: moveScenesTo })
 					.where(and(eq(intervalsTable.endSceneId, scene.id), eq(intervalsTable.userId, userId)));
+				// Re-anchor scene-scoped relationships (caused_by) the same way.
+				// Without this the act FK on a relationship pointing at the deleted
+				// act would hit ON DELETE SET NULL below, dropping the row out of
+				// recomputeRelationshipBoundsAll (it filters on a non-null act FK),
+				// so its scoped start/end position would stay frozen at the old
+				// scene fraction and click-to-jump would land at the wrong moment
+				// (Slice 5 PR-D / Codex P2).
+				await tx
+					.update(relationshipsTable)
+					.set({ startActId: moveScenesTo })
+					.where(and(eq(relationshipsTable.startSceneId, scene.id), eq(relationshipsTable.userId, userId)));
+				await tx
+					.update(relationshipsTable)
+					.set({ endActId: moveScenesTo })
+					.where(and(eq(relationshipsTable.endSceneId, scene.id), eq(relationshipsTable.userId, userId)));
 			}
 		}
 

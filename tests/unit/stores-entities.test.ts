@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { entities, type Entity } from '../../src/lib/stores/entities.js';
 import { intervals as intervalsStore } from '../../src/lib/features/timeline/intervals-store.js';
+import { relationships } from '../../src/lib/stores/relationships.js';
 
 // =============================================================================
 // Helpers
@@ -304,6 +305,32 @@ describe('entities.updateEntity', () => {
 		// The superseded reorder still triggered an interval refresh.
 		expect(intervalsLoad).toHaveBeenCalled();
 		intervalsLoad.mockRestore();
+	});
+
+	it('refreshes relationships after a structural Scene PATCH (so click-to-jump reads fresh positions)', async () => {
+		// Codex P2: a scene reorder recomputes scene-anchored caused_by
+		// start/end positions server-side. The graph click-to-jump reads
+		// $relationships, so the relationships store must reload alongside
+		// intervals — otherwise a scoped edge jumps to the stale scene fraction.
+		const seed = [entity({ id: 's1', name: 'Scene', type: 'Scene', parentId: 'a1', data: {} })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seed)) as unknown as typeof fetch;
+		await entities.load();
+
+		const intervalsLoad = vi.spyOn(intervalsStore, 'load').mockResolvedValue(undefined);
+		const relsLoad = vi.spyOn(relationships, 'load').mockResolvedValue(undefined);
+		const server = entity({ id: 's1', name: 'Scene', type: 'Scene', parentId: 'a1', position: 0, data: {} });
+		globalThis.fetch = vi.fn((url: string) =>
+			url === '/api/entities/s1'
+				? Promise.resolve(makeResponse(server))
+				: Promise.resolve(makeResponse([]))
+		) as unknown as typeof fetch;
+
+		await entities.updateEntity('s1', { position: 0 });
+
+		expect(intervalsLoad).toHaveBeenCalled();
+		expect(relsLoad).toHaveBeenCalled();
+		intervalsLoad.mockRestore();
+		relsLoad.mockRestore();
 	});
 });
 

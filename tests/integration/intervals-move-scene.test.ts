@@ -77,6 +77,45 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 		expect(row.startSceneId).toBe(s.id);
 	});
 
+	it('re-anchors scene-scoped relationships across the move (no parent/act mismatch throw)', async () => {
+		// Slice 5 PR-D / Codex P1. recomputeIntervalsForAct now walks scene-scoped
+		// relationships, and computeIntervalPositions throws if a scene's parent
+		// act != the relationship's start/end_act_id. moveSceneToAct must rewrite
+		// the relationship act FKs (like it does for intervals/placements) so the
+		// caused_by edge survives the cross-act move and recomputes cleanly.
+		const { relationships } = await import('../../src/lib/server/db/schema.js');
+		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [s] = await db
+			.insert(entities)
+			.values({ userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
+			.returning();
+
+		// caused_by scoped to scene s on both ends, anchored to act1.
+		await db.insert(relationships).values({ userId,
+			fromId: ellie,
+			toId: bob.id,
+			type: 'caused_by',
+			startActId: acts.act1,
+			startSceneId: s.id,
+			endActId: acts.act1,
+			endSceneId: s.id,
+			startPosition: 1 + 0,
+			endPosition: 1 + 1
+		});
+
+		// Must not throw (a throw aborts the scene move).
+		await expect(moveSceneToAct(db, s.id, acts.act2, 0, userId)).resolves.toBeUndefined();
+
+		const [rel] = await db.select().from(relationships).where(eq(relationships.fromId, ellie));
+		expect(rel.startActId).toBe(acts.act2);
+		expect(rel.endActId).toBe(acts.act2);
+		expect(rel.startSceneId).toBe(s.id);
+		expect(rel.endSceneId).toBe(s.id);
+		// act2 is index 2 → scene (sole scene of act2) occupies [2, 3).
+		expect(rel.startPosition).toBeCloseTo(2.0, 9);
+		expect(rel.endPosition).toBeCloseTo(3.0, 9);
+	});
+
 	it('updates end_act_id on intervals where end_scene_id = thisScene', async () => {
 		const [sStart] = await db
 			.insert(entities)
