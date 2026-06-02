@@ -585,6 +585,11 @@
 		return { edges, locationOf };
 	});
 
+	// Slice 5 PR-E — Events offered in the "Change owner with cause…" picker.
+	const causeEvents = $derived(
+		$entities.filter((e) => e.type === 'Event').map((e) => ({ id: e.id, name: e.name }))
+	);
+
 	let renderedState = $derived.by<RenderedState | null>(() => {
 		if (!projectionCtx) return null;
 		const t = $playhead ?? Number.NEGATIVE_INFINITY;
@@ -1504,6 +1509,7 @@
 					mapId={activeMapId}
 					{dataLoading}
 					isInScope={$isInScope}
+					events={causeEvents}
 					onDrawHere={startPixiDraw}
 					onEditRegion={(id) => startEditRegion(id)}
 					onDeleteRegion={(id) => void handleDeleteRegion(id)}
