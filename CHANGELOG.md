@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.5.0] - 2026-06-02
+
+Settings customization (Phase 1) — your colors and theme now save to your account and follow you across devices.
+
+### Added
+
+- Customize the palette: Settings → Appearance now has Entity, Relationship, and Role color sections. Click any chip to pick a color (the chip is the live sample), and the graph, wiki, and palette recolor immediately. A dot marks customized chips; reset one with the ↺ button or a whole group with "Reset … to default".
+- Light mode: the Appearance toggle now actually switches the app to a light theme (Midnight Ink dark stays the default).
+- Preferences are server-backed: your theme, accent, and color overrides save to your account and load on any device or reload, instead of living only in one browser. Edits apply instantly and sync in the background.
+- No-flash first paint: a logged-in user's custom colors and theme render correctly on the very first paint after a reload, instead of flashing the defaults until the app hydrates.
+
+### Changed
+
+- Theme and accent color now persist to your account (previously localStorage-only). Signed-out use still works locally.
+
 ## [0.8.3.0] - 2026-06-01
 
 World Map v3 Slice 4 (part 2) — movement. Markers can now move over story-time, completing the Slice 4 authoring story begun in 0.8.1.0.
