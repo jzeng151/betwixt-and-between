@@ -21,3 +21,21 @@ export function jumpToCause(
 	playhead.scrubTo(rel.startPosition);
 	return true;
 }
+
+/**
+ * Whether a graph edge should advertise + accept the click-to-jump affordance
+ * (pointer cursor + left-click handler). Mirrors `jumpToCause`'s preconditions
+ * (scoped `caused_by`) and ADDS the spoiler guard: a mystery edge — one not yet
+ * revealed to the reader at the current playhead position — must NOT be
+ * clickable, or jumping to its `startPosition` would leak the hidden causal
+ * link's story-time and defeat mystery mode.
+ *
+ * Shared by both graph surfaces (StoryGraph, FocusedGraph) so the invariant
+ * lives in exactly one place.
+ */
+export function isCausalEdgeClickable(
+	rel: Pick<Relationship, 'type' | 'startPosition'>,
+	mystery: boolean
+): boolean {
+	return rel.type === 'caused_by' && rel.startPosition != null && !mystery;
+}
