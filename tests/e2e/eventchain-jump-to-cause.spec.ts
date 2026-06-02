@@ -111,4 +111,76 @@ test.describe('EventChain click-to-jump', () => {
 		const pos = Number(await playhead.getAttribute('aria-valuenow'));
 		expect(pos).toBeCloseTo(1 / 3, 6);
 	});
+
+	// Codex P2: deleting an Act while moving its scenes elsewhere must re-anchor
+	// any scene-scoped caused_by relationship to the new Act and recompute its
+	// position — otherwise ON DELETE SET NULL drops the act FK, the row falls
+	// out of recomputeRelationshipBoundsAll, and click-to-jump lands at the old
+	// story-time. API-only (the moveScenesTo fixup lives in the delete route).
+	test('Act delete with ?moveScenesTo= re-anchors a scene-scoped caused_by + recomputes position', async ({
+		request
+	}) => {
+		await clearAll(request);
+
+		const act0 = await (
+			await request.post('/api/entities', { data: { type: 'Act', name: 'Act 0', position: 0 } })
+		).json();
+		const act1 = await (
+			await request.post('/api/entities', { data: { type: 'Act', name: 'Act 1', position: 1 } })
+		).json();
+		// act1 already has one scene, so the moved scenes append at offset 1.
+		await request.post('/api/entities', {
+			data: { type: 'Scene', name: 'A1S0', parentId: act1.id, position: 0 }
+		});
+		// 3 scenes under act0; scope the link to the middle one.
+		await request.post('/api/entities', {
+			data: { type: 'Scene', name: 'S0', parentId: act0.id, position: 0 }
+		});
+		const s1 = await (
+			await request.post('/api/entities', {
+				data: { type: 'Scene', name: 'S1', parentId: act0.id, position: 1 }
+			})
+		).json();
+		await request.post('/api/entities', {
+			data: { type: 'Scene', name: 'S2', parentId: act0.id, position: 2 }
+		});
+		const cause = await (
+			await request.post('/api/entities', { data: { type: 'Event', name: 'Cause' } })
+		).json();
+		const effect = await (
+			await request.post('/api/entities', { data: { type: 'Event', name: 'Effect' } })
+		).json();
+		const rel = await (
+			await request.post('/api/relationships', {
+				data: {
+					fromId: effect.id,
+					toId: cause.id,
+					type: 'caused_by',
+					startActId: act0.id,
+					startSceneId: s1.id,
+					endActId: act0.id,
+					endSceneId: s1.id
+				}
+			})
+		).json();
+		// Middle of 3 scenes at act index 0 → [1/3, 2/3).
+		expect(rel.startPosition).toBeCloseTo(1 / 3, 6);
+		expect(rel.startActId).toBe(act0.id);
+
+		// Delete act0, moving its scenes into act1.
+		const del = await request.delete(
+			`/api/entities/${act0.id}?moveScenesTo=${act1.id}`
+		);
+		expect(del.ok()).toBe(true);
+
+		// S1 is now act1's scene index 2 of 4 (offset 1 + source index 1), and
+		// act1 is the only surviving Act → index 0. Window = [2/4, 3/4).
+		const rels = await (await request.get('/api/relationships')).json();
+		const moved = rels.find((r: { id: string }) => r.id === rel.id);
+		expect(moved).toBeDefined();
+		expect(moved.startActId).toBe(act1.id); // re-anchored, NOT null
+		expect(moved.endActId).toBe(act1.id);
+		expect(moved.startPosition).toBeCloseTo(0.5, 6);
+		expect(moved.endPosition).toBeCloseTo(0.75, 6);
+	});
 });
