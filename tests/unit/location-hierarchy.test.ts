@@ -15,7 +15,9 @@ function mkRel(fromId: string, toId: string, type: Relationship['type'] = 'part_
 		type,
 		label: null,
 		startActId: null,
+		startSceneId: null,
 		endActId: null,
+		endSceneId: null,
 		startPosition: null,
 		endPosition: null,
 		revealedAtPosition: null

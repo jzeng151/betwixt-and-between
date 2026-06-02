@@ -8,7 +8,9 @@ export type Relationship = {
 	type: RelationshipType;
 	label: string | null;
 	startActId: string | null;
+	startSceneId: string | null;
 	endActId: string | null;
+	endSceneId: string | null;
 	startPosition: number | null;
 	endPosition: number | null;
 	revealedAtPosition: number | null;
@@ -48,7 +50,9 @@ function createRelationshipStore() {
 			type?: RelationshipType;
 			label?: string | null;
 			startActId?: string | null;
+			startSceneId?: string | null;
 			endActId?: string | null;
+			endSceneId?: string | null;
 			revealedAtPosition?: number | null;
 		}
 	): Promise<Relationship> {
