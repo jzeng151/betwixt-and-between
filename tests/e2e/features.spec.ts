@@ -11,6 +11,10 @@ async function clearEntities(request: APIRequestContext) {
 test.describe('Wiki', () => {
 	test.beforeEach(async ({ page, request }) => {
 		await clearEntities(request);
+		// app.css gates the desktop on viewports >= 1280px; the default 1280x720 is
+		// borderline (Firefox scrollbars + the bottom dock overlap low controls like
+		// the type-filter pills). Use the same stable size the slice-7 block uses.
+		await page.setViewportSize({ width: 1440, height: 900 });
 		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 		await page.goto('/app');
 	});
@@ -191,68 +195,10 @@ test.describe('Characters', () => {
 	});
 });
 
-test.describe('World Map', () => {
-	test.beforeEach(async ({ page, request }) => {
-		await clearEntities(request);
-		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-		await page.goto('/app');
-	});
-
-	test('empty state → create location → card appears', async ({ page }) => {
-		await page.click('button[title="World Map"]');
-		const win = page.locator('.window[aria-label="World Map"]');
-		await expect(win).toBeVisible();
-
-		await expect(win.locator('.empty-state')).toBeVisible();
-		await expect(win.locator('.empty-state p')).toContainText('No locations yet');
-
-		await win.locator('.empty-state button').click();
-		await expect(win.locator('.loc-card')).toHaveCount(1, { timeout: 3000 });
-		await expect(win.locator('.loc-name').first()).toHaveText('New Location');
-	});
-
-	test('second location added via actions-row button', async ({ page }) => {
-		await page.click('button[title="World Map"]');
-		const win = page.locator('.window[aria-label="World Map"]');
-		await expect(win).toBeVisible();
-
-		await win.locator('.empty-state button').click();
-		await expect(win.locator('.loc-card')).toHaveCount(1, { timeout: 3000 });
-
-		await win.locator('.actions-row button').click();
-		await expect(win.locator('.loc-card')).toHaveCount(2, { timeout: 3000 });
-	});
-
-	test('location card shows linked character chip', async ({ page, request }) => {
-		const loc = await (
-			await request.post('/api/entities', { data: { type: 'Location', name: 'The Ashenveil' } })
-		).json();
-		const char = await (
-			await request.post('/api/entities', { data: { type: 'Character', name: 'Scout' } })
-		).json();
-		await request.post('/api/relationships', {
-			data: { fromId: char.id, toId: loc.id, type: 'located_at' }
-		});
-		await page.goto('/app');
-
-		await page.click('button[title="World Map"]');
-		const win = page.locator('.window[aria-label="World Map"]');
-		await expect(win.locator('.loc-name').first()).toHaveText('The Ashenveil', { timeout: 3000 });
-		await expect(win.locator('.entity-chip').first()).toContainText('Scout');
-	});
-
-	test('multiple locations each get their own card', async ({ page, request }) => {
-		await request.post('/api/entities', { data: { type: 'Location', name: 'Ashenveil' } });
-		await request.post('/api/entities', { data: { type: 'Location', name: 'The Citadel' } });
-		await request.post('/api/entities', { data: { type: 'Location', name: 'Duskport' } });
-		await page.goto('/app');
-
-		await page.click('button[title="World Map"]');
-		const win = page.locator('.window[aria-label="World Map"]');
-		await expect(win).toBeVisible();
-		await expect(win.locator('.loc-card')).toHaveCount(3, { timeout: 3000 });
-	});
-});
+// Removed: test.describe('World Map') — the card-based World Map (.loc-card /
+// .loc-name / .entity-chip / empty-state 'create location') was replaced by
+// World Map v3, a per-Location polygon map (WorldMap.svelte, 'No maps yet').
+// Those flows no longer exist; v3 map coverage is a separate spec, not a port.
 
 // ── Slice 7: Body field, in-window chip nav, edit-mode preview, Settings toggle ──
 test.describe('Wiki — body + in-window navigation (slice 7)', () => {
@@ -272,7 +218,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 		await page.addInitScript(() => {
 			localStorage.setItem('tutorial-dismissed', 'true');
 		});
-		await page.goto('/');
+		await page.goto('/app');
 	});
 
 	test('Body field renders below structured fields for non-Note entities', async ({
@@ -280,7 +226,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 		request
 	}) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
@@ -300,7 +246,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 	}) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Boromir' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
@@ -330,7 +276,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 	}) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Boromir' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		// Pre-seed Aragorn's body via API so the test is fast + deterministic.
 		const aragorn = await (await request.get('/api/entities')).json();
@@ -338,7 +284,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 		await request.patch(`/api/entities/${aragornEntity.id}`, {
 			data: { data: { body: 'Aragorn rode with [[Boromir]] through Edoras.' } }
 		});
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
@@ -369,7 +315,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Boromir' } });
 		// Default Playwright viewport (1280x720) is comfortably above the
 		// 480px mobile gate, so the preview pane is enabled by default.
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
@@ -403,7 +349,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 	}) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Boromir' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		// Open Settings → Editor and uncheck the toggle.
 		await page.click('button[title="Settings"]');
@@ -431,7 +377,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 
 	test('linkPreviewEnabled preference persists across reload', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		// Toggle the preference off.
 		await page.click('button[title="Settings"]');
@@ -454,7 +400,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 		request
 	}) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
-		await page.goto('/');
+		await page.goto('/app');
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
