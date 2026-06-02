@@ -302,17 +302,32 @@ export type ProjectionCausalEdge = {
 };
 
 // Slice 5 PR-C — pre-resolved causal-render input, supplied by the (client)
-// caller that holds the relationships store. `edges` are the caused_by rows;
-// `locationOf` maps an endpoint entity id (Event) → its Location entity id,
-// derived from `takes_place_at` edges (Event AT Location — edge-policy.ts:14).
-// A Scene endpoint or an Event with no takes_place_at simply isn't in the map
-// and its edge is omitted (lazy-GC). Server-side callers pass the empty default.
+// caller that holds the relationships + region geometry. `edges` are the
+// caused_by rows; `locationOf` maps an endpoint entity id (Event) → its Location
+// entity id, derived from `takes_place_at` edges (Event AT Location —
+// edge-policy.ts:14); `centroidByLocation` maps a Location id → its on-map
+// region centroid.
+//
+// `centroidByLocation` is sourced by the caller from the SAME live region
+// geometry the map renders (the mapRegions store), NOT from anchor state_jsonb —
+// region create/edit updates mapRegions optimistically but does not reload the
+// anchor, so anchor-sourced centroids would be stale/missing for a just-edited
+// region. The caller is responsible for user + scope filtering (mapRegions loads
+// from a user-scoped endpoint and the caller passes its scoped view), so
+// projection trusts this set as "owned, on-map regions." An endpoint Location
+// absent from it (off-map, cross-user, or a Scene endpoint with no Location)
+// drops the edge (lazy-GC). Server-side callers pass the empty default.
 export type CausalProjectionInput = {
 	edges: ProjectionCausalEdge[];
 	locationOf: ReadonlyMap<string, string>;
+	centroidByLocation: ReadonlyMap<string, ArtifactPosition>;
 };
 
-const EMPTY_CAUSAL: CausalProjectionInput = { edges: [], locationOf: new Map() };
+const EMPTY_CAUSAL: CausalProjectionInput = {
+	edges: [],
+	locationOf: new Map(),
+	centroidByLocation: new Map()
+};
 
 // Slice 4 PR-F (D5) — minimal placement shape the movement fold needs.
 // projection.ts decouples from DB rows (same pattern as ProjectionAnchor /
@@ -603,9 +618,11 @@ function foldMovement(
  * to the vertex average for a degenerate (zero-area / collinear) polygon so a
  * thin or self-intersecting region still yields a finite point. Returns null
  * only for fewer than 3 vertices (not a polygon). `polygon` is [[x,y], …] in
- * the same normalized fractional coords as region geometry elsewhere.
+ * the same normalized fractional coords as region geometry elsewhere. Exported
+ * so the caller can build `CausalProjectionInput.centroidByLocation` from the
+ * live region geometry (mapRegions) it already renders from.
  */
-function polygonCentroid(polygon: number[][]): ArtifactPosition | null {
+export function polygonCentroid(polygon: number[][]): ArtifactPosition | null {
 	if (!Array.isArray(polygon) || polygon.length < 3) return null;
 	let twiceArea = 0;
 	let cx = 0;
@@ -639,59 +656,15 @@ function polygonCentroid(polygon: number[][]): ArtifactPosition | null {
 	return { x: cx / (3 * twiceArea), y: cy / (3 * twiceArea) };
 }
 
-// Slice 5 PR-C T7 — geometry memo. A Location's centroid depends ONLY on the
-// active anchor's regions + the user-scoped ctx (allowedRegions); NEITHER
-// changes on a playhead tick. foldCausalEdges runs in a $derived that re-fires
-// every scrub frame, so without this the Event→Location→region→centroid
-// resolution the eng-review flagged would re-run per frame. Keyed by anchor then
-// ctx identity — both are stable store objects across ticks and are REPLACED
-// (new identity) on any data reload, which is the cache-invalidation signal.
-// Nested WeakMaps auto-GC when an anchor/ctx object is dropped. The memo is
-// observably pure: same (anchor, ctx) → the same centroid map (same object
-// refs), so projectState's output is unchanged, only faster. This is the only
-// cached path in this otherwise-pure module — see T7 note in the slice-5 plan.
-const centroidByLocationCache = new WeakMap<
-	ProjectionAnchor,
-	WeakMap<ProjectionContext, ReadonlyMap<string, ArtifactPosition>>
->();
-
-function resolveCentroidsByLocation(
-	anchor: ProjectionAnchor,
-	ctx: ProjectionContext
-): ReadonlyMap<string, ArtifactPosition> {
-	let byCtx = centroidByLocationCache.get(anchor);
-	if (byCtx) {
-		const hit = byCtx.get(ctx);
-		if (hit) return hit;
-	} else {
-		byCtx = new WeakMap();
-		centroidByLocationCache.set(anchor, byCtx);
-	}
-	// Centroids come purely from the anchor's declared regions: only those carry
-	// polygon + locationId. transfer_region events change faction_id, never add
-	// geometry — so the post-event `regions` Map has the same centroid-eligible
-	// set as the anchor, and keying on the anchor is exact. First region wins if
-	// a Location appears twice. allowedRegions drops cross-user / off-map regions.
-	const centroidByLocation = new Map<string, ArtifactPosition>();
-	for (const r of anchor.stateJsonb.regions ?? []) {
-		if (!r.locationId) continue;
-		if (!ctx.allowedRegions.has(r.region_id)) continue;
-		if (!r.polygon) continue;
-		if (centroidByLocation.has(r.locationId)) continue;
-		const c = polygonCentroid(r.polygon);
-		if (c) centroidByLocation.set(r.locationId, c);
-	}
-	byCtx.set(ctx, centroidByLocation);
-	return centroidByLocation;
-}
-
 /**
  * Slice 5 PR-C (D2/D5, ADR 0006) — fold `caused_by` relationships into the
  * on-map causal edges visible at time `t`. Mirrors foldMovement's posture:
- * pure, lazy-GC (unresolved/cross-user endpoints are silently dropped, never
- * drawn to nowhere). The geometry (`centroidByLocation`) is precomputed +
- * memoized by resolveCentroidsByLocation (T7); this fn does only the per-tick,
- * t-dependent visibility eval + lookup.
+ * pure, lazy-GC (unresolved endpoints are silently dropped, never drawn to
+ * nowhere). Geometry (`causal.centroidByLocation`) is precomputed by the caller
+ * from the live region store; this fn does only the per-tick, t-dependent
+ * visibility eval + lookup. The caller computes centroidByLocation in a $derived
+ * (refreshes on region edit, not per playhead tick), which is where the T7
+ * per-frame-cost concern is now handled.
  *
  * An edge is emitted iff ALL hold:
  *   - it is visible at T (isEdgeVisibleAtT — the same predicate both graphs use,
@@ -706,16 +679,14 @@ function resolveCentroidsByLocation(
  *     and pickActiveAnchor returns no anchor before the first anchor's tPosition,
  *     so the map draws nothing — causal edges included — at idle regardless.)
  *     The temporal window half (isEdgeVisibleAtT) IS the same rule both graphs use;
- *   - BOTH endpoints resolve through locationOf → an ALLOWED region on this map
- *     (centroidByLocation already excludes cross-user / off-map regions);
+ *   - BOTH endpoints resolve through locationOf → a region in centroidByLocation
+ *     (the caller's owned, on-map, scope-filtered region set — off-map and
+ *     cross-user endpoints are simply absent);
  *   - the endpoints are in DIFFERENT regions — a same-region (self-loop) edge
  *     has no spatial arrow to draw and is dropped (Spike S1 gate decision).
  */
-function foldCausalEdges(
-	t: number,
-	causal: CausalProjectionInput,
-	centroidByLocation: ReadonlyMap<string, ArtifactPosition>
-): RenderedCausalEdge[] {
+function foldCausalEdges(t: number, causal: CausalProjectionInput): RenderedCausalEdge[] {
+	const { centroidByLocation } = causal;
 	if (causal.edges.length === 0 || centroidByLocation.size === 0) return [];
 
 	const out: RenderedCausalEdge[] = [];
@@ -822,13 +793,12 @@ export function projectState(
 	// it as a marker for "explicitly erased here." Same shape either way.
 	const renderedCells: RenderedCell[] = Array.from(cells.values());
 
-	// Slice 5 PR-C — derive on-map causal edges from caused_by. Geometry
-	// (per-Location centroids) is memoized by (anchor, ctx) since it doesn't
-	// change per tick (T7); the fold does the t-dependent visibility eval. No
-	// anchor → no regions → no centroids → no edges.
-	const causalEdges = anchor
-		? foldCausalEdges(t, causal, resolveCentroidsByLocation(anchor, ctx))
-		: [];
+	// Slice 5 PR-C — derive on-map causal edges from caused_by. Geometry comes
+	// from causal.centroidByLocation (caller-supplied, from the live region
+	// store); the fold does the t-dependent visibility eval. Gated on an active
+	// anchor so the map draws nothing before the first anchor (idle convention),
+	// consistent with regions/placements.
+	const causalEdges = anchor ? foldCausalEdges(t, causal) : [];
 
 	return {
 		tPosition: t,

@@ -18,6 +18,10 @@ export function jumpToCause(
 ): boolean {
 	if (!rel || rel.type !== 'caused_by') return false;
 	if (rel.startPosition == null) return false; // timeless link — nothing to jump to
+	// scrubTo silently ignores NaN / non-finite / negative t. Mirror that guard
+	// here so the return value is honest — a caller using it to pick a fallback
+	// shouldn't be told a jump happened when scrubTo dropped the position.
+	if (!Number.isFinite(rel.startPosition) || rel.startPosition < 0) return false;
 	playhead.scrubTo(rel.startPosition);
 	return true;
 }

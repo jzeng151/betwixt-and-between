@@ -32,6 +32,7 @@
 	import MapToolSelector from '$lib/features/map/MapToolSelector.svelte';
 	import {
 		projectState,
+		polygonCentroid,
 		type ProjectionContext,
 		type RenderedState,
 		type ArtifactPosition
@@ -567,9 +568,13 @@
 
 	// Slice 5 PR-C (D2/D5, ADR 0006) — causal-edge projection input. caused_by
 	// rows are the EventChain links; locationOf maps an Event endpoint → its
-	// Location via takes_place_at (Event AT Location, edge-policy.ts:14) so
-	// foldCausalEdges can resolve each endpoint to a region centroid on this map.
-	// Relationship is structurally assignable to ProjectionCausalEdge.
+	// Location via takes_place_at (Event AT Location, edge-policy.ts:14);
+	// centroidByLocation maps a Location → its on-map region centroid, sourced
+	// from scopedRegions — the SAME live geometry PixiRegionLayer draws (NOT the
+	// anchor, which isn't reloaded on region create/edit). This $derived
+	// recomputes only when relationships / regions change, not per playhead tick,
+	// which is where the per-frame-cost (T7) concern is handled. Relationship is
+	// structurally assignable to ProjectionCausalEdge.
 	const causalInput = $derived.by(() => {
 		const edges = $relationships.filter((r) => r.type === 'caused_by');
 		const locationOf = new Map<string, string>();
@@ -582,7 +587,16 @@
 			const existing = locationOf.get(r.fromId);
 			if (existing === undefined || r.toId < existing) locationOf.set(r.fromId, r.toId);
 		}
-		return { edges, locationOf };
+		// Location → centroid from scopedRegions (already user- and scope-filtered).
+		// First region wins per Location (deterministic: scopedRegions order).
+		const centroidByLocation = new Map<string, ArtifactPosition>();
+		for (const r of scopedRegions) {
+			if (!r.locationId || !r.polygon) continue;
+			if (centroidByLocation.has(r.locationId)) continue;
+			const c = polygonCentroid(r.polygon);
+			if (c) centroidByLocation.set(r.locationId, c);
+		}
+		return { edges, locationOf, centroidByLocation };
 	});
 
 	// Slice 5 PR-E — Events offered in the "Change owner with cause…" picker.
