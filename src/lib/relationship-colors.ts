@@ -13,6 +13,7 @@
 
 import type { EntityType, RelationshipType } from '$lib/server/db/schema.js';
 import { CHARACTER_COLORS, HEX_COLOR_RE } from '$lib/features/timeline/timeline-helpers.js';
+import { ENTITY_TYPE_COLOR_VAR } from '$lib/entity-type-colors.js';
 
 /**
  * Edge color per relationship type. Maps to --color-rel-* CSS tokens.
@@ -29,21 +30,13 @@ export const REL_COLOR: Record<RelationshipType, string> = {
 };
 
 /**
- * Node color per entity type. Maps to --color-type-* CSS tokens
- * (separate namespace from --color-rel-* so edge vs node coloring
- * stays decoupled). Six distinct hue families so the same entity
- * type never reads as the same color as a nearby edge.
+ * Node color per entity type — the SAME mapping as ENTITY_TYPE_COLOR_VAR
+ * (eng-review 4A: these were byte-identical duplicates; collapsed to one
+ * source of truth). Both still map to the --color-type-* namespace, kept
+ * separate from --color-rel-* so edge vs node coloring stays decoupled.
+ * Re-exported under this name so existing graph call-sites are untouched.
  */
-export const NODE_COLOR: Record<EntityType, string> = {
-	Character: 'var(--color-type-character)',
-	Location: 'var(--color-type-location)',
-	Event: 'var(--color-type-event)',
-	Act: 'var(--color-type-act)',
-	Scene: 'var(--color-type-scene)',
-	Note: 'var(--color-type-note)',
-	Artifact: 'var(--color-type-artifact)',
-	Item: 'var(--color-type-item)'
-};
+export const NODE_COLOR: Record<EntityType, string> = ENTITY_TYPE_COLOR_VAR;
 
 /**
  * Per-relationship-type edge stroke style. Adds a SECOND visual channel
