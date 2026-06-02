@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
 import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
+import { relationships } from '$lib/stores/relationships.js';
 
 export type Entity = {
 	id: string;
@@ -176,17 +177,22 @@ function createEntityStore() {
 			// is a global store with its own loadToken, so concurrent loads can't
 			// clobber a newer view and the latest response wins. Worst case is one
 			// redundant fetch when two structural edits race — never stale data.
-			if (wasStructural) await intervalsStore.load();
+			// Relationships ride along: the server recomputes scene-anchored
+			// caused_by start/end positions on a scene-within-act mutation too
+			// (Slice 5 PR-D), and the graph click-to-jump reads $relationships,
+			// so a stale store would jump to the old scene fraction (Codex P2).
+			if (wasStructural) await Promise.all([intervalsStore.load(), relationships.load()]);
 			return updated;
 		}
 		latestUpdate.delete(id);
 		updateChains.delete(id);
 		update((all) => all.map((e) => (e.id === id ? updated : e)));
 		// Position/parentId changes on Act/Scene cascade to intervals on the
-		// server (sibling reorder + recompute, or scene cross-act move). Keep
-		// the intervals store in sync.
+		// server (sibling reorder + recompute, or scene cross-act move) AND to
+		// scene-anchored relationship positions (Slice 5 PR-D). Keep both stores
+		// in sync so the timeline bars and the graph click-to-jump agree.
 		if (wasStructural) {
-			await intervalsStore.load();
+			await Promise.all([intervalsStore.load(), relationships.load()]);
 		}
 		return updated;
 	}
@@ -207,10 +213,12 @@ function createEntityStore() {
 		}
 		// Server-side delete cascades to intervals (entity_id / start_act_id /
 		// end_act_id are all CASCADE) and recomputes survivor positions for
-		// Act/Scene deletes. The intervals store is a separate writable so
-		// reload it here — otherwise survivor bars render at pre-delete
-		// positions and overflow when N (act count) decreased.
-		await intervalsStore.load();
+		// Act/Scene deletes. It also cascade-deletes relationships on an endpoint
+		// delete and recomputes / re-anchors scene-scoped relationship positions
+		// on an Act delete (incl. ?moveScenesTo). Both stores are separate
+		// writables, so reload both — otherwise survivor bars render at pre-delete
+		// positions and the graph keeps phantom or stale-positioned edges.
+		await Promise.all([intervalsStore.load(), relationships.load()]);
 	}
 
 	return { subscribe, load, createEntity, createEntities, updateEntity, deleteEntity };
