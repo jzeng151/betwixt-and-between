@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.4.0] - 2026-06-02
+
+World Map v3 Slice 5 — EventChains. Causal links (`caused_by`) gain story-time scope and become a navigation tool.
+
+### Added
+
+- Scope a causal link to a scene: when you edit a "caused by" relationship, you can now pin where the link happens to a specific act and scene (start and end). The scene picker only offers scenes from the act you chose, and switching acts clears a now-mismatched scene so you can't save an inconsistent scope.
+- Click a causal edge to jump there: in the Story Graph and the focused entity graph, clicking a scoped "caused by" edge scrubs the timeline playhead to where that link happens. A pointer cursor marks the edges that jump; unscoped (timeless) links stay inert.
+
+### Fixed
+
+- Causal-link timing stays correct after a scene shuffle: reordering or inserting scenes within an act now re-derives the story-time of any causal link scoped to those scenes, so click-to-jump always lands at the right moment instead of a stale one.
+- Hidden plot links stay hidden: a "mystery" causal edge (one not yet revealed at the current playhead position) is no longer clickable, so jumping to it can't leak the reveal's timing ahead of time.
+
 ## [0.8.3.0] - 2026-06-01
 
 World Map v3 Slice 4 (part 2) — movement. Markers can now move over story-time, completing the Slice 4 authoring story begun in 0.8.1.0.
