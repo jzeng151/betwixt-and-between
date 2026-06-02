@@ -709,3 +709,64 @@ export const worldMapLayerPrefs = pgTable(
 		index('world_map_layer_prefs_map_idx').on(table.worldMapId)
 	]
 );
+
+// =============================================================================
+// user_preferences — Settings customization Phase 1 (2026-06-02)
+// =============================================================================
+// Server-backed user preferences (theme, accent, per-entity-type / per-
+// relationship-type / per-role color overrides). Replaces the localStorage-
+// only `preferences` store as the source of truth; the client store becomes a
+// cache that hydrates from here on login and writes through via PATCH.
+//
+// Profile-shaped from day one (eng-review P4): the (user_id, profile_id) PK +
+// is_active flag mean Phase 3 "workspace profiles" / "theme presets" become
+// "allow N rows + a switcher" with NO schema migration. Phase 1 writes exactly
+// one row per user: name='Default', is_active=1.
+//
+// `is_active` is integer 0/1 (NOT boolean) per CLAUDE.md convention (matches
+// window_canvas_state.pinned, world_map_layer_prefs.visible). The partial
+// unique index user_preferences_one_active enforces "at most one active row
+// per user" at the storage layer — the lowest-level guarantee behind the
+// profile switcher, and the conflict target the lazy first-login upsert
+// (ON CONFLICT DO NOTHING) needs to be race-safe (codex outside-voice).
+//
+// `version` is the OPTIMISTIC-CONCURRENCY revision counter (Approach B).
+// Distinct from data.schemaVersion (the blob SHAPE / migration version) —
+// never conflate. The server PATCH does an atomic conditional bump:
+//   UPDATE ... SET data=$merged, version=version+1
+//   WHERE user_id=$u AND profile_id=$p AND version=$clientVersion
+// Zero rows affected → 409 (stale); client reconciles. (T2 — not this PR.)
+//
+// `initialized_from_client_at` is the durable first-login-reconcile marker
+// (codex): set once when a user's existing localStorage prefs are pushed to a
+// freshly-created Default row, so we never re-clobber by comparing against
+// defaults (which drift between releases).
+//
+// bump_updated_at trigger (CLAUDE.md mutable-table convention) installed by
+// drizzle/0024 — the table IS mutated by user actions, so updated_at must bump
+// on UPDATE and app code must NOT set it.
+// =============================================================================
+export const userPreferences = pgTable(
+	'user_preferences',
+	{
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		profileId: uuid('profile_id').notNull().defaultRandom(),
+		name: text('name').notNull(),
+		isActive: integer('is_active').notNull().default(1),
+		version: integer('version').notNull().default(1),
+		data: jsonb('data').notNull().default({}).$type<Record<string, unknown>>(),
+		initializedFromClientAt: timestamp('initialized_from_client_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		primaryKey({ columns: [table.userId, table.profileId] }),
+		// At most one active profile per user. is_active is integer 0/1, so the
+		// predicate is `= 1` (cf. factions_user_one_system which is boolean).
+		uniqueIndex('user_preferences_one_active')
+			.on(table.userId)
+			.where(sql`is_active = 1`)
+	]
+);

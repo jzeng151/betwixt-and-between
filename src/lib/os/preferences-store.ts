@@ -4,14 +4,19 @@ import {
 	PREFERENCES_DEFAULTS,
 	type Preferences
 } from '../types/preferences.js';
+// Shared merge primitives — one source of truth with the server PATCH handler
+// (src/lib/server/user-preferences.ts) so client-optimistic and server-
+// authoritative merges cannot diverge.
+import { deepMerge, isPlainObject, PROTO_POLLUTION_KEYS } from '../preferences-merge.js';
 
 /**
  * User preferences store — the per-user persistent root.
  *
- * Pre-T8b: localStorage-backed (single tenant, no auth).
- * Post-T8b: this module hydrates from `users.preferences jsonb` on login and
- *           writes through to both server + localStorage cache. The scaffold
- *           establishes the storage shape; the server-sync layer lands later.
+ * Local optimistic state + localStorage cache. Server persistence lives in the
+ * sync controller (./preferences-sync.ts), which hydrates this store from the
+ * `user_preferences` table on login and writes local changes back via debounced
+ * PATCH. (Earlier scaffold notes referenced a `users.preferences jsonb` column;
+ * the shipped design uses a separate profile-shaped `user_preferences` table.)
  *
  * Subscribers re-render on every change. Writes save through to storage on
  * every mutation EXCEPT when versionError is set (downgrade-protection mode):
@@ -34,13 +39,16 @@ import {
 
 const STORAGE_KEY = 'btw:preferences';
 
-/**
- * Object keys that must never propagate from stored payloads into the merged
- * shape — protects against `__proto__` / `constructor` / `prototype` injection
- * from a localStorage payload an attacker could write (or that a future buggy
- * migration could produce).
- */
-const PROTO_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+// Records which signed-in user the cached blob in STORAGE_KEY belongs to, so the
+// first-login reconcile (preferences-sync.ts) can tell "this browser's prefs are
+// mine / unclaimed" from "these are a different user's, do not import them"
+// (codex P1). Kept in a SEPARATE key, not inside the synced blob, so it never
+// reaches the server or the merge/diff paths. Absent = legacy/anonymous cache.
+const OWNER_KEY = 'btw:preferences:owner';
+
+// PROTO_POLLUTION_KEYS, isPlainObject, and deepMerge now live in
+// ../preferences-merge.js (shared with the server PATCH handler) and are
+// imported above. Re-exported via __testing__ for the existing test surface.
 
 /**
  * Forward migrations from version N → N+1. Add an entry here when bumping
@@ -62,6 +70,15 @@ export const MIGRATIONS: Record<number, (old: unknown) => unknown> = {
 		// preview pane below textareas. Default true so existing users
 		// see the feature on first load after upgrade.
 		editor: { linkPreviewEnabled: true }
+	}),
+	4: (v3) => ({
+		// Settings customization Phase 1: adds appearance.{entityTypeColors,
+		// relationshipTypeColors,roleColors}. They are OPTIONAL overrides
+		// (absent = use built-in --color-* default), so the migration is a
+		// pure version bump — no field is seeded. deep-merge with
+		// PREFERENCES_DEFAULTS (which omits the maps) preserves "absent".
+		...(v3 as object),
+		schemaVersion: 4
 	})
 };
 
@@ -102,43 +119,24 @@ export function __setStorageForTesting(s: StorageLike | null): void {
 	_storage = s;
 }
 
-/**
- * Returns true if `v` is a plain object (not null, not array, not function).
- * Used to validate migration outputs and to gate `deepMerge` recursion.
- */
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-	return typeof v === 'object' && v !== null && !Array.isArray(v);
+/** The user id the cached prefs belong to, or null if unclaimed/unavailable. */
+export function getStoredOwner(storage: StorageLike | null = _storage): string | null {
+	if (!storage) return null;
+	try {
+		return storage.getItem(OWNER_KEY);
+	} catch {
+		return null;
+	}
 }
 
-/**
- * Plain-object deep merge. Arrays and primitives are replaced wholesale.
- * Skips prototype-pollution keys to defend against malicious localStorage
- * payloads. Returns a defensive shallow-copy so callers can't mutate base.
- */
-function deepMerge<T>(base: T, over: unknown): T {
-	if (over === null || over === undefined) return base;
-	const baseIsObj = isPlainObject(base);
-	const overIsObj = isPlainObject(over);
-	if (!baseIsObj && !overIsObj) {
-		// Both are non-object scalars — override wins. This is the recursive
-		// primitive case (e.g. {x:1} merged with {x:2} → x recurses to (1,2) → 2).
-		return over as T;
+/** Claim the cached prefs for `userId`. Silently no-ops without storage. */
+export function setStoredOwner(userId: string, storage: StorageLike | null = _storage): void {
+	if (!storage) return;
+	try {
+		storage.setItem(OWNER_KEY, userId);
+	} catch {
+		// Storage full / disabled — degrade silently; ownership re-stamps next hydrate.
 	}
-	if (!baseIsObj || !overIsObj) {
-		// One side is an object, the other isn't — type mismatch. Preserve the
-		// base shape rather than corrupt the caller's typed expectation. A
-		// stored payload that flips a nested object to a scalar (or vice versa)
-		// gets ignored at that key, falling back to the default shape.
-		return base;
-	}
-	const result: Record<string, unknown> = { ...base };
-	for (const key of Object.keys(over)) {
-		if (PROTO_POLLUTION_KEYS.has(key)) continue;
-		const baseVal = base[key];
-		const overVal = over[key];
-		result[key] = key in base ? deepMerge(baseVal, overVal) : overVal;
-	}
-	return result as T;
 }
 
 /** Parse JSON without throwing. Returns null on any failure. */
@@ -152,23 +150,19 @@ function safeParse(raw: string | null): unknown {
 }
 
 /**
- * Read the persisted preferences from `storage`, run forward migrations, and
- * deep-merge with PREFERENCES_DEFAULTS. Returns defaults when storage is null,
- * empty, malformed, or contains a non-object payload. Throws
- * PreferencesVersionError when the stored payload's schemaVersion exceeds the
- * running build's code-max version. Catches migration failures (throws and
- * non-object returns) and falls back to defaults rather than propagating.
+ * Run forward migrations on a parsed payload and deep-merge over
+ * PREFERENCES_DEFAULTS. The shared core for BOTH the localStorage load path
+ * AND the server-hydrate path (T4) — a server blob at an older schemaVersion
+ * MUST be migrated the same way a stored one is, instead of being applied raw
+ * (codex outside-voice).
+ *
+ * Returns defaults for a null/non-object payload. Throws
+ * PreferencesVersionError when schemaVersion exceeds the running build's code
+ * max (downgrade protection — an older client must not write a newer blob's
+ * shape back over the server's data). Migration throws / non-object returns
+ * fall back to defaults rather than bricking.
  */
-export function loadFromStorage(storage: StorageLike | null = _storage): Preferences {
-	if (!storage) return { ...PREFERENCES_DEFAULTS };
-	const raw = (() => {
-		try {
-			return storage.getItem(STORAGE_KEY);
-		} catch {
-			return null;
-		}
-	})();
-	const parsed = safeParse(raw);
+export function migrateAndMerge(parsed: unknown): Preferences {
 	if (!isPlainObject(parsed)) return { ...PREFERENCES_DEFAULTS };
 
 	const storedVersion =
@@ -211,6 +205,23 @@ export function loadFromStorage(storage: StorageLike | null = _storage): Prefere
 	// chain from the right step.
 	const reachedVersion = migrationsCompleted ? PREFERENCES_CODE_MAX_VERSION : storedVersion;
 	return { ...merged, schemaVersion: reachedVersion };
+}
+
+/**
+ * Read the persisted preferences from `storage`, migrate, and deep-merge with
+ * PREFERENCES_DEFAULTS. Returns defaults when storage is null/empty/malformed.
+ * Propagates PreferencesVersionError from migrateAndMerge (downgrade protection).
+ */
+export function loadFromStorage(storage: StorageLike | null = _storage): Preferences {
+	if (!storage) return { ...PREFERENCES_DEFAULTS };
+	const raw = (() => {
+		try {
+			return storage.getItem(STORAGE_KEY);
+		} catch {
+			return null;
+		}
+	})();
+	return migrateAndMerge(safeParse(raw));
 }
 
 /** Persist `prefs` to `storage`. Silently no-ops when storage is null or write fails. */

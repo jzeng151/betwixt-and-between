@@ -18,6 +18,7 @@
   import { openEntity } from '$lib/navigation.js';
   import { WIKI_NAV, type WikiNavContext } from '$lib/contexts/wiki-nav.js';
   import { drainPendingCommit } from '$lib/util/pending-commit.js';
+  import { REL_COLOR } from '$lib/relationship-colors.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
 
   interface Props {
@@ -32,23 +33,15 @@
 
   let { id, name, relationshipType = 'other', onRemove }: Props = $props();
 
-  // Record<RelationshipType | 'arc', string> forces an exhaustiveness
-  // check at compile time so the next enum trim breaks this file until
-  // the contributor updates it (rather than silently leaving orphan
-  // keys behind, the way appears_in + mentor_of did pre-Step-5.5).
-  const COLOR_MAP: Record<RelationshipType | 'arc', string> = {
-    takes_place_at:'var(--color-rel-loc)',
-    caused_by:     'var(--color-rel-event)',
-    allied_with:   'var(--color-rel-ally)',
-    rivals:        'var(--color-rel-rival)',
-    located_at:    'var(--color-rel-loc)',
-    note_of:       'var(--color-type-note)',
-    part_of:       'var(--color-rel-loc)',
-    other:         'var(--color-rel-other)',
-    arc:           'var(--color-rel-arc)',
-  };
-
-  const chipColor = $derived(COLOR_MAP[relationshipType] ?? 'var(--color-rel-other)');
+  // Single source of truth: the chip reads the same REL_COLOR tokens the graph
+  // uses, so Settings → Relationship Colors overrides recolor these chips too and
+  // a swatch can't tint chips inconsistently with edges (codex). `arc` is not a
+  // RelationshipType (it labels arc chips) so it keeps its own token.
+  const chipColor = $derived(
+    relationshipType === 'arc'
+      ? 'var(--color-rel-arc)'
+      : (REL_COLOR[relationshipType] ?? 'var(--color-rel-other)')
+  );
 
   // Pulled at component construction. Svelte 5 context follows the
   // component tree, so a chip rendered inside Wiki.svelte's subtree gets
