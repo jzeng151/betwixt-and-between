@@ -451,6 +451,30 @@ describe('T4 transient-failure retry (codex)', () => {
 		);
 	});
 
+	it('recovers a transiently-failed initial hydrate and flushes stranded edits (codex)', async () => {
+		let gets = 0;
+		mockFetch((c) => {
+			if (c.method === 'GET') {
+				gets++;
+				if (gets === 1) throw new Error('network down'); // initial hydrate fails
+				return fakeRes(200, { data: {}, version: 1, initialized: true, userId: 'u' });
+			}
+			return fakeRes(200, { version: 2 });
+		});
+		await hydratePreferences(); // GET#1 throws → offline, serverVersion 0, retry scheduled
+		expect(__getServerVersionForTesting()).toBe(0);
+		// Edit made while offline accumulates but cannot flush (serverVersion 0).
+		applyPreferencePatch({ set: { appearance: { accentColor: '#abc123' } } });
+		await __flushForTesting();
+		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+		// The scheduled retry hydrate (invoked here directly) succeeds and the
+		// stranded edit finally reaches the server.
+		await hydratePreferences();
+		await __flushForTesting();
+		expect(__getServerVersionForTesting()).toBe(2);
+		expect(calls.find((c) => c.method === 'PATCH')?.body.set.appearance.accentColor).toBe('#abc123');
+	});
+
 	it('drops the patch on a 400 (bad patch) without retrying', async () => {
 		mockFetch((c) =>
 			c.method === 'GET'

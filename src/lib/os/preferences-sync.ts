@@ -58,6 +58,12 @@ const RETRY_BASE_MS = 2000;
 const RETRY_MAX_MS = 30000;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryBackoffMs = RETRY_BASE_MS;
+// A transiently-failed initial hydrate leaves serverVersion at 0, so later edits
+// accumulate but never flush (applyPreferencePatch skips while serverVersion===0).
+// Retry the hydrate itself with capped backoff so the session reaches the server
+// once the connection recovers, without waiting for a manual reload (codex).
+let hydrateRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let hydrateBackoffMs = RETRY_BASE_MS;
 
 const _status = writable<SyncStatus>('idle');
 export const preferencesSyncStatus: Readable<SyncStatus> = { subscribe: _status.subscribe };
@@ -82,6 +88,9 @@ export function __resetSyncForTesting(): void {
 	if (retryTimer) clearTimeout(retryTimer);
 	retryTimer = null;
 	retryBackoffMs = RETRY_BASE_MS;
+	if (hydrateRetryTimer) clearTimeout(hydrateRetryTimer);
+	hydrateRetryTimer = null;
+	hydrateBackoffMs = RETRY_BASE_MS;
 	serverVersion = 0;
 	pending = { set: {}, unset: [] };
 	inFlight = false;
@@ -170,12 +179,20 @@ function reapplyOntoBase(base: Preferences): Preferences {
 export async function hydratePreferences(): Promise<void> {
 	hydrating = true;
 	_status.set('syncing');
+	// We are hydrating now — cancel any scheduled hydrate retry so it can't pile up.
+	if (hydrateRetryTimer) {
+		clearTimeout(hydrateRetryTimer);
+		hydrateRetryTimer = null;
+	}
 	let res: Response;
 	try {
 		res = await fetchImpl('/api/preferences');
 	} catch {
+		// Transient network failure — retry with backoff so offline edits aren't
+		// stranded at serverVersion 0 until a manual reload (codex).
 		hydrating = false;
 		_status.set('offline');
+		scheduleHydrateRetry();
 		return;
 	}
 	if (res.status === 401) {
@@ -187,8 +204,11 @@ export async function hydratePreferences(): Promise<void> {
 		return;
 	}
 	if (!res.ok) {
+		// Transient server error (5xx etc.) — same stranding risk as a network
+		// failure; retry the hydrate with backoff (codex).
 		hydrating = false;
 		_status.set('error');
+		scheduleHydrateRetry();
 		return;
 	}
 	const body = (await res.json()) as {
@@ -274,6 +294,7 @@ export async function hydratePreferences(): Promise<void> {
 	if (currentUserId != null) setStoredOwner(currentUserId);
 
 	hydrating = false;
+	hydrateBackoffMs = RETRY_BASE_MS; // recovered — reset hydrate backoff
 	if (hasPending()) {
 		scheduleFlush();
 	} else {
@@ -315,6 +336,11 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 		retryTimer = null;
 	}
 	retryBackoffMs = RETRY_BASE_MS;
+	if (hydrateRetryTimer) {
+		clearTimeout(hydrateRetryTimer);
+		hydrateRetryTimer = null;
+	}
+	hydrateBackoffMs = RETRY_BASE_MS;
 	pending = { set: {}, unset: [] };
 	serverVersion = 0;
 	inFlight = false;
@@ -361,6 +387,21 @@ function scheduleRetry(): void {
 /** 4xx (except auth) means the patch itself is bad — retrying can't fix it. */
 function isClientPatchError(status: number): boolean {
 	return status === 400 || status === 422;
+}
+
+/**
+ * Retry a transiently-failed hydrate (network down / 5xx) with capped backoff.
+ * Single pending retry; cleared + reset on the next hydrate. Without this, a
+ * failed initial GET strands the session at serverVersion 0 and later edits
+ * never reach the server until a manual reload (codex).
+ */
+function scheduleHydrateRetry(): void {
+	if (hydrateRetryTimer) return;
+	hydrateRetryTimer = setTimeout(() => {
+		hydrateRetryTimer = null;
+		void hydratePreferences();
+	}, hydrateBackoffMs);
+	hydrateBackoffMs = Math.min(hydrateBackoffMs * 2, RETRY_MAX_MS);
 }
 
 async function flush(): Promise<void> {
