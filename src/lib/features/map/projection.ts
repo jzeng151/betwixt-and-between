@@ -36,10 +36,11 @@
 // │   No cascade rewrites of historical anchors. No soft-delete.       │
 // └────────────────────────────────────────────────────────────────────┘
 //
-// Slice 1 ships ONLY state events (transfer_region). Continuous (move_entity)
-// and windowed (link_chain) events are Slice 2+. The signature carries every
-// event through so Slice 2 can extend by adding cases, not by changing the
-// shape.
+// Slice 1 shipped state events (transfer_region); Slice 3 added paint_cells;
+// Slice 4 added the continuous move_entity fold. The originally-reserved
+// windowed `link_chain` map-event kind was ABANDONED in Slice 5 — EventChain
+// derives from the `caused_by` relationship instead (ADR 0006). The signature
+// carries every event through so kinds extend by adding cases, not reshaping.
 
 export const NEUTRAL_REGION_COLOR = '#9ca3af';
 
@@ -51,9 +52,10 @@ export const PAINT_CELLS_MAX_PER_EVENT = 256;
 
 // -- Anchor payload (state_jsonb) ---------------------------------------------
 // Matches docs/plans/world-map-v3-design.md § "State_jsonb shape (anchor
-// content, all slices)". Slice 1 only reads `regions`; `artifacts` and
-// `chains` are passed through to RenderedState so Slice 4/5 can light them
-// up without changing projectState's signature.
+// content, all slices)". Slice 1 only reads `regions`; `artifacts` is passed
+// through to RenderedState. `chains` is an INERT input key as of Slice 5 PR-A
+// (no longer folded into RenderedState — EventChain derives from `caused_by`;
+// see docs/adr/0006-eventchain-derived-from-caused-by.md).
 
 export type AnchorRegion = {
 	region_id: string;
@@ -77,6 +79,11 @@ export type AnchorArtifact = {
 	position: { x: number; y: number };
 };
 
+// INERT as of WM3 Slice 5 PR-A. Retained ONLY to type the harmless residual
+// `AnchorState.chains` input key (existing anchor rows still carry it). It is
+// no longer folded into RenderedState and nothing renders it. EventChain is
+// derived from the `caused_by` relationship — see
+// docs/adr/0006-eventchain-derived-from-caused-by.md. Do not build on this type.
 export type AnchorChain = {
 	chain_id: string;
 	active_step_index: number;
@@ -94,6 +101,9 @@ export type AnchorCell = {
 export type AnchorState = {
 	regions?: AnchorRegion[];
 	artifacts?: AnchorArtifact[];
+	// INERT as of WM3 Slice 5 PR-A — kept as a tolerated input key (existing
+	// rows carry it; new writers may still emit `[]` harmlessly) but no longer
+	// folded into RenderedState. See AnchorChain note + ADR 0006.
 	chains?: AnchorChain[];
 	// Slice 3: terrain cells. Backfilled to [] by drizzle/0022; new
 	// anchors must include this key (PR A invariant test enforces).
@@ -115,7 +125,7 @@ export type ProjectionAnchor = {
 // `EVENT_KINDS` and `EventKind` live here (not in src/lib/server/) so the
 // client store and the server validator share one source of truth without
 // the client crossing the server-only-import barrier (CLAUDE.md trust
-// boundary). Adding a kind (`link_chain` etc.) means updating:
+// boundary). Adding a new event kind means updating:
 //   1. this array
 //   2. src/lib/server/world-map-v3.ts validateEventPayload's switch
 //   3. projection.ts's fold (applyTransferRegion / applyPaintCells / the
@@ -229,7 +239,12 @@ export type RenderedState = {
 	tPosition: number;
 	regions: RenderedRegion[];
 	artifacts: AnchorArtifact[];
-	chains: AnchorChain[];
+	// NOTE: `chains` was removed from RenderedState in WM3 Slice 5 PR-A. The
+	// link_chain map-event scaffolding was never built and nothing rendered it;
+	// EventChain is now derived from the `caused_by` relationship instead (see
+	// docs/adr/0006-eventchain-derived-from-caused-by.md). The inert
+	// `AnchorState.chains` INPUT key is kept (harmless residue) but is no longer
+	// folded into the rendered output.
 	cells: RenderedCell[];
 	// Slice 4 PR-F (D5, D-PRF-3/4) — per-placement position OVERRIDES from the
 	// movement engine, keyed by placement_id. Present only for placements that
@@ -544,7 +559,6 @@ export function projectState(
 
 	const regions = new Map<string, AnchorRegion>();
 	const artifacts: AnchorArtifact[] = [];
-	const chains: AnchorChain[] = [];
 	// Slice 3: cells keyed by "x,y" for last-write-wins folding.
 	const cells = new Map<string, AnchorCell>();
 
@@ -555,9 +569,9 @@ export function projectState(
 		for (const a of anchor.stateJsonb.artifacts ?? []) {
 			artifacts.push(a);
 		}
-		for (const c of anchor.stateJsonb.chains ?? []) {
-			chains.push(c);
-		}
+		// `anchor.stateJsonb.chains` is intentionally NOT folded — see the
+		// RenderedState type note (Slice 5 PR-A). The key is kept as inert input
+		// residue; EventChain derives from `caused_by`, not anchor chains.
 		for (const cell of anchor.stateJsonb.cells ?? []) {
 			if (
 				cell &&
@@ -615,7 +629,6 @@ export function projectState(
 		tPosition: t,
 		regions: renderedRegions,
 		artifacts,
-		chains,
 		cells: renderedCells,
 		artifactOverrides
 	};

@@ -19,14 +19,17 @@
   interface Props { winId: string; entityId: string | null; }
   let { winId, entityId }: Props = $props();
 
+  // Role badges read their OWN --color-role-* tokens (matches CharacterHeader,
+  // eng-review T1A) so Settings → Role Colors overrides apply here and a
+  // Relationship Colors edit no longer recolors these badges (codex).
   const ROLE_OPTIONS: { value: string; color: string }[] = [
     { value: '',            color: 'var(--color-text-muted)' },
-    { value: 'Protagonist', color: 'var(--color-accent)' },
-    { value: 'Antagonist',  color: 'var(--color-rel-rival)' },
-    { value: 'Ally',        color: 'var(--color-rel-ally)' },
-    { value: 'Rival',       color: 'var(--color-rel-rival)' },
-    { value: 'Mentor',      color: 'var(--color-rel-mentor)' },
-    { value: 'Supporting',  color: 'var(--color-rel-event)' },
+    { value: 'Protagonist', color: 'var(--color-role-protagonist)' },
+    { value: 'Antagonist',  color: 'var(--color-role-antagonist)' },
+    { value: 'Ally',        color: 'var(--color-role-ally)' },
+    { value: 'Rival',       color: 'var(--color-role-rival)' },
+    { value: 'Mentor',      color: 'var(--color-role-mentor)' },
+    { value: 'Supporting',  color: 'var(--color-role-supporting)' },
   ];
 
   function roleColor(r: string): string {

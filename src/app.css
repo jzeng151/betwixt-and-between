@@ -40,6 +40,17 @@
   --color-type-item:      #ca8a04;  /* gold — inventory item */
   --color-type-door:      #6d4c2a;  /* leather brown — portal/threshold */
 
+  /* Per-role badge colors (CharacterHeader). Own namespace so role-color
+     customization is decoupled from edge colors (eng-review T1A); seeded
+     from the rel-color and accent values roles previously borrowed, so the
+     default appearance is unchanged. */
+  --color-role-protagonist: #c8942a;  /* was --color-accent */
+  --color-role-antagonist:  #ef4444;  /* was --color-rel-rival */
+  --color-role-ally:        #2dd4bf;  /* was --color-rel-ally */
+  --color-role-rival:       #ef4444;  /* was --color-rel-rival */
+  --color-role-mentor:      #818cf8;  /* was --color-rel-mentor */
+  --color-role-supporting:  #94a3b8;  /* was --color-rel-event */
+
   /* Typography */
   --font-ui:      'Inter', 'Segoe UI', sans-serif;
   --font-display: 'Fraunces', Georgia, serif;

@@ -269,7 +269,7 @@ Implemented as a CSS `@media (max-width: 1279px)` wrapper showing a `<TooSmall>`
 
 - Not a generic SaaS dashboard
 - Not card-grid layouts
-- Not light mode (dark-only in v1)
+- Dark-FIRST. Light mode ships (Settings → Appearance toggle); Midnight Ink is the default and the palette tuned for it. (Was "dark-only in v1"; corrected once the light toggle + user color customization landed — Settings Phase 1.)
 - Not mobile (desktop browser only)
 - Not decorative blobs or gradient backgrounds
 - Not system-ui as the primary font

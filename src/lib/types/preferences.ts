@@ -1,6 +1,18 @@
+import type { EntityType, RelationshipType } from '../server/db/schema.js';
+import type { CharacterRole } from '../character-roles.js';
+
 export interface Appearance {
 	theme: 'dark' | 'light';
 	accentColor: string; // hex color
+	/**
+	 * Settings customization Phase 1 (schema v4) — per-type / per-role color
+	 * OVERRIDES. Absent key = use the built-in `--color-*` default; a hex value
+	 * overrides it. Partial: only customized types appear. The server validates
+	 * keys (EntityType / RelationshipType / CharacterRole) + hex values.
+	 */
+	entityTypeColors?: Partial<Record<EntityType, string>>;
+	relationshipTypeColors?: Partial<Record<RelationshipType, string>>;
+	roleColors?: Partial<Record<CharacterRole, string>>;
 }
 
 /**
@@ -36,7 +48,7 @@ export interface Preferences {
  * The current code's max-known version. Bump in lockstep with adding a
  * migration to MIGRATIONS in os/preferences-store.ts.
  */
-export const PREFERENCES_CODE_MAX_VERSION: number = 3;
+export const PREFERENCES_CODE_MAX_VERSION: number = 4;
 
 /**
  * Built-in defaults. Sub-branches extend by deep-merge: their defaults compose

@@ -37,6 +37,7 @@
 	} from '$lib/util/pending-commit.js';
 	import { parseWikiLinks } from '$lib/wiki-links.js';
 	import { preferences } from '$lib/os/preferences-store.js';
+	import { ENTITY_TYPE_COLOR_VAR } from '$lib/entity-type-colors.js';
 
 	type Kind =
 		| 'single-line'
@@ -251,16 +252,12 @@
 	);
 	const hasResolvedLinks = $derived(previewLinks.length > 0);
 
-	const REL_COLOR_MAP: Record<string, string> = {
-		Character: 'var(--color-rel-arc)',
-		Location: 'var(--color-rel-loc)',
-		Event: 'var(--color-rel-event)',
-		Scene: 'var(--color-rel-event)',
-		Act: 'var(--color-rel-arc)',
-		Note: 'var(--color-rel-other)'
-	};
+	// [[entity]] preview chips are keyed by ENTITY type, so they read the canonical
+	// entity-color vars (same as the wiki/palette/graph). This makes Settings →
+	// Entity Colors overrides recolor them, stops Relationship Colors edits from
+	// wrongly tinting them, and covers Artifact/Item (codex).
 	function previewChipColor(type: string): string {
-		return REL_COLOR_MAP[type] ?? 'var(--color-rel-other)';
+		return ENTITY_TYPE_COLOR_VAR[type as EntityType] ?? 'var(--color-accent)';
 	}
 
 	function onTextKeydown(e: KeyboardEvent, allowEnter: boolean) {

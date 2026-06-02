@@ -19,6 +19,19 @@ export function isUuid(v: unknown): v is string {
 }
 
 /**
+ * `#rgb` or `#rrggbb` hex color. Mirrors the client-side HEX_COLOR_RE in
+ * timeline-helpers (kept as a separate copy here so server validation carries
+ * no client-feature import). Validates user-supplied color overrides before
+ * they land in user_preferences.data and reach every `var()` render path
+ * (codex outside-voice: malformed prefs poison rendering).
+ */
+const HEX_COLOR_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+export function isHexColor(v: unknown): v is string {
+	return typeof v === 'string' && HEX_COLOR_RE.test(v);
+}
+
+/**
  * Coerce a JSON-ish "pinned" input to the integer 0/1 invariant the schema
  * requires. Accepts both booleans (the natural JSON shape from a typical
  * client) and numbers (the literal storage shape). Anything else returns 0,

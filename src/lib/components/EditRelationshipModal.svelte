@@ -24,7 +24,9 @@
       type: RelationshipType;
       label: string | null;
       startActId: string | null;
+      startSceneId: string | null;
       endActId: string | null;
+      endSceneId: string | null;
       revealedAtPosition: number | null;
     }) => Promise<void>;
     onClose: () => void;
@@ -35,16 +37,30 @@
   let editType = $state<RelationshipType>('allied_with');
   let editLabel = $state('');
   let editStartActId = $state('');
+  let editStartSceneId = $state('');
   let editEndActId = $state('');
+  let editEndSceneId = $state('');
   let editRevealedAtPosition = $state<number | null>(null);
 
   $effect(() => {
     editType = relationship.type;
     editLabel = relationship.label ?? '';
     editStartActId = relationship.startActId ?? '';
+    editStartSceneId = relationship.startSceneId ?? '';
     editEndActId = relationship.endActId ?? '';
+    editEndSceneId = relationship.endSceneId ?? '';
     editRevealedAtPosition = relationship.revealedAtPosition;
   });
+
+  // Scenes selectable for the chosen start/end act. A scene's parent act must
+  // match its act FK (computeIntervalPositions throws otherwise), so the
+  // dropdown only offers scenes of the selected act, and changing the act
+  // clears the scene (see the onchange handlers below). Setting
+  // start-scene === end-scene === sceneX yields the [sceneX.start, sceneX.end)
+  // window — i.e. "visible only during scene X" (ADR 0006 scope model).
+  const scenesForAct = (actId: string) => scenes.filter((s) => s.actId === actId);
+  let startScenes = $derived(scenesForAct(editStartActId));
+  let endScenes = $derived(scenesForAct(editEndActId));
   let saving = $state(false);
   let saveError = $state('');
 
@@ -60,7 +76,11 @@
         type: editType,
         label: editLabel.trim() || null,
         startActId: editStartActId || null,
+        // A scene only travels with its act. If no act is set the row is
+        // hidden and the scene is forced null (whole-act / timeless).
+        startSceneId: editStartActId ? editStartSceneId || null : null,
         endActId: editEndActId || null,
+        endSceneId: editEndActId ? editEndSceneId || null : null,
         revealedAtPosition: editRevealedAtPosition
       });
     } catch (err) {
@@ -107,7 +127,11 @@
   {#if acts.length > 0}
     <div class="field-row">
       <label for="edit-rel-start">Starts</label>
-      <select id="edit-rel-start" bind:value={editStartActId}>
+      <select
+        id="edit-rel-start"
+        bind:value={editStartActId}
+        onchange={() => (editStartSceneId = '')}
+      >
         <option value="">Any time</option>
         {#each acts as act}
           <option value={act.id}>{act.name}</option>
@@ -115,15 +139,39 @@
       </select>
     </div>
 
+    {#if editStartActId && startScenes.length > 0}
+      <div class="field-row">
+        <label for="edit-rel-start-scene">↳ start scene</label>
+        <select id="edit-rel-start-scene" bind:value={editStartSceneId}>
+          <option value="">Whole act</option>
+          {#each startScenes as scene}
+            <option value={scene.id}>{scene.name}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
+
     <div class="field-row">
       <label for="edit-rel-end">Ends</label>
-      <select id="edit-rel-end" bind:value={editEndActId}>
+      <select id="edit-rel-end" bind:value={editEndActId} onchange={() => (editEndSceneId = '')}>
         <option value="">Forever</option>
         {#each acts as act}
           <option value={act.id}>{act.name}</option>
         {/each}
       </select>
     </div>
+
+    {#if editEndActId && endScenes.length > 0}
+      <div class="field-row">
+        <label for="edit-rel-end-scene">↳ end scene</label>
+        <select id="edit-rel-end-scene" bind:value={editEndSceneId}>
+          <option value="">Whole act</option>
+          {#each endScenes as scene}
+            <option value={scene.id}>{scene.name}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
 
     <div class="field-row">
       <label for="edit-rel-reveal">Revealed at</label>
@@ -138,7 +186,7 @@
         <option value="">Always visible</option>
         {#each acts as act, i}
           <option value={i}>{act.name}</option>
-          {#each scenes.filter((s) => s.actId === act.id) as scene}
+          {#each scenesForAct(act.id) as scene}
             <option value={scene.position}>  ↳ {scene.name}</option>
           {/each}
         {/each}

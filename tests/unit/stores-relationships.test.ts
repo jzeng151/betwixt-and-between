@@ -38,6 +38,58 @@ describe('relationships.load', () => {
 		expect(get(relationships)).toHaveLength(2);
 	});
 
+	it('drops a stale load whose response resolves after a newer load (Codex P2)', async () => {
+		// Two concurrent structural edits each fire load(). The FIRST request
+		// (stale positions) is made to resolve LAST; without the load token its
+		// set() would clobber the newer state. Latest-wins must hold.
+		const stale = [rel({ id: 'stale', startPosition: 0.1 })];
+		const fresh = [rel({ id: 'fresh', startPosition: 0.9 })];
+
+		let releaseStale: (r: Response) => void = () => {};
+		const stalePending = new Promise<Response>((resolve) => (releaseStale = resolve));
+
+		globalThis.fetch = vi
+			.fn()
+			.mockReturnValueOnce(stalePending) // load #1 — hangs
+			.mockResolvedValueOnce(makeResponse(fresh)) as unknown as typeof fetch; // load #2 — resolves first
+
+		const p1 = relationships.load(); // seq 1, in flight
+		const p2 = relationships.load(); // seq 2, resolves immediately
+		await p2;
+		expect(get(relationships)).toEqual(fresh);
+
+		// Now let the older request resolve — it must NOT overwrite `fresh`.
+		releaseStale(makeResponse(stale));
+		await p1;
+		expect(get(relationships)).toEqual(fresh);
+	});
+
+	it('a local mutation invalidates an in-flight load so it cannot clobber the mutation (Codex P2)', async () => {
+		// A structural edit fires load() (in flight). The user then edits a
+		// relationship; the PATCH commits to the store. The older load response
+		// must NOT restore the pre-edit row.
+		const seeded = [rel({ id: 'r1', label: 'old' })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await relationships.load();
+
+		let releaseLoad: (r: Response) => void = () => {};
+		const loadPending = new Promise<Response>((resolve) => (releaseLoad = resolve));
+
+		globalThis.fetch = vi
+			.fn()
+			.mockReturnValueOnce(loadPending) // the structural-edit load() — hangs
+			.mockResolvedValueOnce(makeResponse(rel({ id: 'r1', label: 'new' }))) as unknown as typeof fetch; // PATCH
+
+		const p = relationships.load(); // in flight, seq captured
+		await relationships.updateRelationship('r1', { label: 'new' }); // commits + bumps token
+		expect(get(relationships)[0].label).toBe('new');
+
+		// The stale load resolves with the pre-edit row — must be dropped.
+		releaseLoad(makeResponse([rel({ id: 'r1', label: 'old' })]));
+		await p;
+		expect(get(relationships)[0].label).toBe('new');
+	});
+
 	it('throws on non-OK response and leaves the store untouched', async () => {
 		// Seed the store with known content via a successful load.
 		const seeded = [rel({ id: 'seed' })];

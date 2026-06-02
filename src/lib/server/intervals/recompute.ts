@@ -298,10 +298,16 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 	// after a scene-within-act mutation (Step 4, Codex #2). Coarse: walk the
 	// user's placement rows. Placements are expected to be few per user; the
 	// per-row recompute short-circuits when nothing drifts.
-	// Note: relationships' scene-anchored rows have the same pre-existing gap
-	// — they only refresh inside recomputeAllIntervals. Out of scope here.
 	const { recomputePlacementBoundsAll } = await import('../map-placements.js');
 	await recomputePlacementBoundsAll(db, userId);
+
+	// Scene-anchored relationships (caused_by scope) carry the same derived
+	// start/end positions and must refresh on a scene-within-act mutation too.
+	// WM3 Slice 5 PR-D wires relationship.start_position to a user-facing
+	// jump-to-cause click, so a stale value now scrubs the playhead to the
+	// wrong story-time. Coarse walk, same short-circuit-on-no-drift contract
+	// as the placement recompute above.
+	await recomputeRelationshipBoundsAll(db, userId);
 
 	return updated;
 }
@@ -488,23 +494,51 @@ export async function resolveRelationshipBounds(
  * internal — only `recomputeAllIntervals` above triggers it today.
  */
 async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<number> {
+	// Two row classes need a visit:
+	//   (a) act-anchored rows — re-derive their position from the live anchor.
+	//   (b) orphaned rows — act FKs both null (the anchoring Act was deleted, so
+	//       ON DELETE SET NULL fired) but start/end_position still hold the
+	//       deleted Act's stale story-time. resolveRelationshipBounds returns
+	//       null/null for these, and the change-detection below clears them.
+	//       Without this, the edge stays "clickable" (isCausalEdgeClickable only
+	//       checks startPosition != null) and jump-to-cause leaks a deleted Act's
+	//       timing for an otherwise now-timeless link (Codex P2, Slice 5 PR-D).
 	const rows = await db
 		.select()
 		.from(relationships)
 		.where(
 			and(
 				eq(relationships.userId, userId),
-				sql`(${relationships.startActId} IS NOT NULL OR ${relationships.endActId} IS NOT NULL)`
+				sql`(${relationships.startActId} IS NOT NULL OR ${relationships.endActId} IS NOT NULL OR ${relationships.startPosition} IS NOT NULL OR ${relationships.endPosition} IS NOT NULL)`
 			)
 		);
 
 	if (rows.length === 0) return 0;
 
 	const cache = await buildRecomputeCache(db, userId);
-	let updated = 0;
+
+	// Compute first, write after, so the position writes can be staged
+	// swap-safely (see below). Two outcome buckets:
+	//   clears — partial-anchor rows reverted to timeless (FKs + positions null).
+	//   sets   — rows whose derived start/end positions changed.
+	const clears: string[] = [];
+	const sets: Array<{ id: string; startPosition: number | null; endPosition: number | null }> = [];
 
 	for (const row of rows) {
 		try {
+			// Partial anchor: an Act delete (ON DELETE SET NULL) nulled exactly one
+			// side of a scoped edge whose start and end acts differ (the modal lets
+			// start/end acts be chosen independently). The surviving half can no
+			// longer form a valid [start, end) scope — resolveRelationshipBounds
+			// requires both act FKs or neither — so revert the row to timeless: null
+			// the dangling anchor and clear both positions. Without this the orphaned
+			// half keeps the row in this query and resolveRelationshipBounds throws,
+			// aborting the whole Act-delete transaction (Codex P1, Slice 5 PR-D).
+			if ((row.startActId == null) !== (row.endActId == null)) {
+				clears.push(row.id);
+				continue;
+			}
+
 			const { startPosition, endPosition } = await resolveRelationshipBounds(
 				db,
 				{
@@ -531,18 +565,56 @@ async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<n
 
 			if (!startChanged && !endChanged) continue;
 
-			await db
-				.update(relationships)
-				.set({ startPosition, endPosition })
-				.where(and(eq(relationships.id, row.id), eq(relationships.userId, userId)));
-			updated++;
+			sets.push({ id: row.id, startPosition, endPosition });
 		} catch (err) {
 			throw new Error(
 				`recomputeRelationshipBoundsAll failed on relationship ${row.id}: ${(err as Error).message}`
 			);
 		}
 	}
-	return updated;
+
+	// Partial-anchor clears go to null start_position → they leave the temporal
+	// dedup index, so no row-ordering hazard.
+	for (const id of clears) {
+		await db
+			.update(relationships)
+			.set({
+				startActId: null,
+				startSceneId: null,
+				endActId: null,
+				endSceneId: null,
+				startPosition: null,
+				endPosition: null
+			})
+			.where(and(eq(relationships.id, id), eq(relationships.userId, userId)));
+	}
+
+	// Position writes are swap-safe. A scene reorder can map two same-endpoint,
+	// same-type edges (which `relationships_temporal_dedup` — UNIQUE (from, to,
+	// type, start_position) WHERE start_position IS NOT NULL — permits to coexist
+	// only because their start_positions differ) onto each other's positions. A
+	// naive row-by-row write would momentarily hold two equal start_positions and
+	// trip that index, aborting the reorder. So stage every changed start_position
+	// to a unique sentinel outside the real range (negatives — real positions are
+	// >= 0) first, then write the finals: neither phase ever holds a duplicate
+	// start_position (Codex P2, Slice 5 PR-D). Only start_position is staged;
+	// end_position is in no unique index.
+	if (sets.length > 0) {
+		for (let i = 0; i < sets.length; i++) {
+			await db
+				.update(relationships)
+				.set({ startPosition: -(i + 1) })
+				.where(and(eq(relationships.id, sets[i].id), eq(relationships.userId, userId)));
+		}
+		for (const s of sets) {
+			await db
+				.update(relationships)
+				.set({ startPosition: s.startPosition, endPosition: s.endPosition })
+				.where(and(eq(relationships.id, s.id), eq(relationships.userId, userId)));
+		}
+	}
+
+	return clears.length + sets.length;
 }
 
 // =============================================================================

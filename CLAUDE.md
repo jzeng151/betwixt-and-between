@@ -13,7 +13,7 @@ SvelteKit + Cloudflare Workers app for composing stories: typed entities (Charac
 ## Conventions
 
 - **Server-only code lives in `src/lib/server/**`.** Imports from there into client modules are forbidden except for declaration-only re-exports (types, `as const` arrays). `schema.ts` is currently declaration-only; keep it that way or break the import-leak guarantee. See [architecture.md](docs/architecture.md#schema-import-leak-risk).
-- **Never set `updated_at` or `created_at` on UPDATE in app code.** A `bump_updated_at` BEFORE UPDATE trigger maintains them on `entities`, `intervals`, `world_maps`.
+- **Never set `updated_at` or `created_at` on UPDATE in app code.** A `bump_updated_at` BEFORE UPDATE trigger maintains them on `entities`, `intervals`, `world_maps`, `user_preferences`.
 - **`relationships` is a discriminated union of typed edges.** 11 types in `RelationshipType`; per-type write semantics in [docs/edges.md](docs/edges.md) and [docs/adr/0001-relationships-as-discriminated-union.md](docs/adr/0001-relationships-as-discriminated-union.md).
 - **`window_canvas_state.pinned` is `integer` 0/1, not `boolean`.** Schema, validators, and client all assume the integer shape.
 - **`entity_aliases` has no `user_id` column.** Every query must scope through the parent table (`entities.user_id`). A missing JOIN is a cross-user data leak. (Note: `map_regions` was dropped in Slice 2 D2 PR-C — region identity now lives in `map_anchors.state_jsonb.regions[]` and the cross-user invariant is enforced via `world_maps.user_id` on the anchor read sites; see `src/lib/server/world-map-v3.ts → readBaselineRegionsForUser`.)
