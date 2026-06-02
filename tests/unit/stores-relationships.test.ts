@@ -64,6 +64,32 @@ describe('relationships.load', () => {
 		expect(get(relationships)).toEqual(fresh);
 	});
 
+	it('a local mutation invalidates an in-flight load so it cannot clobber the mutation (Codex P2)', async () => {
+		// A structural edit fires load() (in flight). The user then edits a
+		// relationship; the PATCH commits to the store. The older load response
+		// must NOT restore the pre-edit row.
+		const seeded = [rel({ id: 'r1', label: 'old' })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await relationships.load();
+
+		let releaseLoad: (r: Response) => void = () => {};
+		const loadPending = new Promise<Response>((resolve) => (releaseLoad = resolve));
+
+		globalThis.fetch = vi
+			.fn()
+			.mockReturnValueOnce(loadPending) // the structural-edit load() — hangs
+			.mockResolvedValueOnce(makeResponse(rel({ id: 'r1', label: 'new' }))) as unknown as typeof fetch; // PATCH
+
+		const p = relationships.load(); // in flight, seq captured
+		await relationships.updateRelationship('r1', { label: 'new' }); // commits + bumps token
+		expect(get(relationships)[0].label).toBe('new');
+
+		// The stale load resolves with the pre-edit row — must be dropped.
+		releaseLoad(makeResponse([rel({ id: 'r1', label: 'old' })]));
+		await p;
+		expect(get(relationships)[0].label).toBe('new');
+	});
+
 	it('throws on non-OK response and leaves the store untouched', async () => {
 		// Seed the store with known content via a successful load.
 		const seeded = [rel({ id: 'seed' })];

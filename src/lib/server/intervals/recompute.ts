@@ -516,7 +516,13 @@ async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<n
 	if (rows.length === 0) return 0;
 
 	const cache = await buildRecomputeCache(db, userId);
-	let updated = 0;
+
+	// Compute first, write after, so the position writes can be staged
+	// swap-safely (see below). Two outcome buckets:
+	//   clears — partial-anchor rows reverted to timeless (FKs + positions null).
+	//   sets   — rows whose derived start/end positions changed.
+	const clears: string[] = [];
+	const sets: Array<{ id: string; startPosition: number | null; endPosition: number | null }> = [];
 
 	for (const row of rows) {
 		try {
@@ -529,18 +535,7 @@ async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<n
 			// half keeps the row in this query and resolveRelationshipBounds throws,
 			// aborting the whole Act-delete transaction (Codex P1, Slice 5 PR-D).
 			if ((row.startActId == null) !== (row.endActId == null)) {
-				await db
-					.update(relationships)
-					.set({
-						startActId: null,
-						startSceneId: null,
-						endActId: null,
-						endSceneId: null,
-						startPosition: null,
-						endPosition: null
-					})
-					.where(and(eq(relationships.id, row.id), eq(relationships.userId, userId)));
-				updated++;
+				clears.push(row.id);
 				continue;
 			}
 
@@ -570,18 +565,56 @@ async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<n
 
 			if (!startChanged && !endChanged) continue;
 
-			await db
-				.update(relationships)
-				.set({ startPosition, endPosition })
-				.where(and(eq(relationships.id, row.id), eq(relationships.userId, userId)));
-			updated++;
+			sets.push({ id: row.id, startPosition, endPosition });
 		} catch (err) {
 			throw new Error(
 				`recomputeRelationshipBoundsAll failed on relationship ${row.id}: ${(err as Error).message}`
 			);
 		}
 	}
-	return updated;
+
+	// Partial-anchor clears go to null start_position → they leave the temporal
+	// dedup index, so no row-ordering hazard.
+	for (const id of clears) {
+		await db
+			.update(relationships)
+			.set({
+				startActId: null,
+				startSceneId: null,
+				endActId: null,
+				endSceneId: null,
+				startPosition: null,
+				endPosition: null
+			})
+			.where(and(eq(relationships.id, id), eq(relationships.userId, userId)));
+	}
+
+	// Position writes are swap-safe. A scene reorder can map two same-endpoint,
+	// same-type edges (which `relationships_temporal_dedup` — UNIQUE (from, to,
+	// type, start_position) WHERE start_position IS NOT NULL — permits to coexist
+	// only because their start_positions differ) onto each other's positions. A
+	// naive row-by-row write would momentarily hold two equal start_positions and
+	// trip that index, aborting the reorder. So stage every changed start_position
+	// to a unique sentinel outside the real range (negatives — real positions are
+	// >= 0) first, then write the finals: neither phase ever holds a duplicate
+	// start_position (Codex P2, Slice 5 PR-D). Only start_position is staged;
+	// end_position is in no unique index.
+	if (sets.length > 0) {
+		for (let i = 0; i < sets.length; i++) {
+			await db
+				.update(relationships)
+				.set({ startPosition: -(i + 1) })
+				.where(and(eq(relationships.id, sets[i].id), eq(relationships.userId, userId)));
+		}
+		for (const s of sets) {
+			await db
+				.update(relationships)
+				.set({ startPosition: s.startPosition, endPosition: s.endPosition })
+				.where(and(eq(relationships.id, s.id), eq(relationships.userId, userId)));
+		}
+	}
+
+	return clears.length + sets.length;
 }
 
 // =============================================================================

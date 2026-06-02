@@ -24,6 +24,11 @@ function createRelationshipStore() {
 	// clobber newer positions with stale ones (the graph click-to-jump reads
 	// these bounds). Stamp each load and only commit if it's still the latest —
 	// out-of-order responses from superseded loads are dropped (Codex P2).
+	//
+	// Local mutations (create/update/delete) also bump the token: a mutation that
+	// commits while a structural-edit load() is still in flight would otherwise be
+	// overwritten when that older response lands and passes the staleness check.
+	// Bumping invalidates any in-flight load so the just-committed local state wins.
 	let loadSeq = 0;
 
 	async function load() {
@@ -31,7 +36,7 @@ function createRelationshipStore() {
 		const res = await fetch('/api/relationships');
 		if (!res.ok) throw new Error(`relationships.load failed: ${res.status} ${await res.text()}`);
 		const data: Relationship[] = await res.json();
-		if (seq !== loadSeq) return; // a newer load() started — drop this stale result
+		if (seq !== loadSeq) return; // a newer load() (or mutation) superseded this — drop it
 		set(data);
 	}
 
@@ -49,6 +54,7 @@ function createRelationshipStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Relationship = await res.json();
+		loadSeq++; // invalidate any in-flight load so it can't clobber this insert
 		update((all) => [...all, created]);
 		return created;
 	}
@@ -72,11 +78,13 @@ function createRelationshipStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const updated: Relationship = await res.json();
+		loadSeq++; // invalidate any in-flight load so it can't clobber this edit
 		update((all) => all.map((r) => (r.id === id ? updated : r)));
 		return updated;
 	}
 
 	async function deleteRelationship(id: string): Promise<void> {
+		loadSeq++; // invalidate any in-flight load so it can't restore this removal
 		update((all) => all.filter((r) => r.id !== id));
 		let res: Response;
 		try {

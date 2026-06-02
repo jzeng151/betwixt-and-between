@@ -142,6 +142,50 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 		expect(rel.endPosition).toBeNull();
 	});
 
+	it('scene swap of two same-endpoint caused_by edges does not trip the temporal dedup unique index', async () => {
+		// Slice 5 PR-D / Codex P2. relationships_temporal_dedup is UNIQUE
+		// (from,to,type,start_position) WHERE start_position IS NOT NULL — so two
+		// caused_by(alice→bob) edges can coexist only because they're scoped to
+		// different scenes (different start_position). A scene reorder swaps those
+		// positions; a row-by-row recompute would momentarily write one edge onto
+		// the other's still-current position and trip the unique index, aborting
+		// the reorder. The staged (two-phase) write must let the swap complete.
+		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [sceneA] = await db
+			.insert(entities)
+			.values({ userId, type: 'Scene', name: 'A', parentId: act0, position: 0 })
+			.returning();
+		const [sceneB] = await db
+			.insert(entities)
+			.values({ userId, type: 'Scene', name: 'B', parentId: act0, position: 1 })
+			.returning();
+
+		// act0 is index 0, two scenes → A occupies [0, 0.5), B occupies [0.5, 1).
+		const [relA] = await db.insert(relationships).values({ userId,
+			fromId: alice, toId: bob.id, type: 'caused_by',
+			startActId: act0, startSceneId: sceneA.id, endActId: act0, endSceneId: sceneA.id,
+			startPosition: 0.0, endPosition: 0.5
+		}).returning();
+		const [relB] = await db.insert(relationships).values({ userId,
+			fromId: alice, toId: bob.id, type: 'caused_by',
+			startActId: act0, startSceneId: sceneB.id, endActId: act0, endSceneId: sceneB.id,
+			startPosition: 0.5, endPosition: 1.0
+		}).returning();
+
+		// Swap the two scenes' order within act0.
+		await db.update(entities).set({ position: 1 }).where(eq(entities.id, sceneA.id));
+		await db.update(entities).set({ position: 0 }).where(eq(entities.id, sceneB.id));
+
+		// Must NOT throw a unique-violation (that would abort the reorder).
+		await expect(recomputeAllIntervals(db, userId)).resolves.toBeTypeOf('number');
+
+		const [aAfter] = await db.select().from(relationships).where(eq(relationships.id, relA.id));
+		const [bAfter] = await db.select().from(relationships).where(eq(relationships.id, relB.id));
+		// Positions swapped: A now at index 1 → [0.5,1), B now at index 0 → [0,0.5).
+		expect(aAfter.startPosition).toBeCloseTo(0.5, 9);
+		expect(bAfter.startPosition).toBeCloseTo(0.0, 9);
+	});
+
 	it('CRITICAL regression: transaction failure rolls back both interval and relationship positions', async () => {
 		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
 
