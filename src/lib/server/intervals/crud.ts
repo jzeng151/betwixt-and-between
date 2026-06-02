@@ -482,6 +482,21 @@ export async function moveSceneToAct(
 		.set({ endActId: newActId })
 		.where(and(eq(mapPlacementsTbl.endSceneId, sceneId), eq(mapPlacementsTbl.userId, userId)));
 
+	// Mirror the act-FK rewrite onto relationships scoped to this scene (Codex
+	// P1, Slice 5 PR-D). A caused_by edge anchored to this scene keeps its old
+	// parent Act otherwise; recomputeRelationshipBoundsAll (run via
+	// recomputeIntervalsForAct below) would then hit the scene-parent/act
+	// mismatch guard in computeIntervalPositions and abort the whole scene move.
+	const { relationships: relationshipsTbl } = await import('../db/schema.js');
+	await db
+		.update(relationshipsTbl)
+		.set({ startActId: newActId })
+		.where(and(eq(relationshipsTbl.startSceneId, sceneId), eq(relationshipsTbl.userId, userId)));
+	await db
+		.update(relationshipsTbl)
+		.set({ endActId: newActId })
+		.where(and(eq(relationshipsTbl.endSceneId, sceneId), eq(relationshipsTbl.userId, userId)));
+
 	if (oldActId !== newActId) {
 		await recomputeIntervalsForAct(db, oldActId, userId);
 	}
