@@ -17,12 +17,16 @@ async function openTimeline(page: Page) {
 	return win;
 }
 
+// Acts/Scenes/Events route to the unified 'entity-detail' window (Issue 19A);
+// clicking an act header opens a standalone editor window (the legacy in-Timeline
+// side panel was retired in the OS shell refactor). The window hosts ActEditor's
+// EditableField rows, which keep their data-field / field-textarea / retry markup.
 test.describe('V2 Act editor (D2/2B-i + D5 + D14)', () => {
 	test.beforeEach(async ({ request }) => {
 		await clearAll(request);
 	});
 
-	test('clicking an act header opens the editor side panel and renders fields', async ({
+	test('clicking an act header opens the editor window and renders fields', async ({
 		page,
 		request
 	}) => {
@@ -33,7 +37,7 @@ test.describe('V2 Act editor (D2/2B-i + D5 + D14)', () => {
 		const win = await openTimeline(page);
 		await win.locator('.act-col-header').first().click();
 
-		const panel = win.locator('.entity-detail');
+		const panel = page.locator('.entity-detail-host');
 		await expect(panel).toBeVisible();
 		// Fields per D5 — Synopsis / Goal / Stakes / Turning point / Color
 		await expect(panel.locator('[data-field="synopsis"]')).toBeVisible();
@@ -57,23 +61,19 @@ test.describe('V2 Act editor (D2/2B-i + D5 + D14)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.act-col-header').first().click();
-		// EntityDetail opens in view mode — toggle to edit before typing.
-		await win.locator('.entity-detail-host .mode-toggle').click();
 
-		const panel = win.locator('.entity-detail');
-		const synopsis = panel
-			.locator('[data-field="synopsis"]')
-			.locator('textarea.field-textarea');
+		const panel = page.locator('.entity-detail-host');
+		// EntityDetail opens in view mode — toggle to edit before typing.
+		await panel.locator('.mode-toggle').click();
+
+		const synopsis = panel.locator('[data-field="synopsis"]').locator('textarea.field-textarea');
 		await synopsis.fill('Ellie escapes the city in the opening act.');
 		await synopsis.blur();
 
-		// API confirms persistence (the "Saving… → Saved" transition shown
-		// in the footer was an aspirational design — the live UI just
-		// renders 'Saved · just now' once edit mode is open).
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
 			const a = ents.find((e: any) => e.id === a0.id);
-			const data = (a.data ?? {});
+			const data = a.data ?? {};
 			expect(data.synopsis).toBe('Ellie escapes the city in the opening act.');
 		}).toPass({ timeout: 3000 });
 	});
@@ -87,19 +87,18 @@ test.describe('V2 Act editor (D2/2B-i + D5 + D14)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.act-col-header').first().click();
-		await win.locator('.entity-detail-host .mode-toggle').click();
 
-		const panel = win.locator('.entity-detail');
-		const synopsis = panel
-			.locator('[data-field="synopsis"]')
-			.locator('textarea.field-textarea');
+		const panel = page.locator('.entity-detail-host');
+		await panel.locator('.mode-toggle').click();
+
+		const synopsis = panel.locator('[data-field="synopsis"]').locator('textarea.field-textarea');
 		await synopsis.fill('discarded draft');
 		await synopsis.press('Escape');
 
 		// Server still has original
 		const ents = await (await request.get('/api/entities')).json();
 		const a = ents.find((e: any) => e.id === a0.id);
-		const data = (a.data ?? {});
+		const data = a.data ?? {};
 		expect(data.synopsis).toBe('original');
 	});
 
@@ -113,7 +112,9 @@ test.describe('V2 Act editor (D2/2B-i + D5 + D14)', () => {
 
 		const win = await openTimeline(page);
 		await win.locator('.act-col-header').first().click();
-		await win.locator('.entity-detail-host .mode-toggle').click();
+
+		const panel = page.locator('.entity-detail-host');
+		await panel.locator('.mode-toggle').click();
 
 		// Force the next PATCH to /api/entities/<id> to fail
 		let routeCount = 0;
@@ -128,18 +129,17 @@ test.describe('V2 Act editor (D2/2B-i + D5 + D14)', () => {
 			await route.continue();
 		});
 
-		const synopsis = win
-			.locator('.entity-detail [data-field="synopsis"] textarea.field-textarea');
+		const synopsis = panel.locator('[data-field="synopsis"] textarea.field-textarea');
 		await synopsis.fill('attempt one');
 		await synopsis.blur();
 
-		const retry = win.locator('.entity-detail [data-field="synopsis"] button.retry');
+		const retry = panel.locator('[data-field="synopsis"] button.retry');
 		await expect(retry).toBeVisible();
 		await retry.click();
 
 		await expect(async () => {
 			const ents = await (await request.get('/api/entities')).json();
-			const data = (ents.find((e: any) => e.id === a0.id).data ?? {});
+			const data = ents.find((e: any) => e.id === a0.id).data ?? {};
 			expect(data.synopsis).toBe('attempt one');
 		}).toPass({ timeout: 3000 });
 	});

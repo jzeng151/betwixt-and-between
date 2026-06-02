@@ -137,7 +137,7 @@ test.describe('V2 Bar translation (T5 — drag whole bar to shift temporally)', 
 		// Click without dragging.
 		await page.mouse.click(barBox.x + barBox.width / 2, barBox.y + barBox.height / 2);
 
-		await expect(win.locator('.entity-detail-host')).toBeVisible();
+		await expect(page.locator('.entity-detail-host')).toBeVisible();
 		// Server-side interval is unchanged.
 		const ints = await (await request.get('/api/intervals')).json();
 		const iv = ints.find((i: any) => i.entityId === ellie.id);

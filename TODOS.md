@@ -204,6 +204,13 @@ Latent risks the restructure brought into view but didn't introduce. Both flagge
   - `src/lib/features/graph/StoryGraph.svelte:~73` and `FocusedGraph.svelte:~57` sort by `(position ?? 0)` (treats null-position Acts as position 0; no `createdAt` tiebreak).
   When two Acts share a `position` value (rare — concurrent creation race, import, or `entities.position` index is non-unique by design), client and server pick different orderings. Graph scope can then assign different act indices than the server uses for intervals, leading to silent off-by-one rendering. **Pre-existing**; the divergence-note comments on `getActs` and `buildActIndexById` only cover the documented 2-way split, not the 4-way reality. **Fix options:** (a) add a unique index on `entities.position` per `(user_id, parentId)` to make the tie impossible; (b) align all client sorts to `(position, createdAt)` matching the server. (a) is the durable fix.
 
+### Review follow-ups (surfaced by /review on e2e-suite-repair)
+
+Two informational items flagged during the e2e-suite repair review. Neither blocks; both are cleanup/coverage debt.
+
+- [ ] **Stale routing docstring in `src/lib/navigation.ts:8`.** The `openEntity` docstring says "Characters → CharacterEditor", but `ENTITY_APP.Character = 'entity-detail'` (`src/lib/os/windows-store.ts:84`) — Characters route to the unified `entity-detail` window. The comment has been wrong since the Issue-19A routing change (2026-04-29); pre-dates this branch. **Fix:** correct line 8 to "Characters → entity-detail (via ENTITY_APP)". One-line edit; left out of the repair PR to keep it surgical.
+- [ ] **World Map scrub-driven scope-dim has no v3 e2e.** The repair deleted `playhead-scrubber.spec.ts`'s "World Map locations dim when out of scope" test — it asserted on `.loc-card.out-of-scope`, the card-based World Map that World Map v3 replaced. v3's out-of-scope dimming lives in the Pixi canvas (`PixiRegionLayer` / `PixiPlacementLayer`), which has no DOM class to assert against, so the test could not be ported as-is. The existing `world-map-*.spec.ts` suite covers brush/move/style/resize but NOT playhead-driven dimming. **Fix options:** (a) add a testable DOM hook (e.g. `data-out-of-scope` attr mirrored onto a sentinel element per dimmed placement) and assert that; (b) canvas/pixel inspection of the Pixi layer at two scrub positions. (a) is cheaper and stays DOM-assertable.
+
 ---
 
 ## Future feature: temporal identity & relationships

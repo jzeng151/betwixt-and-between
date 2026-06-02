@@ -39,17 +39,17 @@ test.describe('V2 Scene rename (InlineEdit on scene name in EntityDetail)', () =
 		await win.locator('.scene-cell').first().click();
 
 		// EntityDetail side panel opens; toggle to edit mode
-		await win.locator('.entity-detail-host .mode-toggle').click();
+		await page.locator('.entity-detail-host .mode-toggle').click();
 
 		// forceEditing InlineEdit renders the name as an input
-		const nameInput = win.locator('.inline-edit-input');
+		const nameInput = page.locator('.inline-edit-input');
 		await expect(nameInput).toBeVisible();
 		await nameInput.fill('New Scene Name');
 		await nameInput.press('Enter');
 
 		// Toggle back to view mode so entity-detail-title-text is rendered (edit mode shows InlineEdit input)
-		await win.locator('.entity-detail-host .mode-toggle').click();
-		const title = win.locator('.entity-detail-host .entity-detail-title-text');
+		await page.locator('.entity-detail-host .mode-toggle').click();
+		const title = page.locator('.entity-detail-host .entity-detail-title-text');
 		await expect(title).toHaveText('New Scene Name', { timeout: 3000 });
 
 		// And persists to the server
@@ -75,9 +75,9 @@ test.describe('V2 Scene rename (InlineEdit on scene name in EntityDetail)', () =
 
 		const win = await openTimeline(page);
 		await win.locator('.scene-cell').first().click();
-		await win.locator('.entity-detail-host .mode-toggle').click();
+		await page.locator('.entity-detail-host .mode-toggle').click();
 
-		const nameInput = win.locator('.inline-edit-input');
+		const nameInput = page.locator('.inline-edit-input');
 		await nameInput.fill('   ');
 		await nameInput.press('Enter');
 

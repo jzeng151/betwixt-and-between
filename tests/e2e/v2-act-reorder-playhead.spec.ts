@@ -42,12 +42,20 @@ test.describe('V2 Act reorder preserves spotlight Time (D8 / 6A)', () => {
 
 		const win = await openTimeline(page);
 
-		// Activate spotlight; click at 50% across (Time = 1.5 in 3-act story).
+		// Activate spotlight; click at 50% across (Time ≈ 1.5 in 3-act story).
+		// The spotlight toggle no longer exposes the decimal Time (it shows the
+		// current act name now), so read the absolute playhead value off the
+		// PlayheadOverlay's aria-valuenow instead.
 		await win.locator('button.scrub-toggle').click();
 		const rowsBox = await win.locator('.rows').boundingBox();
 		if (!rowsBox) throw new Error('rows box');
 		await page.mouse.click(rowsBox.x + rowsBox.width * 0.5, rowsBox.y + 30);
-		await expect(win.locator('button.scrub-toggle')).toContainText('Time = 1.5');
+		const playhead = win.locator('.playhead');
+		await expect(playhead).toBeVisible();
+		const tBefore = Number(await playhead.getAttribute('aria-valuenow'));
+		// Sanity: middle of a 3-act story.
+		expect(tBefore).toBeGreaterThan(1.0);
+		expect(tBefore).toBeLessThan(2.0);
 
 		// Drag Act C to the LEFT half of Act A's header → C lands at idx 0.
 		const headerA = win.locator(`.act-col-header[data-entity-id="${a.id}"]`);
@@ -70,8 +78,11 @@ test.describe('V2 Act reorder preserves spotlight Time (D8 / 6A)', () => {
 			expect(acts.map((x: any) => x.id)).toEqual([c.id, a.id, b.id]);
 		}).toPass({ timeout: 3000 });
 
-		// Playhead T (absolute story-time) must be unchanged.
-		await expect(win.locator('button.scrub-toggle')).toContainText('Time = 1.5');
+		// Playhead T (absolute story-time) must be unchanged by the reorder.
+		await expect(async () => {
+			const tAfter = Number(await playhead.getAttribute('aria-valuenow'));
+			expect(tAfter).toBeCloseTo(tBefore, 5);
+		}).toPass({ timeout: 3000 });
 	});
 
 	// Cross-window Story Graph dim assertion lives in playhead-scrubber.spec.ts;

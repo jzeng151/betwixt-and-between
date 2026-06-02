@@ -10,6 +10,10 @@
   import InlineEdit from '$lib/components/InlineEdit.svelte';
   import CharacterEditorBody from '$lib/features/character/CharacterEditorBody.svelte';
   import { openEntity } from '$lib/navigation.js';
+  // Characters now route to the unified 'entity-detail' window (Issue 19A,
+  // 2026-04-29), which reads ITS OWN pendingEditMode set — not the local one
+  // above. Flag that set so a freshly-created character opens in edit mode.
+  import { pendingEditMode as detailPendingEditMode } from '$lib/components/EntityDetail.svelte';
   import { getCharacterIcon } from '$lib/icons/registry.js';
 
   interface Props { winId: string; entityId: string | null; }
@@ -57,7 +61,7 @@
     createError = '';
     try {
       const created = await entities.createEntity('Character', 'New Character');
-      pendingEditMode.add(created.id);
+      detailPendingEditMode.add(created.id);
       try {
         openEntity(created.id);
       } catch (err) {
@@ -65,7 +69,7 @@
         // store error), back out the pending-edit signal so the
         // already-created entity doesn't later pop into edit mode via
         // some other code path.
-        pendingEditMode.delete(created.id);
+        detailPendingEditMode.delete(created.id);
         throw err;
       }
     } catch {

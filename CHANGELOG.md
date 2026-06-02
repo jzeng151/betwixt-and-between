@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.6.0] - 2026-06-02
+
+### Fixed
+
+- Creating a new character now opens it ready to rename (the name is immediately editable) instead of in read-only view mode that forced an extra "Edit" click.
+
+### Changed
+
+- The Playwright end-to-end test suite is healthy again and now runs in CI. It had drifted out of sync with the app (an OS window refactor moved entity editors from an in-Timeline side panel to standalone windows, and World Map v3 replaced the old card-based map) and was never gated, so ~38 specs were silently red. The specs are retargeted to the current UI, obsolete tests for removed features were dropped, and `npm run test:e2e` now gates both pull requests and production deploys so the suite can't rot unnoticed again.
+
 ## [0.8.5.0] - 2026-06-02
 
 Settings customization (Phase 1) — your colors and theme now save to your account and follow you across devices.

@@ -69,11 +69,12 @@ test.describe('Palette search', () => {
 		await expect(win.locator('.palette-section').first().locator('.palette-item')).toHaveCount(3);
 
 		await input.fill('el');
-		// "Ellie" and "Elena" match, not "Damien"
+		// "Ellie" and "Elena" match, not "Damien" (order-independent — the palette
+		// sorts alphabetically, so don't assume which of the two comes first)
 		const charItems = win.locator('.palette-section').first().locator('.palette-item');
 		await expect(charItems).toHaveCount(2);
-		await expect(charItems.nth(0).locator('.palette-name')).toContainText('Ellie');
-		await expect(charItems.nth(1).locator('.palette-name')).toContainText('Elena');
+		const names = await charItems.locator('.palette-name').allTextContents();
+		expect(names.map((n) => n.trim()).sort()).toEqual(['Elena', 'Ellie']);
 	});
 
 	test('query that matches no items shows "No matches." empty state', async ({ page }) => {
@@ -179,22 +180,23 @@ test.describe('EntityDetail Cancel button', () => {
 
 		// Open the act editor
 		await win.locator('.act-col-header').first().click();
-		await expect(win.locator('.entity-detail-host')).toBeVisible();
+		await expect(page.locator('.entity-detail-host')).toBeVisible();
 
 		// Switch to edit mode
-		await win.locator('.entity-detail-host .mode-toggle').click();
+		await page.locator('.entity-detail-host .mode-toggle').click();
 
 		// Edit the synopsis field
-		const synopsis = win
-			.locator('.entity-detail [data-field="synopsis"] textarea.field-textarea');
+		const synopsis = page.locator(
+			'.entity-detail-host [data-field="synopsis"] textarea.field-textarea'
+		);
 		await synopsis.click(); // ensure focus so Cancel's mousedown dispatches Escape to it
 		await synopsis.fill('discarded draft');
 
 		// Click Cancel — mousedown dispatches Escape to the textarea, reverting draft
-		await win.locator('.entity-detail-host .mode-cancel').click();
+		await page.locator('.entity-detail-host .mode-cancel').click();
 
 		// Field should revert to original
-		const panel = win.locator('.entity-detail');
+		const panel = page.locator('.entity-detail-host');
 		await expect(panel.locator('[data-field="synopsis"]')).toContainText('original synopsis');
 
 		// Server should NOT have the draft
