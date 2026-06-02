@@ -4,6 +4,7 @@
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
+  import { jumpToCause, isCausalEdgeClickable } from '$lib/features/timeline/jump-to-cause.js';
   import { windowStore } from '$lib/os/windows-store.js';
   import { worldMapStore, worldMaps } from '$lib/features/map/store.js';
   import { openEntity } from '$lib/navigation.js';
@@ -198,7 +199,11 @@
         startPosition: r.startPosition,
         endPosition: r.endPosition,
         mysteryMode: mystery,
-        ghostMode
+        ghostMode,
+        // WM3 Slice 5 (D5): only scoped, non-mystery caused_by edges jump on
+        // click; the pointer-cursor affordance is gated identically (shared
+        // predicate so the spoiler guard lives in one place).
+        clickable: isCausalEdgeClickable(r, mystery)
       });
     }
     // Alias edges: dashed "aka" line per pair where both endpoints are visible
@@ -598,6 +603,7 @@
   onNodePositionChange={onNodePositionChange}
   onContextMenu={(id, x, y) => (contextMenu = { entityId: id, x, y })}
   onEdgeContextMenu={(id, x, y) => (editRelMenu = { relationshipId: id, x, y })}
+  onEdgeClick={(id) => jumpToCause($relationships.find((r) => r.id === id))}
   showEdgeLabels={edgeLabelsVisible}
 >
   {#snippet emptyState()}

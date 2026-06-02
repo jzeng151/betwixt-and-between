@@ -57,6 +57,10 @@
 		mysteryMode?: boolean;
 		/** Edge is outside the current temporal window (±2 acts). 'past' = ended, 'future' = not yet started. */
 		ghostMode?: 'past' | 'future' | null;
+		/** Host signals this edge does something on left-click (WM3 Slice 5: a
+		 *  scoped caused_by edge that jumps the playhead). Drives the pointer
+		 *  cursor so the affordance only appears where the click actually acts. */
+		clickable?: boolean;
 	}
 
 	export interface NodeOverlayContext {
@@ -109,6 +113,10 @@
 		    coords so a `position: fixed` ContextMenu lands at the cursor.
 		    The id is the GraphEdge id (relationship id). */
 		onEdgeContextMenu?: (id: string, clientX: number, clientY: number) => void;
+		/** Fires on left-click of an edge. The id is the GraphEdge id
+		    (relationship id). WM3 Slice 5 (D5): the host resolves the edge and,
+		    for a `caused_by` link, jumps the playhead — see jumpToCause. */
+		onEdgeClick?: (id: string) => void;
 	}
 
 	let {
@@ -124,7 +132,8 @@
 		onNodePositionChange,
 		onContextMenu,
 		showEdgeLabels = true,
-		onEdgeContextMenu
+		onEdgeContextMenu,
+		onEdgeClick
 	}: Props = $props();
 
 	const NODE_W = 120;
@@ -466,6 +475,20 @@
 		onEdgeContextMenu?.(id, e.clientX, e.clientY);
 	}
 
+	function onEdgeClickHandler(e: MouseEvent, id: string, clickable: boolean | undefined) {
+		e.stopPropagation();
+		// A connect-drag in progress owns the next click; don't also jump.
+		if (connecting) return;
+		// Honor the same predicate as the pointer-cursor affordance. The hit-area
+		// <line> is rendered for EVERY edge (so right-click edit always works), so
+		// without this guard a left-click on the invisible hit-line of a
+		// non-clickable edge — e.g. a mystery caused_by edge — would still reach
+		// the host's jumpToCause and leak the hidden link's story-time. The
+		// `clickable` flag already encodes scoped-caused_by && !mystery (Codex P1).
+		if (!clickable) return;
+		onEdgeClick?.(id);
+	}
+
 	/**
 	 * Force-merge external position updates into the canvas's internal nodePos
 	 * and re-fit. Used by hosts that mutate positions out-of-band (e.g.
@@ -585,9 +608,13 @@
 				marker-end={edge.arrow && !isMystery ? `url(#${arrowMarkerId})` : undefined}
 				pointer-events="none"
 			/>
-			<!-- Invisible wider hit-area for right-click. Always rendered so the
-			     pointer-events layer doesn't depend on a prop check in the loop. -->
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<!-- Invisible wider hit-area for right-click (edit) + left-click (jump).
+			     Always rendered so the pointer-events layer doesn't depend on a
+			     prop check in the loop. -->
+			<!-- Edge hit-area is mouse-only (matches the right-click edit affordance);
+			     SVG <line> isn't keyboard-focusable. Keyboard parity for jump-to-cause
+			     can come from a node/edge menu later if needed. -->
+			<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 			<line
 				x1={edge.x1}
 				y1={edge.y1}
@@ -597,7 +624,9 @@
 				stroke-width="10"
 				stroke-opacity="0"
 				pointer-events="stroke"
+				class:edge-clickable={onEdgeClick != null && edge.clickable}
 				oncontextmenu={(e) => onEdgeContextMenuHandler(e, edge.id)}
+				onclick={(e) => onEdgeClickHandler(e, edge.id, edge.clickable)}
 				onpointerdown={(e) => e.stopPropagation()}
 			/>
 			{#if showEdgeLabels && !isMystery && !isGhost}
@@ -699,6 +728,12 @@
 		inset: 0;
 		width: 100%;
 		height: 100%;
+	}
+
+	/* WM3 Slice 5 (D5): edges the host wired for click-to-jump get a pointer
+	   cursor so the otherwise-invisible interaction is discoverable. */
+	.edge-clickable {
+		cursor: pointer;
 	}
 
 	.canvas {
