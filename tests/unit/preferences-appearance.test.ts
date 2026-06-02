@@ -27,8 +27,36 @@ describe('Preferences appearance', () => {
 		});
 	});
 
-	it('code max version is 3', () => {
-		expect(PREFERENCES_CODE_MAX_VERSION).toBe(3);
+	it('code max version is 4', () => {
+		expect(PREFERENCES_CODE_MAX_VERSION).toBe(4);
+	});
+
+	it('migration #4 is a pure version bump (color maps are optional, not seeded)', () => {
+		const v3 = {
+			schemaVersion: 3,
+			appearance: { theme: 'dark' as const, accentColor: '#c8942a' },
+			editor: { linkPreviewEnabled: true }
+		};
+		const migrated = MIGRATIONS[4](v3) as Record<string, unknown>;
+		expect(migrated.schemaVersion).toBe(4);
+		// New override maps are absent until the user sets them.
+		const app = migrated.appearance as Record<string, unknown>;
+		expect(app.entityTypeColors).toBeUndefined();
+		expect(app.relationshipTypeColors).toBeUndefined();
+		expect(app.roleColors).toBeUndefined();
+	});
+
+	it('migration #4 preserves existing keys', () => {
+		const v3 = {
+			schemaVersion: 3,
+			appearance: { theme: 'light' as const, accentColor: '#aabbcc' },
+			editor: { linkPreviewEnabled: false },
+			extra: 'kept'
+		};
+		const migrated = MIGRATIONS[4](v3) as Record<string, unknown>;
+		expect((migrated.appearance as { theme: string }).theme).toBe('light');
+		expect((migrated.editor as { linkPreviewEnabled: boolean }).linkPreviewEnabled).toBe(false);
+		expect(migrated.extra).toBe('kept');
 	});
 
 	it('migration #2 adds appearance to v1 payloads', () => {
