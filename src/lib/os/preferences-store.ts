@@ -12,10 +12,11 @@ import { deepMerge, isPlainObject, PROTO_POLLUTION_KEYS } from '../preferences-m
 /**
  * User preferences store — the per-user persistent root.
  *
- * Pre-T8b: localStorage-backed (single tenant, no auth).
- * Post-T8b: this module hydrates from `users.preferences jsonb` on login and
- *           writes through to both server + localStorage cache. The scaffold
- *           establishes the storage shape; the server-sync layer lands later.
+ * Local optimistic state + localStorage cache. Server persistence lives in the
+ * sync controller (./preferences-sync.ts), which hydrates this store from the
+ * `user_preferences` table on login and writes local changes back via debounced
+ * PATCH. (Earlier scaffold notes referenced a `users.preferences jsonb` column;
+ * the shipped design uses a separate profile-shaped `user_preferences` table.)
  *
  * Subscribers re-render on every change. Writes save through to storage on
  * every mutation EXCEPT when versionError is set (downgrade-protection mode):
