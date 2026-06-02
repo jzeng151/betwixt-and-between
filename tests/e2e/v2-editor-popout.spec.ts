@@ -66,27 +66,33 @@ test.describe('V2 Editor windowing + mutex (D2 + D3)', () => {
 		page,
 		request
 	}) => {
-		await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } });
+		const a = await (
+			await request.post('/api/entities', { data: { type: 'Act', name: 'Act A', position: 0 } })
+		).json();
+		const b = await (
+			await request.post('/api/entities', { data: { type: 'Act', name: 'Act B', position: 1 } })
+		).json();
 
 		const win = await openTimeline(page);
-		await win.locator('.act-col-header').first().click();
+		const popoutA = page.locator('.window[aria-label="Act A"]');
+		const popoutB = page.locator('.window[aria-label="Act B"]');
+		const zOf = (loc: typeof popoutA) =>
+			loc.evaluate((el) => Number((el as HTMLElement).style.zIndex || '0'));
 
-		const popout = page.locator('.window[aria-label="Act A"]');
-		await expect(popout).toBeVisible();
-		const initialZ = await popout.evaluate((el) => Number((el as HTMLElement).style.zIndex || '0'));
+		// Open Act A, then Act B — B is now the focused (top-most) window.
+		// dispatchEvent (not click) so an already-open editor window overlapping
+		// the act header in the Timeline can't intercept the pointer event — we're
+		// exercising the windowStore mutex, not pixel-accurate hit-testing.
+		await win.locator(`.act-col-header[data-entity-id="${a.id}"]`).dispatchEvent('click');
+		await expect(popoutA).toBeVisible();
+		await win.locator(`.act-col-header[data-entity-id="${b.id}"]`).dispatchEvent('click');
+		await expect(popoutB).toBeVisible();
+		expect(await zOf(popoutB)).toBeGreaterThan(await zOf(popoutA));
 
-		// Click the same act again — mutex: focus the existing window, no second one.
-		await win.locator('.act-col-header').first().click();
-
-		await expect(page.locator('.window[aria-label="Act A"]')).toHaveCount(1);
-		const newZ = await popout.evaluate((el) => Number((el as HTMLElement).style.zIndex || '0'));
-		expect(newZ).toBeGreaterThanOrEqual(initialZ);
-		// The act window is the focused (top-most) window.
-		const maxZ = await page
-			.locator('.window')
-			.evaluateAll((els) =>
-				Math.max(...els.map((e) => Number((e as HTMLElement).style.zIndex || '0')))
-			);
-		expect(newZ).toBe(maxZ);
+		// Re-click Act A — mutex: no duplicate window, and A is raised above B.
+		// (With B on top first, a no-op re-click would leave A below B and fail.)
+		await win.locator(`.act-col-header[data-entity-id="${a.id}"]`).dispatchEvent('click');
+		await expect(popoutA).toHaveCount(1);
+		expect(await zOf(popoutA)).toBeGreaterThan(await zOf(popoutB));
 	});
 });

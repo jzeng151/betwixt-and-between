@@ -13,7 +13,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Playwright e2e gate for production. Self-contained (mirrors test.yml's e2e
+  # job, same as the check/test mirroring below) so an accidental change to
+  # test.yml can't silently let a deploy skip e2e. Deliberately does NOT set
+  # BETWIXT_E2E_PGLITE at job scope — the e2e build needs the bypass, supplied
+  # to the preview subprocess via playwright.config.ts → webServer.env. The
+  # prod artifact is built only in the `deploy` job below, which pins the var
+  # empty so the bypass is tree-shaken out.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install --with-deps firefox
+      - run: npm run test:e2e
+
   deploy:
+    needs: [e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

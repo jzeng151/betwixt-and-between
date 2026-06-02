@@ -58,7 +58,6 @@
     createError = '';
     try {
       const created = await entities.createEntity('Character', 'New Character');
-      pendingEditMode.add(created.id);
       detailPendingEditMode.add(created.id);
       try {
         openEntity(created.id);
@@ -67,7 +66,6 @@
         // store error), back out the pending-edit signal so the
         // already-created entity doesn't later pop into edit mode via
         // some other code path.
-        pendingEditMode.delete(created.id);
         detailPendingEditMode.delete(created.id);
         throw err;
       }
