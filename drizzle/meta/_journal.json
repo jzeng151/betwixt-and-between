@@ -169,6 +169,13 @@
       "when": 1779930000000,
       "tag": "0023_map_events_auto_anchor_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1780300000000,
+      "tag": "0024_user_preferences",
+      "breakpoints": true
     }
   ]
 }

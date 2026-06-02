@@ -233,6 +233,31 @@ See audit deliverable §Direction commitments.
 
 ---
 
+## Settings customization — Phase 2/3 (deferred from 2026-06-02 eng review)
+
+Phase 1 (server-backed prefs foundation + customizable type/rel/role color palettes)
+is specced + eng/codex/design-reviewed — see design doc
+`~/.gstack/projects/jzeng151-betwixt-and-between/steve-feat-world-map-v3-slice-4-pr-f-design-20260601-232229.md`.
+Built on branch `feat/settings-customization`. Deferred follow-ons:
+
+- **Map per-entity/type color** — `style-cascade.ts` reads `data.style.color` + hardcoded
+  `STYLE_DEFAULTS` hex, NOT the `--color-type-*` CSS vars the graph/wiki use. First Phase 2
+  task: reconcile the two per-entity color keys (`data.color` graph vs `data.style.color` map)
+  and teach `STYLE_DEFAULTS` to read the resolved palette. Until then, customized colors do
+  NOT reach the world map (Phase 1 is "partially customizable" by design).
+- **Edit-in-place swatch** — right-click graph node / map marker → recolor that type/entity.
+- **Window defaults** — "set current as default" size + position.
+- **Graph-toggle persistence** — promote `showGhostTrails` + inactive `soft/hard` from
+  per-window in-memory to the `graph` prefs blob.
+- **Workspace profiles + theme presets** — N named `user_preferences` rows + switcher.
+  A preset = a full theme (profile carrying only appearance). NOT zero-design: profile
+  switching needs transactional deactivate/activate, snapshot/copy semantics, naming,
+  deletion rules.
+
+Depends on: Phase 1 foundation landing first.
+
+---
+
 ## Footnotes from 2026-05-20 audit
 
 These are decisions captured by the whole-app /office-hours audit that aren't queue items — they're context for future decisions. Cross-reference: `~/.gstack/projects/jzeng151-betwixt-and-between/steve-restructure-pre-slice-1-burst-design-20260520-234854.md`.
