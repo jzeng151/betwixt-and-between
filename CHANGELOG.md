@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.9.0] - 2026-06-03
+
+Settings customization Phase 2: the colors you pick now reach the world map, you can recolor any single entity in place, and graphs + windows remember how you like them to open.
+
+### Added
+
+- **The world map obeys your palette.** Recoloring an entity type in Settings (e.g. "Character") now retints its map sprites too, not just the story graph, wiki, and timeline. There's one source of truth for type colors now (`ENTITY_TYPE_HEX`), and the `--color-type-*` block in the stylesheet is generated from it with a drift check, so the canvas and the DOM can't disagree. A low-contrast custom color that would vanish on the dark map gets a fixed light ring so the marker stays visible (the ring is added, never substituted, so an intentionally dark color renders as chosen).
+- **Recolor a single entity in place.** Right-click a story-graph or focused-graph node and pick "Recolor…", or use the new "This `<type>`" swatches in the map marker popover. Both write that entity's color and it shows up everywhere the entity appears — graph node, timeline bar, and map sprite — at once.
+- **"Set current as default" for windows.** A new titlebar button saves a window's current size (and, for single-instance apps like Settings or the World Map, its position) as the default for next time it opens. New windows open at your saved geometry, clamped back on-screen if the viewport shrank.
+- **Graphs remember your toggles.** The Scrubbing (hide vs dim edges) and Ghost-trails toggles are now a saved per-user default — set them once and every graph window opens that way.
+
+### Changed
+
+- The map style cascade resolves an entity's color through placement override → entity style → `data.color` / character cycle → the customizable type palette → global default. A character with no custom color reads the same color on the graph and the map (shared `characterColorFor`).
+- The Settings color pickers commit on release (picker close) and show a live preview while you drag, so dragging the picker no longer rebuilds the open world map on every frame.
+- Preferences schema migrated v4 → v5 (adds the `graph` and `windows` sections); the server validates both. Old preference blobs are defaulted on load — no action needed.
 ## [0.8.8.0] - 2026-06-03
 
 World Map v3 Causal Cartography follow-ups — correctness fixes from the #66 review.

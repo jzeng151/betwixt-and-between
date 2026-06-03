@@ -17,6 +17,7 @@
 	 */
 	import { STYLE_BOUNDS, HEX_COLOR_RE } from '$lib/style-bounds.js';
 	import type { ResolvedStyle, StyleOverride } from '$lib/features/map/style-cascade.js';
+	import { ENTITY_TYPE_HEX } from '$lib/entity-type-colors.js';
 
 	interface Props {
 		value: StyleOverride;
@@ -25,9 +26,19 @@
 	}
 	let { value, inherited, onChange }: Props = $props();
 
-	// Preset swatches: the per-type defaults plus neutral, so a one-click set is
-	// always on-palette. The active swatch (=== value.color) is ringed amber.
-	const SWATCHES = ['#3b82f6', '#f59e0b', '#22c55e', '#ef4444', '#818cf8', '#9ca3af'];
+	// Preset swatches: the placeable-type palette hexes plus neutral, so a
+	// one-click set is always on-palette. Sourced from ENTITY_TYPE_HEX (the single
+	// palette source — Phase 2, Item 1 / CQ1) instead of the former hardcoded
+	// blue/amber/green, which no longer matched the palette. Active swatch
+	// (=== value.color) is ringed amber.
+	const SWATCHES = [
+		ENTITY_TYPE_HEX.Character,
+		ENTITY_TYPE_HEX.Artifact,
+		ENTITY_TYPE_HEX.Item,
+		ENTITY_TYPE_HEX.Event,
+		ENTITY_TYPE_HEX.Scene,
+		'#9ca3af'
+	];
 
 	// Seed from the initial prop; the $effect below resyncs on external changes.
 	// svelte-ignore state_referenced_locally

@@ -40,6 +40,7 @@
 
   function onTitlebarMousedown(e: MouseEvent) {
     if ((e.target as HTMLElement).closest('.win-control')) return;
+    if ((e.target as HTMLElement).closest('.titlebar-action')) return;
     if (maximized) return;
     dragging = true;
     dragOffsetX = e.clientX - x;
@@ -135,6 +136,15 @@
         ></button>
       </div>
       <span class="win-title">{title}</span>
+      <!-- Item 3: persist this window's current size (+ position for
+           single-instance apps) as the open default for its app. -->
+      <button
+        type="button"
+        class="titlebar-action"
+        aria-label="Set current size and position as default"
+        title="Set current size & position as default"
+        onclick={(e) => { e.stopPropagation(); windowStore.setAsDefault(id); }}
+      >⊡</button>
     </div>
     <div class="win-content" class:bare>
       {@render children?.()}
@@ -223,6 +233,26 @@
     flex: 1;
     text-align: center;
     pointer-events: none;
+  }
+
+  .titlebar-action {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: var(--color-text-muted);
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .titlebar-action:hover {
+    color: var(--color-text);
+    background: var(--color-surface);
+  }
+  .titlebar-action:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
   }
 
   .win-content {

@@ -79,6 +79,15 @@ export const MIGRATIONS: Record<number, (old: unknown) => unknown> = {
 		// PREFERENCES_DEFAULTS (which omits the maps) preserves "absent".
 		...(v3 as object),
 		schemaVersion: 4
+	}),
+	5: (v4) => ({
+		// Settings customization Phase 2: adds the `graph` (toggle defaults) and
+		// `windows` (per-AppId geometry defaults) sections. Both have concrete
+		// defaults in PREFERENCES_DEFAULTS, and migrateAndMerge deep-merges over
+		// those defaults — so an old blob without them is filled at hydrate. The
+		// migration is a pure version bump; no field is seeded here.
+		...(v4 as object),
+		schemaVersion: 5
 	})
 };
 

@@ -28,6 +28,7 @@ import { userPreferences, EntityType, RelationshipType } from './db/schema.js';
 import type { Db } from './intervals.js';
 import { isHexColor } from './validation.js';
 import { CHARACTER_ROLES } from '../character-roles.js';
+import { APP_IDS } from '../os/app-ids.js';
 import { deepMerge, applyUnset, isPlainObject, isSafeUnsetPath } from '../preferences-merge.js';
 import { PREFERENCES_CODE_MAX_VERSION } from '../types/preferences.js';
 
@@ -205,6 +206,12 @@ function validateMergedData(data: Record<string, unknown>): void {
 			error(400, `schemaVersion must be an integer between 1 and ${PREFERENCES_CODE_MAX_VERSION}`);
 		}
 	}
+	// Phase 2 sections (Item 4 graph, Item 3 windows). Validated ABOVE the
+	// appearance early-return so a blob with `graph`/`windows` but no `appearance`
+	// is still checked (A3) — otherwise garbage toggles/geometry would persist.
+	validateGraph(data.graph);
+	validateWindows(data.windows);
+
 	const app = data.appearance;
 	if (app === undefined) return;
 	if (!isPlainObject(app)) error(400, 'appearance must be an object');
@@ -230,5 +237,60 @@ function validateColorMap(
 	for (const [k, v] of Object.entries(value)) {
 		if (!allowed.has(k)) error(400, `${label}: unknown key '${k}'`);
 		if (!isHexColor(v)) error(400, `${label}.${k} must be a hex color`);
+	}
+}
+
+/** Item 4 — graph toggle defaults: known boolean keys only. */
+function validateGraph(value: unknown): void {
+	if (value === undefined) return;
+	if (!isPlainObject(value)) error(400, 'graph must be an object');
+	const allowed = new Set(['hardFilter', 'showGhostTrails']);
+	for (const [k, v] of Object.entries(value)) {
+		if (!allowed.has(k)) error(400, `graph: unknown key '${k}'`);
+		if (typeof v !== 'boolean') error(400, `graph.${k} must be a boolean`);
+	}
+}
+
+// Window geometry bounds — generous but finite, to reject NaN/Infinity and a
+// client (or attacker) persisting absurd values that would break layout math.
+const WINDOW_MIN_DIM = 1;
+const WINDOW_MAX_DIM = 10000;
+const WINDOW_MAX_POS = 100000;
+
+function isBoundedNumber(v: unknown, min: number, max: number): boolean {
+	return typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
+}
+
+/** Item 3 — window geometry defaults keyed by AppId. Closed validation: only
+ *  `defaults` at the top level, only width/height/x/y per geometry (codex P3). */
+function validateWindows(value: unknown): void {
+	if (value === undefined) return;
+	if (!isPlainObject(value)) error(400, 'windows must be an object');
+	for (const k of Object.keys(value)) {
+		if (k !== 'defaults') error(400, `windows: unknown key '${k}'`);
+	}
+	const defaults = value.defaults;
+	if (defaults === undefined) return;
+	if (!isPlainObject(defaults)) error(400, 'windows.defaults must be an object');
+	const allowed = new Set<string>(APP_IDS);
+	const geomKeys = new Set(['width', 'height', 'x', 'y']);
+	for (const [appId, geom] of Object.entries(defaults)) {
+		if (!allowed.has(appId)) error(400, `windows.defaults: unknown appId '${appId}'`);
+		if (!isPlainObject(geom)) error(400, `windows.defaults.${appId} must be an object`);
+		for (const k of Object.keys(geom)) {
+			if (!geomKeys.has(k)) error(400, `windows.defaults.${appId}: unknown key '${k}'`);
+		}
+		if (!isBoundedNumber(geom.width, WINDOW_MIN_DIM, WINDOW_MAX_DIM)) {
+			error(400, `windows.defaults.${appId}.width must be a number in [${WINDOW_MIN_DIM}, ${WINDOW_MAX_DIM}]`);
+		}
+		if (!isBoundedNumber(geom.height, WINDOW_MIN_DIM, WINDOW_MAX_DIM)) {
+			error(400, `windows.defaults.${appId}.height must be a number in [${WINDOW_MIN_DIM}, ${WINDOW_MAX_DIM}]`);
+		}
+		if (geom.x !== undefined && !isBoundedNumber(geom.x, -WINDOW_MAX_POS, WINDOW_MAX_POS)) {
+			error(400, `windows.defaults.${appId}.x must be a finite number`);
+		}
+		if (geom.y !== undefined && !isBoundedNumber(geom.y, -WINDOW_MAX_POS, WINDOW_MAX_POS)) {
+			error(400, `windows.defaults.${appId}.y must be a finite number`);
+		}
 	}
 }

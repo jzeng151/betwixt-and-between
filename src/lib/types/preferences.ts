@@ -1,5 +1,6 @@
 import type { EntityType, RelationshipType } from '../server/db/schema.js';
 import type { CharacterRole } from '../character-roles.js';
+import type { AppId } from '../os/app-ids.js';
 
 export interface Appearance {
 	theme: 'dark' | 'light';
@@ -25,6 +26,39 @@ export interface Editor {
 }
 
 /**
+ * Graph preferences (Settings customization Phase 2, Item 4). The user's
+ * preferred DEFAULT for graph view toggles, applied to every graph window on
+ * open (StoryGraph + FocusedGraph). Intentionally a GLOBAL default, not
+ * per-window state — the feature is "remember how I like graphs to open".
+ */
+export interface GraphPrefs {
+	/** Hard-filter (hide) out-of-window nodes (true) vs soft-dim them (false). */
+	hardFilter: boolean;
+	/** Show ghost trails for out-of-scope connections. */
+	showGhostTrails: boolean;
+}
+
+/**
+ * A persisted window geometry default (Settings customization Phase 2, Item 3).
+ * Size is persisted for every AppId; position (x,y) ONLY for single-instance
+ * apps (POSITION_PERSIST_APP_IDS) — multi-instance apps keep the open-stagger.
+ */
+export interface WindowDefault {
+	width: number;
+	height: number;
+	x?: number;
+	y?: number;
+}
+
+/**
+ * Window preferences. `defaults` holds "set current as default" geometry keyed
+ * by AppId; an absent key falls back to the hardcoded WINDOW_DEFAULTS.
+ */
+export interface WindowsPrefs {
+	defaults: Partial<Record<AppId, WindowDefault>>;
+}
+
+/**
  * User preferences shape — the persisted root.
  *
  * Sub-branches add their own sections (appearance, hotkeys, entityDefaults,
@@ -42,13 +76,15 @@ export interface Preferences {
 	schemaVersion: number;
 	appearance: Appearance;
 	editor: Editor;
+	graph: GraphPrefs;
+	windows: WindowsPrefs;
 }
 
 /**
  * The current code's max-known version. Bump in lockstep with adding a
  * migration to MIGRATIONS in os/preferences-store.ts.
  */
-export const PREFERENCES_CODE_MAX_VERSION: number = 4;
+export const PREFERENCES_CODE_MAX_VERSION: number = 5;
 
 /**
  * Built-in defaults. Sub-branches extend by deep-merge: their defaults compose
@@ -58,5 +94,11 @@ export const PREFERENCES_CODE_MAX_VERSION: number = 4;
 export const PREFERENCES_DEFAULTS: Readonly<Preferences> = Object.freeze({
 	schemaVersion: PREFERENCES_CODE_MAX_VERSION,
 	appearance: { theme: 'dark' as const, accentColor: '#c8942a' },
-	editor: { linkPreviewEnabled: true }
+	editor: { linkPreviewEnabled: true },
+	// Graph toggle defaults — match the prior in-component $state literals
+	// (hard filter on, ghost trails off) so existing behavior is unchanged until
+	// a user opts in via Settings.
+	graph: { hardFilter: true, showGhostTrails: false },
+	// No saved window geometry until the user picks "set current as default".
+	windows: { defaults: {} }
 });

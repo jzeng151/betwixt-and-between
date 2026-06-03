@@ -27,8 +27,8 @@ describe('Preferences appearance', () => {
 		});
 	});
 
-	it('code max version is 4', () => {
-		expect(PREFERENCES_CODE_MAX_VERSION).toBe(4);
+	it('code max version is 5', () => {
+		expect(PREFERENCES_CODE_MAX_VERSION).toBe(5);
 	});
 
 	it('migration #4 is a pure version bump (color maps are optional, not seeded)', () => {
@@ -44,6 +44,34 @@ describe('Preferences appearance', () => {
 		expect(app.entityTypeColors).toBeUndefined();
 		expect(app.relationshipTypeColors).toBeUndefined();
 		expect(app.roleColors).toBeUndefined();
+	});
+
+	it('defaults include graph + windows sections (Phase 2)', () => {
+		expect(PREFERENCES_DEFAULTS.graph).toEqual({ hardFilter: true, showGhostTrails: false });
+		expect(PREFERENCES_DEFAULTS.windows).toEqual({ defaults: {} });
+	});
+
+	it('migration #5 is a pure version bump; deep-merge fills graph/windows defaults', () => {
+		const v4 = {
+			schemaVersion: 4,
+			appearance: { theme: 'dark' as const, accentColor: '#c8942a' },
+			editor: { linkPreviewEnabled: true }
+		};
+		const migrated = MIGRATIONS[5](v4) as Record<string, unknown>;
+		expect(migrated.schemaVersion).toBe(5);
+		// The migration itself doesn't seed the sections — migrateAndMerge's
+		// deep-merge over PREFERENCES_DEFAULTS does. A v4 blob loaded through the
+		// store ends up with the defaulted sections.
+		__setStorageForTesting({
+			getItem: () => JSON.stringify(v4),
+			setItem: () => {},
+			removeItem: () => {}
+		});
+		__reloadFromStorageForTesting();
+		const loaded = get(preferences);
+		expect(loaded.schemaVersion).toBe(5);
+		expect(loaded.graph).toEqual({ hardFilter: true, showGhostTrails: false });
+		expect(loaded.windows).toEqual({ defaults: {} });
 	});
 
 	it('migration #4 preserves existing keys', () => {

@@ -20,7 +20,14 @@
 	} from './pixi-context.js';
 	import { placementsAtPlayhead } from '$lib/types/map-placement.js';
 	import type { ArtifactPosition } from '$lib/features/map/projection.js';
-	import { resolveStyle } from '$lib/features/map/style-cascade.js';
+	import {
+		resolveStyle,
+		needsContrastRing,
+		CONTRAST_RING_COLOR
+	} from '$lib/features/map/style-cascade.js';
+	import { resolvePaletteHex } from '$lib/entity-type-colors.js';
+	import { buildCharacterIndexById } from '$lib/features/graph/view-builders.js';
+	import { preferences } from '$lib/os/preferences-store.js';
 	import { easeToward } from '$lib/features/map/ease.js';
 	import { layerVisibility } from '$lib/features/map/layer-prefs-store.js';
 
@@ -252,13 +259,26 @@
 		layer.visible = $visible;
 
 		for (const child of layer.removeChildren()) {
-			child.destroy();
+			// Destroy children too: each marker Container owns Graphics (halo, fill
+			// circle, contrast ring) whose GPU buffers leak if only the Container is
+			// destroyed. This rebuild now also fires on palette changes (not just
+			// playhead scrub), so the per-rebuild leak compounds without this.
+			child.destroy({ children: true });
 		}
 
 		// Cache map dimensions so the loop closure doesn't re-read activeMap
 		// (which could be reactive-tracked but we already gated above).
 		const mapW = activeMap.width;
 		const mapH = activeMap.height;
+
+		// Settings customization Phase 2, Item 1 — the type-default color layer.
+		// Read $preferences INSIDE the effect so a palette recolor re-runs this
+		// rebuild and restyles every sprite (Svelte 5 tracks reads in scope).
+		const resolvedTypeHex = resolvePaletteHex($preferences.appearance);
+		// Character cycle index — computed from the SAME global entities list the
+		// graph uses (WorldMap passes entities={$entities}), via the SAME helper,
+		// so an uncustomized character reads the same color on both surfaces (F3a).
+		const characterIndexById = buildCharacterIndexById(entities);
 
 		for (const placement of activePlacements) {
 			const placeable = entityById.get(placement.placeableId);
@@ -271,17 +291,25 @@
 			const cx = (override ? override.x : placement.x) * mapW;
 			const cy = (override ? override.y : placement.y) * mapH;
 
-			// Slice 3 T9 + B6 — style cascade resolved per-placement at
-			// render. GLOBAL ⊕ STYLE_DEFAULTS[type] ⊕ entity.data.style ⊕
-			// placement.data.style (codex P2, PR #58: the per-placement
-			// override is the top layer so an instance customization wins).
-			// resolved.color is authoritative — resolveStyle already supplies
-			// the per-type default when no override is set, so we trust it
-			// directly. The old sentinel branch re-applied the type color when
-			// resolved.color happened to equal the neutral global default,
-			// which clobbered an explicitly-chosen neutral swatch (codex P2).
-			const resolved = resolveStyle(placeable, placement.data?.style);
+			// Slice 3 T9 + B6 / Settings Phase 2 Item 1 — style cascade resolved
+			// per-placement at render. Color layers (top wins): placement.data.style
+			// ▸ entity.data.style ▸ data.color/char-cycle ▸ resolvedTypeHex[type]
+			// (the customizable palette) ▸ GLOBAL. resolved.color is authoritative —
+			// resolveStyle already supplies the palette default when no override is
+			// set, so we trust it directly. The old sentinel branch re-applied the
+			// type color when resolved.color happened to equal the neutral global
+			// default, which clobbered an explicitly-chosen neutral swatch (codex P2).
+			const resolved = resolveStyle(
+				placeable,
+				resolvedTypeHex,
+				placement.data?.style,
+				characterIndexById.get(placeable.id)
+			);
 			const fillColor = parseHex(resolved.color);
+			// Contrast guard (Item 1 / D4): a low-luminance resolved fill vanishes
+			// against the dark canvas. ADD a fixed light ring — never substitute the
+			// fill — so an intentionally dark/neutral color still renders as chosen.
+			const ringColor = needsContrastRing(resolved.color) ? parseHex(CONTRAST_RING_COLOR) : null;
 
 			// T9 follow-up: scope-based dim. The placeable entity is in
 			// scope when its intervals contain the playhead (or playhead is
@@ -397,6 +425,21 @@
 				.fill({ color: fillColor, alpha: fillAlpha })
 				.stroke({ color: 0x000000, width: 1.5, alpha: strokeAlpha });
 			marker.addChild(g);
+			// Contrast-guard ring: a light ring just outside the marker so a dark
+			// fill stays visible. Composed with the same scope-dim × opacity as the
+			// fill so an out-of-scope marker's ring fades too. The black stroke above
+			// stays (it's the marker outline); this ADDS a light ring on top of it.
+			// The ring guards the FILL CIRCLE, so it's hidden alongside the circle
+			// when an icon sprite successfully overlays it (the icon, not the dark
+			// fill, becomes the visual). On icon-load failure the circle + ring both
+			// remain so a dark fallback stays legible.
+			let ring: PixiGraphics | null = null;
+			if (ringColor !== null) {
+				ring = new PIXI.Graphics();
+				ring.circle(cx, cy, radius + 1.5).stroke({ color: ringColor, width: 2, alpha: fillAlpha });
+				ring.eventMode = 'none';
+				marker.addChild(ring);
+			}
 			layer.addChild(marker);
 
 			// codex P2 (PR #58): an accepted per-placement/entity icon override
@@ -404,7 +447,7 @@
 			// loads and as the fallback if the load fails; on success the icon
 			// sprite overlays it and the circle is hidden.
 			if (resolved.icon) {
-				void loadIconSprite(resolved.icon, cx, cy, radius, fillAlpha, marker, g, generation);
+				void loadIconSprite(resolved.icon, cx, cy, radius, fillAlpha, marker, g, ring, generation);
 			}
 		}
 	});
@@ -533,6 +576,7 @@
 		alpha: number,
 		marker: PixiContainer,
 		circle: PixiGraphics,
+		ring: PixiGraphics | null,
 		generation: number
 	): Promise<void> {
 		if (!PIXI) return;
@@ -555,6 +599,9 @@
 		// intercept events or it would shadow the container's handlers.
 		sprite.eventMode = 'none';
 		circle.visible = false;
+		// The contrast ring guards the now-hidden fill circle; hide it too so it
+		// doesn't float around the icon (which is its own visual).
+		if (ring) ring.visible = false;
 		marker.addChild(sprite);
 	}
 

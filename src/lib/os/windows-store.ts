@@ -1,17 +1,13 @@
 import { writable, get } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
+import { type AppId, persistsPosition } from './app-ids.js';
+import { preferences } from './preferences-store.js';
+import { applyPreferencePatch, preferencesOwnershipResolved } from './preferences-sync.js';
+import { clampToViewport } from './context-menu-clamp.js';
 
-export type AppId =
-	| 'character-editor'
-	| 'world-map'
-	| 'timeline'
-	| 'entity-detail'
-	| 'wiki'
-	| 'story-graph'
-	| 'focused-graph'
-	| 'notes'
-	| 'settings'
-	| 'story-player';
+// Re-export so existing `import type { AppId } from '$lib/os/windows-store'`
+// call sites (Taskbar, app-catalog, WindowManager) keep working.
+export type { AppId };
 
 /**
  * View modes for `focused-graph` windows (Phase 1B Lane C):
@@ -44,6 +40,10 @@ type WindowState = {
 	// When true, the window renders with a boosted z-index that keeps it
 	// above all non-pinned windows regardless of focus changes.
 	alwaysOnTop?: boolean;
+	// True once the user has dragged/resized this window. The one-shot
+	// post-hydrate default re-apply (below) skips adjusted windows so it never
+	// clobbers a deliberate in-session move.
+	geomAdjusted?: boolean;
 };
 
 /** Z-index offset applied to `alwaysOnTop` windows so they float above the rest. */
@@ -109,6 +109,17 @@ function readTaskbarHeight(): number {
 	return Number.isFinite(parsed) ? parsed : 52;
 }
 
+/**
+ * Clamp an open position so the window lands fully inside the viewport (minus
+ * the taskbar) — Item 3 (A2/F5): a saved default x/y that lands off-screen after
+ * a viewport resize is corrected on every open, not just at save. No-op in SSR.
+ */
+function clampOpenGeom(x: number, y: number, width: number, height: number): { x: number; y: number } {
+	if (typeof window === 'undefined') return { x, y };
+	const usableH = Math.max(0, window.innerHeight - readTaskbarHeight());
+	return clampToViewport(x, y, width, height, window.innerWidth, usableH);
+}
+
 function createWindowStore() {
 	const { subscribe, update, set } = writable<WindowState[]>([]);
 
@@ -130,18 +141,35 @@ function createWindowStore() {
 		let x = lastOpenX;
 		let y = lastOpenY;
 		const defaults = WINDOW_DEFAULTS[appId];
-		if (appId === 'story-player' && typeof window !== 'undefined') {
+		// Item 3: a "set current as default" geometry overrides the hardcoded
+		// WINDOW_DEFAULTS. Size applies to every AppId; position only to
+		// single-instance apps (persistsPosition) — multi-instance apps keep the
+		// open-stagger so instances don't stack.
+		const saved = get(preferences).windows.defaults[appId];
+		const width = saved?.width ?? defaults.width;
+		const height = saved?.height ?? defaults.height;
+		const savedPos =
+			saved && persistsPosition(appId) && saved.x !== undefined && saved.y !== undefined
+				? { x: saved.x, y: saved.y }
+				: null;
+		if (savedPos) {
+			x = savedPos.x;
+			y = savedPos.y;
+		} else if (appId === 'story-player' && typeof window !== 'undefined') {
 			// Anchor the Story Player just above the taskbar so it acts like
 			// a transport bar by default. Taskbar height lives in --taskbar-height
 			// (src/app.css); read at runtime so the JS math tracks any CSS change.
 			const taskbarH = readTaskbarHeight();
 			const gap = 12;
-			x = Math.max(8, Math.floor((window.innerWidth - defaults.width) / 2));
-			y = Math.max(8, window.innerHeight - taskbarH - defaults.height - gap);
+			x = Math.max(8, Math.floor((window.innerWidth - width) / 2));
+			y = Math.max(8, window.innerHeight - taskbarH - height - gap);
 		} else {
 			lastOpenX = lastOpenX + 28 > 520 ? 80 : lastOpenX + 28;
 			lastOpenY = lastOpenY + 28 > 400 ? 80 : lastOpenY + 28;
 		}
+		// Clamp every open so a saved (or staggered) position that now lands
+		// off-screen is corrected.
+		({ x, y } = clampOpenGeom(x, y, width, height));
 		zCounter++;
 
 		update((all) => [
@@ -152,8 +180,8 @@ function createWindowStore() {
 				entityId,
 				x,
 				y,
-				width: defaults.width,
-				height: defaults.height,
+				width,
+				height,
 				minimized: false,
 				maximized: false,
 				zIndex: zCounter,
@@ -255,11 +283,11 @@ function createWindowStore() {
 	}
 
 	function move(id: string, x: number, y: number) {
-		patchWindow(id, { x, y });
+		patchWindow(id, { x, y, geomAdjusted: true });
 	}
 
 	function resize(id: string, width: number, height: number) {
-		patchWindow(id, { width, height });
+		patchWindow(id, { width, height, geomAdjusted: true });
 	}
 
 	function maximize(id: string) {
@@ -278,6 +306,28 @@ function createWindowStore() {
 
 	function setEntityId(id: string, entityId: string) {
 		patchWindow(id, { entityId });
+	}
+
+	/**
+	 * Item 3 — "set current as default": persist this window's settled geometry
+	 * as the open default for its AppId. Size for every app; position only for
+	 * single-instance apps (persistsPosition). Called from a titlebar click, so
+	 * it always reads post-drag geometry (the F5 commit-boundary requirement —
+	 * never mid-drag). Maximized windows are skipped (their frame is the
+	 * maximized rect, not a meaningful default).
+	 */
+	function setAsDefault(id: string): void {
+		const w = get({ subscribe }).find((x) => x.id === id);
+		if (!w || w.maximized) return;
+		const geom: { width: number; height: number; x?: number; y?: number } = {
+			width: w.width,
+			height: w.height
+		};
+		if (persistsPosition(w.appId)) {
+			geom.x = w.x;
+			geom.y = w.y;
+		}
+		applyPreferencePatch({ set: { windows: { defaults: { [w.appId]: geom } } } });
 	}
 
 	function focusedWindow(): WindowState | undefined {
@@ -315,6 +365,35 @@ function createWindowStore() {
 		return get({ subscribe }).find((w) => w.entityId === entityId);
 	}
 
+	// codex P2: a window opened BEFORE the initial /api/preferences hydrate
+	// snapshots the built-in WINDOW_DEFAULTS (no saved geometry yet). When
+	// ownership first resolves (hydrate installs windows.defaults), re-apply the
+	// saved geometry ONCE to every open window the user hasn't moved/resized
+	// (geomAdjusted), so a fresh-device window opened in the sub-second before
+	// hydrate still lands at the saved size/position. Size for all apps; position
+	// only for singleton apps (persistsPosition); clamped to the viewport.
+	let _defaultsReapplied = false;
+	preferencesOwnershipResolved.subscribe((resolved) => {
+		if (!resolved || _defaultsReapplied) return;
+		_defaultsReapplied = true;
+		const defaults = get(preferences).windows.defaults;
+		update((all) =>
+			all.map((w) => {
+				if (w.geomAdjusted || w.maximized) return w;
+				const saved = defaults[w.appId];
+				if (!saved) return w;
+				let x = w.x;
+				let y = w.y;
+				if (persistsPosition(w.appId) && saved.x !== undefined && saved.y !== undefined) {
+					x = saved.x;
+					y = saved.y;
+				}
+				const clamped = clampOpenGeom(x, y, saved.width, saved.height);
+				return { ...w, width: saved.width, height: saved.height, x: clamped.x, y: clamped.y };
+			})
+		);
+	});
+
 	return {
 		subscribe,
 		open,
@@ -331,6 +410,7 @@ function createWindowStore() {
 		resize,
 		togglePin,
 		setEntityId,
+		setAsDefault,
 		focusedWindow,
 		findOpenEditorFor,
 		cycleForward,
