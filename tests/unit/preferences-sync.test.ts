@@ -788,6 +788,33 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		).toHaveLength(0);
 	});
 
+	// codex PR #69: after a profile-change 409 whose rehydrate fails transiently,
+	// the client must enter limbo (serverVersion 0) so further edits are refused —
+	// not left editable against the stale profile (stamp → another 409 → dropped).
+	it('enters limbo after a profile-change 409 whose rehydrate fails', async () => {
+		let hydrateOk = true;
+		mockFetch((c) => {
+			if (c.method === 'GET')
+				return hydrateOk
+					? fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A })
+					: fakeRes(500, {}); // the post-409 rehydrate fails transiently
+			return fakeRes(409, { message: 'active profile changed; re-fetch and retry' });
+		});
+		await hydratePreferences();
+
+		hydrateOk = false;
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
+		await __flushForTesting(); // PATCH → 409 → markUnhydrated + (failed) rehydrate
+		expect(get(preferencesProfileId)).toBe(null); // limbo
+
+		const patchesBefore = calls.filter((c) => c.method === 'PATCH').length;
+		applyPreferencePatch({ set: { appearance: { accentColor: '#abcdef' } } });
+		await __flushForTesting();
+		// Refused: accent never applied, no PATCH stamped against the stale profile.
+		expect(get(preferences).appearance.accentColor).not.toBe('#abcdef');
+		expect(calls.filter((c) => c.method === 'PATCH').length).toBe(patchesBefore);
+	});
+
 	// codex PR #69: a save already in flight must finish before the activate, or
 	// it lands after and is dropped by the profile-change guard.
 	it('switchProfile waits for an in-flight save before activating', async () => {

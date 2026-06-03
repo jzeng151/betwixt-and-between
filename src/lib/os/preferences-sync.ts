@@ -702,6 +702,11 @@ async function flush(): Promise<void> {
 			// active profile after hydrate would leak old-profile edits across. Drop
 			// the whole queue, not just the drained patch (codex).
 			pending = { set: {}, unset: [] };
+			// Mark unhydrated before the rehydrate below: if it fails transiently,
+			// serverVersion stays 0 so the limbo guard refuses edits, rather than
+			// letting them stamp the stale profile id and get dropped (codex). The
+			// switch/create paths do the same; this makes all three rehydrates uniform.
+			markUnhydratedUntilSwitchHydrates();
 		} else {
 			requeue(patch);
 		}
