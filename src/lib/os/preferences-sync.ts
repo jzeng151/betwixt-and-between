@@ -29,10 +29,12 @@ import {
 	setStoredOwner
 } from './preferences-store.js';
 import { deepMerge, applyUnset, isPlainObject, diffFromBase } from '../preferences-merge.js';
+import { ensureOk } from './api-error.js';
 import {
 	PREFERENCES_CODE_MAX_VERSION,
 	PREFERENCES_DEFAULTS,
-	type Preferences
+	type Preferences,
+	type ProfileSummary
 } from '../types/preferences.js';
 
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error' | 'stale-app';
@@ -46,9 +48,18 @@ interface PendingPatch {
 let fetchImpl: typeof fetch = (...args) => globalThis.fetch(...args);
 let debounceMs = 400;
 let serverVersion = 0; // 0 = not hydrated / anonymous (no server writes)
+// The active profile id the current serverVersion/blob belong to (Phase 3, F2).
+// Stamped on every PATCH so a write authored against one profile can't land on
+// another after a switch (server returns 409 on mismatch). null = anonymous /
+// not hydrated.
+let serverProfileId: string | null = null;
 let pending: PendingPatch = { set: {}, unset: [] };
 let inFlight = false;
 let hydrating = false;
+// True while a profile switch/create is mid-flight (activate POST + re-hydrate).
+// Suppresses debounced flushes so a pending write can't race the activate and
+// land on the wrong profile (F2 mitigation 2).
+let switching = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 // Transient-failure retry (network down / 5xx / session-expired): the optimistic
@@ -74,6 +85,12 @@ export const preferencesSyncStatus: Readable<SyncStatus> = { subscribe: _status.
 // inline a different user's colors on first paint (codex P1, SSR half).
 const _userId = writable<string | null>(null);
 export const preferencesUserId: Readable<string | null> = { subscribe: _userId.subscribe };
+
+// The active profile id (Phase 3). The switcher UI reads this to mark which
+// profile is live and to refetch the list after a switch. null = anonymous /
+// not hydrated.
+const _profileId = writable<string | null>(null);
+export const preferencesProfileId: Readable<string | null> = { subscribe: _profileId.subscribe };
 
 // True once a hydrate has reached a state where the local store is SAFE TO DISPLAY:
 // a 200 (owner-scoped / foreign discarded) or a definitive 401 (anonymous — the
@@ -102,10 +119,13 @@ export function __resetSyncForTesting(): void {
 	hydrateRetryTimer = null;
 	hydrateBackoffMs = RETRY_BASE_MS;
 	serverVersion = 0;
+	serverProfileId = null;
 	pending = { set: {}, unset: [] };
 	inFlight = false;
 	hydrating = false;
+	switching = false;
 	_userId.set(null);
+	_profileId.set(null);
 	_resolved.set(false);
 	_status.set('idle');
 }
@@ -229,6 +249,7 @@ export async function hydratePreferences(): Promise<void> {
 		version: number;
 		initialized?: boolean;
 		userId?: string;
+		profileId?: string;
 	};
 	let merged: Preferences;
 	try {
@@ -246,6 +267,8 @@ export async function hydratePreferences(): Promise<void> {
 		throw e;
 	}
 	serverVersion = body.version;
+	serverProfileId = typeof body.profileId === 'string' ? body.profileId : null;
+	_profileId.set(serverProfileId);
 	// A current server blob hydrated cleanly — if a too-new localStorage payload
 	// had tripped downgrade protection at boot, clear it now so localStorage
 	// write-through resumes and the stale payload stops re-firing every reload
@@ -341,7 +364,7 @@ export function applyPreferencePatch(patch: { set?: Record<string, unknown>; uns
 	preferences.set(next);
 	// Queue for the server.
 	accumulate(norm);
-	if (serverVersion !== 0 && !hydrating) scheduleFlush();
+	if (serverVersion !== 0 && !hydrating && !switching) scheduleFlush();
 }
 
 /** Auth lifecycle. logout → stop pending writes. switch → reset + re-hydrate. */
@@ -362,8 +385,11 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 	hydrateBackoffMs = RETRY_BASE_MS;
 	pending = { set: {}, unset: [] };
 	serverVersion = 0;
+	serverProfileId = null;
+	switching = false;
 	inFlight = false;
 	_userId.set(null);
+	_profileId.set(null);
 	// Close the gate until the next hydrate re-resolves ownership for the new
 	// account; the switch resets the store to defaults first, so nothing foreign
 	// is shown meanwhile.
@@ -382,6 +408,80 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 	// new user's own row (if initialized) overwrites this on hydrate.
 	preferences.set({ ...PREFERENCES_DEFAULTS });
 	await hydratePreferences();
+}
+
+// ── workspace profiles (Phase 3, T9) ─────────────────────────────────────────
+
+/**
+ * Flush any pending edits to the CURRENT profile, then drop whatever didn't
+ * make it. Called before a profile switch/create so (a) the current profile
+ * keeps the user's edits and (b) nothing pending leaks onto the next profile
+ * via reapplyOntoBase after the re-hydrate (F2 mitigation 2). A transient flush
+ * failure mid-switch is the only case anything is dropped; the optimistic local
+ * copy is replaced by the hydrate either way.
+ */
+async function drainBeforeSwitch(): Promise<void> {
+	if (timer) {
+		clearTimeout(timer);
+		timer = null;
+	}
+	if (retryTimer) {
+		clearTimeout(retryTimer);
+		retryTimer = null;
+	}
+	await flush();
+	pending = { set: {}, unset: [] };
+}
+
+/**
+ * Activate a different profile: drain pending writes to the current profile,
+ * POST the activate, then re-hydrate so the store reflects the newly-active
+ * profile's blob + version + id. Throws on a failed activate (the caller
+ * surfaces it inline + reverts optimistic UI).
+ */
+export async function switchProfile(profileId: string): Promise<void> {
+	switching = true;
+	try {
+		await drainBeforeSwitch();
+		const res = await fetchImpl(`/api/preferences/profiles/${encodeURIComponent(profileId)}/activate`, {
+			method: 'POST'
+		});
+		await ensureOk(res, 'activate profile failed').catch((e) => {
+			_status.set('error');
+			throw e;
+		});
+	} finally {
+		switching = false;
+	}
+	await hydratePreferences();
+}
+
+/**
+ * Create a new profile (server copies the active blob, then activates it) and
+ * re-hydrate so the store tracks the new active profile. Drains pending first
+ * so the copied blob includes the user's latest edits, not a stale server base.
+ * Returns the created profile summary.
+ */
+export async function createProfile(name: string): Promise<ProfileSummary> {
+	switching = true;
+	let created: ProfileSummary;
+	try {
+		await drainBeforeSwitch();
+		const res = await fetchImpl('/api/preferences/profiles', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name })
+		});
+		await ensureOk(res, 'create profile failed').catch((e) => {
+			_status.set('error');
+			throw e;
+		});
+		created = (await res.json()) as ProfileSummary;
+	} finally {
+		switching = false;
+	}
+	await hydratePreferences();
+	return created;
 }
 
 // ── flush machinery ──────────────────────────────────────────────────────────
@@ -431,7 +531,7 @@ function scheduleHydrateRetry(): void {
 }
 
 async function flush(): Promise<void> {
-	if (inFlight || hydrating || serverVersion === 0 || !hasPending()) return;
+	if (inFlight || hydrating || switching || serverVersion === 0 || !hasPending()) return;
 	// We are flushing now — cancel any scheduled retry so it doesn't double-fire.
 	if (retryTimer) {
 		clearTimeout(retryTimer);
@@ -446,7 +546,15 @@ async function flush(): Promise<void> {
 		res = await fetchImpl('/api/preferences', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ set: patch.set, unset: patch.unset, version: serverVersion })
+			body: JSON.stringify({
+				set: patch.set,
+				unset: patch.unset,
+				version: serverVersion,
+				// F2: stamp the profile this write was authored against. If the active
+				// profile changed server-side, the PATCH 409s instead of landing on
+				// the new profile. null (anonymous) is omitted by JSON.stringify.
+				profileId: serverProfileId ?? undefined
+			})
 		});
 	} catch {
 		// Network failure — requeue and retry with backoff so the edit isn't

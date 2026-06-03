@@ -26,11 +26,13 @@ import { and, eq, sql } from 'drizzle-orm';
 import { error } from '@sveltejs/kit';
 import { userPreferences, EntityType, RelationshipType } from './db/schema.js';
 import type { Db } from './intervals.js';
-import { isHexColor } from './validation.js';
+import { isHexColor, isUuid } from './validation.js';
 import { CHARACTER_ROLES } from '../character-roles.js';
 import { APP_IDS } from '../os/app-ids.js';
 import { deepMerge, applyUnset, isPlainObject, isSafeUnsetPath } from '../preferences-merge.js';
-import { PREFERENCES_CODE_MAX_VERSION } from '../types/preferences.js';
+import { PREFERENCES_CODE_MAX_VERSION, type ProfileSummary } from '../types/preferences.js';
+
+export type { ProfileSummary };
 
 /** Max serialized blob size. Generous for palettes + window + graph prefs; a
  *  guard against a client (or attacker) bloating the row and every SSR read. */
@@ -110,11 +112,23 @@ export async function patchPreferences(
 	db: Db,
 	userId: string,
 	patch: PreferencesPatch,
-	clientVersion: number
+	clientVersion: number,
+	expectedProfileId?: string
 ): Promise<ActivePreferences> {
 	validatePatchShape(patch, clientVersion);
 
 	const active = await getActivePreferences(db, userId);
+
+	// F2 (profile-switch concurrency): a patch authored against one profile must
+	// never land on another after the user switches the active profile mid-flight.
+	// The client stamps the profileId its pending edits were based on; if it no
+	// longer matches the active profile, reject as stale so the client re-hydrates
+	// the new profile's base before re-applying. (The conditional UPDATE below
+	// already keys on active.profileId; this turns a silent wrong-profile write
+	// into an explicit 409.)
+	if (expectedProfileId !== undefined && expectedProfileId !== active.profileId) {
+		error(409, 'active profile changed; re-fetch and retry');
+	}
 
 	// Merge onto the CURRENT row data. The conditional UPDATE below only
 	// commits if version is still clientVersion — so a successful write always
@@ -158,6 +172,160 @@ export async function patchPreferences(
 		version: updated[0].version,
 		initialized: true
 	};
+}
+
+// ── workspace profiles (Phase 3, T9) ────────────────────────────────────────
+//
+// The table was profile-shaped from Phase 1 day one: (user_id, profile_id) PK +
+// the is_active 0/1 flag + the partial unique index user_preferences_one_active
+// ("at most one active row per user"). So profiles are "allow N rows + a
+// switcher" with NO schema migration.
+//
+// ACTIVATE is the load-bearing operation. The design proposed a single
+//   UPDATE ... SET is_active = CASE WHEN profile_id=$t THEN 1 ELSE 0 END
+// but that is unsafe against the partial unique index: Postgres checks the
+// index per-row mid-statement, so if the target row flips to is_active=1 BEFORE
+// the previously-active row flips to 0, the two coexist for an instant and the
+// statement aborts with a unique_violation (PGlite can mask this; real
+// Postgres/Neon does not). We instead deactivate-all THEN activate-target
+// inside a transaction — there is never a transient two-active state, and row
+// locking serializes concurrent activates so exactly one wins.
+
+/** Max profile / preset display-name length. Generous; guards row bloat + UI. */
+const MAX_NAME_LEN = 80;
+
+/** Validate + trim a profile/preset display name. 400 on non-string/empty/long.
+ *  Shared by profiles (here) and the appearance-presets module. */
+export function validateDisplayName(name: unknown): string {
+	if (typeof name !== 'string') error(400, 'name must be a string');
+	const trimmed = name.trim();
+	if (trimmed.length === 0) error(400, 'name must not be empty');
+	if (trimmed.length > MAX_NAME_LEN) error(400, `name must be at most ${MAX_NAME_LEN} characters`);
+	return trimmed;
+}
+
+function toSummary(row: {
+	profileId: string;
+	name: string;
+	isActive: number;
+	version: number;
+}): ProfileSummary {
+	return {
+		profileId: row.profileId,
+		name: row.name,
+		isActive: row.isActive === 1,
+		version: row.version
+	};
+}
+
+/** List a user's profiles, oldest first (so "Default" leads). */
+export async function listProfiles(db: Db, userId: string): Promise<ProfileSummary[]> {
+	// Ensure the lazy Default row exists so a brand-new user sees one profile,
+	// not an empty list (mirrors getActivePreferences' lazy-create contract).
+	await getActivePreferences(db, userId);
+	const rows = await db
+		.select({
+			profileId: userPreferences.profileId,
+			name: userPreferences.name,
+			isActive: userPreferences.isActive,
+			version: userPreferences.version
+		})
+		.from(userPreferences)
+		.where(eq(userPreferences.userId, userId))
+		.orderBy(userPreferences.createdAt);
+	return rows.map(toSummary);
+}
+
+/**
+ * Create a new profile by COPYING the active profile's blob (Open Q2 resolved:
+ * "fork my current setup"), then ACTIVATE it atomically — the created profile
+ * becomes active (design interaction-state contract). One transaction so the
+ * copy + the active-swap commit together and never leave two active rows.
+ */
+export async function createProfile(db: Db, userId: string, name: string): Promise<ProfileSummary> {
+	const profileName = validateDisplayName(name);
+	return await db.transaction(async (tx) => {
+		const active = await getActivePreferences(tx, userId);
+		// Bare .returning() (no column config): the Db union only exposes the
+		// zero-arg overload, so we read the full row and pick fields.
+		const [inserted] = await tx
+			.insert(userPreferences)
+			.values({ userId, name: profileName, isActive: 0, data: active.data })
+			.returning();
+		await activateInTx(tx, userId, inserted.profileId);
+		return { profileId: inserted.profileId, name: profileName, isActive: true, version: inserted.version };
+	});
+}
+
+/** Rename a profile. 404 if it isn't the caller's. */
+export async function renameProfile(
+	db: Db,
+	userId: string,
+	profileId: string,
+	name: string
+): Promise<ProfileSummary> {
+	if (!isUuid(profileId)) error(400, 'invalid profileId');
+	const profileName = validateDisplayName(name);
+	const updated = await db
+		.update(userPreferences)
+		.set({ name: profileName })
+		.where(and(eq(userPreferences.userId, userId), eq(userPreferences.profileId, profileId)))
+		.returning();
+	if (updated.length === 0) error(404, 'profile not found');
+	return toSummary(updated[0]);
+}
+
+/**
+ * Delete a profile. Guards (server-enforced): cannot delete the ACTIVE profile
+ * (switch first) and cannot delete the LAST profile (a user always has ≥1).
+ */
+export async function deleteProfile(db: Db, userId: string, profileId: string): Promise<void> {
+	if (!isUuid(profileId)) error(400, 'invalid profileId');
+	await db.transaction(async (tx) => {
+		const rows = await tx
+			.select({ profileId: userPreferences.profileId, isActive: userPreferences.isActive })
+			.from(userPreferences)
+			.where(eq(userPreferences.userId, userId));
+		const target = rows.find((r) => r.profileId === profileId);
+		if (!target) error(404, 'profile not found');
+		if (target.isActive === 1) error(409, 'cannot delete the active profile; switch first');
+		if (rows.length <= 1) error(409, 'cannot delete the last profile');
+		await tx
+			.delete(userPreferences)
+			.where(and(eq(userPreferences.userId, userId), eq(userPreferences.profileId, profileId)));
+	});
+}
+
+/**
+ * Activate a profile: deactivate every active row, then activate the target —
+ * see the section header for why this is two statements, not a CASE. Validates
+ * target existence/ownership FIRST so a bad id can't deactivate everything and
+ * leave the user with zero active rows (the partial unique index enforces
+ * at-most-one, not at-least-one — F2-adjacent).
+ */
+export async function activateProfile(db: Db, userId: string, profileId: string): Promise<void> {
+	if (!isUuid(profileId)) error(400, 'invalid profileId');
+	await db.transaction(async (tx) => {
+		const [target] = await tx
+			.select({ profileId: userPreferences.profileId })
+			.from(userPreferences)
+			.where(and(eq(userPreferences.userId, userId), eq(userPreferences.profileId, profileId)))
+			.limit(1);
+		if (!target) error(404, 'profile not found');
+		await activateInTx(tx, userId, profileId);
+	});
+}
+
+/** Deactivate-all → activate-target. Caller MUST have verified target exists. */
+async function activateInTx(tx: Db, userId: string, profileId: string): Promise<void> {
+	await tx
+		.update(userPreferences)
+		.set({ isActive: 0 })
+		.where(and(eq(userPreferences.userId, userId), eq(userPreferences.isActive, 1)));
+	await tx
+		.update(userPreferences)
+		.set({ isActive: 1 })
+		.where(and(eq(userPreferences.userId, userId), eq(userPreferences.profileId, profileId)));
 }
 
 // ── validation ──────────────────────────────────────────────────────────────
@@ -212,7 +380,18 @@ function validateMergedData(data: Record<string, unknown>): void {
 	validateGraph(data.graph);
 	validateWindows(data.windows);
 
-	const app = data.appearance;
+	validateAppearance(data.appearance);
+}
+
+/**
+ * Validate an `appearance` subtree (theme / accent / the three color maps).
+ * Extracted from validateMergedData so Phase 3 appearance PRESETS reuse the
+ * exact same rules — a preset's stored `appearance` must pass the same gate as
+ * one merged into a profile. `undefined` is allowed (an absent appearance is
+ * the built-in default); callers that REQUIRE it (presets) check presence
+ * themselves before calling.
+ */
+export function validateAppearance(app: unknown): void {
 	if (app === undefined) return;
 	if (!isPlainObject(app)) error(400, 'appearance must be an object');
 	if (app.theme !== undefined && app.theme !== 'dark' && app.theme !== 'light') {

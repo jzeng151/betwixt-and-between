@@ -66,6 +66,19 @@ export interface WindowsPrefs {
  * own type files. The scaffold only owns `schemaVersion`; everything else is
  * additive and version-migrated as needed.
  */
+/**
+ * Workspace profile summary (Settings customization Phase 3, T9). The list-shape
+ * the profiles API returns and the switcher UI renders. Declared here (not in
+ * the server module) so the client can import the type without crossing the
+ * server-only boundary.
+ */
+export interface ProfileSummary {
+	profileId: string;
+	name: string;
+	isActive: boolean;
+	version: number;
+}
+
 export interface Preferences {
 	/**
 	 * Monotonically-increasing version of the persisted shape. Bump when adding
