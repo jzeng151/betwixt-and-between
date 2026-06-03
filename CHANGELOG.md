@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.10.0] - 2026-06-03
+
+Settings customization Phase 3: keep more than one workspace and switch between them, and save your colors as reusable themes.
+
+### Added
+
+- **Workspace profiles.** A new "Profiles" tab in Settings lets you keep several named workspaces, each with its own colors, graph toggles, and window defaults. Switch between them anytime — only one is active. Creating a profile forks your current setup as the starting point, so a new profile begins as a copy you can diverge from. Rename and delete are there too, with guards: you can't delete the active profile (switch away first) or your last remaining one.
+- **Appearance presets.** In the Appearance tab you can apply a saved color theme in one click, including the built-in High Contrast and Sepia themes, or save your current colors as your own named preset to reuse later. Applying a preset replaces only the colors of the active profile — your graph, window, and editor settings are left alone — and applying over a customized profile asks first so you don't lose work silently.
+
+### Changed
+
+- Profiles are isolated end-to-end through the server: edits to one never bleed into another. A pending color edit is flushed to the current profile before a switch or a new-profile copy, and a write authored against one profile is rejected (rather than silently landing on another) if you switch mid-save.
+
 ## [0.8.9.0] - 2026-06-03
 
 Settings customization Phase 2: the colors you pick now reach the world map, you can recolor any single entity in place, and graphs + windows remember how you like them to open.
