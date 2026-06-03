@@ -1,6 +1,7 @@
 <script lang="ts">
   import { preferences, setPreference, getPreference } from '$lib/os/preferences-store.js';
   import { applyPreferencePatch } from '$lib/os/preferences-sync.js';
+  import { applyPaletteVars } from '$lib/palette-vars.js';
   import type { Editor } from '$lib/types/preferences.js';
   import {
     swatchesForGroup,
@@ -48,6 +49,15 @@
     if (typeof document === 'undefined') return;
     const name = cssVarToken.replace(/^var\((--[a-z0-9-]+)\)$/, '$1');
     document.documentElement.style.setProperty(name, hex);
+  }
+  // On blur, drop any uncommitted preview by reconciling EVERY managed var back
+  // to the store (applyPaletteVars sets overridden vars + REMOVES non-overridden
+  // ones). Reverting from the store, not the live CSS var, is the fix for codex
+  // P2: `inputValue(sw)`→`defaultHex()` reads getComputedStyle, which `previewVar`
+  // already polluted, so an abandoned preview on an unmodified swatch would never
+  // revert. The store is the source of truth and is unaffected by the preview.
+  function revertPreview() {
+    applyPaletteVars(appearance);
   }
   function resetSwatch(sw: ColorSwatch) {
     applyPreferencePatch(buildUnsetPatch(sw));
@@ -131,7 +141,7 @@
           value={appearance.accentColor}
           oninput={(e) => previewVar('--color-accent', (e.target as HTMLInputElement).value)}
           onchange={(e) => setAccent((e.target as HTMLInputElement).value)}
-          onblur={() => previewVar('--color-accent', appearance.accentColor)}
+          onblur={revertPreview}
         />
       </div>
 
@@ -156,7 +166,7 @@
                     value={inputValue(sw)}
                     oninput={(e) => previewVar(sw.cssVar, (e.target as HTMLInputElement).value)}
                     onchange={(e) => setSwatch(sw, (e.target as HTMLInputElement).value)}
-                    onblur={() => previewVar(sw.cssVar, inputValue(sw))}
+                    onblur={revertPreview}
                   />
                 </label>
                 {#if isModified(appearance, sw)}
