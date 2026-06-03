@@ -818,4 +818,15 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		expect(calls.filter((c) => c.method === 'PATCH').length).toBe(patchesBefore);
 		expect(get(preferencesProfileId)).toBe(null);
 	});
+
+	// codex PR #69: before the initial hydrate (serverVersion 0, never reconciled),
+	// switch/create must refuse — else a create copies the empty server Default and
+	// the hydrate overwrites the user's unsynced local prefs.
+	it('switchProfile/createProfile refuse before the initial hydrate', async () => {
+		// No hydratePreferences() in this test → hasHydratedOnce is false.
+		await expect(createProfile('X')).rejects.toThrow(/still loading/);
+		await expect(switchProfile(PROFILE_B)).rejects.toThrow(/still loading/);
+		// Refused before any network call.
+		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+	});
 });

@@ -61,6 +61,10 @@ let inFlight = false;
 // profile-change guard, losing an edit meant for the old profile (codex).
 let activeFlush: Promise<void> | null = null;
 let hydrating = false;
+// Set true on the first successful (200) hydrate and never reset for the session.
+// Distinct from serverVersion (which the post-activate path resets to 0): this
+// gates profile switch/create on the INITIAL reconcile having happened (codex).
+let hasHydratedOnce = false;
 // True while a profile switch/create is mid-flight (activate POST + re-hydrate).
 // Suppresses debounced flushes so a pending write can't race the activate and
 // land on the wrong profile (F2 mitigation 2).
@@ -129,6 +133,7 @@ export function __resetSyncForTesting(): void {
 	inFlight = false;
 	activeFlush = null;
 	hydrating = false;
+	hasHydratedOnce = false;
 	switching = false;
 	_userId.set(null);
 	_profileId.set(null);
@@ -275,6 +280,7 @@ export async function hydratePreferences(): Promise<void> {
 	serverVersion = body.version;
 	serverProfileId = typeof body.profileId === 'string' ? body.profileId : null;
 	_profileId.set(serverProfileId);
+	hasHydratedOnce = true; // a real server blob has now reconciled — switch/create are safe
 	// A current server blob hydrated cleanly — if a too-new localStorage payload
 	// had tripped downgrade protection at boot, clear it now so localStorage
 	// write-through resumes and the stale payload stops re-firing every reload
@@ -392,6 +398,7 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 	pending = { set: {}, unset: [] };
 	serverVersion = 0;
 	serverProfileId = null;
+	hasHydratedOnce = false; // new account must re-hydrate before switch/create
 	switching = false;
 	inFlight = false;
 	_userId.set(null);
@@ -426,6 +433,14 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
  * failure mid-switch is the only case anything is dropped; the optimistic local
  * copy is replaced by the hydrate either way.
  */
+/** Refuse a profile switch/create before the initial hydrate has reconciled
+ *  localStorage into the server row (codex). */
+function requireHydrated(): void {
+	if (!hasHydratedOnce) {
+		throw new Error('preferences are still loading; try again in a moment');
+	}
+}
+
 async function drainBeforeSwitch(): Promise<void> {
 	if (timer) {
 		clearTimeout(timer);
@@ -460,6 +475,11 @@ async function drainBeforeSwitch(): Promise<void> {
  * surfaces it inline + reverts optimistic UI).
  */
 export async function switchProfile(profileId: string): Promise<void> {
+	// Block until the initial hydrate has run: at serverVersion 0 the client
+	// hasn't reconciled localStorage into the server row yet, so a switch/create
+	// would operate on an un-reconciled base and the subsequent hydrate could
+	// overwrite the user's unsynced local prefs (codex).
+	requireHydrated();
 	// Drain BEFORE flipping `switching`: drainBeforeSwitch's flush() is itself
 	// gated by the `switching` guard, so setting it first makes the drain a no-op
 	// and silently discards the user's last pending edit (data loss).
@@ -500,6 +520,9 @@ function markUnhydratedUntilSwitchHydrates(): void {
  * Returns the created profile summary.
  */
 export async function createProfile(name: string): Promise<ProfileSummary> {
+	// See switchProfile: refuse before the initial hydrate so the copy isn't taken
+	// from an un-reconciled server Default and local prefs aren't lost (codex).
+	requireHydrated();
 	// Drain BEFORE flipping `switching` (see switchProfile) so the copied blob
 	// includes the user's latest edits and nothing pending is silently dropped.
 	await drainBeforeSwitch();
