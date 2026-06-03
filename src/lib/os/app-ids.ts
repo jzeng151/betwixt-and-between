@@ -21,17 +21,22 @@ export type AppId = (typeof APP_IDS)[number];
 
 /**
  * Apps whose window POSITION (x,y) default is persisted by "set current as
- * default" (A2/F5). Single-instance apps only — multi-instance apps
- * (character-editor, entity-detail, story-graph, focused-graph, notes) keep the
- * `open()` stagger so instances don't stack, so only their SIZE default is
- * persisted, never position.
+ * default" (A2/F5). SINGLETON dock apps only — every app the dock launches as a
+ * single window (id === appId): character-editor (Characters list), notes,
+ * settings, world-map, timeline, wiki, story-player. Excluded: story-graph +
+ * focused-graph (multi-instance, random id) and entity-detail (one window PER
+ * entity, id = `entity-detail-<entityId>`) — persisting position for those would
+ * stack instances at one saved spot, so they keep the `open()` stagger and
+ * persist SIZE only.
  */
 export const POSITION_PERSIST_APP_IDS = [
 	'settings',
 	'world-map',
 	'timeline',
 	'wiki',
-	'story-player'
+	'story-player',
+	'character-editor',
+	'notes'
 ] as const satisfies readonly AppId[];
 
 export function persistsPosition(appId: AppId): boolean {
