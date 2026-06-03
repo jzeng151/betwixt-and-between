@@ -59,13 +59,18 @@ function edge(over: Partial<ProjectionCausalEdge> = {}): ProjectionCausalEdge {
 	};
 }
 
-// Default: effect at LOC_A, cause at LOC_B, both with centroids on the map.
+// One timeless takes_place_at edge (no bounds) for an Event → Location.
+function tpa(locationId: string, startPosition: number | null = null, endPosition: number | null = null) {
+	return [{ locationId, startPosition, endPosition }];
+}
+
+// Default: effect at LOC_A, cause at LOC_B, both timeless, both with centroids.
 function causal(over: Partial<CausalProjectionInput> = {}): CausalProjectionInput {
 	return {
 		edges: [edge()],
-		locationOf: new Map([
-			[EV_EFFECT, LOC_A],
-			[EV_CAUSE, LOC_B]
+		takesPlaceAt: new Map([
+			[EV_EFFECT, tpa(LOC_A)],
+			[EV_CAUSE, tpa(LOC_B)]
 		]),
 		centroidByLocation: new Map([
 			[LOC_A, CENTROID_A],
@@ -116,9 +121,9 @@ describe('projectState causal-edge fold — causalEdges', () => {
 
 	it('off-map endpoint (Location has no centroid) → omitted, no draw', () => {
 		const c = causal({
-			locationOf: new Map([
-				[EV_EFFECT, LOC_A],
-				[EV_CAUSE, LOC_C] // not in centroidByLocation
+			takesPlaceAt: new Map([
+				[EV_EFFECT, tpa(LOC_A)],
+				[EV_CAUSE, tpa(LOC_C)] // LOC_C not in centroidByLocation
 			])
 		});
 		expect(projectState(0, [ANCHOR], [], emptyCtx, [], c).causalEdges).toHaveLength(0);
@@ -147,12 +152,44 @@ describe('projectState causal-edge fold — causalEdges', () => {
 
 	it('degenerate self-edge (both endpoints same Location) → dropped', () => {
 		const c = causal({
-			locationOf: new Map([
-				[EV_EFFECT, LOC_A],
-				[EV_CAUSE, LOC_A] // same place → no spatial arrow
+			takesPlaceAt: new Map([
+				[EV_EFFECT, tpa(LOC_A)],
+				[EV_CAUSE, tpa(LOC_A)] // same place → no spatial arrow
 			])
 		});
 		expect(projectState(0, [ANCHOR], [], emptyCtx, [], c).causalEdges).toHaveLength(0);
+	});
+
+	it('T-aware location: a scoped takes_place_at only anchors the edge inside its window (FU2)', () => {
+		// The cause Event is at LOC_B only during [1/3, 2/3); outside that window it
+		// has no active location, so the (timeless) causal edge can't be placed.
+		const c = causal({
+			takesPlaceAt: new Map([
+				[EV_EFFECT, tpa(LOC_A)],
+				[EV_CAUSE, tpa(LOC_B, 1 / 3, 2 / 3)] // scoped location
+			])
+		});
+		expect(projectState(0.5, [ANCHOR], [], emptyCtx, [], c).causalEdges).toHaveLength(1); // inside
+		expect(projectState(0.1, [ANCHOR], [], emptyCtx, [], c).causalEdges).toHaveLength(0); // before window
+		expect(projectState(0.9, [ANCHOR], [], emptyCtx, [], c).causalEdges).toHaveLength(0); // after window
+	});
+
+	it('T-aware location: a scoped takes_place_at wins over a timeless one inside its window (FU2)', () => {
+		// Cause Event is at LOC_B by default but temporarily at LOC_C during [1/3,2/3).
+		const c = causal({
+			takesPlaceAt: new Map([
+				[EV_EFFECT, tpa(LOC_A)],
+				[EV_CAUSE, [...tpa(LOC_B), { locationId: LOC_C, startPosition: 1 / 3, endPosition: 2 / 3 }]]
+			]),
+			centroidByLocation: new Map([
+				[LOC_A, CENTROID_A],
+				[LOC_B, CENTROID_B],
+				[LOC_C, { x: 0.5, y: 0.5 }]
+			])
+		});
+		// Outside the window → timeless LOC_B; inside → scoped LOC_C wins.
+		expect(projectState(0.1, [ANCHOR], [], emptyCtx, [], c).causalEdges[0].toPos).toEqual(CENTROID_B);
+		expect(projectState(0.5, [ANCHOR], [], emptyCtx, [], c).causalEdges[0].toPos).toEqual({ x: 0.5, y: 0.5 });
 	});
 
 	it('mystery edge (not yet revealed at T) → hidden, then shown once revealed', () => {
@@ -175,7 +212,7 @@ describe('projectState causal-edge fold — causalEdges', () => {
 		expect(
 			projectState(0, [ANCHOR], [], emptyCtx, [], {
 				edges: [],
-				locationOf: new Map(),
+				takesPlaceAt: new Map(),
 				centroidByLocation: new Map()
 			}).causalEdges
 		).toEqual([]);

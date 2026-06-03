@@ -577,15 +577,22 @@
 	// structurally assignable to ProjectionCausalEdge.
 	const causalInput = $derived.by(() => {
 		const edges = $relationships.filter((r) => r.type === 'caused_by');
-		const locationOf = new Map<string, string>();
+		// Group every takes_place_at edge (with its bounds) by Event id. The active
+		// Location at the playhead is resolved inside foldCausalEdges via
+		// isEdgeVisibleAtT — an Event's location can be temporally scoped, so a
+		// timeless lowest-id pick could anchor an edge to an inactive/off-map
+		// Location at T (FU1, Codex #66). Cheap t-independent grouping here; the
+		// t-dependent pick is per-tick but small.
+		const takesPlaceAt = new Map<
+			string,
+			{ locationId: string; startPosition: number | null; endPosition: number | null }[]
+		>();
 		for (const r of $relationships) {
 			if (r.type !== 'takes_place_at') continue;
-			// No DB uniqueness on takes_place_at: an Event can carry >1. The
-			// relationships store isn't sorted, so pick deterministically (lowest
-			// Location id) — otherwise the causal arrow's endpoint could flip
-			// between reloads on a multi-location Event.
-			const existing = locationOf.get(r.fromId);
-			if (existing === undefined || r.toId < existing) locationOf.set(r.fromId, r.toId);
+			const list = takesPlaceAt.get(r.fromId);
+			const entry = { locationId: r.toId, startPosition: r.startPosition, endPosition: r.endPosition };
+			if (list) list.push(entry);
+			else takesPlaceAt.set(r.fromId, [entry]);
 		}
 		// Location → centroid from scopedRegions (already user- and scope-filtered).
 		// First region wins per Location (deterministic: scopedRegions order).
@@ -607,7 +614,7 @@
 				if (c) centroidByLocation.set(r.locationId, c);
 			}
 		}
-		return { edges, locationOf, centroidByLocation };
+		return { edges, takesPlaceAt, centroidByLocation };
 	});
 
 	// Slice 5 PR-E — Events offered in the "Change owner with cause…" picker.
@@ -622,11 +629,15 @@
 		// baseline anchor at t_position = -Infinity, so the fold WOULD otherwise run
 		// at idle and render timeless caused_by links (scoped ones already filtered
 		// by -Infinity) — a half-state that contradicts the playhead-driven causal
-		// view. Geometry (locationOf/centroidByLocation) is preserved so the input
+		// view. Geometry (takesPlaceAt/centroidByLocation) is preserved so the input
 		// identity is stable; only edges are emptied (Codex review #66).
 		const causal =
 			$playhead === null
-				? { edges: [], locationOf: causalInput.locationOf, centroidByLocation: causalInput.centroidByLocation }
+				? {
+						edges: [],
+						takesPlaceAt: causalInput.takesPlaceAt,
+						centroidByLocation: causalInput.centroidByLocation
+					}
 				: causalInput;
 		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore, causal);
 	});
