@@ -1,15 +1,20 @@
 // Slice 3 D5 + outside-voice B6 — style cascade resolver.
 //
-// Four-layer merge for rendering placement styles (highest priority last):
+// Color cascade for rendering placement styles (highest priority first):
 //
-//   GLOBAL_STYLE_DEFAULT
-//     ⊕ STYLE_DEFAULTS[entity.type]
-//     ⊕ entity.data.style
-//     ⊕ placement.data.style   (per-instance override)
+//   placement.data.style.color   (per-instance override)
+//     ▸ entity.data.style.color  (per-entity map override)
+//     ▸ data.color / character cycle  (characterColorFor — shared with the graph)
+//     ▸ resolvedTypeHex[type]    (the customizable palette — Phase 2, Item 1)
+//     ▸ GLOBAL_STYLE_DEFAULT
 //
-// User-style-prefs (the layer in the original A7) is deferred to
-// Slice 4 with the editor UI (B4). When Slice 4 lands, it inserts
-// between STYLE_DEFAULTS and entity.data.style.
+// Settings customization Phase 2, Item 1 (full unify): the type-default COLOR
+// layer is no longer the hardcoded STYLE_DEFAULTS map — it is the resolved
+// palette (`resolvePaletteHex(appearance)` from entity-type-colors.ts), the SAME
+// source the DOM consumers read via `var(--color-type-*)`. So recoloring a type
+// in Settings recolors the map sprites too. STYLE_DEFAULTS keeps ONLY its
+// non-color scale tuning; its color role is fully replaced (F3a — the color keys
+// are DELETED so they can't out-rank the palette).
 //
 // codex P2 (PR #58): the placement endpoints accept + validate a
 // per-instance `placement.data.style`, but the renderer only resolved
@@ -33,6 +38,7 @@
 
 import type { Entity } from '$lib/stores/entities.js';
 import type { EntityType } from '$lib/server/db/schema.js';
+import { characterColorFor } from '$lib/relationship-colors.js';
 
 export type ResolvedStyle = {
 	/** CSS hex color like '#aabbcc'. Used for sprite tint / marker fill. */
@@ -57,27 +63,35 @@ export const GLOBAL_STYLE_DEFAULT: ResolvedStyle = {
 	opacity: 1
 };
 
-// Per-EntityType defaults. Only the placement-relevant types (Character /
-// Artifact / Item per PlaceableEntityType) are tuned with distinct colors;
-// non-placement types (Act, Scene, Note, Event, Location) keep GLOBAL
-// because they don't appear as map sprites. They CAN still be listed in
-// the asset library if data.is_asset=true (PlaceableEntityType remains
-// the type-level guard at the placement-write layer).
+// Per-EntityType non-color tuning. Item 1 (full unify) DELETED the per-type
+// color entries — the type-default color now comes from the customizable palette
+// (`resolvedTypeHex`), not from here, so a surviving color key would silently
+// out-rank the palette for the exact placeable types (F3a). Only the scale
+// tuning that distinguishes Artifact/Item sprites survives.
 export const STYLE_DEFAULTS: Partial<Record<EntityType, StyleOverride>> = {
-	Character: { color: '#3b82f6', scale: 1 }, // blue-500
-	Artifact: { color: '#f59e0b', scale: 0.9 }, // amber-500
-	Item: { color: '#22c55e', scale: 0.8 } // green-500
+	Artifact: { scale: 0.9 },
+	Item: { scale: 0.8 }
 };
 
 /**
- * Resolve the final style for an entity by cascading through GLOBAL →
- * TYPE_DEFAULTS → entity override → placement override. Unknown keys in
- * either override are silently dropped (the merge only copies the four
- * known fields). `placementStyle` is the raw `placement.data.style` of the
- * specific map instance being rendered; pass it so a per-placement
- * customization takes precedence over the entity-level style.
+ * Resolve the final style for an entity. The color layer cascades
+ * placement override → entity `data.style.color` → per-entity color
+ * (`characterColorFor`: `data.color` then the character cycle) → the resolved
+ * palette `resolvedTypeHex[type]` → GLOBAL. Non-color fields keep the prior
+ * GLOBAL → STYLE_DEFAULTS(scale) → entity → placement merge.
+ *
+ * @param resolvedTypeHex the type-default color layer — `resolvePaletteHex(appearance)`
+ *   (entity-type-colors.ts), so a Settings recolor reaches the sprite.
+ * @param placementStyle the raw `placement.data.style` of the rendered instance.
+ * @param characterIndex the entity's index in the Character-filtered list, for
+ *   the shared cycle (must match the graph's index — see characterColorFor).
  */
-export function resolveStyle(entity: Entity, placementStyle?: unknown): ResolvedStyle {
+export function resolveStyle(
+	entity: Entity,
+	resolvedTypeHex: Record<EntityType, string>,
+	placementStyle?: unknown,
+	characterIndex?: number
+): ResolvedStyle {
 	const typeDefault = STYLE_DEFAULTS[entity.type] ?? {};
 	const entityOverride = extractStyleOverride(entity.data?.style);
 	const instanceOverride = extractStyleOverride(placementStyle);
@@ -85,15 +99,11 @@ export function resolveStyle(entity: Entity, placementStyle?: unknown): Resolved
 		color: pickString(
 			instanceOverride.color,
 			entityOverride.color,
-			typeDefault.color,
+			characterColorFor(entity, characterIndex),
+			resolvedTypeHex[entity.type],
 			GLOBAL_STYLE_DEFAULT.color
 		),
-		icon: pickIcon(
-			instanceOverride.icon,
-			entityOverride.icon,
-			typeDefault.icon,
-			GLOBAL_STYLE_DEFAULT.icon
-		),
+		icon: pickIcon(instanceOverride.icon, entityOverride.icon, GLOBAL_STYLE_DEFAULT.icon),
 		scale: clampNumber(
 			pickNumber(
 				instanceOverride.scale,
@@ -108,13 +118,72 @@ export function resolveStyle(entity: Entity, placementStyle?: unknown): Resolved
 			pickNumber(
 				instanceOverride.opacity,
 				entityOverride.opacity,
-				typeDefault.opacity,
 				GLOBAL_STYLE_DEFAULT.opacity
 			),
 			0,
 			1
 		)
 	};
+}
+
+// ── contrast guard (Item 1 / D4) ─────────────────────────────────────────────
+//
+// Full unify lets a user pick an arbitrarily dark type/entity color, which can
+// vanish against the dark map canvas. The guard adds a FIXED light ring around
+// the sprite when the resolved fill is too dark — it only ADDS a ring, never
+// substitutes the fill, so an intentional dark/neutral color still renders as
+// chosen (codex-P2 neutral-swatch invariant).
+
+/** The map canvas background (src/app.css map surface). */
+export const MAP_CANVAS_BG = '#0d0f14';
+
+/**
+ * Fixed ring color for the contrast guard — the Midnight Ink text color. NOT
+ * derived from the (possibly dark) fill, so it always reads against the canvas
+ * and typical terrain (≥3:1, D4 a11y).
+ */
+export const CONTRAST_RING_COLOR = '#e8e0d0';
+
+/** Minimum fill-vs-canvas contrast ratio before the guard kicks in (WCAG-style). */
+export const CONTRAST_MIN_RATIO = 3;
+
+function srgbToLinear(channel: number): number {
+	const c = channel / 255;
+	return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+/**
+ * WCAG relative luminance of a CSS hex in [0,1]; unknown input → 1 (bright, no
+ * ring). MUST accept every hex shape the renderer draws and the server accepts
+ * (3/4/6/8-digit — style-bounds HEX_COLOR_RE), normalized identically to the
+ * Pixi `parseHex` expansion, or the guard silently misses e.g. `#000` (a 3-digit
+ * black entered via the StyleEditor would render dark with no ring — codex P1).
+ */
+export function relativeLuminance(hex: string): number {
+	let s = (typeof hex === 'string' ? hex.trim() : '').replace(/^#/, '');
+	if (s.length === 3 || s.length === 4) s = s.split('').map((c) => c + c).join('');
+	if (s.length === 8) s = s.slice(0, 6); // drop alpha — luminance is RGB-only
+	if (!/^[0-9a-f]{6}$/i.test(s)) return 1;
+	const n = parseInt(s, 16);
+	return (
+		0.2126 * srgbToLinear((n >> 16) & 255) +
+		0.7152 * srgbToLinear((n >> 8) & 255) +
+		0.0722 * srgbToLinear(n & 255)
+	);
+}
+
+/** WCAG contrast ratio between two hex colors (≥1). */
+export function contrastRatio(a: string, b: string): number {
+	const la = relativeLuminance(a);
+	const lb = relativeLuminance(b);
+	const hi = Math.max(la, lb);
+	const lo = Math.min(la, lb);
+	return (hi + 0.05) / (lo + 0.05);
+}
+
+/** True when `fillHex` is too low-contrast against the map canvas to read alone. */
+export function needsContrastRing(fillHex: string): boolean {
+	return contrastRatio(fillHex, MAP_CANVAS_BG) < CONTRAST_MIN_RATIO;
 }
 
 // -- internals ---------------------------------------------------------------

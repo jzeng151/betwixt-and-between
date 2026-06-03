@@ -245,23 +245,30 @@ See audit deliverable §Direction commitments.
 Phase 1 (server-backed prefs foundation + customizable type/rel/role color palettes)
 is specced + eng/codex/design-reviewed — see design doc
 `~/.gstack/projects/jzeng151-betwixt-and-between/steve-feat-world-map-v3-slice-4-pr-f-design-20260601-232229.md`.
-Built on branch `feat/settings-customization`. Deferred follow-ons:
+Built on branch `feat/settings-customization`. Phase 2/3 design doc:
+`~/.gstack/projects/jzeng151-betwixt-and-between/steve-feat-settings-customization-design-20260602-171051.md`.
 
-- **Map per-entity/type color** — `style-cascade.ts` reads `data.style.color` + hardcoded
-  `STYLE_DEFAULTS` hex, NOT the `--color-type-*` CSS vars the graph/wiki use. First Phase 2
-  task: reconcile the two per-entity color keys (`data.color` graph vs `data.style.color` map)
-  and teach `STYLE_DEFAULTS` to read the resolved palette. Until then, customized colors do
-  NOT reach the world map (Phase 1 is "partially customizable" by design).
-- **Edit-in-place swatch** — right-click graph node / map marker → recolor that type/entity.
-- **Window defaults** — "set current as default" size + position.
-- **Graph-toggle persistence** — promote `showGhostTrails` + inactive `soft/hard` from
-  per-window in-memory to the `graph` prefs blob.
-- **Workspace profiles + theme presets** — N named `user_preferences` rows + switcher.
-  A preset = a full theme (profile carrying only appearance). NOT zero-design: profile
-  switching needs transactional deactivate/activate, snapshot/copy semantics, naming,
-  deletion rules.
+Phase 2 (items 1–4) is BUILT on `feat/settings-customization` (T1–T8 + D3/D4):
 
-Depends on: Phase 1 foundation landing first.
+- ✅ **Map per-entity/type color** — `style-cascade.resolveStyle(entity, resolvedTypeHex, …)`
+  now resolves the type-default color from the customizable palette
+  (`resolvePaletteHex(appearance)`); `ENTITY_TYPE_HEX` is the single source and `src/app.css`
+  is generated from it (`npm run gen:palette-css` + drift test). `data.color` bridges to the
+  map; `characterColorFor` is shared graph↔map; a contrast guard rings low-luminance fills.
+- ✅ **Edit-in-place swatch** — `EntityColorField` writes `data.color`, reused by the map
+  marker's `PlacementStylePopover` ("this <type>") and the story/focused-graph node
+  right-click "Recolor…" (`EntityColorPopover`).
+- ✅ **Window defaults** — `windows.defaults` prefs section + titlebar "set as default"
+  (size for all apps; position for single-instance only); clamp-to-viewport on open.
+- ✅ **Graph-toggle persistence** — `graph` prefs section (global default); StoryGraph +
+  FocusedGraph hydrate + write-through. Schema v5 client migration + server validation (A3).
+
+Phase 3 (item 5) — NOT yet built (its own PR):
+
+- **Workspace profiles + theme presets** — N named `user_preferences` rows + switcher
+  (T9), plus an `appearance_presets` table + apply-as-patch (T10) and the Settings UI
+  (D1/D2). Profile activate/deactivate transaction, copy semantics, deletion guards;
+  presets are appearance-only and apply (not switch). Depends on Phase 2 being stable.
 
 ---
 

@@ -62,8 +62,8 @@ test('STYLE section persists color + is_asset, and toggling is_asset propagates 
 	const chip = palette.locator('.chip', { hasText: 'Untitled Artifact' });
 	await expect(chip).toBeVisible();
 
-	// Pick the green swatch (#22c55e) → writes entity.data.style.color.
-	await styleSection.locator('.swatch[title="#22c55e"]').click();
+	// Pick the Artifact preset swatch (#ea580c) → writes entity.data.style.color.
+	await styleSection.locator('.swatch[title="#ea580c"]').click();
 	// Uncheck "Show in placeables palette" → entity.data.is_asset = false.
 	await styleSection.locator('[data-testid="is-asset-toggle"]').uncheck();
 
@@ -80,7 +80,7 @@ test('STYLE section persists color + is_asset, and toggling is_asset propagates 
 			},
 			{ timeout: 8000 }
 		)
-		.toEqual({ color: '#22c55e', isAsset: false });
+		.toEqual({ color: '#ea580c', isAsset: false });
 
 	// 2. Propagated: the chip is gone from the palette (is_asset !== false filter).
 	await expect(chip).toHaveCount(0);
@@ -122,8 +122,8 @@ test('placement popover writes a per-instance style override', async ({ page, re
 	const popover = page.locator('.placement-style-popover[role="dialog"]');
 	await expect(popover).toBeVisible({ timeout: 5000 });
 
-	// Pick the green swatch → writes placement.data.style.color (NOT the entity).
-	await popover.locator('.swatch[title="#22c55e"]').click();
+	// Pick the Artifact preset swatch → writes placement.data.style.color (NOT the entity).
+	await popover.locator('.swatch[title="#ea580c"]').click();
 
 	await expect
 		.poll(
@@ -135,7 +135,7 @@ test('placement popover writes a per-instance style override', async ({ page, re
 			},
 			{ timeout: 8000 }
 		)
-		.toBe('#22c55e');
+		.toBe('#ea580c');
 
 	// The per-instance edit did NOT touch the entity's style.
 	const ents: Array<{ id: string; data?: Record<string, unknown> }> = await (

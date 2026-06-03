@@ -1,5 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
+  import { preferences } from '$lib/os/preferences-store.js';
+  import { applyPreferencePatch } from '$lib/os/preferences-sync.js';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
@@ -19,6 +22,7 @@
   } from '$lib/features/graph/GraphCanvas.svelte';
   import type { NodePosition } from '$lib/features/graph/radial-layout.js';
   import ContextMenu from '$lib/os/ContextMenu.svelte';
+  import EntityColorPopover from '$lib/components/EntityColorPopover.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import { entityAliases } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
@@ -57,6 +61,10 @@
 
   // Right-click context menu state (nodes).
   let contextMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
+
+  // Item 2: right-click → "Recolor" opens an anchored color popover that writes
+  // data.color (reaches the node, the timeline, and the map sprite).
+  let recolorMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
 
   // Edge right-click → edit relationship modal.
   let editRelMenu = $state<{ relationshipId: string; x: number; y: number } | null>(null);
@@ -100,8 +108,19 @@
   );
 
   // ── View options (declared before derived scope logic that references them) ──
-  let hardFilter = $state(true);
-  let showGhostTrails = $state(false);
+  // Item 4: hydrate from the global graph-toggle defaults on open; changing a
+  // toggle here writes the new default back so every graph window opens that way.
+  let hardFilter = $state(get(preferences).graph.hardFilter);
+  let showGhostTrails = $state(get(preferences).graph.showGhostTrails);
+
+  function setHardFilter(v: boolean) {
+    hardFilter = v;
+    applyPreferencePatch({ set: { graph: { hardFilter: v } } });
+  }
+  function setShowGhostTrails(v: boolean) {
+    showGhostTrails = v;
+    applyPreferencePatch({ set: { graph: { showGhostTrails: v } } });
+  }
 
   // ── Playhead scope ─────────────────────────────────────────────────────────
   // Pure projections of stores → derived view; see src/lib/features/graph/scope.ts.
@@ -577,6 +596,13 @@
         onSelect: () => windowStore.openFocusedGraph([id], 'their_worlds')
       },
       {
+        label: 'Recolor…',
+        onSelect: () => {
+          if (contextMenu) recolorMenu = { entityId: id, x: contextMenu.x, y: contextMenu.y };
+          contextMenu = null;
+        }
+      },
+      {
         label: 'Mark as alias of…',
         onSelect: () => {
           const entity = $entities.find((e) => e.id === id);
@@ -687,7 +713,7 @@
         <span>Scrubbing</span>
         <select
           value={hardFilter ? 'hard' : 'soft'}
-          onchange={(e) => (hardFilter = (e.currentTarget as HTMLSelectElement).value === 'hard')}
+          onchange={(e) => setHardFilter((e.currentTarget as HTMLSelectElement).value === 'hard')}
         >
           <option value="hard">Hide edges</option>
           <option value="soft">Dim edges</option>
@@ -695,7 +721,11 @@
       </label>
       <label class="sg-settings-row">
         <span>Ghost trails</span>
-        <input type="checkbox" bind:checked={showGhostTrails} />
+        <input
+          type="checkbox"
+          checked={showGhostTrails}
+          onchange={(e) => setShowGhostTrails((e.currentTarget as HTMLInputElement).checked)}
+        />
       </label>
       <label class="sg-settings-row">
         <span>Hide out of scope</span>
@@ -821,6 +851,18 @@
     y={contextMenu.y}
     onClose={() => (contextMenu = null)}
   />
+{/if}
+
+{#if recolorMenu}
+  {@const recolorEntity = $entities.find((e) => e.id === recolorMenu!.entityId)}
+  {#if recolorEntity}
+    <EntityColorPopover
+      entity={recolorEntity}
+      x={recolorMenu.x}
+      y={recolorMenu.y}
+      onClose={() => (recolorMenu = null)}
+    />
+  {/if}
 {/if}
 
 {#if editRelMenu}

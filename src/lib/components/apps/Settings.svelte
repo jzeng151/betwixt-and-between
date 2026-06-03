@@ -36,6 +36,19 @@
   function setSwatch(sw: ColorSwatch, hex: string) {
     applyPreferencePatch(buildSetPatch(sw, hex));
   }
+
+  // F4 (perf): a native <input type="color"> fires `input` continuously while
+  // the picker is dragged. Committing each one through applyPreferencePatch
+  // churns $preferences and rebuilds the world-map sprites on every event. So
+  // `input` only paints a cheap, local CSS-var preview on the DOM (the graph /
+  // wiki update live for free; the map stays still), and the actual patch is
+  // committed once on `change` (release). On commit, +layout's applyPaletteVars
+  // re-asserts the managed var from the store, superseding this preview.
+  function previewVar(cssVarToken: string, hex: string) {
+    if (typeof document === 'undefined') return;
+    const name = cssVarToken.replace(/^var\((--[a-z0-9-]+)\)$/, '$1');
+    document.documentElement.style.setProperty(name, hex);
+  }
   function resetSwatch(sw: ColorSwatch) {
     applyPreferencePatch(buildUnsetPatch(sw));
   }
@@ -116,7 +129,9 @@
           type="color"
           class="color-picker"
           value={appearance.accentColor}
-          oninput={(e) => setAccent((e.target as HTMLInputElement).value)}
+          oninput={(e) => previewVar('--color-accent', (e.target as HTMLInputElement).value)}
+          onchange={(e) => setAccent((e.target as HTMLInputElement).value)}
+          onblur={() => previewVar('--color-accent', appearance.accentColor)}
         />
       </div>
 
@@ -139,7 +154,9 @@
                     type="color"
                     class="swatch-input"
                     value={inputValue(sw)}
-                    oninput={(e) => setSwatch(sw, (e.target as HTMLInputElement).value)}
+                    oninput={(e) => previewVar(sw.cssVar, (e.target as HTMLInputElement).value)}
+                    onchange={(e) => setSwatch(sw, (e.target as HTMLInputElement).value)}
+                    onblur={() => previewVar(sw.cssVar, inputValue(sw))}
                   />
                 </label>
                 {#if isModified(appearance, sw)}

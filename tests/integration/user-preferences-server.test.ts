@@ -261,6 +261,77 @@ describe('T2 patchPreferences — validation', () => {
 		);
 		expect(r.version).toBe(2);
 	});
+
+	// ── Phase 2 (Item 4 graph, Item 3 windows) — A3 section validation ──────────
+	it('accepts valid graph toggle defaults', async () => {
+		const r = await patchPreferences(
+			db,
+			userId,
+			{ set: { graph: { hardFilter: false, showGhostTrails: true } } },
+			1
+		);
+		expect(r.version).toBe(2);
+	});
+
+	it('rejects a non-boolean graph toggle (400)', async () => {
+		await expectStatus(
+			patchPreferences(db, userId, { set: { graph: { showGhostTrails: 'yes' } } } as any, 1),
+			400
+		);
+	});
+
+	it('validates graph even when appearance is absent (A3 — above early-return)', async () => {
+		await expectStatus(
+			patchPreferences(db, userId, { set: { graph: { hardFilter: 1 } } } as any, 1),
+			400
+		);
+	});
+
+	it('accepts valid window geometry defaults', async () => {
+		const r = await patchPreferences(
+			db,
+			userId,
+			{ set: { windows: { defaults: { 'world-map': { width: 1200, height: 800, x: 40, y: 40 } } } } },
+			1
+		);
+		expect(r.version).toBe(2);
+	});
+
+	it('rejects NaN / non-finite window geometry (400)', async () => {
+		await expectStatus(
+			patchPreferences(
+				db,
+				userId,
+				{ set: { windows: { defaults: { 'world-map': { width: Number.NaN, height: 800 } } } } } as any,
+				1
+			),
+			400
+		);
+	});
+
+	it('rejects an unknown AppId key in windows.defaults (400)', async () => {
+		await expectStatus(
+			patchPreferences(
+				db,
+				userId,
+				{ set: { windows: { defaults: { 'not-an-app': { width: 100, height: 100 } } } } } as any,
+				1
+			),
+			400
+		);
+	});
+
+	it('rejects window geometry missing required dimensions (400)', async () => {
+		await expectStatus(
+			patchPreferences(
+				db,
+				userId,
+				{ set: { windows: { defaults: { wiki: { x: 10, y: 10 } } } } } as any,
+				1
+			),
+			400
+		);
+	});
 });
 
 describe('T2 cross-user isolation', () => {

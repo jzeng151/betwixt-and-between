@@ -16,7 +16,10 @@
 	import { mapPlacements } from '$lib/stores/map-placements.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { resolveStyle, type StyleOverride } from '$lib/features/map/style-cascade.js';
+	import { resolvePaletteHex } from '$lib/entity-type-colors.js';
+	import { preferences } from '$lib/os/preferences-store.js';
 	import StyleEditor from '$lib/components/StyleEditor.svelte';
+	import EntityColorField from '$lib/components/EntityColorField.svelte';
 	import type { MapPlacement } from '$lib/types/map-placement.js';
 	import type { Entity } from '$lib/stores/entities.js';
 
@@ -35,7 +38,10 @@
 	// Per-instance override value + the entity-level resolved baseline (cascade
 	// without the placement layer) for the StyleEditor placeholders.
 	const styleValue = $derived(((placement.data?.style ?? {}) as StyleOverride));
-	const inheritedStyle = $derived(resolveStyle(placeable));
+	// Item 1: the inherited preview reads the resolved palette so it matches the
+	// rendered sprite after a Settings recolor (regression #3).
+	const resolvedTypeHex = $derived(resolvePaletteHex($preferences.appearance));
+	const inheritedStyle = $derived(resolveStyle(placeable, resolvedTypeHex));
 	const inPalette = $derived(
 		(placeable.data as Record<string, unknown>)?.is_asset !== false
 	);
@@ -98,7 +104,13 @@
 		<span class="pop-title">{placeable.name}</span>
 		<button type="button" class="pop-close" title="Close" onclick={onClose}>✕</button>
 	</header>
+	<!-- D3: two scope sections. THIS MARKER = per-instance placement.data.style;
+	     THIS <TYPE> = entity-level overrides shared everywhere (data.color + is_asset). -->
+	<span class="setting-label">This marker</span>
 	<StyleEditor value={styleValue} inherited={inheritedStyle} onChange={persistStyle} />
+
+	<span class="setting-label scope-entity">This {placeable.type.toLowerCase()}</span>
+	<EntityColorField entity={placeable} />
 	<label class="is-asset-toggle">
 		<input
 			type="checkbox"
@@ -143,6 +155,20 @@
 	}
 	.pop-close:hover {
 		color: var(--color-text, #e8e0d0);
+	}
+	.setting-label {
+		display: block;
+		font-size: 9px;
+		font-weight: 600;
+		color: var(--color-text-muted, #6b7280);
+		text-transform: uppercase;
+		letter-spacing: 0.12em;
+		margin-bottom: 6px;
+	}
+	.scope-entity {
+		margin-top: 14px;
+		padding-top: 10px;
+		border-top: 1px solid var(--color-border, #2a2d35);
 	}
 	.is-asset-toggle {
 		display: flex;
