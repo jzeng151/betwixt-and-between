@@ -440,9 +440,12 @@ async function drainBeforeSwitch(): Promise<void> {
  * surfaces it inline + reverts optimistic UI).
  */
 export async function switchProfile(profileId: string): Promise<void> {
+	// Drain BEFORE flipping `switching`: drainBeforeSwitch's flush() is itself
+	// gated by the `switching` guard, so setting it first makes the drain a no-op
+	// and silently discards the user's last pending edit (data loss).
+	await drainBeforeSwitch();
 	switching = true;
 	try {
-		await drainBeforeSwitch();
 		const res = await fetchImpl(`/api/preferences/profiles/${encodeURIComponent(profileId)}/activate`, {
 			method: 'POST'
 		});
@@ -463,10 +466,12 @@ export async function switchProfile(profileId: string): Promise<void> {
  * Returns the created profile summary.
  */
 export async function createProfile(name: string): Promise<ProfileSummary> {
+	// Drain BEFORE flipping `switching` (see switchProfile) so the copied blob
+	// includes the user's latest edits and nothing pending is silently dropped.
+	await drainBeforeSwitch();
 	switching = true;
 	let created: ProfileSummary;
 	try {
-		await drainBeforeSwitch();
 		const res = await fetchImpl('/api/preferences/profiles', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },

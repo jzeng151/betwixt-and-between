@@ -19,10 +19,13 @@ import {
 import {
 	hydratePreferences,
 	applyPreferencePatch,
+	switchProfile,
+	createProfile,
 	onAuthChange,
 	preferencesUserId,
 	preferencesOwnershipResolved,
 	__setFetchForTesting,
+	__setDebounceForTesting,
 	__resetSyncForTesting,
 	__flushForTesting,
 	__getServerVersionForTesting
@@ -653,5 +656,56 @@ describe('T4 editor prefs are local-only across hydrate (codex)', () => {
 		// And it was not pushed to the server (local-only).
 		await __flushForTesting();
 		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+	});
+});
+
+describe('Phase 3 profile switch/create drains pending edits first', () => {
+	const PROFILE_A = '11111111-1111-1111-1111-111111111111';
+	const PROFILE_B = '22222222-2222-2222-2222-222222222222';
+
+	// A large debounce guarantees the scheduled flush never fires on its own —
+	// any PATCH we observe is the explicit drainBeforeSwitch flush, which is the
+	// behaviour under test (it was a no-op while `switching` was set first).
+	beforeEach(() => __setDebounceForTesting(100_000));
+
+	it('switchProfile flushes the pending edit to the current profile before activating', async () => {
+		mockFetch((c) => {
+			if (c.method === 'GET') return fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A });
+			if (c.method === 'PATCH') return fakeRes(200, { version: 2 });
+			return fakeRes(200, { ok: true }); // POST activate
+		});
+		await hydratePreferences();
+
+		// Edit, then switch WITHOUT waiting for the debounce — the edit is pending.
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
+		await switchProfile(PROFILE_B);
+
+		const patchIdx = calls.findIndex((c) => c.method === 'PATCH');
+		const activateIdx = calls.findIndex((c) => c.method === 'POST');
+		// The pending edit reached the server (was NOT silently dropped)…
+		expect(patchIdx).toBeGreaterThanOrEqual(0);
+		expect(calls[patchIdx].body.set.appearance.theme).toBe('light');
+		// …and it landed on the OLD profile, before the activate flipped profiles.
+		expect(calls[patchIdx].body.profileId).toBe(PROFILE_A);
+		expect(patchIdx).toBeLessThan(activateIdx);
+	});
+
+	it('createProfile flushes the pending edit before the server copies the blob', async () => {
+		mockFetch((c) => {
+			if (c.method === 'GET') return fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A });
+			if (c.method === 'PATCH') return fakeRes(200, { version: 2 });
+			return fakeRes(200, { profileId: PROFILE_B, name: 'Fork', isActive: true, version: 1 });
+		});
+		await hydratePreferences();
+
+		applyPreferencePatch({ set: { appearance: { accentColor: '#abcdef' } } });
+		await createProfile('Fork');
+
+		const patchIdx = calls.findIndex((c) => c.method === 'PATCH');
+		const createIdx = calls.findIndex((c) => c.method === 'POST');
+		expect(patchIdx).toBeGreaterThanOrEqual(0);
+		expect(calls[patchIdx].body.set.appearance.accentColor).toBe('#abcdef');
+		// The edit is flushed before the server copies the active blob into the fork.
+		expect(patchIdx).toBeLessThan(createIdx);
 	});
 });
