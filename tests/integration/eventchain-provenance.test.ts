@@ -221,29 +221,26 @@ describe('Causal Cartography — traceRegionProvenance (Slice 5 PR-E / D6)', () 
 		expect(r.status === 'found' && r.earliest.eventId).toBe(second);
 	});
 
-	it('re-converging DAG: earliest = the LONGEST-path root, not the first-reached one (Codex #66)', async () => {
-		// source → a → rootZ ; source → b → a ; source → b → rootA.
-		// Longest path to rootZ is source→b→a→rootZ (3); rootA is source→b→rootA (2).
-		// A shortest-path BFS would tag rootZ via source→a→rootZ (2), tie with rootA
-		// and pick by id; longest-path relaxation must pick rootZ outright.
+	it('non-source cycle (source → B → C → B) terminates and reconstructs without hanging (Codex #66 P1)', async () => {
+		// A caused_by cycle that does NOT include the source. The tree-BFS sets each
+		// hop once (source→B, B→C; C→B is skipped as visited), so hopInto stays a
+		// tree and chain reconstruction reaches the source instead of looping. The
+		// test completing at all is the regression assertion (a hop-rewrite bug here
+		// span an infinite reconstruction loop and hang the request).
 		const source = await event('source');
-		const a = await event('a');
-		const b = await event('b');
-		const rootZ = await event('rootZ');
-		const rootA = await event('rootA');
-		await causedBy(source, a);
-		await causedBy(a, rootZ);
-		await causedBy(source, b);
-		await causedBy(b, a);
-		await causedBy(b, rootA);
+		const B = await event('B');
+		const C = await event('C');
+		await causedBy(source, B);
+		await causedBy(B, C);
+		await causedBy(C, B); // closes the non-source cycle
 		await transferRegion(source);
 
 		const r = await traceRegionProvenance(db, userId, mapId, REGION, 10);
 		expect(r.status).toBe('found');
 		if (r.status !== 'found') return;
-		expect(r.earliest.eventId).toBe(rootZ);
-		// Chain reconstructs along the longest path: source → b → a → rootZ.
-		expect(r.chain.map((s) => s.eventId)).toEqual([source, b, a, rootZ]);
+		// Reconstruction terminates at source; the chain is the discovered tree path.
+		expect(r.chain[0].eventId).toBe(source);
+		expect(r.chain.map((s) => s.eventId)).toEqual([source, B, C]);
 	});
 
 	it('unowned relationship row is excluded even if it references the caller’s Events (Codex #66)', async () => {

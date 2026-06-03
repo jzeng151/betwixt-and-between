@@ -121,29 +121,26 @@ export async function traceRegionProvenance(
 	//      reveal only, NOT on isEdgeVisibleAtT's temporal window — provenance is
 	//      timeless causal lineage ("what caused this"), not "which edges are
 	//      active right now"; only reader-knowledge (reveal) is a spoiler.
-	const hopInto = new Map<string, AncestryHop>(); // causeId → edge that reached it
+	// Plain breadth-first tree walk: each node's hop is set EXACTLY ONCE, at first
+	// discovery, so `hopInto` is always a tree rooted at the source and chain
+	// reconstruction is guaranteed to terminate at the source. (An earlier
+	// longest-path relaxation that rewrote hops on re-discovery was reverted: it
+	// could rewrite a non-source cycle's hops to point only at each other and hang
+	// reconstruction — Codex review #66 P1. The cost is a documented minor
+	// limitation: in a re-converging multi-root DAG the chosen root is the
+	// shortest-path-deepest one, tie-broken by id — a valid root, not guaranteed
+	// the single most-ancestral.)
+	const hopInto = new Map<string, AncestryHop>(); // causeId → edge that reached it (set once)
 	const depth = new Map<string, number>([[sourceEvent.id, 0]]);
 	const visited = new Set<string>([sourceEvent.id]);
-	// Nodes that have ≥1 admissible (owned + revealed) outgoing cause. A visited
-	// node NOT in this set is a true ROOT — a cause with no further recorded
-	// cause — which is the semantically correct "earliest cause" (vs. merely the
-	// BFS-deepest node, which for a re-converging DAG need not be a root).
+	// Nodes with ≥1 admissible (owned + revealed) outgoing cause. A visited node
+	// NOT in this set is a true ROOT — a cause with no further recorded cause.
 	const hasAdmissibleCause = new Set<string>();
 
-	// Per-node causes cache: a node can be re-processed when a longer path relaxes
-	// its depth (below), so memoize its fetched causes to avoid redundant queries.
-	type CauseRow = {
-		relationshipId: string;
-		causeId: string;
-		startPosition: number | null;
-		revealedAtPosition: number | null;
-		causeName: string;
-	};
-	const causesCache = new Map<string, CauseRow[]>();
-	async function causesOf(node: string): Promise<CauseRow[]> {
-		const cached = causesCache.get(node);
-		if (cached) return cached;
-		const rows: CauseRow[] = await db
+	const queue: string[] = [sourceEvent.id];
+	while (queue.length > 0) {
+		const node = queue.shift()!;
+		const causes = await db
 			.select({
 				relationshipId: relationships.id,
 				causeId: relationships.toId,
@@ -159,56 +156,36 @@ export async function traceRegionProvenance(
 					eq(relationships.fromId, node),
 					// Scope BOTH the relationship row AND the cause entity to the
 					// caller. Without the relationship predicate an imported / null-user
-					// edge that happens to reference one of the caller's Events would
-					// leak its id + start_position into the chain — the rest of the app
+					// edge referencing one of the caller's Events would leak its id +
+					// start_position into the chain — the rest of the app
 					// (/api/relationships, the store) uses this owned-edge set too
 					// (Codex review #66).
 					eq(relationships.userId, userId),
 					eq(entities.userId, userId) // cross-user ancestor → excluded → walk stops
 				)
 			);
-		causesCache.set(node, rows);
-		return rows;
-	}
 
-	const queue: string[] = [sourceEvent.id];
-	while (queue.length > 0) {
-		const node = queue.shift()!;
-		const nodeDepth = depth.get(node) ?? 0;
-		// Cycle safety: a simple ancestry path can't be longer than the number of
-		// distinct nodes reached. Once relaxation pushes a depth past that, we're
-		// circling a cycle (caused_by isn't cycle-checked at write) — stop relaxing.
-		if (nodeDepth > visited.size) continue;
-		for (const c of await causesOf(node)) {
+		for (const c of causes) {
 			// Reveal gate: a not-yet-revealed link is invisible to the reader at T.
 			if (c.revealedAtPosition != null && t < c.revealedAtPosition) continue;
 			hasAdmissibleCause.add(node); // node has a real upstream cause → not a root
-			const newDepth = nodeDepth + 1;
-			const known = depth.get(c.causeId);
-			// First visit OR a strictly LONGER path: (re)record this node's depth and
-			// the hop that achieved it, then re-enqueue so downstream depths relax
-			// too. Using longest path (not first/shortest) makes "deepest root" the
-			// most ancestral cause in a re-converging DAG (Codex review #66). The
-			// cycle cap above bounds re-enqueues.
-			if (known === undefined || newDepth > known) {
-				visited.add(c.causeId);
-				depth.set(c.causeId, newDepth);
-				hopInto.set(c.causeId, {
-					fromId: node,
-					relationshipId: c.relationshipId,
-					startPosition: c.startPosition,
-					name: c.causeName
-				});
-				queue.push(c.causeId);
-			}
+			if (visited.has(c.causeId)) continue; // cycle / re-converging DAG guard
+			visited.add(c.causeId);
+			hopInto.set(c.causeId, {
+				fromId: node,
+				relationshipId: c.relationshipId,
+				startPosition: c.startPosition,
+				name: c.causeName
+			});
+			depth.set(c.causeId, (depth.get(node) ?? 0) + 1);
+			queue.push(c.causeId);
 		}
 	}
 
-	// Earliest cause = the most ancestral ROOT (no admissible outgoing cause),
-	// chosen by greatest path length from source, tie-broken by lowest id for
-	// determinism. If every reachable node has an outgoing cause (a pure cycle —
+	// Earliest cause = the deepest ROOT (no admissible outgoing cause), tie-broken
+	// by lowest id. If every reachable node has an outgoing cause (a pure cycle —
 	// a data error, caused_by isn't cycle-checked at write), fall back to the
-	// deepest visited node so the walk still terminates with a defined answer.
+	// deepest visited node so the walk still returns a defined answer.
 	const roots = [...visited].filter((id) => !hasAdmissibleCause.has(id));
 	const candidates = roots.length > 0 ? roots : [...visited];
 	let earliestId = sourceEvent.id;
@@ -221,11 +198,17 @@ export async function traceRegionProvenance(
 		}
 	}
 
-	// 4) Reconstruct the chain source → … → earliest via the hop map.
+	// 4) Reconstruct the chain source → … → earliest via the hop map. `hopInto` is
+	// a tree (set once per node), so this terminates at the source; the seen guard
+	// is defensive belt-and-suspenders against any future hop-rewrite regression.
 	const reversed: CauseStep[] = [];
+	const seenInChain = new Set<string>();
 	let cursor: string | null = earliestId;
 	while (cursor && cursor !== sourceEvent.id) {
-		const hop: AncestryHop = hopInto.get(cursor)!;
+		if (seenInChain.has(cursor)) break; // cyclic hop chain — stop (defensive)
+		seenInChain.add(cursor);
+		const hop = hopInto.get(cursor);
+		if (!hop) break;
 		reversed.push({
 			eventId: cursor,
 			name: hop.name,

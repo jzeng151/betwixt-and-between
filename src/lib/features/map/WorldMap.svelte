@@ -618,14 +618,17 @@
 	let renderedState = $derived.by<RenderedState | null>(() => {
 		if (!projectionCtx) return null;
 		const t = $playhead ?? Number.NEGATIVE_INFINITY;
-		return projectState(
-			t,
-			$mapAnchorsStore,
-			$mapEventsStore,
-			projectionCtx,
-			$placementsStore,
-			causalInput
-		);
+		// Suppress causal edges while the playhead is idle (null). Maps carry a
+		// baseline anchor at t_position = -Infinity, so the fold WOULD otherwise run
+		// at idle and render timeless caused_by links (scoped ones already filtered
+		// by -Infinity) — a half-state that contradicts the playhead-driven causal
+		// view. Geometry (locationOf/centroidByLocation) is preserved so the input
+		// identity is stable; only edges are emptied (Codex review #66).
+		const causal =
+			$playhead === null
+				? { edges: [], locationOf: causalInput.locationOf, centroidByLocation: causalInput.centroidByLocation }
+				: causalInput;
+		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore, causal);
 	});
 
 	// Combined readiness signal piped through to PixiRegionLayer as

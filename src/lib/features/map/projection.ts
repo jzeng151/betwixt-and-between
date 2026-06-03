@@ -674,10 +674,11 @@ export function polygonCentroid(polygon: number[][]): ArtifactPosition | null {
  *     the map is STRICTER than the graph here by design: the graph SHOWS mystery
  *     edges (dimmed, non-clickable), but a drawn spatial arrow between regions is
  *     a stronger spoiler than a dimmed line, so the map HIDES a reveal-gated edge
- *     until the playhead reaches its revealedAtPosition. (Whole-map idle is a
- *     separate matter: WorldMap passes t = -Infinity when the scrubber is idle,
- *     and pickActiveAnchor returns no anchor before the first anchor's tPosition,
- *     so the map draws nothing — causal edges included — at idle regardless.)
+ *     until the playhead reaches its revealedAtPosition. (Whole-map idle is
+ *     handled by the CALLER, not here: a map carries a baseline anchor at
+ *     t_position = -Infinity, so this fold would otherwise run at idle and render
+ *     timeless edges; WorldMap passes empty `causal.edges` when the playhead is
+ *     null so the idle map shows no causal edges — Codex review #66.)
  *     The temporal window half (isEdgeVisibleAtT) IS the same rule both graphs use;
  *   - BOTH endpoints resolve through locationOf → a region in centroidByLocation
  *     (the caller's owned, on-map, scope-filtered region set — off-map and
