@@ -23,6 +23,7 @@ import {
 	createProfile,
 	onAuthChange,
 	preferencesUserId,
+	preferencesProfileId,
 	preferencesOwnershipResolved,
 	__setFetchForTesting,
 	__setDebounceForTesting,
@@ -752,5 +753,69 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		await __flushForTesting();
 		// Nothing pending to replay — the old-profile edit was dropped, not re-sent.
 		expect(calls.filter((c) => c.method === 'PATCH').length).toBe(patchesBefore);
+	});
+
+	// codex PR #69: a save already in flight must finish before the activate, or
+	// it lands after and is dropped by the profile-change guard.
+	it('switchProfile waits for an in-flight save before activating', async () => {
+		let releasePatch!: () => void;
+		const patchGate = new Promise<void>((r) => (releasePatch = r));
+		const order: string[] = [];
+		__setFetchForTesting((async (_url: unknown, init: { method?: string } | undefined) => {
+			const method = init?.method ?? 'GET';
+			if (method === 'GET') return fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A });
+			if (method === 'PATCH') {
+				order.push('patch-start');
+				await patchGate;
+				order.push('patch-done');
+				return fakeRes(200, { version: 2 });
+			}
+			order.push('activate');
+			return fakeRes(200, { ok: true });
+		}) as unknown as typeof fetch);
+		await hydratePreferences();
+
+		__setDebounceForTesting(0);
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
+		// Let the debounced flush launch and block inside the awaiting PATCH.
+		await new Promise((r) => setTimeout(r, 0));
+		await new Promise((r) => setTimeout(r, 0));
+
+		const switchP = switchProfile(PROFILE_B);
+		await new Promise((r) => setTimeout(r, 0));
+		// The activate must NOT fire while the save is still in flight.
+		expect(order).not.toContain('activate');
+
+		releasePatch();
+		await switchP;
+		expect(order.indexOf('activate')).toBeGreaterThan(order.indexOf('patch-done'));
+	});
+
+	// codex PR #69: if the post-activate hydrate fails transiently, edits must not
+	// be stamped with the OLD profile id (and dropped) — writes stay suppressed
+	// until a successful re-hydrate.
+	it('a failed post-activate hydrate suppresses writes until re-hydrate', async () => {
+		let phase: 'pre' | 'post' = 'pre';
+		mockFetch((c) => {
+			if (c.method === 'GET')
+				return phase === 'pre'
+					? fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A })
+					: fakeRes(500, {}); // post-activate hydrate fails transiently
+			if (c.method === 'POST') {
+				phase = 'post';
+				return fakeRes(200, { ok: true });
+			}
+			return fakeRes(200, { version: 2 }); // PATCH — must not happen
+		});
+		await hydratePreferences(); // version 1, profile A
+
+		await switchProfile(PROFILE_B); // activate ok, post-activate hydrate 500s
+
+		const patchesBefore = calls.filter((c) => c.method === 'PATCH').length;
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
+		await __flushForTesting();
+		// Un-hydrated (serverVersion 0): no PATCH, so no stale-profile stamp.
+		expect(calls.filter((c) => c.method === 'PATCH').length).toBe(patchesBefore);
+		expect(get(preferencesProfileId)).toBe(null);
 	});
 });

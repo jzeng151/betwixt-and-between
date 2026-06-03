@@ -55,6 +55,11 @@ let serverVersion = 0; // 0 = not hydrated / anonymous (no server writes)
 let serverProfileId: string | null = null;
 let pending: PendingPatch = { set: {}, unset: [] };
 let inFlight = false;
+// The currently-running flush() promise (null when idle). drainBeforeSwitch
+// awaits it so a profile switch can't proceed while a save is still in the air —
+// otherwise that in-flight PATCH lands after the activate and is dropped by the
+// profile-change guard, losing an edit meant for the old profile (codex).
+let activeFlush: Promise<void> | null = null;
 let hydrating = false;
 // True while a profile switch/create is mid-flight (activate POST + re-hydrate).
 // Suppresses debounced flushes so a pending write can't race the activate and
@@ -122,6 +127,7 @@ export function __resetSyncForTesting(): void {
 	serverProfileId = null;
 	pending = { set: {}, unset: [] };
 	inFlight = false;
+	activeFlush = null;
 	hydrating = false;
 	switching = false;
 	_userId.set(null);
@@ -429,6 +435,11 @@ async function drainBeforeSwitch(): Promise<void> {
 		clearTimeout(retryTimer);
 		retryTimer = null;
 	}
+	// Await a save already in flight: flush() early-returns while inFlight, and the
+	// in-flight patch is no longer in `pending`, so without this the switch would
+	// proceed and that PATCH could land after the activate (dropped by the
+	// profile-change guard, losing the edit) (codex).
+	if (activeFlush) await activeFlush;
 	await flush();
 	// If flush hit a transient failure (offline / 5xx / expired session) it
 	// requeued the patch and scheduled a retry, so `pending` is non-empty here.
@@ -465,7 +476,21 @@ export async function switchProfile(profileId: string): Promise<void> {
 	} finally {
 		switching = false;
 	}
+	markUnhydratedUntilSwitchHydrates();
 	await hydratePreferences();
+}
+
+/**
+ * After an activate commits server-side, mark the client un-hydrated until the
+ * new profile's blob arrives: serverVersion 0 suppresses flushes, so an edit
+ * made during a slow or transiently-failed post-activate hydrate is NOT stamped
+ * with the OLD profile id and dropped by the profile-change guard. A failed
+ * hydrate schedules its own retry, which restores version + profileId (codex).
+ */
+function markUnhydratedUntilSwitchHydrates(): void {
+	serverVersion = 0;
+	serverProfileId = null;
+	_profileId.set(null);
 }
 
 /**
@@ -494,16 +519,26 @@ export async function createProfile(name: string): Promise<ProfileSummary> {
 	} finally {
 		switching = false;
 	}
+	markUnhydratedUntilSwitchHydrates();
 	await hydratePreferences();
 	return created;
 }
 
 // ── flush machinery ──────────────────────────────────────────────────────────
+
+/** Launch a fire-and-forget flush, tracking its promise in `activeFlush` so
+ *  drainBeforeSwitch can await an in-flight save. */
+function launchFlush(): void {
+	activeFlush = flush().finally(() => {
+		activeFlush = null;
+	});
+}
+
 function scheduleFlush(): void {
 	if (timer) clearTimeout(timer);
 	timer = setTimeout(() => {
 		timer = null;
-		void flush();
+		launchFlush();
 	}, debounceMs);
 }
 
@@ -519,7 +554,7 @@ function scheduleRetry(): void {
 	if (retryTimer) return;
 	retryTimer = setTimeout(() => {
 		retryTimer = null;
-		void flush();
+		launchFlush();
 	}, retryBackoffMs);
 	retryBackoffMs = Math.min(retryBackoffMs * 2, RETRY_MAX_MS);
 }
