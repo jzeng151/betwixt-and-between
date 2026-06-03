@@ -708,4 +708,49 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		// The edit is flushed before the server copies the active blob into the fork.
 		expect(patchIdx).toBeLessThan(createIdx);
 	});
+
+	// codex PR #69: a transient flush failure during the pre-switch drain must
+	// NOT discard the edit, and the switch must abort (not proceed and let the
+	// requeued patch reapply onto the next profile after re-hydrate).
+	it('switchProfile aborts and preserves the pending edit when the pre-switch flush fails', async () => {
+		let patchFails = true;
+		mockFetch((c) => {
+			if (c.method === 'GET') return fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A });
+			if (c.method === 'PATCH') return patchFails ? fakeRes(500, {}) : fakeRes(200, { version: 2 });
+			return fakeRes(200, { ok: true });
+		});
+		await hydratePreferences();
+
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
+		await expect(switchProfile(PROFILE_B)).rejects.toThrow(/could not save/);
+		// The switch did not proceed…
+		expect(calls.some((c) => c.method === 'POST')).toBe(false);
+		// …and the edit survived: a later successful flush still delivers it.
+		patchFails = false;
+		await __flushForTesting();
+		const patches = calls.filter((c) => c.method === 'PATCH');
+		expect(patches.at(-1)?.body.set.appearance.theme).toBe('light');
+	});
+
+	// codex PR #69: a profile-change 409 (active profile changed under us) must
+	// DROP the old-profile patch, not requeue + replay it onto the new profile.
+	it('drops a pending patch on a profile-change 409 instead of replaying it', async () => {
+		let activeProfile = PROFILE_A;
+		mockFetch((c) => {
+			if (c.method === 'GET') return fakeRes(200, { data: {}, version: 1, profileId: activeProfile });
+			if (c.method === 'PATCH')
+				return fakeRes(409, { message: 'active profile changed; re-fetch and retry' });
+			return fakeRes(200, { ok: true });
+		});
+		await hydratePreferences(); // active = PROFILE_A
+		activeProfile = PROFILE_B; // server reports a different active profile on re-hydrate
+
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
+		await __flushForTesting(); // PATCH → 409 profile-change → drop + re-hydrate
+
+		const patchesBefore = calls.filter((c) => c.method === 'PATCH').length;
+		await __flushForTesting();
+		// Nothing pending to replay — the old-profile edit was dropped, not re-sent.
+		expect(calls.filter((c) => c.method === 'PATCH').length).toBe(patchesBefore);
+	});
 });

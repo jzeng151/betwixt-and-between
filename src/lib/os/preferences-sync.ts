@@ -430,7 +430,16 @@ async function drainBeforeSwitch(): Promise<void> {
 		retryTimer = null;
 	}
 	await flush();
-	pending = { set: {}, unset: [] };
+	// If flush hit a transient failure (offline / 5xx / expired session) it
+	// requeued the patch and scheduled a retry, so `pending` is non-empty here.
+	// Do NOT clear it (that would discard the edit) and do NOT switch (the
+	// requeued patch would reapply onto the NEXT profile after re-hydrate).
+	// Abort instead: the caller surfaces the error, the edit stays pending for
+	// the CURRENT profile, and the scheduled retry delivers it once the server
+	// recovers (codex). On a clean flush `pending` is already empty — no-op.
+	if (hasPending()) {
+		throw new Error('could not save pending changes before switching; try again');
+	}
 }
 
 /**
@@ -572,14 +581,25 @@ async function flush(): Promise<void> {
 	}
 
 	if (res.status === 409) {
-		// Stale version — another writer won. Requeue our patch and re-hydrate the
-		// base. Do NOT schedule a flush here: re-flushing while serverVersion is the
-		// SAME stale value that just 409'd would loop (another 409). On a successful
-		// rehydrate, hydratePreferences' own tail schedules the flush against the
-		// fresh version; on a transient hydrate failure it schedules a hydrate retry
-		// that will flush once it succeeds. Either way the retry waits for a fresh
-		// version (codex).
-		requeue(patch);
+		// Two distinct 409s share this status (both are SvelteKit error() bodies):
+		//   • profile-change — the active profile changed under us (another tab or
+		//     an in-flight switch). This patch was authored against the OLD profile;
+		//     requeuing + re-stamping it would land the edit on the NEW profile,
+		//     defeating the F2 guard. DROP it and re-hydrate the new base (codex).
+		//   • version-stale — another writer bumped the version on the SAME profile.
+		//     Requeue + re-hydrate so the retry re-applies onto the fresh base.
+		let profileChanged = false;
+		try {
+			const b = (await res.json()) as { message?: unknown };
+			profileChanged =
+				typeof b?.message === 'string' && b.message.includes('active profile changed');
+		} catch {
+			// Non-JSON 409 body — treat as version-stale (the safe, requeue path).
+		}
+		// Do NOT schedule a flush here either way: re-flushing while serverVersion is
+		// the SAME stale value that just 409'd would loop. hydratePreferences' tail
+		// schedules the flush against the fresh version (or a hydrate retry).
+		if (!profileChanged) requeue(patch);
 		inFlight = false;
 		await hydratePreferences();
 		return;
