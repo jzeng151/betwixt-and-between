@@ -5,7 +5,8 @@
     applyPreferencePatch,
     switchProfile,
     createProfile,
-    preferencesProfileId
+    preferencesProfileId,
+    preferencesOwnershipResolved
   } from '$lib/os/preferences-sync.js';
   import {
     fetchProfiles,
@@ -248,7 +249,11 @@
 
   async function saveCurrentAsPreset() {
     const name = newPresetName.trim();
-    if (!name || savingPreset) return;
+    // Wait for the initial hydrate to resolve ownership: before it, `appearance`
+    // may still be a prior user's localStorage cache on a shared browser, and
+    // "Save current" POSTs it straight into the new account — storing the wrong
+    // user's palette. Gate the save until ownership is confirmed (codex).
+    if (!name || savingPreset || !$preferencesOwnershipResolved) return;
     savingPreset = true;
     try {
       await createPresetRequest(name, appearance);
@@ -448,7 +453,7 @@
           />
           <button
             class="action-btn"
-            disabled={!newPresetName.trim() || savingPreset}
+            disabled={!newPresetName.trim() || savingPreset || !$preferencesOwnershipResolved}
             onclick={saveCurrentAsPreset}
           >
             Save current

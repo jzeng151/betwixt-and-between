@@ -375,16 +375,17 @@ export async function hydratePreferences(): Promise<void> {
  * the pending edits.
  */
 export function applyPreferencePatch(patch: { set?: Record<string, unknown>; unset?: string[] }): void {
-	// Post-switch limbo guard: hasHydratedOnce && serverVersion 0 means the initial
-	// hydrate succeeded but a post-activate hydrate hasn't resolved yet (a transient
-	// failure after activate — markUnhydratedUntilSwitchHydrates). The store still
-	// holds the PREVIOUS profile, so an edit here — especially an apply-preset whose
-	// unset list is computed from the current store — would be authored against
-	// stale state and later flushed onto the now-active profile incorrectly (its
-	// exact-replacement guarantee breaks). Refuse until the hydrate retry restores
-	// serverVersion. Anonymous / pre-first-hydrate (hasHydratedOnce false) is
-	// unaffected and keeps its local-only optimistic edits (codex).
-	if (hasHydratedOnce && serverVersion === 0) return;
+	// Profile-transition guard: refuse edits while the active profile is in flux.
+	//   • switching — a switch/create is mid-flight; serverVersion may still belong
+	//     to the PREVIOUS profile, so an edit (esp. an apply-preset whose unset list
+	//     is computed from the current store) would be authored against the old
+	//     profile and replayed onto the new one by the post-switch hydrate.
+	//   • hasHydratedOnce && serverVersion 0 — post-activate hydrate hasn't resolved
+	//     (transient failure); the store still holds the previous profile.
+	// Either way the edit would break a preset's exact-replacement guarantee on the
+	// new profile. Anonymous / pre-first-hydrate (hasHydratedOnce false, not
+	// switching) is unaffected and keeps its local-only optimistic edits (codex).
+	if (switching || (hasHydratedOnce && serverVersion === 0)) return;
 	// Stamp schemaVersion so the server `data` blob stays version-stamped. Without
 	// this, a server blob that only ever received partial sets would lack
 	// schemaVersion, and a later hydrate's migrateAndMerge would run migrations
@@ -515,12 +516,6 @@ export async function switchProfile(profileId: string): Promise<void> {
 			_status.set('error');
 			throw e;
 		});
-	} catch (e) {
-		// Switch failed; we're still on the original profile. An edit queued while
-		// `switching` suppressed its flush would otherwise sit local-only until the
-		// next edit — reschedule it now so it reaches the original profile (codex).
-		if (hasPending()) scheduleFlush();
-		throw e;
 	} finally {
 		switching = false;
 	}
@@ -582,11 +577,6 @@ export async function createProfile(name: string): Promise<ProfileSummary> {
 			throw e;
 		});
 		created = (await res.json()) as ProfileSummary;
-	} catch (e) {
-		// See switchProfile: reschedule edits suppressed while `switching` so a
-		// failed create doesn't strand them local-only (codex).
-		if (hasPending()) scheduleFlush();
-		throw e;
 	} finally {
 		switching = false;
 	}
@@ -706,7 +696,15 @@ async function flush(): Promise<void> {
 		// Do NOT schedule a flush here either way: re-flushing while serverVersion is
 		// the SAME stale value that just 409'd would loop. hydratePreferences' tail
 		// schedules the flush against the fresh version (or a hydrate retry).
-		if (!profileChanged) requeue(patch);
+		if (profileChanged) {
+			// Everything still queued in `pending` was also authored against the OLD
+			// profile (this tab hasn't switched), so re-applying it onto the new
+			// active profile after hydrate would leak old-profile edits across. Drop
+			// the whole queue, not just the drained patch (codex).
+			pending = { set: {}, unset: [] };
+		} else {
+			requeue(patch);
+		}
 		inFlight = false;
 		await hydratePreferences();
 		return;

@@ -755,6 +755,39 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		expect(calls.filter((c) => c.method === 'PATCH').length).toBe(patchesBefore);
 	});
 
+	// codex PR #69: a profile-change 409 must drop the WHOLE pending queue, not just
+	// the drained patch — a second edit queued during the in-flight PATCH was also
+	// authored against the old profile and would otherwise replay onto the new one.
+	it('drops the whole pending queue on a profile-change 409', async () => {
+		let releasePatch!: () => void;
+		const gate = new Promise<void>((r) => (releasePatch = r));
+		let activeProfile = PROFILE_A;
+		__setFetchForTesting((async (_url: unknown, init: { method?: string; body?: string } | undefined) => {
+			const method = init?.method ?? 'GET';
+			const body = init?.body ? JSON.parse(init.body) : undefined;
+			calls.push({ method, body });
+			if (method === 'GET') return fakeRes(200, { data: {}, version: 1, profileId: activeProfile });
+			return gate.then(() => fakeRes(409, { message: 'active profile changed; re-fetch and retry' }));
+		}) as unknown as typeof fetch);
+		await hydratePreferences();
+
+		__setDebounceForTesting(0);
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } }); // patch1 → flush (gated)
+		await new Promise((r) => setTimeout(r, 0));
+		await new Promise((r) => setTimeout(r, 0)); // flush now in flight
+		// A second edit queued while patch1 is in flight (authored against PROFILE_A).
+		applyPreferencePatch({ set: { appearance: { accentColor: '#abcdef' } } });
+		activeProfile = PROFILE_B; // the re-hydrate will report the new active profile
+
+		releasePatch(); // patch1 → 409 profile-change → clears the whole queue, re-hydrates
+		await new Promise((r) => setTimeout(r, 0));
+		await __flushForTesting();
+		// The queued second edit was dropped — never replayed onto PROFILE_B.
+		expect(
+			calls.filter((c) => c.method === 'PATCH' && c.body?.set?.appearance?.accentColor === '#abcdef')
+		).toHaveLength(0);
+	});
+
 	// codex PR #69: a save already in flight must finish before the activate, or
 	// it lands after and is dropped by the profile-change guard.
 	it('switchProfile waits for an in-flight save before activating', async () => {
@@ -847,9 +880,10 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		expect(body.set.appearance.entityTypeColors.Character).toBe('#abcdef'); // edit survives
 	});
 
-	// codex PR #69: an edit queued while `switching` suppressed its flush must be
-	// rescheduled if the switch then fails (else stranded local-only).
-	it('reschedules a suppressed edit when a profile switch fails', async () => {
+	// codex PR #69: an edit attempted while a switch is in flight is REFUSED (not
+	// applied or queued) — the store still holds the old profile, so the edit would
+	// be authored against it and replayed onto the new profile by the hydrate.
+	it('refuses edits made while a profile switch is in flight', async () => {
 		let releaseActivate!: () => void;
 		const gate = new Promise<void>((r) => (releaseActivate = r));
 		__setFetchForTesting((async (_url: unknown, init: { method?: string } | undefined) => {
@@ -859,23 +893,26 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 				: undefined;
 			calls.push({ method, body });
 			if (method === 'GET') return fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A });
-			if (method === 'POST') return gate.then(() => fakeRes(500, {})); // activate fails
+			if (method === 'POST') return gate.then(() => fakeRes(200, { ok: true }));
 			return fakeRes(200, { version: 2 }); // PATCH
 		}) as unknown as typeof fetch);
 		await hydratePreferences();
 
-		const switchP = switchProfile(PROFILE_B).catch(() => {}); // expected to fail
+		const switchP = switchProfile(PROFILE_B);
 		await new Promise((r) => setTimeout(r, 0));
 		await new Promise((r) => setTimeout(r, 0));
-		// Edit arrives while `switching` is true → queued, flush suppressed.
+		// Edit arrives while `switching` is true → refused (store unchanged).
+		const themeBefore = get(preferences).appearance.theme;
 		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
-		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+		expect(get(preferences).appearance.theme).toBe(themeBefore);
 
 		releaseActivate();
-		await switchP; // activate 500s → catch reschedules the pending flush
+		await switchP;
 		await __flushForTesting();
-		const patches = calls.filter((c) => c.method === 'PATCH');
-		expect(patches.at(-1)?.body.set.appearance.theme).toBe('light');
+		// The refused edit never became a PATCH on the new profile.
+		expect(
+			calls.filter((c) => c.method === 'PATCH' && c.body?.set?.appearance?.theme === 'light')
+		).toHaveLength(0);
 	});
 
 	// codex PR #69: before the initial hydrate (serverVersion 0, never reconciled),
