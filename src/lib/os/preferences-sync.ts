@@ -29,10 +29,12 @@ import {
 	setStoredOwner
 } from './preferences-store.js';
 import { deepMerge, applyUnset, isPlainObject, diffFromBase } from '../preferences-merge.js';
+import { ensureOk } from './api-error.js';
 import {
 	PREFERENCES_CODE_MAX_VERSION,
 	PREFERENCES_DEFAULTS,
-	type Preferences
+	type Preferences,
+	type ProfileSummary
 } from '../types/preferences.js';
 
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error' | 'stale-app';
@@ -46,9 +48,27 @@ interface PendingPatch {
 let fetchImpl: typeof fetch = (...args) => globalThis.fetch(...args);
 let debounceMs = 400;
 let serverVersion = 0; // 0 = not hydrated / anonymous (no server writes)
+// The active profile id the current serverVersion/blob belong to (Phase 3, F2).
+// Stamped on every PATCH so a write authored against one profile can't land on
+// another after a switch (server returns 409 on mismatch). null = anonymous /
+// not hydrated.
+let serverProfileId: string | null = null;
 let pending: PendingPatch = { set: {}, unset: [] };
 let inFlight = false;
+// The currently-running flush() promise (null when idle). drainBeforeSwitch
+// awaits it so a profile switch can't proceed while a save is still in the air —
+// otherwise that in-flight PATCH lands after the activate and is dropped by the
+// profile-change guard, losing an edit meant for the old profile (codex).
+let activeFlush: Promise<void> | null = null;
 let hydrating = false;
+// Set true on the first successful (200) hydrate and never reset for the session.
+// Distinct from serverVersion (which the post-activate path resets to 0): this
+// gates profile switch/create on the INITIAL reconcile having happened (codex).
+let hasHydratedOnce = false;
+// True while a profile switch/create is mid-flight (activate POST + re-hydrate).
+// Suppresses debounced flushes so a pending write can't race the activate and
+// land on the wrong profile (F2 mitigation 2).
+let switching = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 // Transient-failure retry (network down / 5xx / session-expired): the optimistic
@@ -74,6 +94,12 @@ export const preferencesSyncStatus: Readable<SyncStatus> = { subscribe: _status.
 // inline a different user's colors on first paint (codex P1, SSR half).
 const _userId = writable<string | null>(null);
 export const preferencesUserId: Readable<string | null> = { subscribe: _userId.subscribe };
+
+// The active profile id (Phase 3). The switcher UI reads this to mark which
+// profile is live and to refetch the list after a switch. null = anonymous /
+// not hydrated.
+const _profileId = writable<string | null>(null);
+export const preferencesProfileId: Readable<string | null> = { subscribe: _profileId.subscribe };
 
 // True once a hydrate has reached a state where the local store is SAFE TO DISPLAY:
 // a 200 (owner-scoped / foreign discarded) or a definitive 401 (anonymous — the
@@ -102,10 +128,15 @@ export function __resetSyncForTesting(): void {
 	hydrateRetryTimer = null;
 	hydrateBackoffMs = RETRY_BASE_MS;
 	serverVersion = 0;
+	serverProfileId = null;
 	pending = { set: {}, unset: [] };
 	inFlight = false;
+	activeFlush = null;
 	hydrating = false;
+	hasHydratedOnce = false;
+	switching = false;
 	_userId.set(null);
+	_profileId.set(null);
 	_resolved.set(false);
 	_status.set('idle');
 }
@@ -134,9 +165,15 @@ function leafPaths(obj: Record<string, unknown>, prefix = ''): string[] {
 
 function accumulate(patch: PendingPatch): void {
 	if (patch.set && Object.keys(patch.set).length > 0) {
-		// A set of a path cancels a pending unset of the same path.
+		// A set cancels a pending unset of the same path OR an ANCESTOR path. The
+		// server applies set-then-unset, so a queued whole-subtree unset (e.g.
+		// `appearance.entityTypeColors` from an apply-preset) left beneath a newer
+		// descendant set (`...entityTypeColors.Character`) would wipe that edit on
+		// flush and lose it. Dropping ancestor unsets keeps the newer edit (codex).
 		const paths = leafPaths(patch.set);
-		pending.unset = pending.unset.filter((u) => !paths.includes(u));
+		pending.unset = pending.unset.filter(
+			(u) => !paths.some((p) => p === u || p.startsWith(`${u}.`))
+		);
 		pending.set = deepMerge(pending.set, patch.set);
 	}
 	for (const p of patch.unset ?? []) {
@@ -210,6 +247,12 @@ export async function hydratePreferences(): Promise<void> {
 		// Unauthenticated: localStorage-only contract. No server writes. This is a
 		// RESOLVED state — the cache is the anonymous viewer's, safe to display.
 		serverVersion = 0;
+		// Reset hasHydratedOnce: a definitive 401 (e.g. session expired after a
+		// prior hydrate) returns us to anonymous, local-only mode. Leaving it true
+		// would make the post-switch-limbo guard in applyPreferencePatch
+		// (hasHydratedOnce && serverVersion 0) silently drop every local edit,
+		// breaking the localStorage-only contract (codex).
+		hasHydratedOnce = false;
 		_userId.set(null);
 		_resolved.set(true);
 		hydrating = false;
@@ -229,6 +272,7 @@ export async function hydratePreferences(): Promise<void> {
 		version: number;
 		initialized?: boolean;
 		userId?: string;
+		profileId?: string;
 	};
 	let merged: Preferences;
 	try {
@@ -246,6 +290,9 @@ export async function hydratePreferences(): Promise<void> {
 		throw e;
 	}
 	serverVersion = body.version;
+	serverProfileId = typeof body.profileId === 'string' ? body.profileId : null;
+	_profileId.set(serverProfileId);
+	hasHydratedOnce = true; // a real server blob has now reconciled — switch/create are safe
 	// A current server blob hydrated cleanly — if a too-new localStorage payload
 	// had tripped downgrade protection at boot, clear it now so localStorage
 	// write-through resumes and the stale payload stops re-firing every reload
@@ -328,6 +375,17 @@ export async function hydratePreferences(): Promise<void> {
  * the pending edits.
  */
 export function applyPreferencePatch(patch: { set?: Record<string, unknown>; unset?: string[] }): void {
+	// Profile-transition guard: refuse edits while the active profile is in flux.
+	//   • switching — a switch/create is mid-flight; serverVersion may still belong
+	//     to the PREVIOUS profile, so an edit (esp. an apply-preset whose unset list
+	//     is computed from the current store) would be authored against the old
+	//     profile and replayed onto the new one by the post-switch hydrate.
+	//   • hasHydratedOnce && serverVersion 0 — post-activate hydrate hasn't resolved
+	//     (transient failure); the store still holds the previous profile.
+	// Either way the edit would break a preset's exact-replacement guarantee on the
+	// new profile. Anonymous / pre-first-hydrate (hasHydratedOnce false, not
+	// switching) is unaffected and keeps its local-only optimistic edits (codex).
+	if (switching || (hasHydratedOnce && serverVersion === 0)) return;
 	// Stamp schemaVersion so the server `data` blob stays version-stamped. Without
 	// this, a server blob that only ever received partial sets would lack
 	// schemaVersion, and a later hydrate's migrateAndMerge would run migrations
@@ -341,7 +399,7 @@ export function applyPreferencePatch(patch: { set?: Record<string, unknown>; uns
 	preferences.set(next);
 	// Queue for the server.
 	accumulate(norm);
-	if (serverVersion !== 0 && !hydrating) scheduleFlush();
+	if (serverVersion !== 0 && !hydrating && !switching) scheduleFlush();
 }
 
 /** Auth lifecycle. logout → stop pending writes. switch → reset + re-hydrate. */
@@ -362,8 +420,17 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 	hydrateBackoffMs = RETRY_BASE_MS;
 	pending = { set: {}, unset: [] };
 	serverVersion = 0;
+	serverProfileId = null;
+	hasHydratedOnce = false; // new account must re-hydrate before switch/create
+	switching = false;
 	inFlight = false;
+	// Drop the previous account's in-flight flush handle: its result is already
+	// discarded (inFlight reset), and leaving it would make the new account's
+	// drainBeforeSwitch await an abandoned request that may hang until it
+	// completes/times out (codex).
+	activeFlush = null;
 	_userId.set(null);
+	_profileId.set(null);
 	// Close the gate until the next hydrate re-resolves ownership for the new
 	// account; the switch resets the store to defaults first, so nothing foreign
 	// is shown meanwhile.
@@ -384,12 +451,167 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 	await hydratePreferences();
 }
 
+// ── workspace profiles (Phase 3, T9) ─────────────────────────────────────────
+
+/**
+ * Flush any pending edits to the CURRENT profile, then drop whatever didn't
+ * make it. Called before a profile switch/create so (a) the current profile
+ * keeps the user's edits and (b) nothing pending leaks onto the next profile
+ * via reapplyOntoBase after the re-hydrate (F2 mitigation 2). A transient flush
+ * failure mid-switch is the only case anything is dropped; the optimistic local
+ * copy is replaced by the hydrate either way.
+ */
+/** Refuse a profile switch/create before the initial hydrate has reconciled
+ *  localStorage into the server row (codex). */
+function requireHydrated(): void {
+	// serverVersion 0 means there is NO resolved current server profile right now —
+	// covers pre-initial-hydrate (956) AND post-switch limbo (a failed post-activate
+	// hydrate leaves hasHydratedOnce true but serverVersion 0). In either case a
+	// switch/create would drain nothing and fork whatever profile is active
+	// server-side while the store shows a different one. Require a resolved profile,
+	// not just a historical hydrate (codex).
+	if (serverVersion === 0) {
+		throw new Error('preferences are still loading; try again in a moment');
+	}
+}
+
+async function drainBeforeSwitch(): Promise<void> {
+	if (timer) {
+		clearTimeout(timer);
+		timer = null;
+	}
+	if (retryTimer) {
+		clearTimeout(retryTimer);
+		retryTimer = null;
+	}
+	// Await a save already in flight: flush() early-returns while inFlight, and the
+	// in-flight patch is no longer in `pending`, so without this the switch would
+	// proceed and that PATCH could land after the activate (dropped by the
+	// profile-change guard, losing the edit) (codex).
+	if (activeFlush) await activeFlush;
+	await flush();
+	// If flush hit a transient failure (offline / 5xx / expired session) it
+	// requeued the patch and scheduled a retry, so `pending` is non-empty here.
+	// Do NOT clear it (that would discard the edit) and do NOT switch (the
+	// requeued patch would reapply onto the NEXT profile after re-hydrate).
+	// Abort instead: the caller surfaces the error, the edit stays pending for
+	// the CURRENT profile, and the scheduled retry delivers it once the server
+	// recovers (codex). On a clean flush `pending` is already empty — no-op.
+	if (hasPending()) {
+		throw new Error('could not save pending changes before switching; try again');
+	}
+}
+
+/**
+ * Activate a different profile: drain pending writes to the current profile,
+ * POST the activate, then re-hydrate so the store reflects the newly-active
+ * profile's blob + version + id. Throws on a failed activate (the caller
+ * surfaces it inline + reverts optimistic UI).
+ */
+export async function switchProfile(profileId: string): Promise<void> {
+	// Block until the initial hydrate has run: at serverVersion 0 the client
+	// hasn't reconciled localStorage into the server row yet, so a switch/create
+	// would operate on an un-reconciled base and the subsequent hydrate could
+	// overwrite the user's unsynced local prefs (codex).
+	requireHydrated();
+	// Drain BEFORE flipping `switching`: drainBeforeSwitch's flush() is itself
+	// gated by the `switching` guard, so setting it first makes the drain a no-op
+	// and silently discards the user's last pending edit (data loss).
+	await drainBeforeSwitch();
+	switching = true;
+	try {
+		const res = await fetchImpl(`/api/preferences/profiles/${encodeURIComponent(profileId)}/activate`, {
+			method: 'POST'
+		});
+		await ensureOk(res, 'activate profile failed').catch((e) => {
+			_status.set('error');
+			throw e;
+		});
+	} finally {
+		switching = false;
+	}
+	markUnhydratedUntilSwitchHydrates();
+	await hydratePreferences();
+	assertSwitchHydrated();
+}
+
+/**
+ * After an activate commits server-side, mark the client un-hydrated until the
+ * new profile's blob arrives: serverVersion 0 suppresses flushes, so an edit
+ * made during a slow or transiently-failed post-activate hydrate is NOT stamped
+ * with the OLD profile id and dropped by the profile-change guard. A failed
+ * hydrate schedules its own retry, which restores version + profileId (codex).
+ */
+function markUnhydratedUntilSwitchHydrates(): void {
+	serverVersion = 0;
+	serverProfileId = null;
+	_profileId.set(null);
+}
+
+/**
+ * After a switch/create activates and we re-hydrate, a still-zero serverVersion
+ * means the post-activate hydrate failed (transient / 401) and the store is NOT
+ * yet on the new profile. Surface that as an unresolved switch so the caller (the
+ * Settings switcher) shows an error instead of silently succeeding — at which
+ * point edits would be no-ops (see applyPreferencePatch's limbo guard) with no
+ * feedback. The scheduled hydrate retry will re-sync the new profile (codex).
+ */
+function assertSwitchHydrated(): void {
+	if (serverVersion === 0) {
+		throw new Error('switched profile but could not load it; check your connection and retry');
+	}
+}
+
+/**
+ * Create a new profile (server copies the active blob, then activates it) and
+ * re-hydrate so the store tracks the new active profile. Drains pending first
+ * so the copied blob includes the user's latest edits, not a stale server base.
+ * Returns the created profile summary.
+ */
+export async function createProfile(name: string): Promise<ProfileSummary> {
+	// See switchProfile: refuse before the initial hydrate so the copy isn't taken
+	// from an un-reconciled server Default and local prefs aren't lost (codex).
+	requireHydrated();
+	// Drain BEFORE flipping `switching` (see switchProfile) so the copied blob
+	// includes the user's latest edits and nothing pending is silently dropped.
+	await drainBeforeSwitch();
+	switching = true;
+	let created: ProfileSummary;
+	try {
+		const res = await fetchImpl('/api/preferences/profiles', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name })
+		});
+		await ensureOk(res, 'create profile failed').catch((e) => {
+			_status.set('error');
+			throw e;
+		});
+		created = (await res.json()) as ProfileSummary;
+	} finally {
+		switching = false;
+	}
+	markUnhydratedUntilSwitchHydrates();
+	await hydratePreferences();
+	assertSwitchHydrated();
+	return created;
+}
+
 // ── flush machinery ──────────────────────────────────────────────────────────
+
+/** Launch a fire-and-forget flush, tracking its promise in `activeFlush` so
+ *  drainBeforeSwitch can await an in-flight save. */
+function launchFlush(): void {
+	activeFlush = flush().finally(() => {
+		activeFlush = null;
+	});
+}
+
 function scheduleFlush(): void {
 	if (timer) clearTimeout(timer);
 	timer = setTimeout(() => {
 		timer = null;
-		void flush();
+		launchFlush();
 	}, debounceMs);
 }
 
@@ -405,7 +627,7 @@ function scheduleRetry(): void {
 	if (retryTimer) return;
 	retryTimer = setTimeout(() => {
 		retryTimer = null;
-		void flush();
+		launchFlush();
 	}, retryBackoffMs);
 	retryBackoffMs = Math.min(retryBackoffMs * 2, RETRY_MAX_MS);
 }
@@ -431,7 +653,7 @@ function scheduleHydrateRetry(): void {
 }
 
 async function flush(): Promise<void> {
-	if (inFlight || hydrating || serverVersion === 0 || !hasPending()) return;
+	if (inFlight || hydrating || switching || serverVersion === 0 || !hasPending()) return;
 	// We are flushing now — cancel any scheduled retry so it doesn't double-fire.
 	if (retryTimer) {
 		clearTimeout(retryTimer);
@@ -446,7 +668,15 @@ async function flush(): Promise<void> {
 		res = await fetchImpl('/api/preferences', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ set: patch.set, unset: patch.unset, version: serverVersion })
+			body: JSON.stringify({
+				set: patch.set,
+				unset: patch.unset,
+				version: serverVersion,
+				// F2: stamp the profile this write was authored against. If the active
+				// profile changed server-side, the PATCH 409s instead of landing on
+				// the new profile. null (anonymous) is omitted by JSON.stringify.
+				profileId: serverProfileId ?? undefined
+			})
 		});
 	} catch {
 		// Network failure — requeue and retry with backoff so the edit isn't
@@ -459,14 +689,38 @@ async function flush(): Promise<void> {
 	}
 
 	if (res.status === 409) {
-		// Stale version — another writer won. Requeue our patch and re-hydrate the
-		// base. Do NOT schedule a flush here: re-flushing while serverVersion is the
-		// SAME stale value that just 409'd would loop (another 409). On a successful
-		// rehydrate, hydratePreferences' own tail schedules the flush against the
-		// fresh version; on a transient hydrate failure it schedules a hydrate retry
-		// that will flush once it succeeds. Either way the retry waits for a fresh
-		// version (codex).
-		requeue(patch);
+		// Two distinct 409s share this status (both are SvelteKit error() bodies):
+		//   • profile-change — the active profile changed under us (another tab or
+		//     an in-flight switch). This patch was authored against the OLD profile;
+		//     requeuing + re-stamping it would land the edit on the NEW profile,
+		//     defeating the F2 guard. DROP it and re-hydrate the new base (codex).
+		//   • version-stale — another writer bumped the version on the SAME profile.
+		//     Requeue + re-hydrate so the retry re-applies onto the fresh base.
+		let profileChanged = false;
+		try {
+			const b = (await res.json()) as { message?: unknown };
+			profileChanged =
+				typeof b?.message === 'string' && b.message.includes('active profile changed');
+		} catch {
+			// Non-JSON 409 body — treat as version-stale (the safe, requeue path).
+		}
+		// Do NOT schedule a flush here either way: re-flushing while serverVersion is
+		// the SAME stale value that just 409'd would loop. hydratePreferences' tail
+		// schedules the flush against the fresh version (or a hydrate retry).
+		if (profileChanged) {
+			// Everything still queued in `pending` was also authored against the OLD
+			// profile (this tab hasn't switched), so re-applying it onto the new
+			// active profile after hydrate would leak old-profile edits across. Drop
+			// the whole queue, not just the drained patch (codex).
+			pending = { set: {}, unset: [] };
+			// Mark unhydrated before the rehydrate below: if it fails transiently,
+			// serverVersion stays 0 so the limbo guard refuses edits, rather than
+			// letting them stamp the stale profile id and get dropped (codex). The
+			// switch/create paths do the same; this makes all three rehydrates uniform.
+			markUnhydratedUntilSwitchHydrates();
+		} else {
+			requeue(patch);
+		}
 		inFlight = false;
 		await hydratePreferences();
 		return;

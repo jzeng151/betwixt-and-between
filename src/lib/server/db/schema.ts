@@ -770,3 +770,36 @@ export const userPreferences = pgTable(
 			.where(sql`is_active = 1`)
 	]
 );
+
+// =============================================================================
+// appearance_presets — Settings customization Phase 3 (theme presets, T10)
+// =============================================================================
+// A named, reusable APPEARANCE blob (theme / accent / the three color maps),
+// SEPARATE from user_preferences (Approach C). Profiles carry the full prefs
+// blob and switch via is_active; a preset is appearance-ONLY and is *applied*
+// (patched into the active profile's appearance.*), never activated. Keeping
+// them in their own table means a profile-list query can never surface a preset
+// (the Approach-B `kind`-discriminator risk — a forgotten filter leaking
+// presets into the switcher — is structurally impossible here).
+//
+// Built-in presets (High Contrast, Sepia, …) ship as a client/server constant
+// (BUILTIN_APPEARANCE_PRESETS), NOT rows — only user-saved presets live here.
+//
+// IMMUTABLE except delete: no updated_at column and NO bump_updated_at trigger.
+// A preset is created once (POST) and deleted (DELETE); there is no rename/edit
+// path, so the mutable-table trigger convention does not apply. created_at is
+// for stable ordering only.
+// =============================================================================
+export const appearancePresets = pgTable(
+	'appearance_presets',
+	{
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		presetId: uuid('preset_id').notNull().defaultRandom(),
+		name: text('name').notNull(),
+		appearance: jsonb('appearance').notNull().default({}).$type<Record<string, unknown>>(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [primaryKey({ columns: [table.userId, table.presetId] })]
+);

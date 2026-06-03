@@ -263,12 +263,14 @@ Phase 2 (items 1–4) is BUILT on `feat/settings-customization` (T1–T8 + D3/D4
 - ✅ **Graph-toggle persistence** — `graph` prefs section (global default); StoryGraph +
   FocusedGraph hydrate + write-through. Schema v5 client migration + server validation (A3).
 
-Phase 3 (item 5) — NOT yet built (its own PR):
+Phase 3 (item 5) — BUILT on `feat/settings-customization-phase-3` (T9 + T10 + D1/D2):
 
-- **Workspace profiles + theme presets** — N named `user_preferences` rows + switcher
+- ✅ **Workspace profiles + theme presets** — N named `user_preferences` rows + switcher
   (T9), plus an `appearance_presets` table + apply-as-patch (T10) and the Settings UI
-  (D1/D2). Profile activate/deactivate transaction, copy semantics, deletion guards;
-  presets are appearance-only and apply (not switch). Depends on Phase 2 being stable.
+  (D1/D2). Profile activate/deactivate transaction (deactivate-all → activate-target),
+  copy-on-create semantics, deletion guards (not-active, not-last), F2 cross-profile
+  PATCH rejection; presets are appearance-only and apply (not switch).
+  **Completed:** v0.8.10.0 (2026-06-03)
 
 ---
 
