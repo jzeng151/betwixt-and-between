@@ -110,37 +110,30 @@ export async function traceRegionProvenance(
 		);
 	if (!sourceEvent) return { status: 'no-cause' };
 
-	// 3) BFS the caused_by ancestry, visited-guarded. Two gates on each hop:
-	//    - ownership (inner-join entities.user_id) — a cross-user ancestor is
-	//      excluded → walk stops at the boundary;
-	//    - reveal (revealedAtPosition) — a `caused_by` link not yet revealed to
-	//      the reader at T is treated as not-yet-existing, so the walk stops
-	//      there and never surfaces a hidden cause's name or story-time. This
-	//      mirrors the map render's strict spoiler posture (projection.ts
-	//      foldCausalEdges + jump-to-cause.isCausalEdgeClickable). NOTE we gate on
-	//      reveal only, NOT on isEdgeVisibleAtT's temporal window — provenance is
-	//      timeless causal lineage ("what caused this"), not "which edges are
-	//      active right now"; only reader-knowledge (reveal) is a spoiler.
-	// Plain breadth-first tree walk: each node's hop is set EXACTLY ONCE, at first
-	// discovery, so `hopInto` is always a tree rooted at the source and chain
-	// reconstruction is guaranteed to terminate at the source. (An earlier
-	// longest-path relaxation that rewrote hops on re-discovery was reverted: it
-	// could rewrite a non-source cycle's hops to point only at each other and hang
-	// reconstruction — Codex review #66 P1. The cost is a documented minor
-	// limitation: in a re-converging multi-root DAG the chosen root is the
-	// shortest-path-deepest one, tie-broken by id — a valid root, not guaranteed
-	// the single most-ancestral.)
-	const hopInto = new Map<string, AncestryHop>(); // causeId → edge that reached it (set once)
-	const depth = new Map<string, number>([[sourceEvent.id, 0]]);
-	const visited = new Set<string>([sourceEvent.id]);
-	// Nodes with ≥1 admissible (owned + revealed) outgoing cause. A visited node
-	// NOT in this set is a true ROOT — a cause with no further recorded cause.
-	const hasAdmissibleCause = new Set<string>();
+	// 3) Walk the caused_by ancestry in two phases. Two gates on each edge:
+	//    - ownership (relationships.user_id AND entities.user_id) — an imported /
+	//      cross-user edge or ancestor is excluded → walk stops at the boundary;
+	//    - reveal (revealedAtPosition) — a link not yet revealed to the reader at T
+	//      is treated as not-yet-existing, so the walk never surfaces a hidden
+	//      cause's name or story-time (mirrors the map render's spoiler posture).
+	//      Gated on reveal ONLY, not isEdgeVisibleAtT's window — provenance is
+	//      timeless causal lineage, and only reader-knowledge is a spoiler.
 
-	const queue: string[] = [sourceEvent.id];
-	while (queue.length > 0) {
-		const node = queue.shift()!;
-		const causes = await db
+	// Phase A — discover the admissible ancestry subgraph. Each node is fetched
+	// EXACTLY ONCE (a `nodes` set dedups the frontier), so this terminates even
+	// when caused_by has a cycle (it isn't cycle-checked at write).
+	type AdjEdge = {
+		causeId: string;
+		relationshipId: string;
+		startPosition: number | null;
+		name: string;
+	};
+	const adj = new Map<string, AdjEdge[]>(); // node → its admissible outgoing cause edges
+	const nodes = new Set<string>([sourceEvent.id]);
+	const frontier: string[] = [sourceEvent.id];
+	while (frontier.length > 0) {
+		const node = frontier.shift()!;
+		const rows = await db
 			.select({
 				relationshipId: relationships.id,
 				causeId: relationships.toId,
@@ -154,40 +147,92 @@ export async function traceRegionProvenance(
 				and(
 					eq(relationships.type, 'caused_by'),
 					eq(relationships.fromId, node),
-					// Scope BOTH the relationship row AND the cause entity to the
-					// caller. Without the relationship predicate an imported / null-user
-					// edge referencing one of the caller's Events would leak its id +
-					// start_position into the chain — the rest of the app
-					// (/api/relationships, the store) uses this owned-edge set too
-					// (Codex review #66).
 					eq(relationships.userId, userId),
-					eq(entities.userId, userId) // cross-user ancestor → excluded → walk stops
+					eq(entities.userId, userId)
 				)
 			);
-
-		for (const c of causes) {
-			// Reveal gate: a not-yet-revealed link is invisible to the reader at T.
-			if (c.revealedAtPosition != null && t < c.revealedAtPosition) continue;
-			hasAdmissibleCause.add(node); // node has a real upstream cause → not a root
-			if (visited.has(c.causeId)) continue; // cycle / re-converging DAG guard
-			visited.add(c.causeId);
-			hopInto.set(c.causeId, {
-				fromId: node,
+		const edges: AdjEdge[] = [];
+		for (const c of rows) {
+			if (c.revealedAtPosition != null && t < c.revealedAtPosition) continue; // reveal gate
+			edges.push({
+				causeId: c.causeId,
 				relationshipId: c.relationshipId,
 				startPosition: c.startPosition,
 				name: c.causeName
 			});
-			depth.set(c.causeId, (depth.get(node) ?? 0) + 1);
-			queue.push(c.causeId);
+			if (!nodes.has(c.causeId)) {
+				nodes.add(c.causeId);
+				frontier.push(c.causeId);
+			}
+		}
+		adj.set(node, edges);
+	}
+
+	// Phase B — longest path from source to each node, so the deepest ROOT is the
+	// MOST ancestral cause (Codex review #66). Topological-sort DP (Kahn) when the
+	// subgraph is acyclic: dist relaxes forward and each parent has strictly
+	// smaller dist than its child, so the hop chain can't cycle and reconstruction
+	// always terminates at the source. If a cycle is present (a data error —
+	// caused_by isn't cycle-checked), fall back to a safe set-once BFS tree.
+	const depth = new Map<string, number>([[sourceEvent.id, 0]]);
+	const hopInto = new Map<string, AncestryHop>(); // causeId → the edge that set its depth
+
+	const indeg = new Map<string, number>();
+	for (const n of nodes) indeg.set(n, 0);
+	for (const edges of adj.values()) for (const e of edges) indeg.set(e.causeId, (indeg.get(e.causeId) ?? 0) + 1);
+	const kahn: string[] = [];
+	for (const n of nodes) if ((indeg.get(n) ?? 0) === 0 && !depth.has(n)) depth.set(n, 0);
+	for (const n of nodes) if ((indeg.get(n) ?? 0) === 0) kahn.push(n);
+	let processed = 0;
+	while (kahn.length > 0) {
+		const node = kahn.shift()!;
+		processed++;
+		const dn = depth.get(node) ?? 0;
+		for (const e of adj.get(node) ?? []) {
+			if (dn + 1 > (depth.get(e.causeId) ?? -1)) {
+				depth.set(e.causeId, dn + 1);
+				hopInto.set(e.causeId, {
+					fromId: node,
+					relationshipId: e.relationshipId,
+					startPosition: e.startPosition,
+					name: e.name
+				});
+			}
+			const d = (indeg.get(e.causeId) ?? 0) - 1;
+			indeg.set(e.causeId, d);
+			if (d === 0) kahn.push(e.causeId);
+		}
+	}
+	if (processed < nodes.size) {
+		// Cycle in the discovered subgraph → topo order is undefined. Fall back to a
+		// set-once BFS tree (each hop set once → tree → reconstruction terminates).
+		depth.clear();
+		hopInto.clear();
+		depth.set(sourceEvent.id, 0);
+		const visited = new Set<string>([sourceEvent.id]);
+		const bq: string[] = [sourceEvent.id];
+		while (bq.length > 0) {
+			const node = bq.shift()!;
+			for (const e of adj.get(node) ?? []) {
+				if (visited.has(e.causeId)) continue;
+				visited.add(e.causeId);
+				depth.set(e.causeId, (depth.get(node) ?? 0) + 1);
+				hopInto.set(e.causeId, {
+					fromId: node,
+					relationshipId: e.relationshipId,
+					startPosition: e.startPosition,
+					name: e.name
+				});
+				bq.push(e.causeId);
+			}
 		}
 	}
 
 	// Earliest cause = the deepest ROOT (no admissible outgoing cause), tie-broken
-	// by lowest id. If every reachable node has an outgoing cause (a pure cycle —
-	// a data error, caused_by isn't cycle-checked at write), fall back to the
-	// deepest visited node so the walk still returns a defined answer.
-	const roots = [...visited].filter((id) => !hasAdmissibleCause.has(id));
-	const candidates = roots.length > 0 ? roots : [...visited];
+	// by lowest id. If every reachable node has a cause (a pure cycle), fall back
+	// to the deepest visited node so the walk still returns a defined answer.
+	const roots = [...nodes].filter((n) => (adj.get(n)?.length ?? 0) === 0);
+	const candidates = roots.length > 0 ? roots : [...nodes];
 	let earliestId = sourceEvent.id;
 	let bestDepth = -1;
 	for (const id of candidates) {

@@ -221,12 +221,36 @@ describe('Causal Cartography — traceRegionProvenance (Slice 5 PR-E / D6)', () 
 		expect(r.status === 'found' && r.earliest.eventId).toBe(second);
 	});
 
-	it('non-source cycle (source → B → C → B) terminates and reconstructs without hanging (Codex #66 P1)', async () => {
-		// A caused_by cycle that does NOT include the source. The tree-BFS sets each
-		// hop once (source→B, B→C; C→B is skipped as visited), so hopInto stays a
-		// tree and chain reconstruction reaches the source instead of looping. The
-		// test completing at all is the regression assertion (a hop-rewrite bug here
-		// span an infinite reconstruction loop and hang the request).
+	it('re-converging DAG: earliest = the LONGEST-path (most ancestral) root (FU1, Codex #66)', async () => {
+		// source → A → rootZ ; source → B → A ; source → B → rootA.
+		// Longest path to rootZ is source→B→A→rootZ (3); rootA is source→B→rootA (2).
+		// The topo-sort longest-path DP must pick rootZ (deepest) outright, not let a
+		// shortest-path tie + UUID tie-break choose the less-ancestral rootA.
+		const source = await event('source');
+		const A = await event('A');
+		const B = await event('B');
+		const rootZ = await event('rootZ');
+		const rootA = await event('rootA');
+		await causedBy(source, A);
+		await causedBy(A, rootZ);
+		await causedBy(source, B);
+		await causedBy(B, A);
+		await causedBy(B, rootA);
+		await transferRegion(source);
+
+		const r = await traceRegionProvenance(db, userId, mapId, REGION, 10);
+		expect(r.status).toBe('found');
+		if (r.status !== 'found') return;
+		expect(r.earliest.eventId).toBe(rootZ);
+		expect(r.chain.map((s) => s.eventId)).toEqual([source, B, A, rootZ]); // longest path
+	});
+
+	it('non-source cycle (source → B → C → B) terminates without hanging (FU1 cycle fallback, Codex #66 P1)', async () => {
+		// A caused_by cycle that does NOT include the source. Topo sort can't order a
+		// cyclic subgraph, so the walk falls back to a set-once BFS tree: hopInto
+		// stays a tree and reconstruction reaches the source instead of looping. The
+		// test completing at all is the regression assertion (the reverted longest-
+		// path relaxation could hang here).
 		const source = await event('source');
 		const B = await event('B');
 		const C = await event('C');
