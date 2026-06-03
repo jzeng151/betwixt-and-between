@@ -32,6 +32,7 @@
 	import { mapAnchorsStore } from './map-anchors-store.js';
 	import { layerVisibility } from './layer-prefs-store.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
+	import { pointInPolygon } from './point-in-polygon.js';
 	import type { MapRegion } from './types.js';
 	// Type-only import (declaration-only — erased at compile, no server-code leak;
 	// same pattern as RelationshipType from schema.ts). Slice 5 PR-E.
@@ -563,6 +564,29 @@
 			// rather than screen-space — survives pan/zoom correctly.
 			viewport.eventMode = 'static';
 			stageRightClickHandler = (e: FederatedPointerEvent) => {
+				// Route by geometry: if the right-click world point is inside a region
+				// polygon, open that region's menu; otherwise the empty-area snapshot
+				// menu. Works even when a causal edge sits on top of the region (FU3).
+				const vp = stageCtx.viewport;
+				if (vp) {
+					const local = e.getLocalPosition(vp); // world coords (x, y)
+					// region.polygon is [[lat, lng], …]; convert to [x=lng, y=lat].
+					const hit = regions.find(
+						(r) =>
+							r.polygon &&
+							r.polygon.length >= 3 &&
+							pointInPolygon(
+								local.x,
+								local.y,
+								r.polygon.map(([lat, lng]) => [lng, lat])
+							)
+					);
+					if (hit) {
+						e.stopPropagation();
+						openRegionMenu(hit.id, e);
+						return;
+					}
+				}
 				openSnapshotMenu(e);
 			};
 			viewport.on('rightclick', stageRightClickHandler);
@@ -609,16 +633,11 @@
 				.stroke({ color: fill, width: strokeWidth, alpha: strokeAlpha });
 			g.eventMode = 'static';
 			g.cursor = 'pointer';
-			// 'rightclick' fires on pointerup with right button; matches
-			// the spike's documented Pixi v8 API. Close any existing menu
-			// before opening a new one so rapid right-clicks don't stack.
-			g.on('rightclick', (e: FederatedPointerEvent) => {
-				// Stop propagation so the stage-level snapshot menu doesn't
-				// also fire — region right-click takes precedence over the
-				// empty-area "Snapshot here" affordance.
-				e.stopPropagation();
-				openRegionMenu(region.id, e);
-			});
+			// Region right-click is NOT handled per-polygon anymore: an interactive
+			// layer on top (causal edges) would steal the hit-test and the region
+			// menu would never open over that strip. Instead the viewport-level
+			// rightclick handler routes by geometry (point-in-polygon) so it works
+			// regardless of overlays (FU3, Codex #66).
 			layer.addChild(g);
 		}
 	});
