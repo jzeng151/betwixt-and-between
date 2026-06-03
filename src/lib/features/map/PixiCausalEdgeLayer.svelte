@@ -31,10 +31,17 @@
 	let {
 		activeMap,
 		causalEdges = [],
+		interactive = true,
 		onEdgeClick
 	}: {
 		activeMap: WorldMap | null;
 		causalEdges?: RenderedCausalEdge[];
+		// When false, edges are drawn but non-interactive (eventMode 'none'): a tap
+		// passes through to the viewport. WorldMap sets this false in any non-idle
+		// canvas mode (draw / brush / place / move) so an edge crossing the area a
+		// user is outlining doesn't swallow vertex clicks or scrub the playhead
+		// mid-gesture (Codex review #66).
+		interactive?: boolean;
 		// Fired on a left-click of an edge with its relationship id. WorldMap looks
 		// up the Relationship and calls jumpToCause (shared with the graphs).
 		onEdgeClick?: (relationshipId: string) => void;
@@ -167,8 +174,11 @@
 			const pts = sampleCurve(p0, p1, p2);
 
 			const edgeG: PixiContainer = new PIXI.Container();
-			edgeG.eventMode = 'static';
-			edgeG.cursor = 'pointer';
+			// Non-interactive outside idle mode so a tap passes through to the
+			// viewport (polygon-draw vertex, brush, etc.) instead of jumping the
+			// playhead. Reading `interactive` here rebuilds edges when the mode flips.
+			edgeG.eventMode = interactive ? 'static' : 'none';
+			edgeG.cursor = interactive ? 'pointer' : 'default';
 
 			// Invisible fat hit stroke so the thin dashes are easy to click.
 			const hit: PixiGraphics = new PIXI.Graphics();

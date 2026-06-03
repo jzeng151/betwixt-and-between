@@ -589,12 +589,23 @@
 		}
 		// Location → centroid from scopedRegions (already user- and scope-filtered).
 		// First region wins per Location (deterministic: scopedRegions order).
+		// MapRegion.polygon is stored as [[lat, lng], …] in source-image PIXELS
+		// (Leaflet convention — PixiRegionLayer draws it as world-space [lng, lat]).
+		// PixiCausalEdgeLayer expects FRACTIONAL [0,1] {x,y} and multiplies by
+		// activeMap.width/height, so normalize each vertex to [lng/W, lat/H] here:
+		// this rescales pixels→fraction AND fixes the lat/lng→y/x transpose, so
+		// edges land exactly on the regions PixiRegionLayer draws (Codex review #66).
 		const centroidByLocation = new Map<string, ArtifactPosition>();
-		for (const r of scopedRegions) {
-			if (!r.locationId || !r.polygon) continue;
-			if (centroidByLocation.has(r.locationId)) continue;
-			const c = polygonCentroid(r.polygon);
-			if (c) centroidByLocation.set(r.locationId, c);
+		const mapW = activeMap?.width ?? 0;
+		const mapH = activeMap?.height ?? 0;
+		if (mapW > 0 && mapH > 0) {
+			for (const r of scopedRegions) {
+				if (!r.locationId || !r.polygon) continue;
+				if (centroidByLocation.has(r.locationId)) continue;
+				const fractional = r.polygon.map(([lat, lng]) => [lng / mapW, lat / mapH]);
+				const c = polygonCentroid(fractional);
+				if (c) centroidByLocation.set(r.locationId, c);
+			}
 		}
 		return { edges, locationOf, centroidByLocation };
 	});
@@ -1548,6 +1559,7 @@
 				<PixiCausalEdgeLayer
 					{activeMap}
 					causalEdges={renderedState?.causalEdges ?? []}
+					interactive={canvasMode === 'idle'}
 					onEdgeClick={(id) => jumpToCause($relationships.find((r) => r.id === id))}
 				/>
 				<PixiPlacementLayer

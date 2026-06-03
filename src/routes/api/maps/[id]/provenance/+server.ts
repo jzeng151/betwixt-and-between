@@ -15,6 +15,10 @@ export const GET: RequestHandler = async (event) => {
 	const regionId = event.url.searchParams.get('regionId');
 	const tRaw = event.url.searchParams.get('t');
 	if (!regionId) error(400, 'regionId is required');
+	// Require t explicitly: Number(null) and Number('') both coerce to 0, which
+	// would silently trace provenance at the start of story-time for a request
+	// that just dropped the playhead param (Codex review #66).
+	if (tRaw === null || tRaw === '') error(400, 't is required');
 	const t = Number(tRaw);
 	if (!Number.isFinite(t)) error(400, 't must be a finite number');
 	return json(await traceRegionProvenance(db, userId, event.params.id, regionId, t));

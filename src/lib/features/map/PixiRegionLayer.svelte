@@ -325,9 +325,16 @@
 
 	// ── Slice 5 PR-E (D6) — Causal Cartography ─────────────────────────────
 	// Authoring: pick a faction + an optional cause Event for a region's change.
-	let causeModal = $state<{ regionId: string; factionId: string; sourceEventId: string } | null>(
-		null
-	);
+	// currentFactionId is the region's owner at the active playhead; commit is
+	// blocked when the picked faction equals it, so the modal can't write a no-op
+	// transfer_region that changes nothing yet becomes the latest provenance
+	// source (mirrors the inline menu's disabled current-owner item — Codex review #66).
+	let causeModal = $state<{
+		regionId: string;
+		factionId: string;
+		sourceEventId: string;
+		currentFactionId: string;
+	} | null>(null);
 	// Read: the traced provenance for a region (the result of /provenance).
 	let provenance = $state<
 		{ regionId: string; loading: boolean; error: string | null; result: ProvenanceResult | null }
@@ -336,12 +343,18 @@
 	function openCauseModal(regionId: string) {
 		const currentFactionId =
 			renderedState?.regions.find((r) => r.regionId === regionId)?.factionId ?? '';
-		causeModal = { regionId, factionId: currentFactionId || (factionList[0]?.id ?? ''), sourceEventId: '' };
+		// Preselect a faction that differs from the current owner where possible,
+		// so accepting the default is a real change, not a no-op.
+		const preselect =
+			factionList.find((f) => f.id !== currentFactionId)?.id ?? currentFactionId ?? '';
+		causeModal = { regionId, factionId: preselect, sourceEventId: '', currentFactionId };
 	}
 
 	async function commitCause() {
 		const m = causeModal;
-		if (!m || !m.factionId) return;
+		// Block empty and no-op (same-owner) commits — the latter would stamp a
+		// redundant provenance source without changing ownership (Codex review #66).
+		if (!m || !m.factionId || m.factionId === m.currentFactionId) return;
 		causeModal = null;
 		await changeOwner(m.regionId, m.factionId, m.sourceEventId || null);
 	}
@@ -667,9 +680,16 @@
 					{/each}
 				</select>
 			</label>
+			{#if causeModal.factionId && causeModal.factionId === causeModal.currentFactionId}
+				<p class="cause-field" style="margin-top:0">Pick a different owner — this region already belongs to that faction.</p>
+			{/if}
 			<div class="modal-actions">
 				<button class="btn-secondary" onclick={() => (causeModal = null)}>Cancel</button>
-				<button class="btn-primary" disabled={!causeModal.factionId} onclick={() => void commitCause()}>
+				<button
+					class="btn-primary"
+					disabled={!causeModal.factionId || causeModal.factionId === causeModal.currentFactionId}
+					onclick={() => void commitCause()}
+				>
 					Change owner
 				</button>
 			</div>
