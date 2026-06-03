@@ -41,6 +41,15 @@
 // windowed `link_chain` map-event kind was ABANDONED in Slice 5 — EventChain
 // derives from the `caused_by` relationship instead (ADR 0006). The signature
 // carries every event through so kinds extend by adding cases, not reshaping.
+//
+// Slice 5 PR-C (ADR 0006): the EventChain map render derives from the
+// `caused_by` relationship. This module's ONLY import is the pair of pure
+// temporal-visibility predicates from playhead-store — reused unchanged (plan
+// D3) rather than re-implemented here, so the map and both graphs share one
+// visibility rule. The predicates are pure; the store singleton they sit beside
+// is a harmless, isomorphic no-op when this module loads server-side.
+
+import { isEdgeVisibleAtT, isMysteryEdgeAtT } from '$lib/features/timeline/playhead-store.js';
 
 export const NEUTRAL_REGION_COLOR = '#9ca3af';
 
@@ -255,6 +264,69 @@ export type RenderedState = {
 	// Movers-only: a static placement is absent from this map (no double-draw,
 	// nothing to dedup). Empty map when no placements move.
 	artifactOverrides: Map<string, ArtifactPosition>;
+	// Slice 5 PR-C (D2/D5, ADR 0006) — causal edges (`caused_by` relationships)
+	// drawn on the map at T. Each is one Bezier from the effect endpoint's region
+	// centroid to the cause endpoint's. Present only for edges whose BOTH
+	// endpoints resolve to an allowed region on THIS map, that are visible at T
+	// (isEdgeVisibleAtT) and not still-hidden (mystery), and that are not
+	// degenerate self-edges (both endpoints in one region — S1 gate). Empty when
+	// no caused_by edges co-locate on the map (the common case — "causality is
+	// local"; see plan Spike S1 gate decision).
+	causalEdges: RenderedCausalEdge[];
+};
+
+// Slice 5 PR-C — render output for one on-map causal edge. `fromPos` is the
+// effect endpoint's centroid (arrow tail), `toPos` the cause endpoint's (arrow
+// head), matching the graph's `caused_by` arrow convention (effect ← cause,
+// arrowhead at the `to`/cause end — edge-policy.ts:15, GraphCanvas arrow at
+// `to`). `causeEndpointId` is the cause Event id (= the relationship's toId).
+export type RenderedCausalEdge = {
+	relationshipId: string;
+	fromPos: ArtifactPosition;
+	toPos: ArtifactPosition;
+	causeEndpointId: string;
+};
+
+// Slice 5 PR-C — minimal `caused_by` relationship shape the causal fold needs.
+// `Relationship` (src/lib/stores/relationships.ts) is structurally assignable,
+// so WorldMap passes its caused_by rows directly. fromId = effect, toId = cause
+// (edge-policy.ts:15). The position/reveal fields feed isEdgeVisibleAtT +
+// isMysteryEdgeAtT unchanged (plan D3).
+export type ProjectionCausalEdge = {
+	id: string;
+	fromId: string;
+	toId: string;
+	startPosition: number | null;
+	endPosition: number | null;
+	revealedAtPosition: number | null;
+};
+
+// Slice 5 PR-C — pre-resolved causal-render input, supplied by the (client)
+// caller that holds the relationships + region geometry. `edges` are the
+// caused_by rows; `locationOf` maps an endpoint entity id (Event) → its Location
+// entity id, derived from `takes_place_at` edges (Event AT Location —
+// edge-policy.ts:14); `centroidByLocation` maps a Location id → its on-map
+// region centroid.
+//
+// `centroidByLocation` is sourced by the caller from the SAME live region
+// geometry the map renders (the mapRegions store), NOT from anchor state_jsonb —
+// region create/edit updates mapRegions optimistically but does not reload the
+// anchor, so anchor-sourced centroids would be stale/missing for a just-edited
+// region. The caller is responsible for user + scope filtering (mapRegions loads
+// from a user-scoped endpoint and the caller passes its scoped view), so
+// projection trusts this set as "owned, on-map regions." An endpoint Location
+// absent from it (off-map, cross-user, or a Scene endpoint with no Location)
+// drops the edge (lazy-GC). Server-side callers pass the empty default.
+export type CausalProjectionInput = {
+	edges: ProjectionCausalEdge[];
+	locationOf: ReadonlyMap<string, string>;
+	centroidByLocation: ReadonlyMap<string, ArtifactPosition>;
+};
+
+const EMPTY_CAUSAL: CausalProjectionInput = {
+	edges: [],
+	locationOf: new Map(),
+	centroidByLocation: new Map()
 };
 
 // Slice 4 PR-F (D5) — minimal placement shape the movement fold needs.
@@ -541,19 +613,116 @@ function foldMovement(
 }
 
 /**
+ * Slice 5 PR-C — area-weighted centroid of a closed polygon (the standard
+ * shoelace centroid), used as the on-map anchor point for a region. Falls back
+ * to the vertex average for a degenerate (zero-area / collinear) polygon so a
+ * thin or self-intersecting region still yields a finite point. Returns null
+ * only for fewer than 3 vertices (not a polygon). `polygon` is [[x,y], …] in
+ * the same normalized fractional coords as region geometry elsewhere. Exported
+ * so the caller can build `CausalProjectionInput.centroidByLocation` from the
+ * live region geometry (mapRegions) it already renders from.
+ */
+export function polygonCentroid(polygon: number[][]): ArtifactPosition | null {
+	if (!Array.isArray(polygon) || polygon.length < 3) return null;
+	let twiceArea = 0;
+	let cx = 0;
+	let cy = 0;
+	let sx = 0;
+	let sy = 0;
+	for (let i = 0; i < polygon.length; i++) {
+		const p = polygon[i];
+		const q = polygon[(i + 1) % polygon.length];
+		if (
+			!Array.isArray(p) ||
+			!Array.isArray(q) ||
+			typeof p[0] !== 'number' ||
+			typeof p[1] !== 'number' ||
+			typeof q[0] !== 'number' ||
+			typeof q[1] !== 'number'
+		) {
+			return null; // malformed vertex → not drawable
+		}
+		const cross = p[0] * q[1] - q[0] * p[1];
+		twiceArea += cross;
+		cx += (p[0] + q[0]) * cross;
+		cy += (p[1] + q[1]) * cross;
+		sx += p[0];
+		sy += p[1];
+	}
+	if (twiceArea === 0) {
+		// Degenerate (zero area) → vertex average.
+		return { x: sx / polygon.length, y: sy / polygon.length };
+	}
+	return { x: cx / (3 * twiceArea), y: cy / (3 * twiceArea) };
+}
+
+/**
+ * Slice 5 PR-C (D2/D5, ADR 0006) — fold `caused_by` relationships into the
+ * on-map causal edges visible at time `t`. Mirrors foldMovement's posture:
+ * pure, lazy-GC (unresolved endpoints are silently dropped, never drawn to
+ * nowhere). Geometry (`causal.centroidByLocation`) is precomputed by the caller
+ * from the live region store; this fn does only the per-tick, t-dependent
+ * visibility eval + lookup. The caller computes centroidByLocation in a $derived
+ * (refreshes on region edit, not per playhead tick), which is where the T7
+ * per-frame-cost concern is now handled.
+ *
+ * An edge is emitted iff ALL hold:
+ *   - it is visible at T (isEdgeVisibleAtT — the same predicate both graphs use,
+ *     covering timeless = always, span [start,end), and scene-equality windows);
+ *   - it is NOT still hidden from the reader (isMysteryEdgeAtT) — drawing a
+ *     not-yet-revealed causal link would leak hidden causality spatially. NOTE
+ *     the map is STRICTER than the graph here by design: the graph SHOWS mystery
+ *     edges (dimmed, non-clickable), but a drawn spatial arrow between regions is
+ *     a stronger spoiler than a dimmed line, so the map HIDES a reveal-gated edge
+ *     until the playhead reaches its revealedAtPosition. (Whole-map idle is
+ *     handled by the CALLER, not here: a map carries a baseline anchor at
+ *     t_position = -Infinity, so this fold would otherwise run at idle and render
+ *     timeless edges; WorldMap passes empty `causal.edges` when the playhead is
+ *     null so the idle map shows no causal edges — Codex review #66.)
+ *     The temporal window half (isEdgeVisibleAtT) IS the same rule both graphs use;
+ *   - BOTH endpoints resolve through locationOf → a region in centroidByLocation
+ *     (the caller's owned, on-map, scope-filtered region set — off-map and
+ *     cross-user endpoints are simply absent);
+ *   - the endpoints are in DIFFERENT regions — a same-region (self-loop) edge
+ *     has no spatial arrow to draw and is dropped (Spike S1 gate decision).
+ */
+function foldCausalEdges(t: number, causal: CausalProjectionInput): RenderedCausalEdge[] {
+	const { centroidByLocation } = causal;
+	if (causal.edges.length === 0 || centroidByLocation.size === 0) return [];
+
+	const out: RenderedCausalEdge[] = [];
+	for (const e of causal.edges) {
+		if (isMysteryEdgeAtT(e, t)) continue;
+		if (!isEdgeVisibleAtT(e, t)) continue;
+		const fromLoc = causal.locationOf.get(e.fromId);
+		const toLoc = causal.locationOf.get(e.toId);
+		if (!fromLoc || !toLoc) continue; // Scene endpoint / no takes_place_at → omit
+		if (fromLoc === toLoc) continue; // same place → degenerate self-edge → drop
+		const fromPos = centroidByLocation.get(fromLoc);
+		const toPos = centroidByLocation.get(toLoc);
+		if (!fromPos || !toPos) continue; // off-map / cross-user endpoint → omit
+		out.push({ relationshipId: e.id, fromPos, toPos, causeEndpointId: e.toId });
+	}
+	return out;
+}
+
+/**
  * Pure projection. Given the inputs, return the RenderedState at time `t`.
  *
  * Inputs are not required to be sorted; projectState sorts internally so
  * callers can pass raw DB result rows. `placements` (Slice 4 PR-F) feeds the
  * movement fold; callers with no placements pass [] (or omit) and get an empty
- * `artifactOverrides` map — behavior unchanged from pre-PR-F.
+ * `artifactOverrides` map — behavior unchanged from pre-PR-F. `causal` (Slice 5
+ * PR-C) feeds the caused_by causal-edge fold; callers with no caused_by edges
+ * (every server-side caller) omit it and get an empty `causalEdges`.
  */
 export function projectState(
 	t: number,
 	anchors: ProjectionAnchor[],
 	events: ProjectionEvent[],
 	ctx: ProjectionContext,
-	placements: ProjectionPlacement[] = []
+	placements: ProjectionPlacement[] = [],
+	causal: CausalProjectionInput = EMPTY_CAUSAL
 ): RenderedState {
 	const anchor = pickActiveAnchor(t, anchors);
 
@@ -625,11 +794,19 @@ export function projectState(
 	// it as a marker for "explicitly erased here." Same shape either way.
 	const renderedCells: RenderedCell[] = Array.from(cells.values());
 
+	// Slice 5 PR-C — derive on-map causal edges from caused_by. Geometry comes
+	// from causal.centroidByLocation (caller-supplied, from the live region
+	// store); the fold does the t-dependent visibility eval. Gated on an active
+	// anchor so the map draws nothing before the first anchor (idle convention),
+	// consistent with regions/placements.
+	const causalEdges = anchor ? foldCausalEdges(t, causal) : [];
+
 	return {
 		tPosition: t,
 		regions: renderedRegions,
 		artifacts,
 		cells: renderedCells,
-		artifactOverrides
+		artifactOverrides,
+		causalEdges
 	};
 }

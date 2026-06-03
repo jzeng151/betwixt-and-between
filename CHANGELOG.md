@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.7.0] - 2026-06-02
+
+World Map v3 Slice 5 (Causal Cartography) — causal links now show up on the map, and you can trace why a region got the way it is.
+
+### Added
+
+- **Causal edges on the map.** `caused_by` relationships between Events now draw as dashed arrows on the world map, from the effect's region to the cause's, matching how they already look in the story graph. An edge only appears when both of its Events sit in regions on the map you're viewing, and only while the playhead is inside the link's scene scope (a not-yet-revealed link stays hidden so it can't spoil a mystery). Click an edge to jump the playhead to where the causal link is scoped — the same jump you get from clicking it in either graph.
+- **Trace cause (Causal Cartography).** Right-click a region and pick "Trace cause" to walk back the chain of Events that led to its current ownership: the change that set it, the Event recorded as its cause, and that Event's causal ancestry back to the earliest root. A "Jump to earliest cause" button scrubs the playhead there. The walk stays inside your own data and stops at a not-yet-revealed link.
+- **Attribute a cause when changing ownership.** The region right-click menu gains "Change owner with cause…", which lets you record which Event caused a `transfer_region` change so "Trace cause" has something to follow.
+
+### Changed
+
+- Map causal-edge geometry is sourced from the live region store (the same geometry the map draws), so a region you just created or edited shows its causal arrows in the right place without a reload.
+
 ## [0.8.6.0] - 2026-06-02
 
 ### Fixed

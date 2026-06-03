@@ -33,6 +33,9 @@
 	import { layerVisibility } from './layer-prefs-store.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
 	import type { MapRegion } from './types.js';
+	// Type-only import (declaration-only — erased at compile, no server-code leak;
+	// same pattern as RelationshipType from schema.ts). Slice 5 PR-E.
+	import type { ProvenanceResult } from '$lib/server/world-map-v3-provenance.js';
 
 	// Slice 3 E4 — layer toggle.
 	const visible = layerVisibility('regions');
@@ -48,6 +51,7 @@
 		mapId,
 		dataLoading = false,
 		isInScope = null,
+		events = [],
 		onDrawHere,
 		onEditRegion,
 		onDeleteRegion,
@@ -57,6 +61,9 @@
 		regions: MapRegion[];
 		renderedState: RenderedState | null;
 		mapId: string | null;
+		// Slice 5 PR-E — the user's Events, for the "set cause" authoring picker.
+		// {id,name} only; WorldMap passes $entities filtered to type='Event'.
+		events?: { id: string; name: string }[];
 		// Codex P2 on PR #55 (commit d849ea0): true while anchors/events
 		// for this map are still loading. snapshotWorldState() reads
 		// renderedState ownership; if loads are in flight, that ownership
@@ -281,7 +288,7 @@
 		}
 	}
 
-	async function changeOwner(regionId: string, factionId: string) {
+	async function changeOwner(regionId: string, factionId: string, sourceEventId: string | null = null) {
 		if (!mapId) {
 			actionError = 'No active map';
 			return;
@@ -306,10 +313,91 @@
 			await mapEventsStore.create(mapId, {
 				tPosition,
 				kind: 'transfer_region',
-				payloadJsonb: { region_id: regionId, new_faction_id: factionId }
+				payloadJsonb: { region_id: regionId, new_faction_id: factionId },
+				// Slice 5 PR-E (D6) — optional recorded cause. The server validates
+				// it is an owned Event (assertSourceEventIdIsEvent); null = no cause.
+				sourceEventId
 			});
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : String(err);
+		}
+	}
+
+	// ── Slice 5 PR-E (D6) — Causal Cartography ─────────────────────────────
+	// Authoring: pick a faction + an optional cause Event for a region's change.
+	// currentFactionId is the region's owner at the active playhead; commit is
+	// blocked when the picked faction equals it, so the modal can't write a no-op
+	// transfer_region that changes nothing yet becomes the latest provenance
+	// source (mirrors the inline menu's disabled current-owner item — Codex review #66).
+	let causeModal = $state<{
+		regionId: string;
+		factionId: string;
+		sourceEventId: string;
+		currentFactionId: string;
+	} | null>(null);
+	// Read: the traced provenance for a region (the result of /provenance).
+	let provenance = $state<
+		{ regionId: string; loading: boolean; error: string | null; result: ProvenanceResult | null }
+	| null>(null);
+
+	function openCauseModal(regionId: string) {
+		const currentFactionId =
+			renderedState?.regions.find((r) => r.regionId === regionId)?.factionId ?? '';
+		// Preselect a faction that differs from the current owner where possible,
+		// so accepting the default is a real change, not a no-op.
+		const preselect =
+			factionList.find((f) => f.id !== currentFactionId)?.id ?? currentFactionId ?? '';
+		causeModal = { regionId, factionId: preselect, sourceEventId: '', currentFactionId };
+	}
+
+	async function commitCause() {
+		const m = causeModal;
+		// Block empty and no-op (same-owner) commits — the latter would stamp a
+		// redundant provenance source without changing ownership (Codex review #66).
+		if (!m || !m.factionId || m.factionId === m.currentFactionId) return;
+		causeModal = null;
+		await changeOwner(m.regionId, m.factionId, m.sourceEventId || null);
+	}
+
+	async function traceCause(regionId: string) {
+		if (!mapId) return;
+		// Trace at the SAME time the map renders. At idle the map shows the
+		// -Infinity baseline; tracing at T=0 would answer a different state than the
+		// one the user sees, so the action is gated on an active playhead (the menu
+		// item is disabled too). Guard defensively in case it's reached otherwise
+		// (Codex review #66).
+		const t = get(playhead);
+		if (t === null) return;
+		provenance = { regionId, loading: true, error: null, result: null };
+		try {
+			const res = await fetch(
+				`/api/maps/${mapId}/provenance?regionId=${encodeURIComponent(regionId)}&t=${t}`
+			);
+			if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+			const result = (await res.json()) as ProvenanceResult;
+			provenance = { regionId, loading: false, error: null, result };
+		} catch (err) {
+			provenance = {
+				regionId,
+				loading: false,
+				error: err instanceof Error ? err.message : String(err),
+				result: null
+			};
+		}
+	}
+
+	// jumpPosition is jumpable only when present AND ≥ 0 (scrubTo ignores t < 0,
+	// which would otherwise be a silent dead button — fractional positions can be
+	// negative). The button is gated on this same predicate.
+	function canJump(r: ProvenanceResult | null): boolean {
+		return r?.status === 'found' && r.jumpPosition != null && r.jumpPosition >= 0;
+	}
+
+	function jumpToEarliestCause() {
+		const r = provenance?.result;
+		if (r?.status === 'found' && r.jumpPosition != null && r.jumpPosition >= 0) {
+			playhead.scrubTo(r.jumpPosition);
+			provenance = null;
 		}
 	}
 
@@ -406,6 +494,20 @@
 			});
 		}
 
+		// Slice 5 PR-E (D6) — Causal Cartography. Trace why this region is the way
+		// it is at the playhead; jump to the earliest recorded cause. Disabled while
+		// the playhead is idle: the map then shows the -Infinity baseline, so a
+		// trace at T=0 would answer a different state than what's on screen (Codex
+		// review #66). `get(playhead)` is read at menu-open (this derived recomputes
+		// when `menu` changes), which is the right moment.
+		const playheadIdle = get(playhead) === null;
+		items.push({
+			label: playheadIdle ? 'Trace cause (scrub to a moment first)' : 'Trace cause',
+			icon: '🔎',
+			disabled: playheadIdle,
+			onSelect: () => void traceCause(regionId)
+		});
+
 		if (factionList.length === 0) {
 			items.push({
 				label: 'No factions yet — create one first',
@@ -434,6 +536,13 @@
 				}
 			});
 		}
+		// Slice 5 PR-E (D6) — same ownership change, but attribute it to a cause
+		// Event (sets source_event_id) so it shows up in a later "Trace cause".
+		items.push({
+			label: 'Change owner with cause…',
+			icon: '🎬',
+			onSelect: () => openCauseModal(regionId)
+		});
 		return items;
 	});
 
@@ -561,6 +670,78 @@
 	</div>
 {/if}
 
+<!-- Slice 5 PR-E (D6) — authoring: change owner + attribute a cause Event. -->
+{#if causeModal}
+	<div class="modal-overlay" role="dialog" aria-modal="true">
+		<div class="modal-content">
+			<h3>Change owner with cause</h3>
+			<label class="cause-field">
+				New owner
+				<select bind:value={causeModal.factionId}>
+					{#each factionList as f (f.id)}
+						<option value={f.id}>{f.name}</option>
+					{/each}
+				</select>
+			</label>
+			<label class="cause-field">
+				Caused by (optional)
+				<select bind:value={causeModal.sourceEventId}>
+					<option value="">— no recorded cause —</option>
+					{#each events as ev (ev.id)}
+						<option value={ev.id}>{ev.name}</option>
+					{/each}
+				</select>
+			</label>
+			{#if causeModal.factionId && causeModal.factionId === causeModal.currentFactionId}
+				<p class="cause-field" style="margin-top:0">Pick a different owner — this region already belongs to that faction.</p>
+			{/if}
+			<div class="modal-actions">
+				<button class="btn-secondary" onclick={() => (causeModal = null)}>Cancel</button>
+				<button
+					class="btn-primary"
+					disabled={!causeModal.factionId || causeModal.factionId === causeModal.currentFactionId}
+					onclick={() => void commitCause()}
+				>
+					Change owner
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Slice 5 PR-E (D6) — read: the traced causal lineage of a region's state. -->
+{#if provenance}
+	<div class="modal-overlay" role="dialog" aria-modal="true">
+		<div class="modal-content">
+			<h3>Why is this region the way it is?</h3>
+			{#if provenance.loading}
+				<p class="variant-help">Tracing cause…</p>
+			{:else if provenance.error}
+				<p class="variant-help cause-error">{provenance.error}</p>
+			{:else if provenance.result?.status === 'no-change'}
+				<p class="variant-help">No ownership change recorded for this region at this point in the story.</p>
+			{:else if provenance.result?.status === 'no-cause'}
+				<p class="variant-help">This change has no recorded cause. Use “Change owner with cause…” to attribute one.</p>
+			{:else if provenance.result?.status === 'found'}
+				<ol class="cause-chain">
+					{#each provenance.result.chain as step, i (step.eventId)}
+						<li class:earliest={i === provenance.result.chain.length - 1}>
+							{step.name}
+							{#if i === provenance.result.chain.length - 1}<span class="cause-tag">earliest cause</span>{/if}
+						</li>
+					{/each}
+				</ol>
+			{/if}
+			<div class="modal-actions">
+				<button class="btn-secondary" onclick={() => (provenance = null)}>Close</button>
+				{#if canJump(provenance.result)}
+					<button class="btn-primary" onclick={jumpToEarliestCause}>Jump to earliest cause</button>
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	.action-error {
 		position: absolute;
@@ -598,5 +779,44 @@
 		font-size: 12px;
 		border: 1px solid #14532d;
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+	}
+	/* Slice 5 PR-E — cause authoring + provenance panel. */
+	.cause-field {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin: 10px 0;
+		font-size: 12px;
+		color: var(--color-text-muted, #9ca3af);
+	}
+	.cause-field select {
+		padding: 6px 8px;
+		background: var(--color-surface-2, #1c1f28);
+		color: var(--color-text, #e8e0d0);
+		border: 1px solid var(--color-border, #2a2d35);
+		border-radius: 4px;
+		font-size: 13px;
+	}
+	.cause-chain {
+		margin: 8px 0;
+		padding-left: 20px;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		font-size: 13px;
+		color: var(--color-text, #e8e0d0);
+	}
+	.cause-chain li.earliest {
+		font-weight: 600;
+	}
+	.cause-tag {
+		margin-left: 8px;
+		font-size: 10px;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--color-rel-other, #94a3b8);
+	}
+	.cause-error {
+		color: #fca5a5;
 	}
 </style>

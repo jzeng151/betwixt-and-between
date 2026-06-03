@@ -6,6 +6,7 @@
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
+	import { jumpToCause } from '$lib/features/timeline/jump-to-cause.js';
 	import { get } from 'svelte/store';
 	import { windowStore } from '$lib/os/windows-store.js';
 	import { buildHierarchyIndex, walkAncestors } from '$lib/location-hierarchy.js';
@@ -24,12 +25,14 @@
 	import PixiGridLayer from '$lib/features/map/PixiGridLayer.svelte';
 	import PixiTerrainLayer from '$lib/features/map/PixiTerrainLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
+	import PixiCausalEdgeLayer from '$lib/features/map/PixiCausalEdgeLayer.svelte';
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import MapToolSelector from '$lib/features/map/MapToolSelector.svelte';
 	import {
 		projectState,
+		polygonCentroid,
 		type ProjectionContext,
 		type RenderedState,
 		type ArtifactPosition
@@ -563,10 +566,69 @@
 		};
 	});
 
+	// Slice 5 PR-C (D2/D5, ADR 0006) — causal-edge projection input. caused_by
+	// rows are the EventChain links; locationOf maps an Event endpoint → its
+	// Location via takes_place_at (Event AT Location, edge-policy.ts:14);
+	// centroidByLocation maps a Location → its on-map region centroid, sourced
+	// from scopedRegions — the SAME live geometry PixiRegionLayer draws (NOT the
+	// anchor, which isn't reloaded on region create/edit). This $derived
+	// recomputes only when relationships / regions change, not per playhead tick,
+	// which is where the per-frame-cost (T7) concern is handled. Relationship is
+	// structurally assignable to ProjectionCausalEdge.
+	const causalInput = $derived.by(() => {
+		const edges = $relationships.filter((r) => r.type === 'caused_by');
+		const locationOf = new Map<string, string>();
+		for (const r of $relationships) {
+			if (r.type !== 'takes_place_at') continue;
+			// No DB uniqueness on takes_place_at: an Event can carry >1. The
+			// relationships store isn't sorted, so pick deterministically (lowest
+			// Location id) — otherwise the causal arrow's endpoint could flip
+			// between reloads on a multi-location Event.
+			const existing = locationOf.get(r.fromId);
+			if (existing === undefined || r.toId < existing) locationOf.set(r.fromId, r.toId);
+		}
+		// Location → centroid from scopedRegions (already user- and scope-filtered).
+		// First region wins per Location (deterministic: scopedRegions order).
+		// MapRegion.polygon is stored as [[lat, lng], …] in source-image PIXELS
+		// (Leaflet convention — PixiRegionLayer draws it as world-space [lng, lat]).
+		// PixiCausalEdgeLayer expects FRACTIONAL [0,1] {x,y} and multiplies by
+		// activeMap.width/height, so normalize each vertex to [lng/W, lat/H] here:
+		// this rescales pixels→fraction AND fixes the lat/lng→y/x transpose, so
+		// edges land exactly on the regions PixiRegionLayer draws (Codex review #66).
+		const centroidByLocation = new Map<string, ArtifactPosition>();
+		const mapW = activeMap?.width ?? 0;
+		const mapH = activeMap?.height ?? 0;
+		if (mapW > 0 && mapH > 0) {
+			for (const r of scopedRegions) {
+				if (!r.locationId || !r.polygon) continue;
+				if (centroidByLocation.has(r.locationId)) continue;
+				const fractional = r.polygon.map(([lat, lng]) => [lng / mapW, lat / mapH]);
+				const c = polygonCentroid(fractional);
+				if (c) centroidByLocation.set(r.locationId, c);
+			}
+		}
+		return { edges, locationOf, centroidByLocation };
+	});
+
+	// Slice 5 PR-E — Events offered in the "Change owner with cause…" picker.
+	const causeEvents = $derived(
+		$entities.filter((e) => e.type === 'Event').map((e) => ({ id: e.id, name: e.name }))
+	);
+
 	let renderedState = $derived.by<RenderedState | null>(() => {
 		if (!projectionCtx) return null;
 		const t = $playhead ?? Number.NEGATIVE_INFINITY;
-		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore);
+		// Suppress causal edges while the playhead is idle (null). Maps carry a
+		// baseline anchor at t_position = -Infinity, so the fold WOULD otherwise run
+		// at idle and render timeless caused_by links (scoped ones already filtered
+		// by -Infinity) — a half-state that contradicts the playhead-driven causal
+		// view. Geometry (locationOf/centroidByLocation) is preserved so the input
+		// identity is stable; only edges are emptied (Codex review #66).
+		const causal =
+			$playhead === null
+				? { edges: [], locationOf: causalInput.locationOf, centroidByLocation: causalInput.centroidByLocation }
+				: causalInput;
+		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore, causal);
 	});
 
 	// Combined readiness signal piped through to PixiRegionLayer as
@@ -1475,6 +1537,7 @@
 					mapId={activeMapId}
 					{dataLoading}
 					isInScope={$isInScope}
+					events={causeEvents}
 					onDrawHere={startPixiDraw}
 					onEditRegion={(id) => startEditRegion(id)}
 					onDeleteRegion={(id) => void handleDeleteRegion(id)}
@@ -1491,6 +1554,16 @@
 						}
 					}}
 					onOpenLocation={(locId) => windowStore.open('entity-detail', locId)}
+				/>
+				<!-- Slice 5 PR-C — EventChain causal edges (caused_by), over regions
+				     and under markers. Click routes through the shared jumpToCause
+				     helper (same jump as both graphs); a timeless edge click is a
+				     harmless no-op (D5). -->
+				<PixiCausalEdgeLayer
+					{activeMap}
+					causalEdges={renderedState?.causalEdges ?? []}
+					interactive={canvasMode === 'idle'}
+					onEdgeClick={(id) => jumpToCause($relationships.find((r) => r.id === id))}
 				/>
 				<PixiPlacementLayer
 					{activeMap}

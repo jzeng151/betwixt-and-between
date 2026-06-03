@@ -67,10 +67,11 @@ type Fixture = {
 	anchors: ProjectionAnchor[];
 	events: ProjectionEvent[];
 	ctx: ProjectionContext;
-	// Movement (artifactOverrides) has its own dedicated tests; these golden
-	// fixtures pin the state-event projection and compare only the 5 non-movement
-	// fields (see runFixture). Omit it so the literals stay focused.
-	expected: Omit<RenderedState, 'artifactOverrides'>;
+	// Movement (artifactOverrides) and causal edges (causalEdges) have their own
+	// dedicated tests; these golden fixtures pin the state-event projection and
+	// compare only the non-movement, non-causal fields (see runFixture). Omit
+	// both so the literals stay focused.
+	expected: Omit<RenderedState, 'artifactOverrides' | 'causalEdges'>;
 };
 
 const FIXTURES: Fixture[] = [
@@ -391,16 +392,18 @@ describe('projection-engine fixtures (Δ1a-F, ≥10 cases)', () => {
 
 	for (const fixture of FIXTURES) {
 		it(fixture.name, () => {
-			const { artifactOverrides, ...state } = projectState(
+			const { artifactOverrides, causalEdges, ...state } = projectState(
 				fixture.t,
 				fixture.anchors,
 				fixture.events,
 				fixture.ctx
 			);
 			expect(state).toEqual(fixture.expected);
-			// These fixtures pass no placements, so the movement fold yields no
-			// overrides — guard that the contract addition stays inert here.
+			// These fixtures pass no placements and no caused_by edges, so the
+			// movement + causal folds yield nothing — guard both contract
+			// additions stay inert here.
 			expect(artifactOverrides.size).toBe(0);
+			expect(causalEdges).toEqual([]);
 		});
 	}
 });
