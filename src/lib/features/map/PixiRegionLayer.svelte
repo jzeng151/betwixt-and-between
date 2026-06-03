@@ -361,8 +361,14 @@
 
 	async function traceCause(regionId: string) {
 		if (!mapId) return;
+		// Trace at the SAME time the map renders. At idle the map shows the
+		// -Infinity baseline; tracing at T=0 would answer a different state than the
+		// one the user sees, so the action is gated on an active playhead (the menu
+		// item is disabled too). Guard defensively in case it's reached otherwise
+		// (Codex review #66).
+		const t = get(playhead);
+		if (t === null) return;
 		provenance = { regionId, loading: true, error: null, result: null };
-		const t = get(playhead) ?? 0;
 		try {
 			const res = await fetch(
 				`/api/maps/${mapId}/provenance?regionId=${encodeURIComponent(regionId)}&t=${t}`
@@ -489,10 +495,16 @@
 		}
 
 		// Slice 5 PR-E (D6) — Causal Cartography. Trace why this region is the way
-		// it is at the playhead; jump to the earliest recorded cause.
+		// it is at the playhead; jump to the earliest recorded cause. Disabled while
+		// the playhead is idle: the map then shows the -Infinity baseline, so a
+		// trace at T=0 would answer a different state than what's on screen (Codex
+		// review #66). `get(playhead)` is read at menu-open (this derived recomputes
+		// when `menu` changes), which is the right moment.
+		const playheadIdle = get(playhead) === null;
 		items.push({
-			label: 'Trace cause',
+			label: playheadIdle ? 'Trace cause (scrub to a moment first)' : 'Trace cause',
 			icon: '🔎',
+			disabled: playheadIdle,
 			onSelect: () => void traceCause(regionId)
 		});
 
