@@ -245,6 +245,7 @@ export async function listProfiles(db: Db, userId: string): Promise<ProfileSumma
 export async function createProfile(db: Db, userId: string, name: string): Promise<ProfileSummary> {
 	const profileName = validateDisplayName(name);
 	return await db.transaction(async (tx) => {
+		await lockUserProfiles(tx, userId);
 		const active = await getActivePreferences(tx, userId);
 		// Bare .returning() (no column config): the Db union only exposes the
 		// zero-arg overload, so we read the full row and pick fields.
@@ -282,6 +283,7 @@ export async function renameProfile(
 export async function deleteProfile(db: Db, userId: string, profileId: string): Promise<void> {
 	if (!isUuid(profileId)) error(400, 'invalid profileId');
 	await db.transaction(async (tx) => {
+		await lockUserProfiles(tx, userId);
 		const rows = await tx
 			.select({ profileId: userPreferences.profileId, isActive: userPreferences.isActive })
 			.from(userPreferences)
@@ -290,9 +292,18 @@ export async function deleteProfile(db: Db, userId: string, profileId: string): 
 		if (!target) error(404, 'profile not found');
 		if (target.isActive === 1) error(409, 'cannot delete the active profile; switch first');
 		if (rows.length <= 1) error(409, 'cannot delete the last profile');
+		// Lock held + `is_active = 0` in the predicate: a concurrent activate that
+		// flipped this row active (after the guard read) can't be silently deleted
+		// out from under the user, leaving zero active rows (codex).
 		await tx
 			.delete(userPreferences)
-			.where(and(eq(userPreferences.userId, userId), eq(userPreferences.profileId, profileId)));
+			.where(
+				and(
+					eq(userPreferences.userId, userId),
+					eq(userPreferences.profileId, profileId),
+					eq(userPreferences.isActive, 0)
+				)
+			);
 	});
 }
 
@@ -306,6 +317,7 @@ export async function deleteProfile(db: Db, userId: string, profileId: string): 
 export async function activateProfile(db: Db, userId: string, profileId: string): Promise<void> {
 	if (!isUuid(profileId)) error(400, 'invalid profileId');
 	await db.transaction(async (tx) => {
+		await lockUserProfiles(tx, userId);
 		const [target] = await tx
 			.select({ profileId: userPreferences.profileId })
 			.from(userPreferences)
@@ -316,7 +328,22 @@ export async function activateProfile(db: Db, userId: string, profileId: string)
 	});
 }
 
-/** Deactivate-all → activate-target. Caller MUST have verified target exists. */
+/**
+ * Serialize every per-user profile mutation by locking ALL of the user's
+ * profile rows (FOR UPDATE) at the top of the transaction. Without this, two
+ * concurrent activates of different profiles can each deactivate only the rows
+ * that were active at THEIR statement snapshot, then both set their target
+ * active — the partial unique index `user_preferences_one_active` aborts one
+ * with a unique_violation (codex). It also makes the delete not-active guard
+ * atomic against a concurrent activate of the same row. Mirrors the world_maps
+ * `SELECT … FOR UPDATE` convention in world-map-v3.ts.
+ */
+async function lockUserProfiles(tx: Db, userId: string): Promise<void> {
+	await tx.execute(sql`SELECT profile_id FROM user_preferences WHERE user_id = ${userId} FOR UPDATE`);
+}
+
+/** Deactivate-all → activate-target. Caller MUST have verified target exists
+ *  and MUST hold the per-user profile lock (lockUserProfiles). */
 async function activateInTx(tx: Db, userId: string, profileId: string): Promise<void> {
 	await tx
 		.update(userPreferences)
