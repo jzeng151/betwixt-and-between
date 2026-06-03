@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { preferences, setPreference, getPreference } from '$lib/os/preferences-store.js';
-  import { applyPreferencePatch, switchProfile, createProfile } from '$lib/os/preferences-sync.js';
+  import {
+    applyPreferencePatch,
+    switchProfile,
+    createProfile,
+    preferencesProfileId
+  } from '$lib/os/preferences-sync.js';
   import {
     fetchProfiles,
     renameProfileRequest,
@@ -270,6 +275,20 @@
   onMount(() => {
     void loadProfiles();
     void loadPresets();
+  });
+
+  // Cross-tab: another tab can switch the active profile, which reaches this tab
+  // via the prefs hydrate (preferencesProfileId updates) without touching our
+  // cached list. Refetch when the active id changes from what the list reflects,
+  // so the header + switcher don't keep showing the old profile as active while
+  // the store edits the new one (codex). Skip null (transient post-activate).
+  $effect(() => {
+    const pid = $preferencesProfileId;
+    if (!pid) return;
+    const listActive = profiles.find((p) => p.isActive)?.profileId;
+    if (listActive !== undefined && listActive !== pid) {
+      void loadProfiles();
+    }
   });
 </script>
 
