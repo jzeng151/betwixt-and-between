@@ -567,20 +567,23 @@
 				// Route by geometry: if the right-click world point is inside a region
 				// polygon, open that region's menu; otherwise the empty-area snapshot
 				// menu. Works even when a causal edge sits on top of the region (FU3).
+				// Skip region routing when the Regions layer is toggled off — clicks on
+				// an invisible polygon should reach the snapshot/draw menu (Codex #67).
 				const vp = stageCtx.viewport;
-				if (vp) {
+				if (vp && get(visible)) {
 					const local = e.getLocalPosition(vp); // world coords (x, y)
-					// region.polygon is [[lat, lng], …]; convert to [x=lng, y=lat].
-					const hit = regions.find(
-						(r) =>
-							r.polygon &&
-							r.polygon.length >= 3 &&
-							pointInPolygon(
-								local.x,
-								local.y,
-								r.polygon.map(([lat, lng]) => [lng, lat])
-							)
-					);
+					// Match Pixi's topmost-first hit order: the draw loop adds regions in
+					// array order (later on top), so scan in REVERSE so a right-click on
+					// the visible top polygon opens ITS menu, not a covered one (Codex #67).
+					let hit: MapRegion | undefined;
+					for (let i = regions.length - 1; i >= 0; i--) {
+						const r = regions[i];
+						if (!r.polygon || r.polygon.length < 3) continue;
+						if (pointInPolygon(local.x, local.y, r.polygon.map(([lat, lng]) => [lng, lat]))) {
+							hit = r;
+							break;
+						}
+					}
 					if (hit) {
 						e.stopPropagation();
 						openRegionMenu(hit.id, e);
