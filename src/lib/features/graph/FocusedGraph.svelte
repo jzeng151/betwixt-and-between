@@ -104,11 +104,26 @@
   let hardFilter = $state(get(preferences).graph.hardFilter);
   let showGhostTrails = $state(get(preferences).graph.showGhostTrails);
 
+  // codex P2: a graph window opened DURING the initial /api/preferences hydrate
+  // snapshots built-in defaults; sync local state from the store UNTIL the user
+  // toggles so a fresh-browser window still picks up the server-saved defaults.
+  // Only writes local $state (no applyPreferencePatch) → no write-back loop.
+  let graphPrefsTouched = false;
+  $effect(() => {
+    const g = $preferences.graph;
+    if (!graphPrefsTouched) {
+      hardFilter = g.hardFilter;
+      showGhostTrails = g.showGhostTrails;
+    }
+  });
+
   function setHardFilter(v: boolean) {
+    graphPrefsTouched = true;
     hardFilter = v;
     applyPreferencePatch({ set: { graph: { hardFilter: v } } });
   }
   function setShowGhostTrails(v: boolean) {
+    graphPrefsTouched = true;
     showGhostTrails = v;
     applyPreferencePatch({ set: { graph: { showGhostTrails: v } } });
   }
