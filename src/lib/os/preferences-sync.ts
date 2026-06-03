@@ -247,6 +247,12 @@ export async function hydratePreferences(): Promise<void> {
 		// Unauthenticated: localStorage-only contract. No server writes. This is a
 		// RESOLVED state — the cache is the anonymous viewer's, safe to display.
 		serverVersion = 0;
+		// Reset hasHydratedOnce: a definitive 401 (e.g. session expired after a
+		// prior hydrate) returns us to anonymous, local-only mode. Leaving it true
+		// would make the post-switch-limbo guard in applyPreferencePatch
+		// (hasHydratedOnce && serverVersion 0) silently drop every local edit,
+		// breaking the localStorage-only contract (codex).
+		hasHydratedOnce = false;
 		_userId.set(null);
 		_resolved.set(true);
 		hydrating = false;
@@ -520,6 +526,7 @@ export async function switchProfile(profileId: string): Promise<void> {
 	}
 	markUnhydratedUntilSwitchHydrates();
 	await hydratePreferences();
+	assertSwitchHydrated();
 }
 
 /**
@@ -533,6 +540,20 @@ function markUnhydratedUntilSwitchHydrates(): void {
 	serverVersion = 0;
 	serverProfileId = null;
 	_profileId.set(null);
+}
+
+/**
+ * After a switch/create activates and we re-hydrate, a still-zero serverVersion
+ * means the post-activate hydrate failed (transient / 401) and the store is NOT
+ * yet on the new profile. Surface that as an unresolved switch so the caller (the
+ * Settings switcher) shows an error instead of silently succeeding — at which
+ * point edits would be no-ops (see applyPreferencePatch's limbo guard) with no
+ * feedback. The scheduled hydrate retry will re-sync the new profile (codex).
+ */
+function assertSwitchHydrated(): void {
+	if (serverVersion === 0) {
+		throw new Error('switched profile but could not load it; check your connection and retry');
+	}
 }
 
 /**
@@ -571,6 +592,7 @@ export async function createProfile(name: string): Promise<ProfileSummary> {
 	}
 	markUnhydratedUntilSwitchHydrates();
 	await hydratePreferences();
+	assertSwitchHydrated();
 	return created;
 }
 

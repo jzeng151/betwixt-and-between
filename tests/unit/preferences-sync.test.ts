@@ -809,7 +809,8 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		});
 		await hydratePreferences(); // version 1, profile A
 
-		await switchProfile(PROFILE_B); // activate ok, post-activate hydrate 500s
+		// activate ok, post-activate hydrate 500s → switch is unresolved (rejects).
+		await expect(switchProfile(PROFILE_B)).rejects.toThrow(/could not load it/);
 
 		const patchesBefore = calls.filter((c) => c.method === 'PATCH').length;
 		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
@@ -886,5 +887,25 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		await expect(switchProfile(PROFILE_B)).rejects.toThrow(/still loading/);
 		// Refused before any network call.
 		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+	});
+
+	// codex PR #69: a definitive 401 after a prior hydrate returns to local-only
+	// (anonymous) mode — the limbo guard must NOT keep dropping edits.
+	it('a 401 after hydrating re-enables local-only edits (not stuck in limbo)', async () => {
+		let phase: 'ok' | 'expired' = 'ok';
+		mockFetch((c) =>
+			c.method === 'GET'
+				? phase === 'ok'
+					? fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A })
+					: fakeRes(401, {})
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences(); // 200 → hasHydratedOnce true
+		phase = 'expired';
+		await hydratePreferences(); // 401 → serverVersion 0, hasHydratedOnce reset
+
+		// The localStorage-only contract: a local edit still applies optimistically.
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
+		expect(get(preferences).appearance.theme).toBe('light');
 	});
 });
