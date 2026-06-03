@@ -117,61 +117,66 @@ export async function patchPreferences(
 ): Promise<ActivePreferences> {
 	validatePatchShape(patch, clientVersion);
 
-	const active = await getActivePreferences(db, userId);
+	// Run the read-check-write under the per-user profile lock so the F2 check is
+	// ATOMIC with the write: without it a concurrent activate (another tab) between
+	// the active read and the UPDATE would let the write land on the now-inactive
+	// old profile (the UPDATE keys on active.profileId, not is_active), silently
+	// succeeding against stale state instead of returning the profile-change 409
+	// (codex). The lock serializes against activate/create/delete.
+	return await db.transaction(async (tx) => {
+		await lockUserProfiles(tx, userId);
+		const active = await getActivePreferences(tx, userId);
 
-	// F2 (profile-switch concurrency): a patch authored against one profile must
-	// never land on another after the user switches the active profile mid-flight.
-	// The client stamps the profileId its pending edits were based on; if it no
-	// longer matches the active profile, reject as stale so the client re-hydrates
-	// the new profile's base before re-applying. (The conditional UPDATE below
-	// already keys on active.profileId; this turns a silent wrong-profile write
-	// into an explicit 409.)
-	if (expectedProfileId !== undefined && expectedProfileId !== active.profileId) {
-		error(409, 'active profile changed; re-fetch and retry');
-	}
+		// F2 (profile-switch concurrency): a patch authored against one profile must
+		// never land on another after the user switches the active profile mid-flight.
+		// Under the lock, active.profileId is authoritative through the UPDATE below.
+		if (expectedProfileId !== undefined && expectedProfileId !== active.profileId) {
+			error(409, 'active profile changed; re-fetch and retry');
+		}
 
-	// Merge onto the CURRENT row data. The conditional UPDATE below only
-	// commits if version is still clientVersion — so a successful write always
-	// used the base the client saw, and a raced write is discarded (→ 409).
-	const merged = applyUnset(deepMerge(active.data, patch.set ?? {}), patch.unset ?? []);
-	validateMergedData(merged);
+		// Merge onto the CURRENT row data. The conditional UPDATE below only
+		// commits if version is still clientVersion — so a successful write always
+		// used the base the client saw, and a raced write is discarded (→ 409).
+		const merged = applyUnset(deepMerge(active.data, patch.set ?? {}), patch.unset ?? []);
+		validateMergedData(merged);
 
-	const updated = await db
-		.update(userPreferences)
-		// Stamp initialized_from_client_at on the FIRST client write (COALESCE
-		// keeps it stable thereafter) — the durable first-login-reconcile marker.
-		// Not updated_at/created_at, so explicit set is allowed (CLAUDE.md trigger
-		// convention covers only the timestamp pair the trigger maintains).
-		.set({
-			data: merged,
-			version: sql`${userPreferences.version} + 1`,
-			initializedFromClientAt: sql`coalesce(${userPreferences.initializedFromClientAt}, now())`
-		})
-		.where(
-			and(
-				eq(userPreferences.userId, userId),
-				eq(userPreferences.profileId, active.profileId),
-				eq(userPreferences.version, clientVersion)
+		const updated = await tx
+			.update(userPreferences)
+			// Stamp initialized_from_client_at on the FIRST client write (COALESCE
+			// keeps it stable thereafter) — the durable first-login-reconcile marker.
+			// Not updated_at/created_at, so explicit set is allowed (CLAUDE.md trigger
+			// convention covers only the timestamp pair the trigger maintains).
+			.set({
+				data: merged,
+				version: sql`${userPreferences.version} + 1`,
+				initializedFromClientAt: sql`coalesce(${userPreferences.initializedFromClientAt}, now())`
+			})
+			.where(
+				and(
+					eq(userPreferences.userId, userId),
+					eq(userPreferences.profileId, active.profileId),
+					eq(userPreferences.version, clientVersion)
+				)
 			)
-		)
-		.returning();
+			.returning();
 
-	if (updated.length === 0) {
-		// Stale — another writer (or device) bumped the version between the
-		// client's last GET and this PATCH. The client re-GETs, re-applies its
-		// pending patch onto the fresh base, and retries (T4).
-		error(409, 'preferences version is stale; re-fetch and retry');
-	}
+		if (updated.length === 0) {
+			// Stale — another writer (or device) bumped the version between the
+			// client's last GET and this PATCH. The client re-GETs, re-applies its
+			// pending patch onto the fresh base, and retries (T4).
+			error(409, 'preferences version is stale; re-fetch and retry');
+		}
 
-	// A successful write always sets the marker (COALESCE above), so the row is
-	// initialized from here on.
-	return {
-		profileId: active.profileId,
-		name: active.name,
-		data: merged,
-		version: updated[0].version,
-		initialized: true
-	};
+		// A successful write always sets the marker (COALESCE above), so the row is
+		// initialized from here on.
+		return {
+			profileId: active.profileId,
+			name: active.name,
+			data: merged,
+			version: updated[0].version,
+			initialized: true
+		};
+	});
 }
 
 // ── workspace profiles (Phase 3, T9) ────────────────────────────────────────
