@@ -130,10 +130,20 @@ export async function traceRegionProvenance(
 	// BFS-deepest node, which for a re-converging DAG need not be a root).
 	const hasAdmissibleCause = new Set<string>();
 
-	const queue: string[] = [sourceEvent.id];
-	while (queue.length > 0) {
-		const node = queue.shift()!;
-		const causes = await db
+	// Per-node causes cache: a node can be re-processed when a longer path relaxes
+	// its depth (below), so memoize its fetched causes to avoid redundant queries.
+	type CauseRow = {
+		relationshipId: string;
+		causeId: string;
+		startPosition: number | null;
+		revealedAtPosition: number | null;
+		causeName: string;
+	};
+	const causesCache = new Map<string, CauseRow[]>();
+	async function causesOf(node: string): Promise<CauseRow[]> {
+		const cached = causesCache.get(node);
+		if (cached) return cached;
+		const rows: CauseRow[] = await db
 			.select({
 				relationshipId: relationships.id,
 				causeId: relationships.toId,
@@ -147,24 +157,50 @@ export async function traceRegionProvenance(
 				and(
 					eq(relationships.type, 'caused_by'),
 					eq(relationships.fromId, node),
+					// Scope BOTH the relationship row AND the cause entity to the
+					// caller. Without the relationship predicate an imported / null-user
+					// edge that happens to reference one of the caller's Events would
+					// leak its id + start_position into the chain — the rest of the app
+					// (/api/relationships, the store) uses this owned-edge set too
+					// (Codex review #66).
+					eq(relationships.userId, userId),
 					eq(entities.userId, userId) // cross-user ancestor → excluded → walk stops
 				)
 			);
+		causesCache.set(node, rows);
+		return rows;
+	}
 
-		for (const c of causes) {
+	const queue: string[] = [sourceEvent.id];
+	while (queue.length > 0) {
+		const node = queue.shift()!;
+		const nodeDepth = depth.get(node) ?? 0;
+		// Cycle safety: a simple ancestry path can't be longer than the number of
+		// distinct nodes reached. Once relaxation pushes a depth past that, we're
+		// circling a cycle (caused_by isn't cycle-checked at write) — stop relaxing.
+		if (nodeDepth > visited.size) continue;
+		for (const c of await causesOf(node)) {
 			// Reveal gate: a not-yet-revealed link is invisible to the reader at T.
 			if (c.revealedAtPosition != null && t < c.revealedAtPosition) continue;
 			hasAdmissibleCause.add(node); // node has a real upstream cause → not a root
-			if (visited.has(c.causeId)) continue; // cycle / re-converging DAG guard
-			visited.add(c.causeId);
-			hopInto.set(c.causeId, {
-				fromId: node,
-				relationshipId: c.relationshipId,
-				startPosition: c.startPosition,
-				name: c.causeName
-			});
-			depth.set(c.causeId, (depth.get(node) ?? 0) + 1);
-			queue.push(c.causeId);
+			const newDepth = nodeDepth + 1;
+			const known = depth.get(c.causeId);
+			// First visit OR a strictly LONGER path: (re)record this node's depth and
+			// the hop that achieved it, then re-enqueue so downstream depths relax
+			// too. Using longest path (not first/shortest) makes "deepest root" the
+			// most ancestral cause in a re-converging DAG (Codex review #66). The
+			// cycle cap above bounds re-enqueues.
+			if (known === undefined || newDepth > known) {
+				visited.add(c.causeId);
+				depth.set(c.causeId, newDepth);
+				hopInto.set(c.causeId, {
+					fromId: node,
+					relationshipId: c.relationshipId,
+					startPosition: c.startPosition,
+					name: c.causeName
+				});
+				queue.push(c.causeId);
+			}
 		}
 	}
 

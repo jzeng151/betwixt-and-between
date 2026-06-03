@@ -220,4 +220,52 @@ describe('Causal Cartography — traceRegionProvenance (Slice 5 PR-E / D6)', () 
 		const r = await traceRegionProvenance(db, userId, mapId, REGION, 5);
 		expect(r.status === 'found' && r.earliest.eventId).toBe(second);
 	});
+
+	it('re-converging DAG: earliest = the LONGEST-path root, not the first-reached one (Codex #66)', async () => {
+		// source → a → rootZ ; source → b → a ; source → b → rootA.
+		// Longest path to rootZ is source→b→a→rootZ (3); rootA is source→b→rootA (2).
+		// A shortest-path BFS would tag rootZ via source→a→rootZ (2), tie with rootA
+		// and pick by id; longest-path relaxation must pick rootZ outright.
+		const source = await event('source');
+		const a = await event('a');
+		const b = await event('b');
+		const rootZ = await event('rootZ');
+		const rootA = await event('rootA');
+		await causedBy(source, a);
+		await causedBy(a, rootZ);
+		await causedBy(source, b);
+		await causedBy(b, a);
+		await causedBy(b, rootA);
+		await transferRegion(source);
+
+		const r = await traceRegionProvenance(db, userId, mapId, REGION, 10);
+		expect(r.status).toBe('found');
+		if (r.status !== 'found') return;
+		expect(r.earliest.eventId).toBe(rootZ);
+		// Chain reconstructs along the longest path: source → b → a → rootZ.
+		expect(r.chain.map((s) => s.eventId)).toEqual([source, b, a, rootZ]);
+	});
+
+	it('unowned relationship row is excluded even if it references the caller’s Events (Codex #66)', async () => {
+		const otherUserId = (await seedTestUser(db, { email: 'other2@example.com' })).id;
+		const source = await event('Owned source');
+		const ghostCause = await event('Cause via foreign edge'); // entity owned by caller
+		// A caused_by row owned by ANOTHER user that points at the caller's Events
+		// (imported / null-user style). entities.userId scoping alone would let this
+		// through; the relationships.userId predicate must drop it.
+		await db.insert(relationships).values({
+			userId: otherUserId,
+			fromId: source,
+			toId: ghostCause,
+			type: 'caused_by'
+		});
+		await transferRegion(source);
+
+		const r = await traceRegionProvenance(db, userId, mapId, REGION, 10);
+		expect(r.status).toBe('found');
+		if (r.status !== 'found') return;
+		// The foreign-owned edge is not followed → chain is just the owned source.
+		expect(r.chain.map((s) => s.eventId)).toEqual([source]);
+		expect(r.earliest.eventId).toBe(source);
+	});
 });
