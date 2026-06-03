@@ -48,6 +48,14 @@ describe('Phase 3 profiles', () => {
 		expect(await activeCount(db, userId)).toBe(1);
 	});
 
+	it('a created profile is marked initialized, not a first-login reconcile target (codex PR #69)', async () => {
+		await createProfile(db, userId, 'Fork');
+		// The copy carries the user's real blob, so a later hydrate must treat it as
+		// initialized (initialized:false would let the reconcile path clobber it).
+		const active = await getActivePreferences(db, userId);
+		expect(active.initialized).toBe(true);
+	});
+
 	it('create copies the active blob and activates the new profile', async () => {
 		const active = await getActivePreferences(db, userId);
 		await patchPreferences(db, userId, { set: { appearance: { theme: 'light' } } }, active.version);

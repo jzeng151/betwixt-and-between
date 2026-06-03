@@ -69,6 +69,14 @@ describe('Phase 3 presets', () => {
 		await expectStatus(deletePreset(db, userId, crypto.randomUUID()), 404);
 	});
 
+	it('rejects an oversized appearance payload (codex PR #69)', async () => {
+		// validateAppearance ignores unknown top-level keys, so the size guard is
+		// what stops a client bloating its preset rows (loaded on every list).
+		const huge = { theme: 'dark', junk: 'x'.repeat(70_000) } as unknown;
+		await expectStatus(createPreset(db, userId, 'big', huge), 400);
+		expect((await listPresets(db, userId)).user).toHaveLength(0);
+	});
+
 	it('presets are user-scoped', async () => {
 		const created = await createPreset(db, userId, 'Mine', { theme: 'dark' });
 		const otherId = (await seedTestUser(db, { email: 'b@t.com' })).id;

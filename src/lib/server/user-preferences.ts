@@ -36,7 +36,7 @@ export type { ProfileSummary };
 
 /** Max serialized blob size. Generous for palettes + window + graph prefs; a
  *  guard against a client (or attacker) bloating the row and every SSR read. */
-const MAX_BLOB_BYTES = 64 * 1024;
+export const MAX_BLOB_BYTES = 64 * 1024;
 
 export interface PreferencesPatch {
 	/** Partial subtree to deep-merge into the blob. */
@@ -251,7 +251,17 @@ export async function createProfile(db: Db, userId: string, name: string): Promi
 		// zero-arg overload, so we read the full row and pick fields.
 		const [inserted] = await tx
 			.insert(userPreferences)
-			.values({ userId, name: profileName, isActive: 0, data: active.data })
+			// Stamp initialized_from_client_at: the copy carries the user's real
+			// active blob, so it is NOT a fresh first-login row. Without this the
+			// copied profile reads back initialized:false and a later hydrate would
+			// run the first-login reconcile and overwrite its saved data (codex).
+			.values({
+				userId,
+				name: profileName,
+				isActive: 0,
+				data: active.data,
+				initializedFromClientAt: sql`now()`
+			})
 			.returning();
 		await activateInTx(tx, userId, inserted.profileId);
 		return { profileId: inserted.profileId, name: profileName, isActive: true, version: inserted.version };

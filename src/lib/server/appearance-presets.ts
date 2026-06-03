@@ -17,7 +17,7 @@ import { appearancePresets } from './db/schema.js';
 import type { Db } from './intervals.js';
 import { isUuid } from './validation.js';
 import { isPlainObject } from '../preferences-merge.js';
-import { validateAppearance, validateDisplayName } from './user-preferences.js';
+import { validateAppearance, validateDisplayName, MAX_BLOB_BYTES } from './user-preferences.js';
 import { BUILTIN_APPEARANCE_PRESETS, type PresetSummary } from '../appearance-presets.js';
 import type { Appearance } from '../types/preferences.js';
 
@@ -63,6 +63,12 @@ export async function createPreset(
 	const presetName = validateDisplayName(name);
 	if (!isPlainObject(appearance)) error(400, 'appearance must be an object');
 	validateAppearance(appearance);
+	// validateAppearance only checks the known keys; unknown top-level keys pass
+	// through and would be stored verbatim. Bound the serialized size (same cap as
+	// a full prefs blob) so a client can't bloat its preset rows — which are
+	// returned on every Settings preset-list load (codex).
+	const size = JSON.stringify(appearance).length;
+	if (size > MAX_BLOB_BYTES) error(400, `preset appearance too large (${size} > ${MAX_BLOB_BYTES} bytes)`);
 	const [row] = await db
 		.insert(appearancePresets)
 		.values({ userId, name: presetName, appearance: appearance as Record<string, unknown> })
