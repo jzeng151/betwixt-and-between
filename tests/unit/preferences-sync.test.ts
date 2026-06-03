@@ -953,6 +953,30 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
 	});
 
+	// codex PR #69: switch/create must be refused while in post-switch limbo
+	// (serverVersion 0 after a failed post-activate hydrate), not just pre-initial-
+	// hydrate — else the create forks whatever profile is active server-side.
+	it('refuses switch/create while in post-switch limbo', async () => {
+		let phase: 'pre' | 'post' = 'pre';
+		mockFetch((c) => {
+			if (c.method === 'GET')
+				return phase === 'pre'
+					? fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A })
+					: fakeRes(500, {});
+			if (c.method === 'POST') {
+				phase = 'post';
+				return fakeRes(200, { ok: true });
+			}
+			return fakeRes(200, { version: 2 });
+		});
+		await hydratePreferences();
+
+		// Enter limbo: activate ok, post-activate hydrate 500s.
+		await expect(switchProfile(PROFILE_B)).rejects.toThrow(/could not load it/);
+		// In limbo (serverVersion 0) a further switch/create is refused.
+		await expect(createProfile('X')).rejects.toThrow(/still loading/);
+	});
+
 	// codex PR #69: a definitive 401 after a prior hydrate returns to local-only
 	// (anonymous) mode — the limbo guard must NOT keep dropping edits.
 	it('a 401 after hydrating re-enables local-only edits (not stuck in limbo)', async () => {

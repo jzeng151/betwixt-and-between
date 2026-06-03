@@ -249,11 +249,14 @@
 
   async function saveCurrentAsPreset() {
     const name = newPresetName.trim();
-    // Wait for the initial hydrate to resolve ownership: before it, `appearance`
-    // may still be a prior user's localStorage cache on a shared browser, and
-    // "Save current" POSTs it straight into the new account — storing the wrong
-    // user's palette. Gate the save until ownership is confirmed (codex).
-    if (!name || savingPreset || !$preferencesOwnershipResolved) return;
+    // Gate "Save current" until the store reflects a RESOLVED current profile:
+    //   • ownership unresolved → `appearance` may be a prior user's localStorage
+    //     cache on a shared browser (saves the wrong user's palette).
+    //   • profileId null → post-switch limbo (a failed post-activate hydrate); the
+    //     store still holds the PREVIOUS profile, so saving captures stale colors.
+    // The save bypasses applyPreferencePatch (POSTs appearance directly), so it
+    // needs its own guard (codex).
+    if (!name || savingPreset || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
     savingPreset = true;
     try {
       await createPresetRequest(name, appearance);
@@ -453,7 +456,7 @@
           />
           <button
             class="action-btn"
-            disabled={!newPresetName.trim() || savingPreset || !$preferencesOwnershipResolved}
+            disabled={!newPresetName.trim() || savingPreset || !$preferencesOwnershipResolved || !$preferencesProfileId}
             onclick={saveCurrentAsPreset}
           >
             Save current

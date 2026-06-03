@@ -424,6 +424,11 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 	hasHydratedOnce = false; // new account must re-hydrate before switch/create
 	switching = false;
 	inFlight = false;
+	// Drop the previous account's in-flight flush handle: its result is already
+	// discarded (inFlight reset), and leaving it would make the new account's
+	// drainBeforeSwitch await an abandoned request that may hang until it
+	// completes/times out (codex).
+	activeFlush = null;
 	_userId.set(null);
 	_profileId.set(null);
 	// Close the gate until the next hydrate re-resolves ownership for the new
@@ -459,7 +464,13 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 /** Refuse a profile switch/create before the initial hydrate has reconciled
  *  localStorage into the server row (codex). */
 function requireHydrated(): void {
-	if (!hasHydratedOnce) {
+	// serverVersion 0 means there is NO resolved current server profile right now —
+	// covers pre-initial-hydrate (956) AND post-switch limbo (a failed post-activate
+	// hydrate leaves hasHydratedOnce true but serverVersion 0). In either case a
+	// switch/create would drain nothing and fork whatever profile is active
+	// server-side while the store shows a different one. Require a resolved profile,
+	// not just a historical hydrate (codex).
+	if (serverVersion === 0) {
 		throw new Error('preferences are still loading; try again in a moment');
 	}
 }
