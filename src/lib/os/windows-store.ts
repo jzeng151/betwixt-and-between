@@ -2,7 +2,7 @@ import { writable, get } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
 import { type AppId, persistsPosition } from './app-ids.js';
 import { preferences } from './preferences-store.js';
-import { applyPreferencePatch } from './preferences-sync.js';
+import { applyPreferencePatch, preferencesOwnershipResolved } from './preferences-sync.js';
 import { clampToViewport } from './context-menu-clamp.js';
 
 // Re-export so existing `import type { AppId } from '$lib/os/windows-store'`
@@ -40,6 +40,10 @@ type WindowState = {
 	// When true, the window renders with a boosted z-index that keeps it
 	// above all non-pinned windows regardless of focus changes.
 	alwaysOnTop?: boolean;
+	// True once the user has dragged/resized this window. The one-shot
+	// post-hydrate default re-apply (below) skips adjusted windows so it never
+	// clobbers a deliberate in-session move.
+	geomAdjusted?: boolean;
 };
 
 /** Z-index offset applied to `alwaysOnTop` windows so they float above the rest. */
@@ -279,11 +283,11 @@ function createWindowStore() {
 	}
 
 	function move(id: string, x: number, y: number) {
-		patchWindow(id, { x, y });
+		patchWindow(id, { x, y, geomAdjusted: true });
 	}
 
 	function resize(id: string, width: number, height: number) {
-		patchWindow(id, { width, height });
+		patchWindow(id, { width, height, geomAdjusted: true });
 	}
 
 	function maximize(id: string) {
@@ -360,6 +364,35 @@ function createWindowStore() {
 	function findOpenEditorFor(entityId: string): WindowState | undefined {
 		return get({ subscribe }).find((w) => w.entityId === entityId);
 	}
+
+	// codex P2: a window opened BEFORE the initial /api/preferences hydrate
+	// snapshots the built-in WINDOW_DEFAULTS (no saved geometry yet). When
+	// ownership first resolves (hydrate installs windows.defaults), re-apply the
+	// saved geometry ONCE to every open window the user hasn't moved/resized
+	// (geomAdjusted), so a fresh-device window opened in the sub-second before
+	// hydrate still lands at the saved size/position. Size for all apps; position
+	// only for singleton apps (persistsPosition); clamped to the viewport.
+	let _defaultsReapplied = false;
+	preferencesOwnershipResolved.subscribe((resolved) => {
+		if (!resolved || _defaultsReapplied) return;
+		_defaultsReapplied = true;
+		const defaults = get(preferences).windows.defaults;
+		update((all) =>
+			all.map((w) => {
+				if (w.geomAdjusted || w.maximized) return w;
+				const saved = defaults[w.appId];
+				if (!saved) return w;
+				let x = w.x;
+				let y = w.y;
+				if (persistsPosition(w.appId) && saved.x !== undefined && saved.y !== undefined) {
+					x = saved.x;
+					y = saved.y;
+				}
+				const clamped = clampOpenGeom(x, y, saved.width, saved.height);
+				return { ...w, width: saved.width, height: saved.height, x: clamped.x, y: clamped.y };
+			})
+		);
+	});
 
 	return {
 		subscribe,
