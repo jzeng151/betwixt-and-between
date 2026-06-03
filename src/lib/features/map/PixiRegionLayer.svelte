@@ -32,6 +32,7 @@
 	import { mapAnchorsStore } from './map-anchors-store.js';
 	import { layerVisibility } from './layer-prefs-store.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
+	import { pointInPolygon } from './point-in-polygon.js';
 	import type { MapRegion } from './types.js';
 	// Type-only import (declaration-only — erased at compile, no server-code leak;
 	// same pattern as RelationshipType from schema.ts). Slice 5 PR-E.
@@ -563,6 +564,32 @@
 			// rather than screen-space — survives pan/zoom correctly.
 			viewport.eventMode = 'static';
 			stageRightClickHandler = (e: FederatedPointerEvent) => {
+				// Route by geometry: if the right-click world point is inside a region
+				// polygon, open that region's menu; otherwise the empty-area snapshot
+				// menu. Works even when a causal edge sits on top of the region (FU3).
+				// Skip region routing when the Regions layer is toggled off — clicks on
+				// an invisible polygon should reach the snapshot/draw menu (Codex #67).
+				const vp = stageCtx.viewport;
+				if (vp && get(visible)) {
+					const local = e.getLocalPosition(vp); // world coords (x, y)
+					// Match Pixi's topmost-first hit order: the draw loop adds regions in
+					// array order (later on top), so scan in REVERSE so a right-click on
+					// the visible top polygon opens ITS menu, not a covered one (Codex #67).
+					let hit: MapRegion | undefined;
+					for (let i = regions.length - 1; i >= 0; i--) {
+						const r = regions[i];
+						if (!r.polygon || r.polygon.length < 3) continue;
+						if (pointInPolygon(local.x, local.y, r.polygon.map(([lat, lng]) => [lng, lat]))) {
+							hit = r;
+							break;
+						}
+					}
+					if (hit) {
+						e.stopPropagation();
+						openRegionMenu(hit.id, e);
+						return;
+					}
+				}
 				openSnapshotMenu(e);
 			};
 			viewport.on('rightclick', stageRightClickHandler);
@@ -609,16 +636,11 @@
 				.stroke({ color: fill, width: strokeWidth, alpha: strokeAlpha });
 			g.eventMode = 'static';
 			g.cursor = 'pointer';
-			// 'rightclick' fires on pointerup with right button; matches
-			// the spike's documented Pixi v8 API. Close any existing menu
-			// before opening a new one so rapid right-clicks don't stack.
-			g.on('rightclick', (e: FederatedPointerEvent) => {
-				// Stop propagation so the stage-level snapshot menu doesn't
-				// also fire — region right-click takes precedence over the
-				// empty-area "Snapshot here" affordance.
-				e.stopPropagation();
-				openRegionMenu(region.id, e);
-			});
+			// Region right-click is NOT handled per-polygon anymore: an interactive
+			// layer on top (causal edges) would steal the hit-test and the region
+			// menu would never open over that strip. Instead the viewport-level
+			// rightclick handler routes by geometry (point-in-polygon) so it works
+			// regardless of overlays (FU3, Codex #66).
 			layer.addChild(g);
 		}
 	});

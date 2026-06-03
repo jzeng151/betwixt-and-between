@@ -18,6 +18,15 @@ Settings customization Phase 2: the colors you pick now reach the world map, you
 - The map style cascade resolves an entity's color through placement override → entity style → `data.color` / character cycle → the customizable type palette → global default. A character with no custom color reads the same color on the graph and the map (shared `characterColorFor`).
 - The Settings color pickers commit on release (picker close) and show a live preview while you drag, so dragging the picker no longer rebuilds the open world map on every frame.
 - Preferences schema migrated v4 → v5 (adds the `graph` and `windows` sections); the server validates both. Old preference blobs are defaulted on load — no action needed.
+## [0.8.8.0] - 2026-06-03
+
+World Map v3 Causal Cartography follow-ups — correctness fixes from the #66 review.
+
+### Fixed
+
+- **Trace cause now identifies the deepest root cause in branching histories.** When a region's causal chain re-converges (the same cause reached by more than one path), the trace walks the longest path to pick the most ancestral cause, instead of an arbitrary one — and it stays fast and can't hang even if the causal links form a loop.
+- **Causal arrows follow an event to wherever it takes place at the current moment.** If an event's location is scoped to part of the story, its causal edge now anchors to the location active at the playhead (and disappears when the event has no location there), instead of a fixed first-listed location that could be off-map.
+- **Right-clicking a region always opens its menu, even where a causal arrow crosses it.** The region's context menu (Trace cause / Change owner) is now found by where you click rather than by what's drawn on top, so a causal edge laid over a region no longer swallows the right-click.
 
 ## [0.8.7.0] - 2026-06-02
 

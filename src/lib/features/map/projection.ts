@@ -301,12 +301,21 @@ export type ProjectionCausalEdge = {
 	revealedAtPosition: number | null;
 };
 
+// Slice 5 PR-C — one `takes_place_at` edge for an Event, with its temporal
+// bounds. FU1/#66: an Event's location can be temporally scoped (the relationship
+// editor allows bounds on any type), so the active Location is resolved AT the
+// playhead, not picked timelessly. `Relationship` is structurally assignable.
+export type ProjectionTakesPlaceAt = {
+	locationId: string; // the `to` endpoint (Event AT Location — edge-policy.ts:14)
+	startPosition: number | null;
+	endPosition: number | null;
+};
+
 // Slice 5 PR-C — pre-resolved causal-render input, supplied by the (client)
 // caller that holds the relationships + region geometry. `edges` are the
-// caused_by rows; `locationOf` maps an endpoint entity id (Event) → its Location
-// entity id, derived from `takes_place_at` edges (Event AT Location —
-// edge-policy.ts:14); `centroidByLocation` maps a Location id → its on-map
-// region centroid.
+// caused_by rows; `takesPlaceAt` maps an Event id → its `takes_place_at` edges
+// (with bounds), from which foldCausalEdges resolves the Location ACTIVE at T;
+// `centroidByLocation` maps a Location id → its on-map region centroid.
 //
 // `centroidByLocation` is sourced by the caller from the SAME live region
 // geometry the map renders (the mapRegions store), NOT from anchor state_jsonb —
@@ -314,18 +323,18 @@ export type ProjectionCausalEdge = {
 // anchor, so anchor-sourced centroids would be stale/missing for a just-edited
 // region. The caller is responsible for user + scope filtering (mapRegions loads
 // from a user-scoped endpoint and the caller passes its scoped view), so
-// projection trusts this set as "owned, on-map regions." An endpoint Location
-// absent from it (off-map, cross-user, or a Scene endpoint with no Location)
-// drops the edge (lazy-GC). Server-side callers pass the empty default.
+// projection trusts this set as "owned, on-map regions." An endpoint whose
+// T-active Location is absent from it (off-map, cross-user, a Scene endpoint, or
+// no takes_place_at active at T) drops the edge (lazy-GC). Server callers default.
 export type CausalProjectionInput = {
 	edges: ProjectionCausalEdge[];
-	locationOf: ReadonlyMap<string, string>;
+	takesPlaceAt: ReadonlyMap<string, ProjectionTakesPlaceAt[]>;
 	centroidByLocation: ReadonlyMap<string, ArtifactPosition>;
 };
 
 const EMPTY_CAUSAL: CausalProjectionInput = {
 	edges: [],
-	locationOf: new Map(),
+	takesPlaceAt: new Map(),
 	centroidByLocation: new Map()
 };
 
@@ -680,23 +689,50 @@ export function polygonCentroid(polygon: number[][]): ArtifactPosition | null {
  *     timeless edges; WorldMap passes empty `causal.edges` when the playhead is
  *     null so the idle map shows no causal edges — Codex review #66.)
  *     The temporal window half (isEdgeVisibleAtT) IS the same rule both graphs use;
- *   - BOTH endpoints resolve through locationOf → a region in centroidByLocation
- *     (the caller's owned, on-map, scope-filtered region set — off-map and
- *     cross-user endpoints are simply absent);
+ *   - BOTH endpoints resolve to a Location ACTIVE at T (via takesPlaceAt +
+ *     isEdgeVisibleAtT — a scoped takes_place_at outside its window is skipped)
+ *     whose region is in centroidByLocation (the caller's owned, on-map,
+ *     scope-filtered region set — off-map / cross-user / no-active-location
+ *     endpoints are simply absent);
  *   - the endpoints are in DIFFERENT regions — a same-region (self-loop) edge
  *     has no spatial arrow to draw and is dropped (Spike S1 gate decision).
  */
 function foldCausalEdges(t: number, causal: CausalProjectionInput): RenderedCausalEdge[] {
-	const { centroidByLocation } = causal;
+	const { centroidByLocation, takesPlaceAt } = causal;
 	if (causal.edges.length === 0 || centroidByLocation.size === 0) return [];
+
+	// Resolve the Location an Event is AT during time T. An Event's takes_place_at
+	// can be temporally scoped (FU1/#66), so only edges visible at T count; among
+	// those, prefer a scoped (bounded) one over a timeless default, then lowest
+	// locationId for determinism. null = no active location → endpoint omitted.
+	function locationAtT(eventId: string): string | null {
+		const edges = takesPlaceAt.get(eventId);
+		if (!edges || edges.length === 0) return null;
+		let best: ProjectionTakesPlaceAt | null = null;
+		for (const tp of edges) {
+			if (!isEdgeVisibleAtT(tp, t)) continue;
+			if (best === null) {
+				best = tp;
+				continue;
+			}
+			const tpScoped = tp.startPosition != null || tp.endPosition != null;
+			const bestScoped = best.startPosition != null || best.endPosition != null;
+			if (tpScoped !== bestScoped) {
+				if (tpScoped) best = tp; // scoped beats timeless (more specific)
+			} else if (tp.locationId < best.locationId) {
+				best = tp; // deterministic tie-break
+			}
+		}
+		return best?.locationId ?? null;
+	}
 
 	const out: RenderedCausalEdge[] = [];
 	for (const e of causal.edges) {
 		if (isMysteryEdgeAtT(e, t)) continue;
 		if (!isEdgeVisibleAtT(e, t)) continue;
-		const fromLoc = causal.locationOf.get(e.fromId);
-		const toLoc = causal.locationOf.get(e.toId);
-		if (!fromLoc || !toLoc) continue; // Scene endpoint / no takes_place_at → omit
+		const fromLoc = locationAtT(e.fromId);
+		const toLoc = locationAtT(e.toId);
+		if (!fromLoc || !toLoc) continue; // Scene endpoint / no active location → omit
 		if (fromLoc === toLoc) continue; // same place → degenerate self-edge → drop
 		const fromPos = centroidByLocation.get(fromLoc);
 		const toPos = centroidByLocation.get(toLoc);
