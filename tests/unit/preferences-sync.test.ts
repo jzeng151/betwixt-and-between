@@ -814,8 +814,11 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		const patchesBefore = calls.filter((c) => c.method === 'PATCH').length;
 		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
 		await __flushForTesting();
-		// Un-hydrated (serverVersion 0): no PATCH, so no stale-profile stamp.
+		// In post-switch limbo the edit is REFUSED (not just unflushed): the store
+		// still holds the previous profile, so applying against it would be stale.
+		// theme stays the hydrated default ('dark'), and no PATCH was queued/sent.
 		expect(calls.filter((c) => c.method === 'PATCH').length).toBe(patchesBefore);
+		expect(get(preferences).appearance.theme).toBe('dark');
 		expect(get(preferencesProfileId)).toBe(null);
 	});
 

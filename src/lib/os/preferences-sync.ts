@@ -369,6 +369,16 @@ export async function hydratePreferences(): Promise<void> {
  * the pending edits.
  */
 export function applyPreferencePatch(patch: { set?: Record<string, unknown>; unset?: string[] }): void {
+	// Post-switch limbo guard: hasHydratedOnce && serverVersion 0 means the initial
+	// hydrate succeeded but a post-activate hydrate hasn't resolved yet (a transient
+	// failure after activate — markUnhydratedUntilSwitchHydrates). The store still
+	// holds the PREVIOUS profile, so an edit here — especially an apply-preset whose
+	// unset list is computed from the current store — would be authored against
+	// stale state and later flushed onto the now-active profile incorrectly (its
+	// exact-replacement guarantee breaks). Refuse until the hydrate retry restores
+	// serverVersion. Anonymous / pre-first-hydrate (hasHydratedOnce false) is
+	// unaffected and keeps its local-only optimistic edits (codex).
+	if (hasHydratedOnce && serverVersion === 0) return;
 	// Stamp schemaVersion so the server `data` blob stays version-stamped. Without
 	// this, a server blob that only ever received partial sets would lack
 	// schemaVersion, and a later hydrate's migrateAndMerge would run migrations
