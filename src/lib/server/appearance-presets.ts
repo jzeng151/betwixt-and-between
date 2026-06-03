@@ -63,6 +63,14 @@ export async function createPreset(
 	const presetName = validateDisplayName(name);
 	if (!isPlainObject(appearance)) error(400, 'appearance must be an object');
 	validateAppearance(appearance);
+	// A preset is APPLIED as an exact replacement (buildApplyPresetPatch unsets the
+	// keys it omits), and the UI's "Save current" always sends a full appearance.
+	// validateAppearance leaves theme/accentColor optional, so require the required
+	// scalars here — else a partial preset from an API client would unset them on
+	// apply, resetting the active profile's theme/accent to defaults (codex).
+	if (typeof appearance.theme !== 'string' || typeof appearance.accentColor !== 'string') {
+		error(400, 'preset appearance must include theme and accentColor');
+	}
 	// validateAppearance only checks the known keys; unknown top-level keys pass
 	// through and would be stored verbatim. Bound the serialized size (same cap as
 	// a full prefs blob) so a client can't bloat its preset rows — which are

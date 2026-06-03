@@ -60,8 +60,13 @@ describe('Phase 3 presets', () => {
 		await expectStatus(createPreset(db, userId, '   ', { theme: 'dark' }), 400);
 	});
 
+	it('requires theme and accentColor (preset is applied as an exact replacement) (codex PR #69)', async () => {
+		await expectStatus(createPreset(db, userId, 'no-accent', { theme: 'dark' }), 400);
+		await expectStatus(createPreset(db, userId, 'no-theme', { accentColor: '#abcdef' }), 400);
+	});
+
 	it('deletes a user preset; built-in ids are not deletable', async () => {
-		const created = await createPreset(db, userId, 'Tmp', { theme: 'light' });
+		const created = await createPreset(db, userId, 'Tmp', { theme: 'light', accentColor: '#abcdef' });
 		await deletePreset(db, userId, created.presetId);
 		expect((await listPresets(db, userId)).user).toHaveLength(0);
 		// Built-in id is not a uuid → 400; a random uuid → 404.
@@ -72,13 +77,13 @@ describe('Phase 3 presets', () => {
 	it('rejects an oversized appearance payload (codex PR #69)', async () => {
 		// validateAppearance ignores unknown top-level keys, so the size guard is
 		// what stops a client bloating its preset rows (loaded on every list).
-		const huge = { theme: 'dark', junk: 'x'.repeat(70_000) } as unknown;
+		const huge = { theme: 'dark', accentColor: '#abcdef', junk: 'x'.repeat(70_000) } as unknown;
 		await expectStatus(createPreset(db, userId, 'big', huge), 400);
 		expect((await listPresets(db, userId)).user).toHaveLength(0);
 	});
 
 	it('presets are user-scoped', async () => {
-		const created = await createPreset(db, userId, 'Mine', { theme: 'dark' });
+		const created = await createPreset(db, userId, 'Mine', { theme: 'dark', accentColor: '#abcdef' });
 		const otherId = (await seedTestUser(db, { email: 'b@t.com' })).id;
 		expect((await listPresets(db, otherId)).user).toHaveLength(0);
 		await expectStatus(deletePreset(db, otherId, created.presetId), 404);
