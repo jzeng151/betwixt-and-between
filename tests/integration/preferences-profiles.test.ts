@@ -73,19 +73,43 @@ describe('Phase 3 profiles', () => {
 		expect(profiles.map((p) => p.name).sort()).toEqual(['Default', 'Revision']);
 	});
 
+	it('requires a profileId stamp on writes once multiple profiles exist (codex PR #69)', async () => {
+		const a = await getActivePreferences(db, userId); // single profile
+		// One profile → a stampless write is unambiguous, allowed.
+		await patchPreferences(db, userId, { set: { appearance: { theme: 'light' } } }, a.version);
+
+		await createProfile(db, userId, 'B'); // now two profiles
+		const active = await getActivePreferences(db, userId);
+		// Stampless write is now rejected (400) — a stale tab can't blindly write…
+		await expectStatus(
+			patchPreferences(db, userId, { set: { appearance: { theme: 'dark' } } }, active.version),
+			400
+		);
+		// …but a stamped write to the active profile still succeeds.
+		await patchPreferences(
+			db,
+			userId,
+			{ set: { appearance: { theme: 'dark' } } },
+			active.version,
+			active.profileId
+		);
+	});
+
 	it('edits to the new profile do not bleed into the original', async () => {
 		const a = await getActivePreferences(db, userId);
 		await patchPreferences(db, userId, { set: { appearance: { accentColor: '#aaaaaa' } } }, a.version);
 		const defaultId = (await getActivePreferences(db, userId)).profileId;
 
 		const fork = await createProfile(db, userId, 'Fork');
-		// Edit the fork (now active).
+		// Edit the fork (now active). With >1 profile the profileId stamp is now
+		// required (F2 completeness), so pass it.
 		const forkActive = await getActivePreferences(db, userId);
 		await patchPreferences(
 			db,
 			userId,
 			{ set: { appearance: { accentColor: '#bbbbbb' } } },
-			forkActive.version
+			forkActive.version,
+			forkActive.profileId
 		);
 
 		// Switch back to Default — its accent is the pre-fork value, untouched.

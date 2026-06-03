@@ -130,7 +130,21 @@ export async function patchPreferences(
 		// F2 (profile-switch concurrency): a patch authored against one profile must
 		// never land on another after the user switches the active profile mid-flight.
 		// Under the lock, active.profileId is authoritative through the UPDATE below.
-		if (expectedProfileId !== undefined && expectedProfileId !== active.profileId) {
+		if (expectedProfileId === undefined) {
+			// A stampless write is only unambiguous with a single profile. With more
+			// than one, a stale-bundle tab or API client that omits the stamp could
+			// land on whichever profile is active at arrival — and version collisions
+			// (a copied profile starts at the same version as the source) make the
+			// optimistic-version check insufficient. Require the stamp once multiple
+			// profiles exist; 400 so the client drops it (no 409 requeue loop) (codex).
+			const all = await tx
+				.select({ profileId: userPreferences.profileId })
+				.from(userPreferences)
+				.where(eq(userPreferences.userId, userId));
+			if (all.length > 1) {
+				error(400, 'profileId required to write when multiple profiles exist');
+			}
+		} else if (expectedProfileId !== active.profileId) {
 			error(409, 'active profile changed; re-fetch and retry');
 		}
 
