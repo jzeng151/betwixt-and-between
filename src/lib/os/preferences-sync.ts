@@ -165,9 +165,15 @@ function leafPaths(obj: Record<string, unknown>, prefix = ''): string[] {
 
 function accumulate(patch: PendingPatch): void {
 	if (patch.set && Object.keys(patch.set).length > 0) {
-		// A set of a path cancels a pending unset of the same path.
+		// A set cancels a pending unset of the same path OR an ANCESTOR path. The
+		// server applies set-then-unset, so a queued whole-subtree unset (e.g.
+		// `appearance.entityTypeColors` from an apply-preset) left beneath a newer
+		// descendant set (`...entityTypeColors.Character`) would wipe that edit on
+		// flush and lose it. Dropping ancestor unsets keeps the newer edit (codex).
 		const paths = leafPaths(patch.set);
-		pending.unset = pending.unset.filter((u) => !paths.includes(u));
+		pending.unset = pending.unset.filter(
+			(u) => !paths.some((p) => p === u || p.startsWith(`${u}.`))
+		);
 		pending.set = deepMerge(pending.set, patch.set);
 	}
 	for (const p of patch.unset ?? []) {
@@ -493,6 +499,12 @@ export async function switchProfile(profileId: string): Promise<void> {
 			_status.set('error');
 			throw e;
 		});
+	} catch (e) {
+		// Switch failed; we're still on the original profile. An edit queued while
+		// `switching` suppressed its flush would otherwise sit local-only until the
+		// next edit — reschedule it now so it reaches the original profile (codex).
+		if (hasPending()) scheduleFlush();
+		throw e;
 	} finally {
 		switching = false;
 	}
@@ -539,6 +551,11 @@ export async function createProfile(name: string): Promise<ProfileSummary> {
 			throw e;
 		});
 		created = (await res.json()) as ProfileSummary;
+	} catch (e) {
+		// See switchProfile: reschedule edits suppressed while `switching` so a
+		// failed create doesn't strand them local-only (codex).
+		if (hasPending()) scheduleFlush();
+		throw e;
 	} finally {
 		switching = false;
 	}

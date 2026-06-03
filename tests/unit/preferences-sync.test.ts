@@ -819,6 +819,61 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		expect(get(preferencesProfileId)).toBe(null);
 	});
 
+	// codex PR #69: an apply-preset whole-subtree unset queued beneath a later
+	// descendant set must be canceled, or the server (set-then-unset) wipes the edit.
+	it('a later descendant set cancels a queued ancestor unset', async () => {
+		mockFetch((c) =>
+			c.method === 'GET'
+				? fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A })
+				: fakeRes(200, { version: 2 })
+		);
+		await hydratePreferences();
+
+		// Apply-preset shape: set appearance + unset a whole color-map subtree…
+		applyPreferencePatch({
+			set: { appearance: { theme: 'dark' } },
+			unset: ['appearance.entityTypeColors']
+		});
+		// …then a quick edit under that subtree before the (large-debounce) flush.
+		applyPreferencePatch({ set: { appearance: { entityTypeColors: { Character: '#abcdef' } } } });
+		await __flushForTesting();
+
+		const body = calls.filter((c) => c.method === 'PATCH').at(-1)!.body;
+		expect(body.unset).not.toContain('appearance.entityTypeColors'); // ancestor unset canceled
+		expect(body.set.appearance.entityTypeColors.Character).toBe('#abcdef'); // edit survives
+	});
+
+	// codex PR #69: an edit queued while `switching` suppressed its flush must be
+	// rescheduled if the switch then fails (else stranded local-only).
+	it('reschedules a suppressed edit when a profile switch fails', async () => {
+		let releaseActivate!: () => void;
+		const gate = new Promise<void>((r) => (releaseActivate = r));
+		__setFetchForTesting((async (_url: unknown, init: { method?: string } | undefined) => {
+			const method = init?.method ?? 'GET';
+			const body = (init as { body?: string } | undefined)?.body
+				? JSON.parse((init as { body: string }).body)
+				: undefined;
+			calls.push({ method, body });
+			if (method === 'GET') return fakeRes(200, { data: {}, version: 1, profileId: PROFILE_A });
+			if (method === 'POST') return gate.then(() => fakeRes(500, {})); // activate fails
+			return fakeRes(200, { version: 2 }); // PATCH
+		}) as unknown as typeof fetch);
+		await hydratePreferences();
+
+		const switchP = switchProfile(PROFILE_B).catch(() => {}); // expected to fail
+		await new Promise((r) => setTimeout(r, 0));
+		await new Promise((r) => setTimeout(r, 0));
+		// Edit arrives while `switching` is true → queued, flush suppressed.
+		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
+		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+
+		releaseActivate();
+		await switchP; // activate 500s → catch reschedules the pending flush
+		await __flushForTesting();
+		const patches = calls.filter((c) => c.method === 'PATCH');
+		expect(patches.at(-1)?.body.set.appearance.theme).toBe('light');
+	});
+
 	// codex PR #69: before the initial hydrate (serverVersion 0, never reconciled),
 	// switch/create must refuse — else a create copies the empty server Default and
 	// the hydrate overwrites the user's unsynced local prefs.
