@@ -56,6 +56,7 @@
 	import StyleEditor from './StyleEditor.svelte';
 	import { resolveStyle, type StyleOverride } from '$lib/features/map/style-cascade.js';
 	import { resolvePaletteHex } from '$lib/entity-type-colors.js';
+	import { buildCharacterIndexById } from '$lib/features/graph/view-builders.js';
 	import { preferences } from '$lib/os/preferences-store.js';
 
 	interface Props {
@@ -171,7 +172,14 @@
 	// the resolved palette so the preview tracks a Settings recolor (Phase 2, Item 1).
 	const resolvedTypeHex = $derived(resolvePaletteHex($preferences.appearance));
 	const inheritedStyle = $derived(
-		entity ? resolveStyle({ ...entity, data: {} }, resolvedTypeHex) : null
+		entity
+			? resolveStyle(
+					{ ...entity, data: {} },
+					resolvedTypeHex,
+					undefined,
+					buildCharacterIndexById($entities).get(entity.id)
+				)
+			: null
 	);
 	// is_asset defaults true; only an explicit `false` opts the entity out.
 	const inPalette = $derived(

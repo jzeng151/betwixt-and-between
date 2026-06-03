@@ -17,6 +17,7 @@
 	import { entities } from '$lib/stores/entities.js';
 	import { resolveStyle, type StyleOverride } from '$lib/features/map/style-cascade.js';
 	import { resolvePaletteHex } from '$lib/entity-type-colors.js';
+	import { buildCharacterIndexById } from '$lib/features/graph/view-builders.js';
 	import { preferences } from '$lib/os/preferences-store.js';
 	import StyleEditor from '$lib/components/StyleEditor.svelte';
 	import EntityColorField from '$lib/components/EntityColorField.svelte';
@@ -39,9 +40,14 @@
 	// without the placement layer) for the StyleEditor placeholders.
 	const styleValue = $derived(((placement.data?.style ?? {}) as StyleOverride));
 	// Item 1: the inherited preview reads the resolved palette so it matches the
-	// rendered sprite after a Settings recolor (regression #3).
+	// rendered sprite after a Settings recolor (regression #3). Pass the character
+	// cycle index too — the renderer (PixiPlacementLayer) passes it, so an
+	// uncustomized Character beyond index 0 resolves to its cycle color; omitting
+	// it here would preview the type-palette color and mismatch the sprite (codex P2).
 	const resolvedTypeHex = $derived(resolvePaletteHex($preferences.appearance));
-	const inheritedStyle = $derived(resolveStyle(placeable, resolvedTypeHex));
+	const inheritedStyle = $derived(
+		resolveStyle(placeable, resolvedTypeHex, undefined, buildCharacterIndexById($entities).get(placeable.id))
+	);
 	const inPalette = $derived(
 		(placeable.data as Record<string, unknown>)?.is_asset !== false
 	);
