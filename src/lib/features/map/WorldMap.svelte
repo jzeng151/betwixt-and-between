@@ -25,6 +25,7 @@
 	import PixiGridLayer from '$lib/features/map/PixiGridLayer.svelte';
 	import PixiTerrainLayer from '$lib/features/map/PixiTerrainLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
+	import PixiDecorationLayer from '$lib/features/map/PixiDecorationLayer.svelte';
 	import PixiCausalEdgeLayer from '$lib/features/map/PixiCausalEdgeLayer.svelte';
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
@@ -1570,6 +1571,8 @@
 				     and under markers. Click routes through the shared jumpToCause
 				     helper (same jump as both graphs); a timeless edge click is a
 				     harmless no-op (D5). -->
+				<!-- Slice 6 T1 PoC: placeholder swaying props (prove a prop breathes). -->
+				<PixiDecorationLayer {activeMap} />
 				<PixiCausalEdgeLayer
 					{activeMap}
 					causalEdges={renderedState?.causalEdges ?? []}

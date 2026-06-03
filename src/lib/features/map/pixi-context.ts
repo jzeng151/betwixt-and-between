@@ -12,11 +12,17 @@
 //                     let app = $derived(ctx.app);
 
 import type { Application, Container } from 'pixi.js';
+import type { AnimController } from './anim-controller.js';
 
 export const PIXI_STAGE_CONTEXT = Symbol('pixi-stage');
 
 export type PixiStageContext = {
 	app: Application | null;
+	// Slice 6 D6 — ONE shared animation controller (single ticker + uTime clock)
+	// owned by PixiStage. Animated layers (terrain shimmer, decoration sway,
+	// future placement idle) subscribe via anim.register(); they must NOT call
+	// anim.destroy() — PixiStage owns its lifecycle. Null pre-init / post-destroy.
+	anim: AnimController | null;
 	// T13 parity (codex PR#57 iter3): pixi-viewport provides pan/zoom.
 	// PixiStage creates a Viewport and adds it to app.stage; descendant
 	// layers addChild to `viewport` (typed as Container so consumers
