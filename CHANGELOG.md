@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.11.0] - 2026-06-04
+
+World Map v3 Slice 6: paint your map from a tile pack, with square cells.
+
+### Added
+
+- **Sprite-tile terrain.** The world map now draws terrain as illustrated tiles from a texture pack instead of flat colors. The brush palette groups terrains into types (Clay, Grass, Ice, Lava, Paving, Sand, Snow, and Water); click a type to open a popover of its textures and pick the exact one to paint. Water is a single terrain whose popover holds the per-origin water colors. Each painted cell remembers its chosen texture, and water cells get an ambient shimmer so the surface reads as alive.
+- **Square grid cells.** The grid now fits the base image's aspect ratio, so cells are square instead of stretched rectangles. New maps square automatically on the first image upload; existing maps were re-fit to their image aspect.
+
+### Changed
+
+- Terrain is now an asset-backed vocabulary: a painted cell stores a known texture key (a category name, a specific tile, or a water color), validated server-side against the generated tile manifest so an unrenderable key can't be stored as invisible, grid-blocking terrain. Legacy flat-color cells still render unchanged.
+- Terrain tiles are served through a new `/api/sprites` route (R2 in prod, the local pack in dev), keeping the licensed art pack out of the public repo; only the generated manifest is tracked.
+
 ## [0.8.10.0] - 2026-06-03
 
 Settings customization Phase 3: keep more than one workspace and switch between them, and save your colors as reusable themes.
