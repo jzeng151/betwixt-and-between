@@ -9,7 +9,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # `npm test` (vitest unit + PGlite-backed integration) now runs ~9.5 min in
+    # CI as the suite has grown; check+test+build+size was overrunning the old
+    # 10-min wall and cancelling `npm run build` mid-step. Match the e2e job's
+    # 20-min budget — the steps all pass, they just need the wall-clock.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -1,6 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { windowStore } from '../../src/lib/os/windows-store.js';
+import { preferences } from '../../src/lib/os/preferences-store.js';
+import { PREFERENCES_DEFAULTS, type WindowsPrefs } from '../../src/lib/types/preferences.js';
 
 // The window store is a module-level singleton, so reset state between tests
 // by closing every window via the public API.
@@ -262,5 +264,78 @@ describe('windowStore.setEntityId + focusedWindow', () => {
 
 	it('focusedWindow returns undefined when no windows are open', () => {
 		expect(windowStore.focusedWindow()).toBeUndefined();
+	});
+});
+
+describe('windowStore — Item 3 window geometry defaults', () => {
+	function setWindowDefaults(windows: WindowsPrefs) {
+		preferences.set({ ...PREFERENCES_DEFAULTS, windows });
+	}
+	beforeEach(() => {
+		const all = get(windowStore);
+		for (const w of all) windowStore.close(w.id);
+		preferences.set({ ...PREFERENCES_DEFAULTS });
+	});
+
+	it('applies a saved SIZE default on open (all AppIds)', () => {
+		setWindowDefaults({ defaults: { wiki: { width: 900, height: 650 } } });
+		windowStore.open('wiki');
+		const w = get(windowStore)[0];
+		expect(w.width).toBe(900);
+		expect(w.height).toBe(650);
+	});
+
+	it('applies a saved POSITION for a single-instance app', () => {
+		setWindowDefaults({ defaults: { wiki: { width: 600, height: 500, x: 120, y: 90 } } });
+		windowStore.open('wiki');
+		const w = get(windowStore)[0];
+		expect(w.x).toBe(120);
+		expect(w.y).toBe(90);
+	});
+
+	it('ignores a saved position for a multi-instance app (keeps stagger)', () => {
+		setWindowDefaults({ defaults: { 'story-graph': { width: 700, height: 600, x: 500, y: 500 } } });
+		windowStore.open('story-graph');
+		const w = get(windowStore)[0];
+		// Size still applied...
+		expect(w.width).toBe(700);
+		expect(w.height).toBe(600);
+		// ...but position came from the open-stagger, not the saved x/y.
+		expect(w.x).not.toBe(500);
+	});
+
+	it('clamps an off-screen saved position to the viewport on open', () => {
+		// These unit tests run in node (no DOM); the clamp is browser-only, so
+		// stub the minimal window/document surface it reads.
+		vi.stubGlobal('window', { innerWidth: 1024, innerHeight: 768 });
+		vi.stubGlobal('document', { documentElement: {} });
+		vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '52' }));
+		try {
+			setWindowDefaults({ defaults: { settings: { width: 520, height: 400, x: 99999, y: 99999 } } });
+			windowStore.open('settings');
+			const w = get(windowStore)[0];
+			expect(w.x + w.width).toBeLessThanOrEqual(1024);
+			expect(w.y + w.height).toBeLessThanOrEqual(768 - 52);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('setAsDefault persists size for a multi-instance app but not position', () => {
+		const id = windowStore.open('story-graph');
+		windowStore.resize(id, 800, 700);
+		windowStore.move(id, 333, 222);
+		windowStore.setAsDefault(id);
+		const saved = get(preferences).windows.defaults['story-graph'];
+		expect(saved).toEqual({ width: 800, height: 700 });
+		expect(saved?.x).toBeUndefined();
+	});
+
+	it('setAsDefault persists size + position for a single-instance app', () => {
+		const id = windowStore.open('wiki');
+		windowStore.resize(id, 850, 640);
+		windowStore.move(id, 70, 80);
+		windowStore.setAsDefault(id);
+		expect(get(preferences).windows.defaults.wiki).toEqual({ width: 850, height: 640, x: 70, y: 80 });
 	});
 });

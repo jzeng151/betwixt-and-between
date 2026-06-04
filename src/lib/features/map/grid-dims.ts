@@ -8,7 +8,7 @@
 // LONGER axis and derive the shorter so cellW ≈ cellH for any aspect (a 4:3
 // image reproduces the historical 32×24 default exactly).
 //
-// Mirrored by drizzle/0025_square_grid_cells.sql, which backfills the same
+// Mirrored by drizzle/0026_square_grid_cells.sql, which backfills the same
 // formula onto existing maps — keep the two in sync.
 
 const BASE_CELLS = 32; // target cells along the longer axis

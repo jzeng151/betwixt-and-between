@@ -55,6 +55,9 @@
 	import NotesSection from './NotesSection.svelte';
 	import StyleEditor from './StyleEditor.svelte';
 	import { resolveStyle, type StyleOverride } from '$lib/features/map/style-cascade.js';
+	import { resolvePaletteHex } from '$lib/entity-type-colors.js';
+	import { buildCharacterIndexById } from '$lib/features/graph/view-builders.js';
+	import { preferences } from '$lib/os/preferences-store.js';
 
 	interface Props {
 		entityId: string | null;
@@ -164,9 +167,24 @@
 	const PLACEABLE_TYPES = ['Character', 'Artifact', 'Item'];
 	const isPlaceable = $derived(!!entity && PLACEABLE_TYPES.includes(entity.type));
 	const styleValue = $derived(((entity?.data?.style ?? {}) as StyleOverride));
-	// The cascade baseline WITHOUT this entity's override (GLOBAL ⊕ TYPE), shown
-	// as the StyleEditor placeholders so a cleared field falls back visibly.
-	const inheritedStyle = $derived(entity ? resolveStyle({ ...entity, data: {} }) : null);
+	// The cascade baseline WITHOUT this entity's data.style override, shown as the
+	// StyleEditor placeholders so a cleared style field falls back visibly. Uses
+	// the resolved palette so the preview tracks a Settings recolor (Phase 2, Item 1).
+	// Strip ONLY data.style — keep data.color (the Recolor flow) so the cleared-style
+	// baseline matches what the sprite actually resolves to (codex P2): the cascade
+	// falls back data.style.color → data.color → cycle → palette.
+	const resolvedTypeHex = $derived(resolvePaletteHex($preferences.appearance));
+	const inheritedStyle = $derived.by(() => {
+		if (!entity) return null;
+		const dataNoStyle = { ...((entity.data as Record<string, unknown>) ?? {}) };
+		delete dataNoStyle.style;
+		return resolveStyle(
+			{ ...entity, data: dataNoStyle },
+			resolvedTypeHex,
+			undefined,
+			buildCharacterIndexById($entities).get(entity.id)
+		);
+	});
 	// is_asset defaults true; only an explicit `false` opts the entity out.
 	const inPalette = $derived(
 		entity ? (entity.data as Record<string, unknown>)?.is_asset !== false : true

@@ -14,8 +14,10 @@
  * Overriding either recolors both. This matches the intentional var-sharing in
  * app.css; per-type rel vars would be a separate refactor.
  *
- * The world MAP is NOT covered (style-cascade.ts reads hardcoded hex, not these
- * vars) — Phase 2. Phase 1 recolors graph + wiki + palette + role badges.
+ * The world MAP does not read these CSS vars (it's Pixi/canvas), but it IS
+ * covered as of Phase 2, Item 1: style-cascade.ts resolves its type-default
+ * color from the SAME source via resolvePaletteHex(appearance) (entity-type-
+ * colors.ts), so a recolor reaches graph + wiki + palette + role badges + map.
  *
  * No svelte / DB imports — the pure fns are testable and SSR-safe; only
  * applyPaletteVars touches `document`.

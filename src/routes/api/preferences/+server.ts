@@ -41,7 +41,11 @@ export const GET: RequestHandler = async (event) => {
 		data: active.data,
 		version: active.version,
 		initialized: active.initialized,
-		userId
+		userId,
+		// profileId lets the client stamp its pending PATCHes with the profile they
+		// were authored against (F2) — a write authored before a profile switch is
+		// rejected (409) rather than landing on the newly-active profile.
+		profileId: active.profileId
 	});
 };
 
@@ -51,7 +55,12 @@ export const PATCH: RequestHandler = async (event) => {
 	// Malformed JSON (or a non-object literal like `null`/`42`) must surface as
 	// the contract's 400, not an unhandled 500 — patchPreferences can only run its
 	// 400 validation once we have an object to read set/unset/version from (codex).
-	let body: { set?: Record<string, unknown>; unset?: string[]; version?: number };
+	let body: {
+		set?: Record<string, unknown>;
+		unset?: string[];
+		version?: number;
+		profileId?: string;
+	};
 	try {
 		body = (await event.request.json()) as typeof body;
 	} catch {
@@ -61,12 +70,14 @@ export const PATCH: RequestHandler = async (event) => {
 		error(400, 'request body must be a JSON object');
 	}
 	// patchPreferences validates the patch shape + version (400) and enforces
-	// optimistic concurrency (409). We pass body fields through verbatim.
+	// optimistic concurrency (409). `profileId` (optional) guards against a write
+	// landing on the wrong profile after a switch (F2) — mismatch → 409.
 	const result = await patchPreferences(
 		db,
 		userId,
 		{ set: body.set, unset: body.unset },
-		body.version as number
+		body.version as number,
+		body.profileId
 	);
 	return json({ data: result.data, version: result.version });
 };

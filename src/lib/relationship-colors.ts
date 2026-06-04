@@ -95,12 +95,34 @@ export function nodeColorFor(
 	entity: { type: EntityType; data: Record<string, unknown> | null | undefined },
 	characterIndex?: number
 ): string {
+	return characterColorFor(entity, characterIndex) ?? NODE_COLOR[entity.type] ?? 'var(--color-accent)';
+}
+
+/**
+ * The per-ENTITY color layer shared by the graph (`nodeColorFor`) and the world
+ * map (`style-cascade.resolveStyle`) so the SAME entity reads the same color on
+ * both surfaces (Settings customization Phase 2, F3a). Returns:
+ *
+ *   1. A valid `data.color` hex (any type) — the per-entity override.
+ *   2. For a Character with a `characterIndex`, the cycled CHARACTER_COLORS hex.
+ *   3. `undefined` otherwise — the caller supplies its own type-default layer
+ *      (`NODE_COLOR` var for the DOM graph, resolved hex for the canvas map),
+ *      which resolve to the same color so the surfaces still agree.
+ *
+ * `characterIndex` is the entity's position in the Character-filtered entity
+ * list; BOTH call sites MUST compute it identically (same filter + order) or
+ * uncustomized characters drift between graph and map.
+ */
+export function characterColorFor(
+	entity: { type: EntityType; data: Record<string, unknown> | null | undefined },
+	characterIndex?: number
+): string | undefined {
 	const custom = entity.data?.color;
 	if (typeof custom === 'string' && HEX_COLOR_RE.test(custom)) return custom;
 	if (entity.type === 'Character' && characterIndex !== undefined) {
 		return CHARACTER_COLORS[characterIndex % CHARACTER_COLORS.length];
 	}
-	return NODE_COLOR[entity.type] ?? 'var(--color-accent)';
+	return undefined;
 }
 
 /**

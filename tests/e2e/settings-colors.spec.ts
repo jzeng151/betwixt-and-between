@@ -34,10 +34,14 @@ test('entity-type color customization persists server-side and resets to default
 	const charInput = charChip.locator('input[type="color"]');
 	await expect(charInput).toBeAttached({ timeout: 10000 });
 
-	// Set Character to red via the native color input.
+	// Set Character to red via the native color input. `input` fires the live
+	// CSS-var preview; `change` (what a real OS picker fires on close) is what
+	// commits through applyPreferencePatch (Settings customization Phase 2, F4 —
+	// commit-on-release so the map rebuilds once, not per drag frame).
 	await charInput.evaluate((el: HTMLInputElement) => {
 		el.value = '#ff0000';
 		el.dispatchEvent(new Event('input', { bubbles: true }));
+		el.dispatchEvent(new Event('change', { bubbles: true }));
 	});
 	// Modified dot appears immediately (optimistic).
 	await expect(charChip.locator('.swatch-modified')).toBeVisible();

@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/svelte';
 import StyleEditor from '$lib/components/StyleEditor.svelte';
 import type { ResolvedStyle } from '$lib/features/map/style-cascade.js';
+import { ENTITY_TYPE_HEX } from '$lib/entity-type-colors.js';
 
 const INHERITED: ResolvedStyle = { color: '#123456', icon: null, scale: 1, opacity: 1 };
 
@@ -114,9 +115,11 @@ describe('StyleEditor — swatches & sliders', () => {
 		const { container } = render(StyleEditor, {
 			props: { value: {}, inherited: INHERITED, onChange }
 		});
-		const swatch = container.querySelector('.swatch') as HTMLButtonElement; // first = #3b82f6
+		// First preset swatch = ENTITY_TYPE_HEX.Character (Phase 2, Item 1 / CQ1:
+		// the presets now source the palette instead of the old hardcoded blue).
+		const swatch = container.querySelector('.swatch') as HTMLButtonElement;
 		await fireEvent.click(swatch);
-		expect(onChange).toHaveBeenCalledWith({ color: '#3b82f6' });
+		expect(onChange).toHaveBeenCalledWith({ color: ENTITY_TYPE_HEX.Character });
 	});
 
 	it('scale slider emits the dragged value', async () => {

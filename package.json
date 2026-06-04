@@ -1,7 +1,7 @@
 {
   "name": "betwixt-and-between",
   "private": true,
-  "version": "0.8.8.0",
+  "version": "0.8.10.0",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -27,6 +27,7 @@
     "docs:api": "tsx scripts/docs/generate-api-md.ts",
     "docs:edges": "tsx scripts/docs/generate-edges-md.ts",
     "docs:all": "npm run docs:schema && npm run docs:api && npm run docs:edges",
+    "gen:palette-css": "tsx scripts/gen-palette-css.ts",
     "size": "size-limit"
   },
   "size-limit": [

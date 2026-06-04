@@ -1,5 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
+  import { preferences } from '$lib/os/preferences-store.js';
+  import { applyPreferencePatch } from '$lib/os/preferences-sync.js';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
   import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
@@ -20,6 +23,7 @@
   } from '$lib/features/graph/GraphCanvas.svelte';
   import type { NodePosition } from '$lib/features/graph/radial-layout.js';
   import ContextMenu from '$lib/os/ContextMenu.svelte';
+  import EntityColorPopover from '$lib/components/EntityColorPopover.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
   import Legend from '$lib/features/graph/Legend.svelte';
@@ -95,8 +99,34 @@
   const aliasEntityIds = $derived(buildAliasEntityIdSet($entityAliases));
 
   // ── View options (declared before derived scope logic that references them) ──
-  let hardFilter = $state(true);
-  let showGhostTrails = $state(false);
+  // Item 4: hydrate from the global graph-toggle defaults; changing a toggle
+  // writes the new default so every graph window opens with it.
+  let hardFilter = $state(get(preferences).graph.hardFilter);
+  let showGhostTrails = $state(get(preferences).graph.showGhostTrails);
+
+  // codex P2: a graph window opened DURING the initial /api/preferences hydrate
+  // snapshots built-in defaults; sync local state from the store UNTIL the user
+  // toggles so a fresh-browser window still picks up the server-saved defaults.
+  // Only writes local $state (no applyPreferencePatch) → no write-back loop.
+  let graphPrefsTouched = false;
+  $effect(() => {
+    const g = $preferences.graph;
+    if (!graphPrefsTouched) {
+      hardFilter = g.hardFilter;
+      showGhostTrails = g.showGhostTrails;
+    }
+  });
+
+  function setHardFilter(v: boolean) {
+    graphPrefsTouched = true;
+    hardFilter = v;
+    applyPreferencePatch({ set: { graph: { hardFilter: v } } });
+  }
+  function setShowGhostTrails(v: boolean) {
+    graphPrefsTouched = true;
+    showGhostTrails = v;
+    applyPreferencePatch({ set: { graph: { showGhostTrails: v } } });
+  }
 
   // ── Out-of-scope at playhead ───────────────────────────────────────────────
   // Pure projections of stores → derived view; see src/lib/features/graph/scope.ts.
@@ -610,6 +640,7 @@
   // set" affordance so the user can grow the focal selection without going
   // back to StoryGraph.
   let contextMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
+  let recolorMenu = $state<{ entityId: string; x: number; y: number } | null>(null);
   let editRelMenu = $state<{ relationshipId: string; x: number; y: number } | null>(null);
   let aliasModal = $state<{ entity: { id: string; type: string; name: string } } | null>(null);
 
@@ -653,6 +684,13 @@
     items.push({
       label: 'Layout by type',
       onSelect: () => void layoutByType()
+    });
+    items.push({
+      label: 'Recolor…',
+      onSelect: () => {
+        if (contextMenu) recolorMenu = { entityId: id, x: contextMenu.x, y: contextMenu.y };
+        contextMenu = null;
+      }
     });
     items.push({
       label: 'Mark as alias of…',
@@ -824,7 +862,7 @@
           <span>Scrubbing</span>
           <select
             value={hardFilter ? 'hard' : 'soft'}
-            onchange={(e) => (hardFilter = (e.currentTarget as HTMLSelectElement).value === 'hard')}
+            onchange={(e) => setHardFilter((e.currentTarget as HTMLSelectElement).value === 'hard')}
           >
             <option value="hard">Hide edges</option>
             <option value="soft">Dim edges</option>
@@ -832,7 +870,11 @@
         </label>
         <label class="fg-settings-row">
           <span>Ghost trails</span>
-          <input type="checkbox" bind:checked={showGhostTrails} />
+          <input
+            type="checkbox"
+            checked={showGhostTrails}
+            onchange={(e) => setShowGhostTrails((e.currentTarget as HTMLInputElement).checked)}
+          />
         </label>
         <label class="fg-settings-row">
           <span>Hide out of scope</span>
@@ -854,6 +896,18 @@
     y={contextMenu.y}
     onClose={() => (contextMenu = null)}
   />
+{/if}
+
+{#if recolorMenu}
+  {@const recolorEntity = $entities.find((e) => e.id === recolorMenu!.entityId)}
+  {#if recolorEntity}
+    <EntityColorPopover
+      entity={recolorEntity}
+      x={recolorMenu.x}
+      y={recolorMenu.y}
+      onClose={() => (recolorMenu = null)}
+    />
+  {/if}
 {/if}
 
 {#if editRelMenu}
