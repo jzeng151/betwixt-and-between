@@ -76,7 +76,13 @@
 		const viewport = stageCtx.viewport;
 		if (!PIXI || !viewport || !manifest || !activeMap?.width || !activeMap?.height) return;
 		// Square grids only for the tile render; hex keeps the flat layer's look.
-		if (activeMap.gridType === 'hex') return;
+		// This component persists across map switches (it isn't re-keyed), so a
+		// square→hex switch must DROP any tiles we built for the square map —
+		// otherwise the stale sprites ghost on top of the hex map.
+		if (activeMap.gridType === 'hex') {
+			if (layer) layer.removeChildren().forEach((c) => c.destroy());
+			return;
+		}
 
 		if (!layer) {
 			layer = new PIXI.Container();

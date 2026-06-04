@@ -71,13 +71,22 @@ export async function loadTerrainManifest(
 ): Promise<TerrainManifest | null> {
 	if (cache) return cache;
 	if (inflight) return inflight;
+	// Only a SUCCESSFUL load is cached. On failure we clear `inflight` so the
+	// next call re-fetches — otherwise one transient flake (asset route warming
+	// up, network blip) leaves the palette empty + terrain flat for the whole
+	// session. A successful manifest never changes mid-session, so caching it is
+	// safe; a null is not worth remembering.
 	inflight = fetchImpl(TERRAIN_MANIFEST_URL)
 		.then((r) => (r.ok ? (r.json() as Promise<TerrainManifest>) : null))
 		.then((m) => {
 			cache = m;
+			if (!m) inflight = null;
 			return m;
 		})
-		.catch(() => null);
+		.catch(() => {
+			inflight = null;
+			return null;
+		});
 	return inflight;
 }
 

@@ -1264,7 +1264,10 @@ async function maybeWriteAutoAnchor(
 					c &&
 					Number.isInteger(c.x) &&
 					Number.isInteger(c.y) &&
-					(BIOMES as readonly string[]).includes(c.biome)
+					// Open terrain-key vocabulary (Slice 6 D15) — must match the
+					// paint_cells validator + projection fold, NOT the legacy enum,
+					// or the snapshot silently drops all asset-vocabulary terrain.
+					isTerrainKey(c.biome)
 				) {
 					cells.set(`${c.x},${c.y}`, c);
 				}

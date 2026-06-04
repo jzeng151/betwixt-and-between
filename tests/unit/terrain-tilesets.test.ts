@@ -182,4 +182,18 @@ describe('loadTerrainManifest', () => {
 		const failFetch = (async () => ({ ok: false }) as Response) as unknown as typeof fetch;
 		expect(await loadTerrainManifest(failFetch)).toBeNull();
 	});
+
+	it('does NOT cache a failure — a later call retries and can recover', async () => {
+		let calls = 0;
+		// First call fails (e.g. asset route warming up), second succeeds.
+		const flakyFetch = (async () => {
+			calls++;
+			return calls === 1
+				? ({ ok: false } as Response)
+				: ({ ok: true, json: async () => MANIFEST } as Response);
+		}) as unknown as typeof fetch;
+		expect(await loadTerrainManifest(flakyFetch)).toBeNull(); // transient failure
+		expect(await loadTerrainManifest(flakyFetch)).toEqual(MANIFEST); // retried + recovered
+		expect(calls).toBe(2);
+	});
 });

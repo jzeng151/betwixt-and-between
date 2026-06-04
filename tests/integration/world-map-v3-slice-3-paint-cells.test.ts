@@ -528,6 +528,40 @@ describe('Slice 3 B.5 — auto-anchor tight rules', () => {
 		expect(state.cells).toHaveLength(20);
 	});
 
+	// Slice 6 D15/D16 regression: the auto-anchor snapshot fold must keep the
+	// OPEN terrain vocabulary (category names, water_* keys, specific tile
+	// keys), matching the paint_cells validator + projection. Pre-fix it
+	// filtered through the legacy BIOMES enum and silently dropped every
+	// asset-vocabulary cell from the baked snapshot — so painted terrain
+	// vanished the moment the first auto-anchor fired.
+	it('snapshot fold keeps open-vocabulary biomes, not just legacy enum (D15/D16)', async () => {
+		const map = await seedMap();
+		const biomes = ['Grass', 'water_snow', 'grass_01_tile_256_05'];
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: biomes[i % biomes.length] }] }
+					}
+				})
+			);
+		}
+		const anchors = await currentDb
+			.select({ isSynthetic: mapAnchors.isSynthetic, stateJsonb: mapAnchors.stateJsonb })
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id))
+			.orderBy(asc(mapAnchors.createdAt));
+		const synthetic = anchors.filter((a) => a.isSynthetic);
+		expect(synthetic).toHaveLength(1);
+		const state = synthetic[0].stateJsonb as { cells: Array<{ x: number; biome: string }> };
+		// All 20 asset-vocabulary cells survive the fold (pre-fix: 0 survived).
+		expect(state.cells).toHaveLength(20);
+		expect(new Set(state.cells.map((c) => c.biome))).toEqual(new Set(biomes));
+	});
+
 	it('deferred mid-stroke: 20 chunks with command_complete=false suppress until last chunk', async () => {
 		const map = await seedMap();
 		const strokeId = crypto.randomUUID();

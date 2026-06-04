@@ -432,7 +432,7 @@ function applyPaintCells(
 		// Last-write-wins on (x, y). Caller has already sorted events
 		// by (t_position, created_at, id); the final write at each cell
 		// is the projected biome.
-		cells.set(`${x},${y}`, { x, y, biome: biome as BiomeKind });
+		cells.set(`${x},${y}`, { x, y, biome });
 	}
 }
 
