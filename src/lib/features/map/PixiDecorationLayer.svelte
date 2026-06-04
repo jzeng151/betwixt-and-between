@@ -33,6 +33,10 @@
 	let PIXI = $state<PixiModule | null>(null);
 	let layer: PixiContainer | null = null;
 	let offAnim: (() => void) | null = null;
+	// The map id the current props were built for. PixiStage stays mounted across
+	// map switches, so we rebuild when this changes rather than building once
+	// (else map 1's trees linger at map 1's coords on map 2 — Codex #70).
+	let builtFor: string | null = null;
 
 	// Per-tree state: static trunk + a canopy that sways. Only the canopy
 	// rotates (pivots where it meets the trunk), so the trunk stays planted —
@@ -54,19 +58,46 @@
 		};
 	});
 
-	// Build the placeholder props once the renderer + map are ready.
+	// Tear down the current props (canopy/trunk graphics + the anim subscription)
+	// but keep the layer container for reuse.
+	function clearTrees() {
+		if (offAnim) {
+			offAnim();
+			offAnim = null;
+		}
+		for (const { trunk, canopy } of trees) {
+			try {
+				trunk.destroy();
+				canopy.destroy();
+			} catch (_) {
+				/* may already be destroyed with the layer */
+			}
+		}
+		trees = [];
+	}
+
+	// (Re)build the placeholder props for the active map. Rebuilds on map switch.
 	$effect(() => {
 		const viewport = stageCtx.viewport;
 		const anim = stageCtx.anim; // shared controller (D6); implies app ready
-		if (!PIXI || !viewport || !anim || !activeMap?.width || !activeMap?.height) return;
-		if (layer) return; // build once
+		if (!PIXI || !viewport || !anim || !activeMap?.width || !activeMap?.height) {
+			// No usable map (e.g. switched to an image-less one): drop the props.
+			clearTrees();
+			builtFor = null;
+			return;
+		}
+		if (builtFor === activeMap.id) return; // already built for this map
+		clearTrees(); // switching maps — clear the previous map's props first
 
 		const w = activeMap.width;
 		const h = activeMap.height;
 
-		layer = new PIXI.Container();
-		// Props sit above terrain + region tint, below placements (Fix-12 z-order).
-		viewport.addChild(layer);
+		if (!layer) {
+			layer = new PIXI.Container();
+			// Props sit above terrain + region tint, below placements (Fix-12 z-order).
+			viewport.addChild(layer);
+		}
+		builtFor = activeMap.id;
 
 		// A short row of placeholder trees across the lower third of the map.
 		const COUNT = 6;
@@ -109,20 +140,9 @@
 	});
 
 	onDestroy(() => {
-		if (offAnim) {
-			offAnim();
-			offAnim = null;
-		}
-		// Do NOT destroy the controller — PixiStage owns it (D6); just unsubscribe.
-		for (const { trunk, canopy } of trees) {
-			try {
-				trunk.destroy();
-				canopy.destroy();
-			} catch (_) {
-				/* may already be destroyed with the layer */
-			}
-		}
-		trees = [];
+		// Do NOT destroy the controller — PixiStage owns it (D6); just unsubscribe
+		// + drop the props (clearTrees), then the layer.
+		clearTrees();
 		if (layer) {
 			try {
 				layer.destroy({ children: true });

@@ -299,7 +299,14 @@
 	.popover-backdrop {
 		position: fixed;
 		inset: 0;
-		z-index: 200;
+		/* BELOW .brush-palette (z-index:150) on purpose. The palette is a
+		   positioned z-index stacking context, so the popover (z-index:210
+		   inside it) paints as part of the palette at root level 150. A backdrop
+		   at a HIGHER root z-index would paint above the trapped popover and
+		   eat the swatch clicks (Codex #70 P1). 140 keeps it above the map +
+		   sidebar (z-index:100) so outside clicks still dismiss, but below the
+		   palette so swatch/chip clicks land. */
+		z-index: 140;
 		background: transparent;
 		border: none;
 		padding: 0;

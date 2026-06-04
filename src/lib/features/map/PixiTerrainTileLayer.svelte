@@ -17,7 +17,9 @@
 	// legacy maps alias to tiles, or fall back to flat per D15? Flagged, not locked.
 
 	import { getContext, onDestroy, onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
+	import { layerVisibility } from './layer-prefs-store.js';
 	import {
 		loadTerrainManifest,
 		firstBaseTile,
@@ -34,6 +36,11 @@
 	let { activeMap, cells }: { activeMap: WorldMap | null; cells: RenderedCell[] } = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
+
+	// Sprite tiles are part of the Terrain layer — share the flat layer's
+	// per-user visibility pref so toggling "Terrain" off hides tiles too (Codex
+	// #70). Seeded at creation; flipped by the visibility effect below.
+	const visible = layerVisibility('terrain');
 
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
@@ -74,7 +81,13 @@
 
 	$effect(() => {
 		const viewport = stageCtx.viewport;
-		if (!PIXI || !viewport || !manifest || !activeMap?.width || !activeMap?.height) return;
+		if (!PIXI || !viewport || !manifest || !activeMap?.width || !activeMap?.height) {
+			// Switched to a map with no image/dimensions: drop any tiles we built
+			// for the previous map (this layer persists across switches), else they
+			// ghost over the blank canvas (Codex #70).
+			if (layer) layer.removeChildren().forEach((c) => c.destroy());
+			return;
+		}
 		// Square grids only for the tile render; hex keeps the flat layer's look.
 		// This component persists across map switches (it isn't re-keyed), so a
 		// square→hex switch must DROP any tiles we built for the square map —
@@ -86,6 +99,7 @@
 
 		if (!layer) {
 			layer = new PIXI.Container();
+			layer.visible = get(visible); // honor the saved Terrain-layer pref
 			// Just above the flat terrain layer (which clamps to index ≤3).
 			viewport.addChildAt(layer, Math.min(4, viewport.children.length));
 		}
@@ -140,6 +154,14 @@
 		return () => {
 			cancelled = true;
 		};
+	});
+
+	// Visibility-only effect — flips layer.visible from the Terrain pref without
+	// rebuilding sprites. Read $visible unconditionally so it subscribes even
+	// while layer is still null (Pixi imports async).
+	$effect(() => {
+		const v = $visible;
+		if (layer) layer.visible = v;
 	});
 
 	onDestroy(() => {

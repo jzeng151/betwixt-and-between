@@ -10,7 +10,9 @@
 	// own/destroy it.
 
 	import { getContext, onDestroy, onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
+	import { layerVisibility } from './layer-prefs-store.js';
 	import { createTerrainShimmerFilter } from './terrain-shimmer.js';
 	import {
 		loadTerrainManifest,
@@ -31,6 +33,10 @@
 
 	const WATER_COLOR = 0x0ea5e9; // sky-500 — flat fallback when no tile
 	const WATER_ALPHA = 0.85;
+
+	// Water is part of the Terrain layer — toggling "Terrain" off hides it too
+	// (Codex #70). Seeded at creation; flipped by the visibility effect below.
+	const visible = layerVisibility('terrain');
 
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
@@ -56,10 +62,16 @@
 
 	$effect(() => {
 		const viewport = stageCtx.viewport;
-		if (!PIXI || !viewport || !activeMap?.width || !activeMap?.height) return;
+		if (!PIXI || !viewport || !activeMap?.width || !activeMap?.height) {
+			// Switched to an image-less map: drop the previous map's water so it
+			// doesn't ghost over the blank canvas (Codex #70).
+			if (layer) layer.removeChildren().forEach((c) => c.destroy());
+			return;
+		}
 
 		if (!layer) {
 			layer = new PIXI.Container();
+			layer.visible = get(visible); // honor the saved Terrain-layer pref
 			// Above terrain (≤3) + land tiles (4); below regions/placements.
 			viewport.addChildAt(layer, Math.min(5, viewport.children.length));
 		}
@@ -150,6 +162,13 @@
 		return () => {
 			cancelled = true;
 		};
+	});
+
+	// Visibility-only effect — flips layer.visible from the Terrain pref. Read
+	// $visible unconditionally so it subscribes even while layer is still null.
+	$effect(() => {
+		const v = $visible;
+		if (layer) layer.visible = v;
 	});
 
 	onDestroy(() => {
