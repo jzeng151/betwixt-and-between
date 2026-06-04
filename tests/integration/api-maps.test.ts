@@ -942,6 +942,35 @@ describe('/api/maps/[id]/upload-image', () => {
 		expect([body.width, body.height]).toEqual([900, 1600]);
 		expect([body.gridCellsX, body.gridCellsY]).toEqual([32, 18]); // unchanged
 	});
+
+	// /review #3 (Codex): the brush needs an image, but the API can author
+	// paint_cells on an image-less map. First-upload grid fitting must scan for
+	// terrain (not just trust "no image ⇒ no terrain") or it could shrink the
+	// grid under that terrain and orphan it.
+	it('does NOT fit the grid when the map already has API-authored terrain', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		// Paint a cell on the still-image-less map via the API.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'Grass' }], command_complete: true }
+				}
+			})
+		);
+		const body = await readJson(
+			await uploadImageRoute.POST(
+				mkFormDataEvent({
+					params: { id: map.id },
+					file: new File([widePng], 'wide.png', { type: 'image/png' })
+				})
+			)
+		);
+		expect([body.width, body.height]).toEqual([1600, 900]);
+		expect([body.gridCellsX, body.gridCellsY]).toEqual([32, 24]); // grid left at default
+	});
 });
 
 // Regression: linking a region to a Location must materialize a part_of edge

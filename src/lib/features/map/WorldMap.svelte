@@ -647,6 +647,19 @@
 		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore, causal);
 	});
 
+	// Terrain cells, clamped to the current grid. projectState emits every
+	// STORED cell (sparse, bounds-agnostic by design), but a cell outside the
+	// grid — e.g. left behind when a map was re-fit to a smaller grid — has no
+	// valid square and would draw off-grid. The terrain layers consume this
+	// clamped list so out-of-range cells render nowhere (the data survives; it
+	// reappears if the grid grows back).
+	let boundedTerrainCells = $derived.by(() => {
+		const cells = renderedState?.cells ?? [];
+		const gx = activeMap?.gridCellsX ?? Infinity;
+		const gy = activeMap?.gridCellsY ?? Infinity;
+		return cells.filter((c) => c.x >= 0 && c.x < gx && c.y >= 0 && c.y < gy);
+	});
+
 	// Combined readiness signal piped through to PixiRegionLayer as
 	// dataLoading. True while ANY of these are in flight or unhealthy:
 	//  - anchors+events for the active map (projectionCtxHealthy)
@@ -1546,11 +1559,11 @@
 			{#snippet children()}
 				<PixiBackgroundLayer {activeMap} />
 				<PixiGridLayer {activeMap} />
-				<PixiTerrainLayer {activeMap} cells={renderedState?.cells ?? []} />
+				<PixiTerrainLayer {activeMap} cells={boundedTerrainCells} />
 				<!-- Slice 6 D15: sprite-tile terrain on top of the flat layer. -->
-				<PixiTerrainTileLayer {activeMap} cells={renderedState?.cells ?? []} />
+				<PixiTerrainTileLayer {activeMap} cells={boundedTerrainCells} />
 				<!-- Slice 6: only water ripples (shimmer applied to water cells alone). -->
-				<PixiWaterLayer {activeMap} cells={renderedState?.cells ?? []} />
+				<PixiWaterLayer {activeMap} cells={boundedTerrainCells} />
 				<PixiRegionLayer
 					regions={scopedRegions}
 					{renderedState}
