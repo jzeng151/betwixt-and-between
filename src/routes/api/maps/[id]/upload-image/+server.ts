@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { worldMaps } from '$lib/server/db/schema.js';
+import { squareGridCounts } from '$lib/features/map/grid-dims.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -59,9 +60,18 @@ export const POST: RequestHandler = async (event) => {
 
 	const baseImageUrl = `/api/maps/file/${filename}`;
 
+	// Fit the grid to the image aspect so cells are square, but ONLY on the
+	// FIRST upload (no image before → no terrain can have been painted, since
+	// the brush requires a base image). On a re-upload we leave the grid alone:
+	// re-fitting it could orphan painted cells, which the PATCH grid guard
+	// deliberately protects against.
+	const squared = map.baseImageUrl
+		? {}
+		: squareGridCounts(dimensions.width, dimensions.height);
+
 	const [updated] = await db
 		.update(worldMaps)
-		.set({ baseImageUrl, width: dimensions.width, height: dimensions.height })
+		.set({ baseImageUrl, width: dimensions.width, height: dimensions.height, ...squared })
 		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)))
 		.returning();
 

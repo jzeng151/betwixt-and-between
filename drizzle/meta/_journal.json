@@ -176,6 +176,13 @@
       "when": 1780300000000,
       "tag": "0024_user_preferences",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1780400000000,
+      "tag": "0025_square_grid_cells",
+      "breakpoints": true
     }
   ]
 }
