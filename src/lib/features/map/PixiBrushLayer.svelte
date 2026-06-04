@@ -32,10 +32,8 @@
 	import { mapEventsStore } from './map-events-store.js';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
 	import { cellAtPoint } from './grid-snap.js';
-	import { biomeStyle } from './biome-textures.js';
 	import { hexSizeForCanvas, hexAxialToPixel, hexVertices } from './hex-grid.js';
 	import { PAINT_CELLS_MAX_PER_EVENT } from './projection.js';
-	import type { BiomeKind } from './projection.js';
 	import type { WorldMap } from './types.js';
 
 	type PixiModule = typeof import('pixi.js');
@@ -46,13 +44,13 @@
 	let {
 		active = $bindable(false),
 		activeMap = null,
-		biome = 'plains',
+		biome = 'Grass',
 		size = 1,
 		onStrokeComplete = undefined
 	}: {
 		active?: boolean;
 		activeMap?: WorldMap | null;
-		biome?: BiomeKind;
+		biome?: string;
 		size?: 1 | 3 | 5;
 		onStrokeComplete?: (cellCount: number) => void;
 	} = $props();
@@ -66,7 +64,7 @@
 	// Per-gesture state. Reset on mouse-down.
 	let painting = false;
 	let strokeId: string | null = null;
-	let touched: Map<string, { x: number; y: number; biome: BiomeKind }> = new Map();
+	let touched: Map<string, { x: number; y: number; biome: string }> = new Map();
 	let hoverCells = $state<Array<{ x: number; y: number }>>([]);
 
 	let stagePointerDown: ((e: FederatedPointerEvent) => void) | null = null;
@@ -344,18 +342,18 @@
 			return;
 		}
 
-		const style = biomeStyle(b);
-		// Hover preview at fixed alpha 0.5 (regardless of biome's base
-		// alpha) so the user gets consistent visual weight per stroke
-		// regardless of biome.
-		const previewAlpha = b === 'unset' ? 0.2 : 0.5;
+		// Neutral brush-footprint highlight. The terrain vocabulary is now an
+		// open asset-driven set (Slice 6 D15) with no per-key flat color, so the
+		// preview is a consistent highlight (red for the eraser) rather than the
+		// painted terrain's color — it just shows WHERE the stroke lands.
+		const previewAlpha = b === 'unset' ? 0.25 : 0.4;
 		if (map.gridType === 'hex') {
 			drawHexPreview(previewGraphics, cells, map);
 		} else {
 			drawSquarePreview(previewGraphics, cells, map);
 		}
 		previewGraphics.fill({
-			color: b === 'unset' ? 0xef4444 : style.color,
+			color: b === 'unset' ? 0xef4444 : 0xffffff,
 			alpha: previewAlpha
 		});
 	});

@@ -41,3 +41,38 @@ export const BIOME_STYLES: Record<BiomeKind, BiomeStyle> = {
 export function biomeStyle(biome: string): BiomeStyle {
 	return BIOME_STYLES[biome as BiomeKind] ?? BIOME_STYLES.unset;
 }
+
+// Slice 6 D15 — flat colors for the asset terrain categories, so the flat
+// PixiTerrainLayer can still show land where the sprite tile isn't drawn: hex
+// maps (sprite tiling is square-only) and square cells whose tile failed to
+// load (missing R2 object / dev checkout without the gitignored pack). Without
+// this, asset-vocabulary cells (e.g. 'Grass', 'grass_01_tile_256_05') fall
+// through biomeStyle() to transparent and the painted terrain is invisible
+// while still being stored (Codex #70). One color per category; specific tile
+// keys match by category prefix.
+const CATEGORY_STYLES: Record<string, BiomeStyle> = {
+	clay: { color: 0xb45309, alpha: 0.5 }, // amber-700
+	grass: { color: 0x4d7c0f, alpha: 0.5 }, // lime-700
+	ice: { color: 0x67e8f9, alpha: 0.45 }, // cyan-300
+	lava: { color: 0xdc2626, alpha: 0.55 }, // red-600
+	paving: { color: 0x9ca3af, alpha: 0.5 }, // gray-400
+	sand: { color: 0xeab308, alpha: 0.45 }, // yellow-500
+	snow: { color: 0xe5e7eb, alpha: 0.55 } // gray-200
+};
+const CATEGORY_PREFIXES = Object.keys(CATEGORY_STYLES);
+
+/**
+ * Flat style for ANY terrain key — the visible fallback under the sprite tiles.
+ * Legacy biomes + 'unset' resolve via biomeStyle; an asset key (a manifest
+ * category like 'Grass' or a specific tile like 'grass_01_tile_256_05') matches
+ * its category by prefix. Water keys stay transparent here (PixiWaterLayer draws
+ * water); a genuinely unknown key stays transparent (lazy-GC posture).
+ */
+export function terrainFlatStyle(biome: string): BiomeStyle {
+	const legacy = BIOME_STYLES[biome as BiomeKind];
+	if (legacy) return legacy;
+	const lower = biome.toLowerCase();
+	if (lower.startsWith('water')) return BIOME_STYLES.unset; // water layer owns it
+	const cat = CATEGORY_PREFIXES.find((c) => lower.startsWith(c));
+	return cat ? CATEGORY_STYLES[cat] : BIOME_STYLES.unset;
+}

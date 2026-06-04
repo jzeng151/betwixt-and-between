@@ -41,6 +41,16 @@ test.db
 # User-uploaded map images (R2 in prod, local fs in dev)
 static/maps/
 
+# Licensed terrain tile pack — served from R2 (TERRAIN_ASSETS) in prod via
+# /api/sprites, local mirror in dev. NOT committed to this public repo.
+# The generated manifest IS tracked (just filenames; the client loads it from
+# /Sprites/terrain-manifest.json, and prod needs it in the build).
+static/Sprites/*
+!static/Sprites/terrain-manifest.json
+
+# understand-anything knowledge-graph cache (local tool artifact).
+.understand-anything/
+
 # Engineering docs — generated + locally authored, not tracked.
 # Regenerate the generated ones with `npm run docs:all`.
 # Anchored to root so scripts/docs/ (the generators) is unaffected.

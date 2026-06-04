@@ -50,6 +50,7 @@
 // is a harmless, isomorphic no-op when this module loads server-side.
 
 import { isEdgeVisibleAtT, isMysteryEdgeAtT } from '$lib/features/timeline/playhead-store.js';
+import { TERRAIN_ASSET_KEYS } from './terrain-keys.generated.js';
 
 export const NEUTRAL_REGION_COLOR = '#9ca3af';
 
@@ -104,7 +105,9 @@ export type AnchorChain = {
 export type AnchorCell = {
 	x: number;
 	y: number;
-	biome: BiomeKind;
+	// Open terrain-key vocabulary (Slice 6 D15): legacy BIOMES, manifest
+	// categories ('Grass'), water colors ('water_snow'), or 'unset'.
+	biome: string;
 };
 
 export type AnchorState = {
@@ -155,7 +158,7 @@ export type TransferRegionPayload = {
 // command_complete flag on the last chunk lets the server-side auto-anchor
 // fire only at stroke boundary (outside-voice B7).
 export type PaintCellsPayload = {
-	cells: Array<{ x: number; y: number; biome: BiomeKind }>;
+	cells: Array<{ x: number; y: number; biome: string }>; // open vocab (Slice 6 D15)
 	// Optional. Last chunk of a multi-event stroke sets this true so the
 	// auto-anchor logic doesn't fire mid-stroke. Single-event strokes
 	// either set it true or omit it (defaults to true server-side).
@@ -200,6 +203,23 @@ export const BIOMES = [
 ] as const;
 export type BiomeKind = (typeof BIOMES)[number];
 
+// Slice 6 D15 — terrain is an asset-folder-driven vocabulary (manifest
+// categories like 'Grass', their specific tile keys like 'grass_01_tile_256_05',
+// and water colors like 'water_snow'), plus the legacy BIOMES enum and 'unset'.
+// A biome is valid iff it's a KNOWN, renderable key — not just any well-formed
+// string (/review #3): accepting unrenderable junk would store invisible cells
+// that still block grid resize and mis-route arbitrary 'water_*' keys to water.
+// TERRAIN_ASSET_KEYS is generated from the pack manifest. This ONE predicate
+// guards every biome gate (projection fold + server paint_cells/anchor writes)
+// so they can never disagree on what's storable.
+const KNOWN_TERRAIN_KEYS: ReadonlySet<string> = new Set([
+	...TERRAIN_ASSET_KEYS,
+	...BIOMES // legacy enum + 'unset' (BIOMES includes 'unset')
+]);
+export function isKnownTerrainKey(s: unknown): s is string {
+	return typeof s === 'string' && KNOWN_TERRAIN_KEYS.has(s);
+}
+
 export type ProjectionEvent = {
 	id: string;
 	tPosition: number;
@@ -237,7 +257,7 @@ export type RenderedRegion = {
 export type RenderedCell = {
 	x: number;
 	y: number;
-	biome: BiomeKind;
+	biome: string; // open terrain-key vocabulary (Slice 6 D15)
 };
 
 // Slice 4 PR-F (D5) — normalized fractional position, same convention as
@@ -410,8 +430,7 @@ function applyPaintCells(
 			!Number.isInteger(x) ||
 			typeof y !== 'number' ||
 			!Number.isInteger(y) ||
-			typeof biome !== 'string' ||
-			!(BIOMES as readonly string[]).includes(biome)
+			!isKnownTerrainKey(biome)
 		) {
 			// Lazy GC: malformed entries silently dropped at render
 			// (matches the cross-user ref policy in resolveRegionColor).
@@ -420,7 +439,7 @@ function applyPaintCells(
 		// Last-write-wins on (x, y). Caller has already sorted events
 		// by (t_position, created_at, id); the final write at each cell
 		// is the projected biome.
-		cells.set(`${x},${y}`, { x, y, biome: biome as BiomeKind });
+		cells.set(`${x},${y}`, { x, y, biome });
 	}
 }
 
@@ -782,7 +801,7 @@ export function projectState(
 				cell &&
 				Number.isInteger(cell.x) &&
 				Number.isInteger(cell.y) &&
-				(BIOMES as readonly string[]).includes(cell.biome)
+				isKnownTerrainKey(cell.biome)
 			) {
 				cells.set(`${cell.x},${cell.y}`, cell);
 			}

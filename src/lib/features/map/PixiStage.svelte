@@ -27,6 +27,7 @@
 	import { onMount, setContext, type Snippet } from 'svelte';
 	import type { WorldMap } from './types.js';
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
+	import { createAnimController } from './anim-controller.js';
 
 	type PixiApplication = import('pixi.js').Application;
 
@@ -52,7 +53,7 @@
 	// Reactive context wrapper so descendants can read the live Application
 	// and viewport via getContext(PIXI_STAGE_CONTEXT). $state-backed object:
 	// PixiRegionLayer's $effect re-runs when `app` or `viewport` mutates.
-	const stageCtx = $state<PixiStageContext>({ app: null, viewport: null });
+	const stageCtx = $state<PixiStageContext>({ app: null, viewport: null, anim: null });
 	setContext(PIXI_STAGE_CONTEXT, stageCtx);
 
 	onMount(() => {
@@ -113,10 +114,19 @@
 					events: newApp.renderer.events
 				});
 				viewport.drag().pinch().wheel().clampZoom({ minScale: 0.25, maxScale: 8 });
+				// Layers set container.zIndex from MAP_LAYER_Z; sort by it so the
+				// paint order is deterministic regardless of async mount timing
+				// (Codex #70), not the order children happened to be appended.
+				viewport.sortableChildren = true;
 				newApp.stage.addChild(viewport);
 
 				stageCtx.app = newApp;
 				stageCtx.viewport = viewport;
+				// Slice 6 D6 — one shared animation controller per app; layers
+				// subscribe (terrain shimmer, decoration sway, ...). Set after
+				// app/viewport so a layer effect that re-runs on those mutations
+				// also sees a ready controller.
+				stageCtx.anim = createAnimController(newApp);
 				onViewport?.(viewport);
 				ready = true;
 			} catch (err) {
@@ -127,6 +137,9 @@
 
 		return () => {
 			cancelled = true;
+			// Stop the shared ticker before destroying the app it ticks on.
+			stageCtx.anim?.destroy();
+			stageCtx.anim = null;
 			stageCtx.app = null;
 			stageCtx.viewport = null;
 			onViewport?.(null);

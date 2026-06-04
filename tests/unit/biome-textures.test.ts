@@ -6,7 +6,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { BIOMES } from '../../src/lib/features/map/projection.js';
-import { BIOME_STYLES, biomeStyle } from '../../src/lib/features/map/biome-textures.js';
+import {
+	BIOME_STYLES,
+	biomeStyle,
+	terrainFlatStyle
+} from '../../src/lib/features/map/biome-textures.js';
 
 describe('BIOME_STYLES coverage', () => {
 	it('has a style for every BIOMES enum value', () => {
@@ -38,5 +42,33 @@ describe('biomeStyle()', () => {
 		const style = biomeStyle('magma');
 		expect(style).toBe(BIOME_STYLES.unset);
 		expect(style.alpha).toBe(0);
+	});
+});
+
+describe('terrainFlatStyle() — asset-key flat fallback (Codex #70)', () => {
+	it('resolves legacy biomes via biomeStyle', () => {
+		expect(terrainFlatStyle('forest')).toBe(BIOME_STYLES.forest);
+		expect(terrainFlatStyle('unset')).toBe(BIOME_STYLES.unset);
+	});
+
+	it('gives a visible color to manifest categories', () => {
+		for (const cat of ['Grass', 'Sand', 'Clay', 'Ice', 'Lava', 'Paving', 'Snow']) {
+			expect(terrainFlatStyle(cat).alpha).toBeGreaterThan(0);
+		}
+	});
+
+	it('matches a specific tile key to its category color', () => {
+		// 'grass_01_tile_256_05' must paint the same as the 'Grass' category.
+		expect(terrainFlatStyle('grass_01_tile_256_05')).toEqual(terrainFlatStyle('Grass'));
+		expect(terrainFlatStyle('clay_tile_256_03')).toEqual(terrainFlatStyle('Clay'));
+	});
+
+	it('leaves water keys transparent (PixiWaterLayer draws water)', () => {
+		expect(terrainFlatStyle('water_snow').alpha).toBe(0);
+		expect(terrainFlatStyle('water').alpha).toBeGreaterThan(0); // legacy 'water' biome stays colored
+	});
+
+	it('leaves a genuinely unknown key transparent', () => {
+		expect(terrainFlatStyle('zzz').alpha).toBe(0);
 	});
 });

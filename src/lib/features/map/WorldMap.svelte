@@ -24,6 +24,8 @@
 	import PixiBackgroundLayer from '$lib/features/map/PixiBackgroundLayer.svelte';
 	import PixiGridLayer from '$lib/features/map/PixiGridLayer.svelte';
 	import PixiTerrainLayer from '$lib/features/map/PixiTerrainLayer.svelte';
+	import PixiTerrainTileLayer from '$lib/features/map/PixiTerrainTileLayer.svelte';
+	import PixiWaterLayer from '$lib/features/map/PixiWaterLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import PixiCausalEdgeLayer from '$lib/features/map/PixiCausalEdgeLayer.svelte';
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
@@ -47,7 +49,6 @@
 	import BrushPalette from '$lib/components/BrushPalette.svelte';
 	import { ASSET_DRAG_MIME } from '$lib/components/asset-drag.js';
 	import PixiBrushLayer from '$lib/features/map/PixiBrushLayer.svelte';
-	import type { BiomeKind } from '$lib/features/map/projection.js';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
 
 	// windowId is this WorldMap instance's window id (from WindowManager). Two
@@ -68,7 +69,10 @@
 	// enters place-armed mode once a chip is actually armed (armedPlaceableId).
 	let brushActive = $derived(activeTool === 'brush');
 	let moveActive = $derived(activeTool === 'move');
-	let brushBiome = $state<BiomeKind>('plains');
+	// Open terrain-key vocabulary (Slice 6 D15): a manifest category, water
+	// color key, or 'unset'. Defaults to a real category so first paint lands a
+	// tile (BrushPalette resolves the live list from the manifest).
+	let brushBiome = $state<string>('Grass');
 	let brushSize = $state<1 | 3 | 5>(1);
 
 	// armed placeable id (chip selected in PlaceablePalette). When non-null,
@@ -640,6 +644,19 @@
 					}
 				: causalInput;
 		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore, causal);
+	});
+
+	// Terrain cells, clamped to the current grid. projectState emits every
+	// STORED cell (sparse, bounds-agnostic by design), but a cell outside the
+	// grid — e.g. left behind when a map was re-fit to a smaller grid — has no
+	// valid square and would draw off-grid. The terrain layers consume this
+	// clamped list so out-of-range cells render nowhere (the data survives; it
+	// reappears if the grid grows back).
+	let boundedTerrainCells = $derived.by(() => {
+		const cells = renderedState?.cells ?? [];
+		const gx = activeMap?.gridCellsX ?? Infinity;
+		const gy = activeMap?.gridCellsY ?? Infinity;
+		return cells.filter((c) => c.x >= 0 && c.x < gx && c.y >= 0 && c.y < gy);
 	});
 
 	// Combined readiness signal piped through to PixiRegionLayer as
@@ -1541,7 +1558,11 @@
 			{#snippet children()}
 				<PixiBackgroundLayer {activeMap} />
 				<PixiGridLayer {activeMap} />
-				<PixiTerrainLayer {activeMap} cells={renderedState?.cells ?? []} />
+				<PixiTerrainLayer {activeMap} cells={boundedTerrainCells} />
+				<!-- Slice 6 D15: sprite-tile terrain on top of the flat layer. -->
+				<PixiTerrainTileLayer {activeMap} cells={boundedTerrainCells} />
+				<!-- Slice 6: only water ripples (shimmer applied to water cells alone). -->
+				<PixiWaterLayer {activeMap} cells={boundedTerrainCells} />
 				<PixiRegionLayer
 					regions={scopedRegions}
 					{renderedState}

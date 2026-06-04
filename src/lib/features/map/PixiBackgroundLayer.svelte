@@ -12,7 +12,7 @@
 	// see PixiRegionLayer.svelte's matching pattern.
 
 	import { getContext, onDestroy, onMount } from 'svelte';
-	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
+	import { PIXI_STAGE_CONTEXT, MAP_LAYER_Z, type PixiStageContext } from './pixi-context.js';
 	import { layerVisibility } from './layer-prefs-store.js';
 	import type { WorldMap } from './types.js';
 
@@ -61,7 +61,8 @@
 		// viewport (so regions / placements / polygon-draw render on top).
 		if (!layer) {
 			layer = new PIXI.Container();
-			viewport.addChildAt(layer, 0);
+			layer.zIndex = MAP_LAYER_Z.background; // bottom of the stack
+			viewport.addChild(layer);
 		}
 		// Slice 3 E4 — apply user visibility toggle.
 		layer.visible = $visible;

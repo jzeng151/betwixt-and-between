@@ -20,7 +20,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { and, eq, asc, sql } from 'drizzle-orm';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { mapAnchors, mapEvents, worldMaps } from '../../src/lib/server/db/schema.js';
-import { projectState, type ProjectionContext } from '../../src/lib/features/map/projection.js';
+import {
+	projectState,
+	isKnownTerrainKey,
+	type ProjectionContext
+} from '../../src/lib/features/map/projection.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 let userId: string;
@@ -71,6 +75,22 @@ const emptyCtx: ProjectionContext = {
 	allowedFactions: new Map(),
 	allowedRegions: new Set()
 };
+
+describe('Slice 6 /review #3 — isKnownTerrainKey (asset-backed vocabulary)', () => {
+	it('accepts known kinds: category, specific tile, water color, legacy biome, unset', () => {
+		for (const k of ['Grass', 'grass_01_tile_256_05', 'water_snow', 'plains', 'unset']) {
+			expect(isKnownTerrainKey(k)).toBe(true);
+		}
+	});
+	it('rejects unknown-but-well-formed keys and non-strings', () => {
+		for (const k of ['water_xyz', 'zzz', 'Grasss', 'grass_01_tile_256_99', '']) {
+			expect(isKnownTerrainKey(k)).toBe(false);
+		}
+		expect(isKnownTerrainKey(42)).toBe(false);
+		expect(isKnownTerrainKey(null)).toBe(false);
+		expect(isKnownTerrainKey(undefined)).toBe(false);
+	});
+});
 
 describe('Slice 3 B.1 — projection paint_cells fold', () => {
 	beforeEach(async () => {
@@ -144,13 +164,48 @@ describe('Slice 3 B.1 — projection paint_cells fold', () => {
 		expect(state.cells).toEqual([{ x: 2, y: 2, biome: 'snow' }]);
 	});
 
-	it('unknown biome silently dropped (lazy GC) at render', () => {
+	// Slice 6 D15 + /review #3: a biome is valid iff it's a KNOWN asset-backed
+	// key (manifest category / specific tile / water color), a legacy biome, or
+	// 'unset'. A known key (e.g. the 'Grass' category) is kept at render.
+	it('known asset-backed biome is kept at render', () => {
 		const event = {
 			id: 'e1',
 			tPosition: 1,
 			kind: 'paint_cells',
 			createdAt: new Date('2026-01-01T00:00:00Z'),
-			payloadJsonb: { cells: [{ x: 3, y: 3, biome: 'magma' }] }
+			payloadJsonb: { cells: [{ x: 3, y: 3, biome: 'Grass' }] }
+		};
+		const state = projectState(2, [], [event], emptyCtx);
+		expect(state.cells).toEqual([{ x: 3, y: 3, biome: 'Grass' }]);
+	});
+
+	it('format-invalid biome silently dropped (lazy GC) at render', () => {
+		const event = {
+			id: 'e1',
+			tPosition: 1,
+			kind: 'paint_cells',
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+			payloadJsonb: { cells: [{ x: 3, y: 3, biome: 'bad biome!' }] }
+		};
+		const state = projectState(2, [], [event], emptyCtx);
+		expect(state.cells).toEqual([]);
+	});
+
+	// /review #3: well-formed but NOT asset-backed (a typo'd tile, an arbitrary
+	// water color) is dropped at render — it isn't renderable, so keeping it
+	// would be an invisible, grid-blocking cell.
+	it('well-formed but unknown (non-asset) biome dropped at render', () => {
+		const event = {
+			id: 'e1',
+			tPosition: 1,
+			kind: 'paint_cells',
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+			payloadJsonb: {
+				cells: [
+					{ x: 3, y: 3, biome: 'water_xyz' }, // not a manifest water color
+					{ x: 4, y: 4, biome: 'zzz' } // not a category/tile/legacy key
+				]
+			}
 		};
 		const state = projectState(2, [], [event], emptyCtx);
 		expect(state.cells).toEqual([]);
@@ -190,7 +245,7 @@ describe('Slice 3 B.2 — paint_cells server validator', () => {
 		expect(res.status).toBe(201);
 	});
 
-	it('rejects unknown biome with 400', async () => {
+	it('rejects format-invalid biome with 400 (garbage = bad format)', async () => {
 		const map = await seedMap();
 		await expect(
 			CREATE_EVENT(
@@ -199,11 +254,51 @@ describe('Slice 3 B.2 — paint_cells server validator', () => {
 					body: {
 						tPosition: 1,
 						kind: 'paint_cells',
-						payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'lava' }] }
+						payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'bad biome!' }] }
 					}
 				})
 			)
 		).rejects.toMatchObject({ status: 400 });
+	});
+
+	// /review #3: a well-formed but non-asset key (typo'd tile, arbitrary water
+	// color) is rejected too — only KNOWN renderable keys are storable.
+	it('rejects a well-formed but unknown (non-asset) biome with 400', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'water_xyz' }] }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('accepts a known asset-backed biome (category + specific tile + water)', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1,
+						kind: 'paint_cells',
+						payloadJsonb: {
+							cells: [
+								{ x: 0, y: 0, biome: 'Grass' }, // manifest category
+								{ x: 1, y: 0, biome: 'grass_01_tile_256_05' }, // specific tile
+								{ x: 2, y: 0, biome: 'water_snow' } // water color
+							]
+						}
+					}
+				})
+			)
+		).resolves.toBeTruthy();
 	});
 
 	it('rejects out-of-bounds x with 400 (defaults: grid_cells_x=32)', async () => {
@@ -495,6 +590,40 @@ describe('Slice 3 B.5 — auto-anchor tight rules', () => {
 		// Snapshot includes all 20 cells.
 		const state = synthetic[0].stateJsonb as { cells: Array<{ x: number; biome: string }> };
 		expect(state.cells).toHaveLength(20);
+	});
+
+	// Slice 6 D15/D16 regression: the auto-anchor snapshot fold must keep the
+	// OPEN terrain vocabulary (category names, water_* keys, specific tile
+	// keys), matching the paint_cells validator + projection. Pre-fix it
+	// filtered through the legacy BIOMES enum and silently dropped every
+	// asset-vocabulary cell from the baked snapshot — so painted terrain
+	// vanished the moment the first auto-anchor fired.
+	it('snapshot fold keeps open-vocabulary biomes, not just legacy enum (D15/D16)', async () => {
+		const map = await seedMap();
+		const biomes = ['Grass', 'water_snow', 'grass_01_tile_256_05'];
+		for (let i = 0; i < 20; i++) {
+			await CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1 + i * 0.001,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: i, y: 0, biome: biomes[i % biomes.length] }] }
+					}
+				})
+			);
+		}
+		const anchors = await currentDb
+			.select({ isSynthetic: mapAnchors.isSynthetic, stateJsonb: mapAnchors.stateJsonb })
+			.from(mapAnchors)
+			.where(eq(mapAnchors.worldMapId, map.id))
+			.orderBy(asc(mapAnchors.createdAt));
+		const synthetic = anchors.filter((a) => a.isSynthetic);
+		expect(synthetic).toHaveLength(1);
+		const state = synthetic[0].stateJsonb as { cells: Array<{ x: number; biome: string }> };
+		// All 20 asset-vocabulary cells survive the fold (pre-fix: 0 survived).
+		expect(state.cells).toHaveLength(20);
+		expect(new Set(state.cells.map((c) => c.biome))).toEqual(new Set(biomes));
 	});
 
 	it('deferred mid-stroke: 20 chunks with command_complete=false suppress until last chunk', async () => {
@@ -1028,7 +1157,7 @@ describe('Slice 3 codex P2 follow-ups (iter 3 review — authored anchors)', () 
 		).rejects.toMatchObject({ status: 400 });
 	});
 
-	it('#14 authored anchor with an unknown biome is rejected (400)', async () => {
+	it('#14 authored anchor with a format-invalid biome is rejected (400)', async () => {
 		const map = await seedMap();
 		await expect(
 			CREATE_ANCHOR(
@@ -1040,7 +1169,7 @@ describe('Slice 3 codex P2 follow-ups (iter 3 review — authored anchors)', () 
 							regions: [],
 							artifacts: [],
 							chains: [],
-							cells: [{ x: 1, y: 1, biome: 'lava' }]
+							cells: [{ x: 1, y: 1, biome: 'bad biome!' }]
 						}
 					}
 				})

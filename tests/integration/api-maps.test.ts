@@ -899,6 +899,78 @@ describe('/api/maps/[id]/upload-image', () => {
 		expect(body.width).toBe(1);
 		expect(body.height).toBe(1);
 	});
+
+	// The same minimal PNG with its IHDR width/height patched (the route reads
+	// dims straight from the IHDR, no CRC/decode) lets us exercise any aspect.
+	const widePng = Buffer.from(pngBuffer);
+	widePng.writeUInt32BE(1600, 16);
+	widePng.writeUInt32BE(900, 20);
+	const tallPng = Buffer.from(pngBuffer);
+	tallPng.writeUInt32BE(900, 16);
+	tallPng.writeUInt32BE(1600, 20);
+
+	it('first upload fits the grid to the image aspect → square cells', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		const file = new File([widePng], 'wide.png', { type: 'image/png' });
+		const body = await readJson(
+			await uploadImageRoute.POST(mkFormDataEvent({ params: { id: map.id }, file }))
+		);
+		expect([body.width, body.height]).toEqual([1600, 900]);
+		// 1600/32 === 900/18 === 50 → square cells.
+		expect([body.gridCellsX, body.gridCellsY]).toEqual([32, 18]);
+	});
+
+	it('re-upload does NOT re-fit the grid (first-upload-only; protects painted cells)', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		// First upload: landscape → grid established at 32×18.
+		await uploadImageRoute.POST(
+			mkFormDataEvent({
+				params: { id: map.id },
+				file: new File([widePng], 'a.png', { type: 'image/png' })
+			})
+		);
+		// Second upload: portrait — dimensions update, but the grid must stay as
+		// it was established on the first upload (re-fitting could orphan terrain).
+		const body = await readJson(
+			await uploadImageRoute.POST(
+				mkFormDataEvent({
+					params: { id: map.id },
+					file: new File([tallPng], 'b.png', { type: 'image/png' })
+				})
+			)
+		);
+		expect([body.width, body.height]).toEqual([900, 1600]);
+		expect([body.gridCellsX, body.gridCellsY]).toEqual([32, 18]); // unchanged
+	});
+
+	// /review #3 (Codex): the brush needs an image, but the API can author
+	// paint_cells on an image-less map. First-upload grid fitting must scan for
+	// terrain (not just trust "no image ⇒ no terrain") or it could shrink the
+	// grid under that terrain and orphan it.
+	it('does NOT fit the grid when the map already has API-authored terrain', async () => {
+		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
+		// Paint a cell on the still-image-less map via the API.
+		await CREATE_EVENT(
+			mkEvent({
+				params: { id: map.id },
+				body: {
+					tPosition: 1,
+					kind: 'paint_cells',
+					payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'Grass' }], command_complete: true }
+				}
+			})
+		);
+		const body = await readJson(
+			await uploadImageRoute.POST(
+				mkFormDataEvent({
+					params: { id: map.id },
+					file: new File([widePng], 'wide.png', { type: 'image/png' })
+				})
+			)
+		);
+		expect([body.width, body.height]).toEqual([1600, 900]);
+		expect([body.gridCellsX, body.gridCellsY]).toEqual([32, 24]); // grid left at default
+	});
 });
 
 // Regression: linking a region to a Location must materialize a part_of edge

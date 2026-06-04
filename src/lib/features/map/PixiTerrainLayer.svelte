@@ -27,8 +27,8 @@
 
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
-	import { biomeStyle } from './biome-textures.js';
+	import { PIXI_STAGE_CONTEXT, MAP_LAYER_Z, type PixiStageContext } from './pixi-context.js';
+	import { terrainFlatStyle } from './biome-textures.js';
 	import { layerVisibility } from './layer-prefs-store.js';
 
 	// Slice 3 E4 — layer toggle.
@@ -59,6 +59,9 @@
 	let PIXI = $state<PixiModule | null>(null);
 	let layer: PixiContainer | null = null;
 	let graphics: PixiGraphics | null = null;
+
+	// (Slice 6: the breathing shimmer moved to PixiWaterLayer — only water
+	// ripples now. This layer is pure flat-color terrain again.)
 
 	onMount(() => {
 		let cancelled = false;
@@ -92,10 +95,8 @@
 			// pref store (toggling visibility stays the separate effect's job —
 			// it must not rebuild up to 16k cell polygons).
 			layer.visible = get(visible);
-			// Terrain layer sits at viewport.children[3] if grid layer
-			// mounted, viewport.children[2] otherwise. addChildAt with a
-			// clamped index works either way.
-			viewport.addChildAt(layer, Math.min(3, viewport.children.length));
+			layer.zIndex = MAP_LAYER_Z.terrain; // sorts below sprite tiles + overlays
+			viewport.addChild(layer);
 		}
 
 		if (graphics) {
@@ -147,7 +148,7 @@
 		const cellH = canvasH / cellsY;
 		for (const cell of rendered) {
 			if (cell.biome === 'unset') continue;
-			const style = biomeStyle(cell.biome);
+			const style = terrainFlatStyle(cell.biome);
 			if (style.alpha === 0) continue;
 			const px = cell.x * cellW;
 			const py = cell.y * cellH;
@@ -169,7 +170,7 @@
 		const size: HexSize = hexSizeForCanvas(cellsX, cellsY, canvasW, canvasH);
 		for (const cell of rendered) {
 			if (cell.biome === 'unset') continue;
-			const style = biomeStyle(cell.biome);
+			const style = terrainFlatStyle(cell.biome);
 			if (style.alpha === 0) continue;
 			const center = hexAxialToPixel(cell.x, cell.y, size);
 			const verts = hexVertices(center.x, center.y, size);

@@ -29,6 +29,7 @@ import {
 	BIOMES,
 	EVENT_KINDS,
 	PAINT_CELLS_MAX_PER_EVENT,
+	isKnownTerrainKey,
 	type AnchorState,
 	type BiomeKind,
 	type EaseKind,
@@ -509,8 +510,12 @@ function assertCellsInBounds(cells: unknown, gridX: number, gridY: number, label
 		if (cell.y < 0 || cell.y >= gridY) {
 			error(400, `${label} cells[${i}].y out of bounds [0, ${gridY})`);
 		}
-		if (!(BIOMES as readonly string[]).includes(cell.biome as BiomeKind)) {
-			error(400, `${label} cells[${i}].biome must be one of ${BIOMES.join('|')}`);
+		// Asset-backed terrain vocabulary (Slice 6 D15 + /review #3): a manifest
+		// category / specific tile key / water color, a legacy biome, or 'unset'.
+		// Must be a KNOWN renderable key — not just well-formed — or it would
+		// persist as invisible, grid-blocking terrain.
+		if (!isKnownTerrainKey(cell.biome)) {
+			error(400, `${label} cells[${i}].biome must be a known terrain key`);
 		}
 	}
 }
@@ -1239,7 +1244,7 @@ async function maybeWriteAutoAnchor(
 			return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 		}
 	);
-	const cells = new Map<string, { x: number; y: number; biome: BiomeKind }>();
+	const cells = new Map<string, { x: number; y: number; biome: string }>();
 	for (const cell of baseState.cells ?? []) {
 		cells.set(`${cell.x},${cell.y}`, cell);
 	}
@@ -1261,7 +1266,10 @@ async function maybeWriteAutoAnchor(
 					c &&
 					Number.isInteger(c.x) &&
 					Number.isInteger(c.y) &&
-					(BIOMES as readonly string[]).includes(c.biome)
+					// Asset-backed terrain vocabulary (Slice 6 D15 + /review #3) —
+					// must match the paint_cells validator + projection fold, NOT the
+					// legacy enum, or the snapshot silently drops asset-vocab terrain.
+					isKnownTerrainKey(c.biome)
 				) {
 					cells.set(`${c.x},${c.y}`, c);
 				}
