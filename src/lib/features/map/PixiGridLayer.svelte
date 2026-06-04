@@ -25,7 +25,7 @@
 
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
+	import { PIXI_STAGE_CONTEXT, MAP_LAYER_Z, type PixiStageContext } from './pixi-context.js';
 	import {
 		hexSizeForCanvas,
 		hexAxialToPixel,
@@ -95,11 +95,8 @@
 			// must not tear down + rebuild the grid (the separate visibility
 			// effect below owns that, to avoid rebuilding up to 16k polygons).
 			layer.visible = get(visible);
-			// addChildAt(2) so it lives between PixiBackgroundLayer (index
-			// 0/1) and the region/placement layers above. Pixi clamps
-			// indices that exceed the current child count, so 2 here is
-			// safe regardless of which other layers have mounted.
-			viewport.addChildAt(layer, Math.min(2, viewport.children.length));
+			layer.zIndex = MAP_LAYER_Z.grid; // above background, below terrain + overlays
+			viewport.addChild(layer);
 		}
 
 		// Geometry effect: rebuild Graphics only when shape inputs change

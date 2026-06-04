@@ -114,6 +114,10 @@
 					events: newApp.renderer.events
 				});
 				viewport.drag().pinch().wheel().clampZoom({ minScale: 0.25, maxScale: 8 });
+				// Layers set container.zIndex from MAP_LAYER_Z; sort by it so the
+				// paint order is deterministic regardless of async mount timing
+				// (Codex #70), not the order children happened to be appended.
+				viewport.sortableChildren = true;
 				newApp.stage.addChild(viewport);
 
 				stageCtx.app = newApp;

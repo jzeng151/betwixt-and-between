@@ -11,7 +11,7 @@
 
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
+	import { PIXI_STAGE_CONTEXT, MAP_LAYER_Z, type PixiStageContext } from './pixi-context.js';
 	import { layerVisibility } from './layer-prefs-store.js';
 	import { createTerrainShimmerFilter } from './terrain-shimmer.js';
 	import {
@@ -72,8 +72,8 @@
 		if (!layer) {
 			layer = new PIXI.Container();
 			layer.visible = get(visible); // honor the saved Terrain-layer pref
-			// Above terrain (≤3) + land tiles (4); below regions/placements.
-			viewport.addChildAt(layer, Math.min(5, viewport.children.length));
+			layer.zIndex = MAP_LAYER_Z.water; // above land tiles, below overlays
+			viewport.addChild(layer);
 		}
 		if (!shimmerAttached && stageCtx.anim) {
 			try {

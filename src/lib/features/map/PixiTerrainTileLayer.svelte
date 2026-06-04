@@ -18,7 +18,7 @@
 
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
+	import { PIXI_STAGE_CONTEXT, MAP_LAYER_Z, type PixiStageContext } from './pixi-context.js';
 	import { layerVisibility } from './layer-prefs-store.js';
 	import {
 		loadTerrainManifest,
@@ -100,8 +100,8 @@
 		if (!layer) {
 			layer = new PIXI.Container();
 			layer.visible = get(visible); // honor the saved Terrain-layer pref
-			// Just above the flat terrain layer (which clamps to index ≤3).
-			viewport.addChildAt(layer, Math.min(4, viewport.children.length));
+			layer.zIndex = MAP_LAYER_Z.terrainTiles; // sorts above flat terrain, below overlays
+			viewport.addChild(layer);
 		}
 
 		const w = activeMap.width;
