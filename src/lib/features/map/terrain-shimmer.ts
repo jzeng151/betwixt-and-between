@@ -103,8 +103,9 @@ export function createTerrainShimmerFilter(PIXI: PixiModule): TerrainShimmer {
 			shimmer: {
 				uTime: { value: 0, type: 'f32' },
 				// Tunable. Keep small — this is "breathing", not "wobbling".
-				uAmplitude: { value: 0.006, type: 'f32' },
-				uFrequency: { value: 18.0, type: 'f32' }
+				// Reduced per feedback: a faint shimmer, not a visible ripple.
+				uAmplitude: { value: 0.0022, type: 'f32' },
+				uFrequency: { value: 14.0, type: 'f32' }
 			}
 		}
 	});

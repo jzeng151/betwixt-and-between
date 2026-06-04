@@ -15,6 +15,10 @@
     {
       "binding": "MAP_UPLOADS",
       "bucket_name": "betwixt-map-uploads"
+    },
+    {
+      "binding": "TERRAIN_ASSETS",
+      "bucket_name": "betwitxt-assets"
     }
   ]
 }

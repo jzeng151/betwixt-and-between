@@ -42,6 +42,7 @@ declare global {
 				RESEND_API_KEY?: string;
 				RESEND_FROM_EMAIL?: string;
 				MAP_UPLOADS?: R2Bucket;
+				TERRAIN_ASSETS?: R2Bucket;
 			};
 		}
 	}

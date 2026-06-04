@@ -24,6 +24,8 @@
 	import PixiBackgroundLayer from '$lib/features/map/PixiBackgroundLayer.svelte';
 	import PixiGridLayer from '$lib/features/map/PixiGridLayer.svelte';
 	import PixiTerrainLayer from '$lib/features/map/PixiTerrainLayer.svelte';
+	import PixiTerrainTileLayer from '$lib/features/map/PixiTerrainTileLayer.svelte';
+	import PixiWaterLayer from '$lib/features/map/PixiWaterLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import PixiDecorationLayer from '$lib/features/map/PixiDecorationLayer.svelte';
 	import PixiCausalEdgeLayer from '$lib/features/map/PixiCausalEdgeLayer.svelte';
@@ -48,7 +50,6 @@
 	import BrushPalette from '$lib/components/BrushPalette.svelte';
 	import { ASSET_DRAG_MIME } from '$lib/components/asset-drag.js';
 	import PixiBrushLayer from '$lib/features/map/PixiBrushLayer.svelte';
-	import type { BiomeKind } from '$lib/features/map/projection.js';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
 
 	// windowId is this WorldMap instance's window id (from WindowManager). Two
@@ -69,7 +70,10 @@
 	// enters place-armed mode once a chip is actually armed (armedPlaceableId).
 	let brushActive = $derived(activeTool === 'brush');
 	let moveActive = $derived(activeTool === 'move');
-	let brushBiome = $state<BiomeKind>('plains');
+	// Open terrain-key vocabulary (Slice 6 D15): a manifest category, water
+	// color key, or 'unset'. Defaults to a real category so first paint lands a
+	// tile (BrushPalette resolves the live list from the manifest).
+	let brushBiome = $state<string>('Grass');
 	let brushSize = $state<1 | 3 | 5>(1);
 
 	// armed placeable id (chip selected in PlaceablePalette). When non-null,
@@ -1543,6 +1547,10 @@
 				<PixiBackgroundLayer {activeMap} />
 				<PixiGridLayer {activeMap} />
 				<PixiTerrainLayer {activeMap} cells={renderedState?.cells ?? []} />
+				<!-- Slice 6 D15: sprite-tile terrain on top of the flat layer. -->
+				<PixiTerrainTileLayer {activeMap} cells={renderedState?.cells ?? []} />
+				<!-- Slice 6: only water ripples (shimmer applied to water cells alone). -->
+				<PixiWaterLayer {activeMap} cells={renderedState?.cells ?? []} />
 				<PixiRegionLayer
 					regions={scopedRegions}
 					{renderedState}

@@ -1,64 +1,135 @@
 <script lang="ts">
 	/**
-	 * BrushPalette — Slice 3 T5 brush UX. Slice 4 PR-F (DS4): now a detail panel
-	 * shown only when the Brush tool is active (MapToolSelector owns on/off, and
-	 * hosts undo/redo). Two pieces:
+	 * BrushPalette — terrain paint UX. Slice 6 D15/D16: asset-folder-driven, and
+	 * the brush paints a SPECIFIC chosen texture (not one fixed tile per type).
 	 *
-	 *   1. Biome picker: chip rail with one chip per BIOMES enum value.
-	 *      Eraser is biome='unset' rendered with a distinct (red dashed
-	 *      border + ⌀ glyph) style so it's visually a tool, not a biome.
+	 *   1. Land: one chip per manifest category (Clay/Grass/Ice/Lava/Paving/
+	 *      Sand/Snow). Clicking a chip opens a POPOVER of that type's textures;
+	 *      clicking a swatch arms that exact tile and closes the popover.
+	 *   2. Water: a SINGLE "Water" chip whose popover holds the water colors
+	 *      (water_*) — the 7 colors are grouped under one terrain (D16).
+	 *   3. Eraser: biome='unset', styled as a tool not a terrain (no popover).
 	 *
-	 *   2. Size selector: three buttons (1, 3, 5 cell radius). Matches the
-	 *      design-doc thread #4 prior (1/3/5 — no continuous slider for
-	 *      Slice 3 MVP).
-	 *
-	 * Per outside-voice A2, paint_cells events have a 256-cell cap; the
-	 * brush at size=5 on hex paints a 2-ring (19 cells) per gesture step,
-	 * well under the cap. PixiBrushLayer chunks long drag strokes.
+	 * The painted cell stores the chosen texture key (a tile basename like
+	 * "grass_01_tile_256_05", or a water color key like "water_snow"). Size
+	 * selector unchanged (1/3/5 cell radius).
 	 */
-	import { BIOMES, type BiomeKind } from '$lib/features/map/projection.js';
-	import { BIOME_STYLES } from '$lib/features/map/biome-textures.js';
+	import { onMount } from 'svelte';
+	import {
+		loadTerrainManifest,
+		terrainCategories,
+		texturesForType,
+		typeForKey,
+		tileUrlForKey,
+		firstBaseTile,
+		WATER_TYPE,
+		type TerrainManifest
+	} from '$lib/features/map/terrain-tilesets.js';
 
 	interface Props {
-		biome: BiomeKind;
+		biome: string;
 		size: 1 | 3 | 5;
-		onSetBiome: (biome: BiomeKind) => void;
+		onSetBiome: (biome: string) => void;
 		onSetSize: (size: 1 | 3 | 5) => void;
 	}
 	let { biome, size, onSetBiome, onSetSize }: Props = $props();
 
-	// Paintable biomes first; 'unset' (eraser) rendered as a separate
-	// affordance to the right so it visually reads as a tool.
-	const PAINTABLE_BIOMES: BiomeKind[] = BIOMES.filter((b) => b !== 'unset');
+	let manifest = $state<TerrainManifest | null>(null);
+	onMount(async () => {
+		manifest = await loadTerrainManifest();
+	});
+
+	// Which type's texture popover is open (a land category, WATER_TYPE, or null).
+	let openType = $state<string | null>(null);
+
+	let landTypes = $derived(terrainCategories(manifest));
+	let hasWater = $derived(texturesForType(manifest, WATER_TYPE).length > 0);
+	// The terrain type the current brush belongs to → which chip reads as armed.
+	let armedType = $derived(typeForKey(manifest, biome));
 	const SIZES: Array<1 | 3 | 5> = [1, 3, 5];
 
-	function rgbHex(color: number): string {
-		return '#' + color.toString(16).padStart(6, '0');
+	function toggleType(type: string) {
+		openType = openType === type ? null : type;
+	}
+	function pickTexture(key: string) {
+		onSetBiome(key);
+		openType = null;
+	}
+	// The thumbnail on a type chip: the armed texture when that type is armed,
+	// else the type's representative (first) tile.
+	function chipThumb(type: string): string | null {
+		if (armedType === type) {
+			const u = tileUrlForKey(manifest, biome);
+			if (u) return u;
+		}
+		if (type === WATER_TYPE) return texturesForType(manifest, WATER_TYPE)[0]?.url ?? null;
+		return firstBaseTile(manifest, type);
 	}
 </script>
+
+<svelte:window
+	onkeydown={(e) => {
+		if (e.key === 'Escape' && openType) openType = null;
+	}}
+/>
 
 <div class="brush-palette" data-testid="brush-palette">
 	<div class="palette-header">
 		<span class="palette-title">Brush</span>
-		<span class="palette-hint">drag on map to paint · Shift on vertices = snap</span>
+		<span class="palette-hint">click a terrain → pick a texture → drag on map to paint</span>
 	</div>
 
 	<div class="palette-body">
-		<div class="biome-chips" aria-label="Biome">
-			{#each PAINTABLE_BIOMES as b (b)}
-				<button
-					type="button"
-					class="chip"
-					class:armed={biome === b}
-					aria-pressed={biome === b}
-					style="--biome-color: {rgbHex(BIOME_STYLES[b].color)}"
-					onclick={() => onSetBiome(b)}
-					title={`Paint ${b}`}
-				>
-					<span class="chip-swatch" aria-hidden="true"></span>
-					<span class="chip-name">{b}</span>
-				</button>
+		<div class="terrain-chips" aria-label="Terrain">
+			{#each landTypes as type (type)}
+				<div class="chip-wrap">
+					<button
+						type="button"
+						class="chip"
+						class:armed={armedType === type}
+						class:open={openType === type}
+						aria-haspopup="true"
+						aria-expanded={openType === type}
+						aria-pressed={armedType === type}
+						onclick={() => toggleType(type)}
+						title={`${type} — pick a texture`}
+					>
+						<img class="chip-tile" src={chipThumb(type)} alt="" aria-hidden="true" />
+						<span class="chip-name">{type}</span>
+						<span class="chip-caret" aria-hidden="true">▾</span>
+					</button>
+
+					{#if openType === type}
+						{@render popover(type)}
+					{/if}
+				</div>
 			{/each}
+
+			{#if hasWater}
+				<span class="group-sep" aria-hidden="true"></span>
+				<div class="chip-wrap">
+					<button
+						type="button"
+						class="chip water"
+						class:armed={armedType === WATER_TYPE}
+						class:open={openType === WATER_TYPE}
+						aria-haspopup="true"
+						aria-expanded={openType === WATER_TYPE}
+						aria-pressed={armedType === WATER_TYPE}
+						onclick={() => toggleType(WATER_TYPE)}
+						title="Water — pick a color"
+					>
+						<img class="chip-tile" src={chipThumb(WATER_TYPE)} alt="" aria-hidden="true" />
+						<span class="chip-name">Water</span>
+						<span class="chip-caret" aria-hidden="true">▾</span>
+					</button>
+
+					{#if openType === WATER_TYPE}
+						{@render popover(WATER_TYPE)}
+					{/if}
+				</div>
+			{/if}
+
 			<button
 				type="button"
 				class="chip eraser"
@@ -89,24 +160,40 @@
 	</div>
 </div>
 
+{#if openType}
+	<!-- Click-away closes the open popover; sits under the popovers, over the map. -->
+	<button class="popover-backdrop" aria-label="Close texture picker" onclick={() => (openType = null)}
+	></button>
+{/if}
+
+{#snippet popover(type: string)}
+	<div class="texture-popover" role="menu" aria-label={`${type} textures`}>
+		{#each texturesForType(manifest, type) as tex (tex.key)}
+			<button
+				type="button"
+				class="swatch"
+				class:armed={biome === tex.key}
+				role="menuitemradio"
+				aria-checked={biome === tex.key}
+				title={tex.label}
+				onclick={() => pickTexture(tex.key)}
+			>
+				<img src={tex.url} alt={tex.label} />
+			</button>
+		{/each}
+	</div>
+{/snippet}
+
 <style>
 	.brush-palette {
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
 		padding: 8px 10px;
-		/* The MapSidebar (Layers/Factions) is position:absolute, right:8px,
-		   width:200px and overlays the bottom-right of the map wrapper — i.e.
-		   the right end of this full-width palette. The size selector is the
-		   last control in the row, so it landed underneath the sidebar and
-		   read as "no brush size selection". Reserve the sidebar's footprint
-		   (200 + 8 right + 8 gap) so every control stays in the clear. */
 		padding-right: 216px;
 		background: var(--color-panel, rgba(0, 0, 0, 0.6));
 		border-top: 1px solid var(--color-border, #333);
 		font-size: 12px;
-		/* Sit above the MapSidebar (z-index:100) so the absolutely-positioned
-		   sidebar doesn't paint over this bottom-of-column rail. */
 		position: relative;
 		z-index: 150;
 	}
@@ -130,18 +217,29 @@
 		gap: 8px;
 		align-items: center;
 	}
-	.biome-chips {
+	.terrain-chips {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px;
 		flex: 1;
 		min-width: 0;
+		align-items: center;
+	}
+	.chip-wrap {
+		position: relative;
+		display: inline-flex;
+	}
+	.group-sep {
+		width: 1px;
+		align-self: stretch;
+		background: var(--color-border, #333);
+		margin: 2px 4px;
 	}
 	.chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 4px;
-		padding: 3px 8px;
+		gap: 5px;
+		padding: 3px 8px 3px 4px;
 		border-radius: 12px;
 		border: 1px solid var(--color-border, #333);
 		background: var(--color-bg, #1a1a1a);
@@ -150,23 +248,37 @@
 		cursor: pointer;
 	}
 	.chip:hover {
-		border-color: var(--biome-color, var(--color-accent, #c8942a));
+		border-color: var(--color-accent, #c8942a);
+	}
+	.chip.open {
+		border-color: var(--color-accent, #c8942a);
 	}
 	.chip.armed {
-		border-color: var(--biome-color, var(--color-accent, #c8942a));
-		background: color-mix(in srgb, var(--biome-color, var(--color-accent, #c8942a)) 25%, transparent);
-		box-shadow: 0 0 0 1px var(--biome-color, var(--color-accent, #c8942a));
+		border-color: var(--color-accent, #c8942a);
+		background: color-mix(in srgb, var(--color-accent, #c8942a) 25%, transparent);
+		box-shadow: 0 0 0 1px var(--color-accent, #c8942a);
 	}
-	.chip-swatch {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		border-radius: 2px;
-		background: var(--biome-color);
+	.chip.water.armed {
+		border-color: #38bdf8;
+		box-shadow: 0 0 0 1px #38bdf8;
+		background: color-mix(in srgb, #38bdf8 22%, transparent);
+	}
+	.chip-tile {
+		width: 18px;
+		height: 18px;
+		border-radius: 3px;
+		object-fit: cover;
+		background: #222;
+	}
+	.chip-caret {
+		font-size: 9px;
+		opacity: 0.6;
+		margin-left: -2px;
 	}
 	.chip.eraser {
 		border-style: dashed;
 		border-color: var(--color-text-muted, #888);
+		padding-left: 8px;
 	}
 	.chip.eraser:hover {
 		border-color: #ef4444;
@@ -182,6 +294,58 @@
 		line-height: 1;
 		opacity: 0.85;
 	}
+
+	/* Texture popover — floats above the clicked chip. */
+	.popover-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 200;
+		background: transparent;
+		border: none;
+		padding: 0;
+		cursor: default;
+	}
+	.texture-popover {
+		position: absolute;
+		bottom: calc(100% + 6px);
+		left: 0;
+		z-index: 210;
+		display: grid;
+		grid-template-columns: repeat(6, 30px);
+		gap: 4px;
+		padding: 6px;
+		max-height: 188px;
+		overflow-y: auto;
+		background: var(--color-panel-solid, #15161a);
+		border: 1px solid var(--color-border, #333);
+		border-radius: 8px;
+		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+	}
+	.swatch {
+		width: 30px;
+		height: 30px;
+		padding: 0;
+		border-radius: 4px;
+		border: 1px solid var(--color-border, #333);
+		background: #222;
+		cursor: pointer;
+		overflow: hidden;
+		line-height: 0;
+	}
+	.swatch img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		display: block;
+	}
+	.swatch:hover {
+		border-color: var(--color-accent, #c8942a);
+	}
+	.swatch.armed {
+		border-color: var(--color-accent, #c8942a);
+		box-shadow: 0 0 0 2px var(--color-accent, #c8942a);
+	}
+
 	.size-selector {
 		display: flex;
 		gap: 2px;

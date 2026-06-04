@@ -30,7 +30,6 @@
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
 	import { biomeStyle } from './biome-textures.js';
 	import { layerVisibility } from './layer-prefs-store.js';
-	import { createTerrainShimmerFilter } from './terrain-shimmer.js';
 
 	// Slice 3 E4 — layer toggle.
 	const visible = layerVisibility('terrain');
@@ -61,12 +60,8 @@
 	let layer: PixiContainer | null = null;
 	let graphics: PixiGraphics | null = null;
 
-	// Slice 6 T1 — subtle UV ripple making flat terrain "breathe" (D13: terrain
-	// stays flat-color + shader; sprite rewrite deferred). Driven by the SHARED
-	// anim-controller on PixiStage (D6) — this layer subscribes, never owns it.
-	let shimmer: import('./terrain-shimmer.js').TerrainShimmer | null = null;
-	let offShimmer: (() => void) | null = null;
-	let shimmerAttached = false;
+	// (Slice 6: the breathing shimmer moved to PixiWaterLayer — only water
+	// ripples now. This layer is pure flat-color terrain again.)
 
 	onMount(() => {
 		let cancelled = false;
@@ -104,22 +99,6 @@
 			// mounted, viewport.children[2] otherwise. addChildAt with a
 			// clamped index works either way.
 			viewport.addChildAt(layer, Math.min(3, viewport.children.length));
-		}
-
-		// Slice 6 T1: attach the shimmer filter ONCE, fed by the shared clock.
-		// Outside the `if (!layer)` block + guarded by shimmerAttached so that if
-		// the shared controller wasn't ready on the first pass, a later geometry
-		// re-run (cells/map change) still wires it. Subscribes to stageCtx.anim;
-		// does NOT create or destroy the controller (PixiStage owns it).
-		if (PIXI && layer && stageCtx.anim && !shimmerAttached) {
-			try {
-				shimmer = createTerrainShimmerFilter(PIXI);
-				layer.filters = [shimmer.filter];
-				offShimmer = stageCtx.anim.register((t) => shimmer!.setTime(t));
-				shimmerAttached = true;
-			} catch (_) {
-				/* filter unsupported on this renderer — terrain still draws */
-			}
 		}
 
 		if (graphics) {
@@ -207,18 +186,6 @@
 	}
 
 	onDestroy(() => {
-		// Slice 6 T1 — tear down the shimmer filter + its ticker subscription
-		// before the layer/app so we don't leak a ticker callback on unmount.
-		if (offShimmer) {
-			offShimmer();
-			offShimmer = null;
-		}
-		// Do NOT destroy the controller — PixiStage owns it (D6). Just unsubscribe
-		// (above) and drop our filter.
-		if (shimmer) {
-			shimmer.destroy();
-			shimmer = null;
-		}
 		if (graphics) {
 			try {
 				graphics.destroy();

@@ -29,6 +29,7 @@ import {
 	BIOMES,
 	EVENT_KINDS,
 	PAINT_CELLS_MAX_PER_EVENT,
+	isTerrainKey,
 	type AnchorState,
 	type BiomeKind,
 	type EaseKind,
@@ -509,8 +510,10 @@ function assertCellsInBounds(cells: unknown, gridX: number, gridY: number, label
 		if (cell.y < 0 || cell.y >= gridY) {
 			error(400, `${label} cells[${i}].y out of bounds [0, ${gridY})`);
 		}
-		if (!(BIOMES as readonly string[]).includes(cell.biome as BiomeKind)) {
-			error(400, `${label} cells[${i}].biome must be one of ${BIOMES.join('|')}`);
+		// Open terrain-key vocabulary (Slice 6 D15): manifest categories + water
+		// colors + legacy biomes + 'unset', validated by format not enum.
+		if (!isTerrainKey(cell.biome)) {
+			error(400, `${label} cells[${i}].biome must be a terrain key (letters/digits/_, ≤40 chars)`);
 		}
 	}
 }
@@ -1239,7 +1242,7 @@ async function maybeWriteAutoAnchor(
 			return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 		}
 	);
-	const cells = new Map<string, { x: number; y: number; biome: BiomeKind }>();
+	const cells = new Map<string, { x: number; y: number; biome: string }>();
 	for (const cell of baseState.cells ?? []) {
 		cells.set(`${cell.x},${cell.y}`, cell);
 	}

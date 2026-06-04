@@ -104,7 +104,9 @@ export type AnchorChain = {
 export type AnchorCell = {
 	x: number;
 	y: number;
-	biome: BiomeKind;
+	// Open terrain-key vocabulary (Slice 6 D15): legacy BIOMES, manifest
+	// categories ('Grass'), water colors ('water_snow'), or 'unset'.
+	biome: string;
 };
 
 export type AnchorState = {
@@ -155,7 +157,7 @@ export type TransferRegionPayload = {
 // command_complete flag on the last chunk lets the server-side auto-anchor
 // fire only at stroke boundary (outside-voice B7).
 export type PaintCellsPayload = {
-	cells: Array<{ x: number; y: number; biome: BiomeKind }>;
+	cells: Array<{ x: number; y: number; biome: string }>; // open vocab (Slice 6 D15)
 	// Optional. Last chunk of a multi-event stroke sets this true so the
 	// auto-anchor logic doesn't fire mid-stroke. Single-event strokes
 	// either set it true or omit it (defaults to true server-side).
@@ -200,6 +202,17 @@ export const BIOMES = [
 ] as const;
 export type BiomeKind = (typeof BIOMES)[number];
 
+// Slice 6 D15 — terrain is now an OPEN, asset-folder-driven vocabulary
+// (manifest categories like 'Grass', water colors like 'water_snow') plus the
+// legacy BIOMES enum and 'unset'. A cell's biome is a freeform key validated by
+// format, not enum membership — the render lazy-GCs/handles unknown keys (flat
+// fallback / no tile), so strict enum membership is no longer the guard; a
+// charset+length check is. Shared by the projection fold and the server
+// paint_cells / anchor-write validators so they agree on what's storable.
+export function isTerrainKey(s: unknown): s is string {
+	return typeof s === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(s);
+}
+
 export type ProjectionEvent = {
 	id: string;
 	tPosition: number;
@@ -237,7 +250,7 @@ export type RenderedRegion = {
 export type RenderedCell = {
 	x: number;
 	y: number;
-	biome: BiomeKind;
+	biome: string; // open terrain-key vocabulary (Slice 6 D15)
 };
 
 // Slice 4 PR-F (D5) — normalized fractional position, same convention as
@@ -410,8 +423,7 @@ function applyPaintCells(
 			!Number.isInteger(x) ||
 			typeof y !== 'number' ||
 			!Number.isInteger(y) ||
-			typeof biome !== 'string' ||
-			!(BIOMES as readonly string[]).includes(biome)
+			!isTerrainKey(biome)
 		) {
 			// Lazy GC: malformed entries silently dropped at render
 			// (matches the cross-user ref policy in resolveRegionColor).
@@ -782,7 +794,7 @@ export function projectState(
 				cell &&
 				Number.isInteger(cell.x) &&
 				Number.isInteger(cell.y) &&
-				(BIOMES as readonly string[]).includes(cell.biome)
+				isTerrainKey(cell.biome)
 			) {
 				cells.set(`${cell.x},${cell.y}`, cell);
 			}

@@ -144,13 +144,28 @@ describe('Slice 3 B.1 — projection paint_cells fold', () => {
 		expect(state.cells).toEqual([{ x: 2, y: 2, biome: 'snow' }]);
 	});
 
-	it('unknown biome silently dropped (lazy GC) at render', () => {
+	// Slice 6 D15: terrain is an OPEN vocabulary now — a well-formed unknown key
+	// (e.g. a manifest category) is KEPT (rendered with a flat/no-tile fallback).
+	// Only FORMAT-invalid keys (spaces / punctuation / >40 chars) are lazy-GC'd.
+	it('well-formed unknown biome is kept at render (open vocab)', () => {
 		const event = {
 			id: 'e1',
 			tPosition: 1,
 			kind: 'paint_cells',
 			createdAt: new Date('2026-01-01T00:00:00Z'),
-			payloadJsonb: { cells: [{ x: 3, y: 3, biome: 'magma' }] }
+			payloadJsonb: { cells: [{ x: 3, y: 3, biome: 'Grass' }] }
+		};
+		const state = projectState(2, [], [event], emptyCtx);
+		expect(state.cells).toEqual([{ x: 3, y: 3, biome: 'Grass' }]);
+	});
+
+	it('format-invalid biome silently dropped (lazy GC) at render', () => {
+		const event = {
+			id: 'e1',
+			tPosition: 1,
+			kind: 'paint_cells',
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+			payloadJsonb: { cells: [{ x: 3, y: 3, biome: 'bad biome!' }] }
 		};
 		const state = projectState(2, [], [event], emptyCtx);
 		expect(state.cells).toEqual([]);
@@ -190,7 +205,7 @@ describe('Slice 3 B.2 — paint_cells server validator', () => {
 		expect(res.status).toBe(201);
 	});
 
-	it('rejects unknown biome with 400', async () => {
+	it('rejects format-invalid biome with 400 (open vocab; garbage = bad format)', async () => {
 		const map = await seedMap();
 		await expect(
 			CREATE_EVENT(
@@ -199,11 +214,27 @@ describe('Slice 3 B.2 — paint_cells server validator', () => {
 					body: {
 						tPosition: 1,
 						kind: 'paint_cells',
-						payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'lava' }] }
+						payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'bad biome!' }] }
 					}
 				})
 			)
 		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('accepts a well-formed asset-category biome (open vocab, Slice 6 D15)', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1,
+						kind: 'paint_cells',
+						payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'Grass' }] }
+					}
+				})
+			)
+		).resolves.toBeTruthy();
 	});
 
 	it('rejects out-of-bounds x with 400 (defaults: grid_cells_x=32)', async () => {
@@ -1028,7 +1059,7 @@ describe('Slice 3 codex P2 follow-ups (iter 3 review — authored anchors)', () 
 		).rejects.toMatchObject({ status: 400 });
 	});
 
-	it('#14 authored anchor with an unknown biome is rejected (400)', async () => {
+	it('#14 authored anchor with a format-invalid biome is rejected (400)', async () => {
 		const map = await seedMap();
 		await expect(
 			CREATE_ANCHOR(
@@ -1040,7 +1071,7 @@ describe('Slice 3 codex P2 follow-ups (iter 3 review — authored anchors)', () 
 							regions: [],
 							artifacts: [],
 							chains: [],
-							cells: [{ x: 1, y: 1, biome: 'lava' }]
+							cells: [{ x: 1, y: 1, biome: 'bad biome!' }]
 						}
 					}
 				})
