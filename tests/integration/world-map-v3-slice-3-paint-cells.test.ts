@@ -20,7 +20,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { and, eq, asc, sql } from 'drizzle-orm';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { mapAnchors, mapEvents, worldMaps } from '../../src/lib/server/db/schema.js';
-import { projectState, type ProjectionContext } from '../../src/lib/features/map/projection.js';
+import {
+	projectState,
+	isKnownTerrainKey,
+	type ProjectionContext
+} from '../../src/lib/features/map/projection.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 let userId: string;
@@ -71,6 +75,22 @@ const emptyCtx: ProjectionContext = {
 	allowedFactions: new Map(),
 	allowedRegions: new Set()
 };
+
+describe('Slice 6 /review #3 — isKnownTerrainKey (asset-backed vocabulary)', () => {
+	it('accepts known kinds: category, specific tile, water color, legacy biome, unset', () => {
+		for (const k of ['Grass', 'grass_01_tile_256_05', 'water_snow', 'plains', 'unset']) {
+			expect(isKnownTerrainKey(k)).toBe(true);
+		}
+	});
+	it('rejects unknown-but-well-formed keys and non-strings', () => {
+		for (const k of ['water_xyz', 'zzz', 'Grasss', 'grass_01_tile_256_99', '']) {
+			expect(isKnownTerrainKey(k)).toBe(false);
+		}
+		expect(isKnownTerrainKey(42)).toBe(false);
+		expect(isKnownTerrainKey(null)).toBe(false);
+		expect(isKnownTerrainKey(undefined)).toBe(false);
+	});
+});
 
 describe('Slice 3 B.1 — projection paint_cells fold', () => {
 	beforeEach(async () => {
@@ -144,10 +164,10 @@ describe('Slice 3 B.1 — projection paint_cells fold', () => {
 		expect(state.cells).toEqual([{ x: 2, y: 2, biome: 'snow' }]);
 	});
 
-	// Slice 6 D15: terrain is an OPEN vocabulary now — a well-formed unknown key
-	// (e.g. a manifest category) is KEPT (rendered with a flat/no-tile fallback).
-	// Only FORMAT-invalid keys (spaces / punctuation / >40 chars) are lazy-GC'd.
-	it('well-formed unknown biome is kept at render (open vocab)', () => {
+	// Slice 6 D15 + /review #3: a biome is valid iff it's a KNOWN asset-backed
+	// key (manifest category / specific tile / water color), a legacy biome, or
+	// 'unset'. A known key (e.g. the 'Grass' category) is kept at render.
+	it('known asset-backed biome is kept at render', () => {
 		const event = {
 			id: 'e1',
 			tPosition: 1,
@@ -166,6 +186,26 @@ describe('Slice 3 B.1 — projection paint_cells fold', () => {
 			kind: 'paint_cells',
 			createdAt: new Date('2026-01-01T00:00:00Z'),
 			payloadJsonb: { cells: [{ x: 3, y: 3, biome: 'bad biome!' }] }
+		};
+		const state = projectState(2, [], [event], emptyCtx);
+		expect(state.cells).toEqual([]);
+	});
+
+	// /review #3: well-formed but NOT asset-backed (a typo'd tile, an arbitrary
+	// water color) is dropped at render — it isn't renderable, so keeping it
+	// would be an invisible, grid-blocking cell.
+	it('well-formed but unknown (non-asset) biome dropped at render', () => {
+		const event = {
+			id: 'e1',
+			tPosition: 1,
+			kind: 'paint_cells',
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+			payloadJsonb: {
+				cells: [
+					{ x: 3, y: 3, biome: 'water_xyz' }, // not a manifest water color
+					{ x: 4, y: 4, biome: 'zzz' } // not a category/tile/legacy key
+				]
+			}
 		};
 		const state = projectState(2, [], [event], emptyCtx);
 		expect(state.cells).toEqual([]);
@@ -205,7 +245,7 @@ describe('Slice 3 B.2 — paint_cells server validator', () => {
 		expect(res.status).toBe(201);
 	});
 
-	it('rejects format-invalid biome with 400 (open vocab; garbage = bad format)', async () => {
+	it('rejects format-invalid biome with 400 (garbage = bad format)', async () => {
 		const map = await seedMap();
 		await expect(
 			CREATE_EVENT(
@@ -221,7 +261,9 @@ describe('Slice 3 B.2 — paint_cells server validator', () => {
 		).rejects.toMatchObject({ status: 400 });
 	});
 
-	it('accepts a well-formed asset-category biome (open vocab, Slice 6 D15)', async () => {
+	// /review #3: a well-formed but non-asset key (typo'd tile, arbitrary water
+	// color) is rejected too — only KNOWN renderable keys are storable.
+	it('rejects a well-formed but unknown (non-asset) biome with 400', async () => {
 		const map = await seedMap();
 		await expect(
 			CREATE_EVENT(
@@ -230,7 +272,29 @@ describe('Slice 3 B.2 — paint_cells server validator', () => {
 					body: {
 						tPosition: 1,
 						kind: 'paint_cells',
-						payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'Grass' }] }
+						payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'water_xyz' }] }
+					}
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('accepts a known asset-backed biome (category + specific tile + water)', async () => {
+		const map = await seedMap();
+		await expect(
+			CREATE_EVENT(
+				mkEvent({
+					params: { id: map.id },
+					body: {
+						tPosition: 1,
+						kind: 'paint_cells',
+						payloadJsonb: {
+							cells: [
+								{ x: 0, y: 0, biome: 'Grass' }, // manifest category
+								{ x: 1, y: 0, biome: 'grass_01_tile_256_05' }, // specific tile
+								{ x: 2, y: 0, biome: 'water_snow' } // water color
+							]
+						}
 					}
 				})
 			)

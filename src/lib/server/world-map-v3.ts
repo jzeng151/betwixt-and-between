@@ -29,7 +29,7 @@ import {
 	BIOMES,
 	EVENT_KINDS,
 	PAINT_CELLS_MAX_PER_EVENT,
-	isTerrainKey,
+	isKnownTerrainKey,
 	type AnchorState,
 	type BiomeKind,
 	type EaseKind,
@@ -510,10 +510,12 @@ function assertCellsInBounds(cells: unknown, gridX: number, gridY: number, label
 		if (cell.y < 0 || cell.y >= gridY) {
 			error(400, `${label} cells[${i}].y out of bounds [0, ${gridY})`);
 		}
-		// Open terrain-key vocabulary (Slice 6 D15): manifest categories + water
-		// colors + legacy biomes + 'unset', validated by format not enum.
-		if (!isTerrainKey(cell.biome)) {
-			error(400, `${label} cells[${i}].biome must be a terrain key (letters/digits/_, ≤40 chars)`);
+		// Asset-backed terrain vocabulary (Slice 6 D15 + /review #3): a manifest
+		// category / specific tile key / water color, a legacy biome, or 'unset'.
+		// Must be a KNOWN renderable key — not just well-formed — or it would
+		// persist as invisible, grid-blocking terrain.
+		if (!isKnownTerrainKey(cell.biome)) {
+			error(400, `${label} cells[${i}].biome must be a known terrain key`);
 		}
 	}
 }
@@ -1264,10 +1266,10 @@ async function maybeWriteAutoAnchor(
 					c &&
 					Number.isInteger(c.x) &&
 					Number.isInteger(c.y) &&
-					// Open terrain-key vocabulary (Slice 6 D15) — must match the
-					// paint_cells validator + projection fold, NOT the legacy enum,
-					// or the snapshot silently drops all asset-vocabulary terrain.
-					isTerrainKey(c.biome)
+					// Asset-backed terrain vocabulary (Slice 6 D15 + /review #3) —
+					// must match the paint_cells validator + projection fold, NOT the
+					// legacy enum, or the snapshot silently drops asset-vocab terrain.
+					isKnownTerrainKey(c.biome)
 				) {
 					cells.set(`${c.x},${c.y}`, c);
 				}

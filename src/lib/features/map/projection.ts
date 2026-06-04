@@ -50,6 +50,7 @@
 // is a harmless, isomorphic no-op when this module loads server-side.
 
 import { isEdgeVisibleAtT, isMysteryEdgeAtT } from '$lib/features/timeline/playhead-store.js';
+import { TERRAIN_ASSET_KEYS } from './terrain-keys.generated.js';
 
 export const NEUTRAL_REGION_COLOR = '#9ca3af';
 
@@ -202,15 +203,21 @@ export const BIOMES = [
 ] as const;
 export type BiomeKind = (typeof BIOMES)[number];
 
-// Slice 6 D15 — terrain is now an OPEN, asset-folder-driven vocabulary
-// (manifest categories like 'Grass', water colors like 'water_snow') plus the
-// legacy BIOMES enum and 'unset'. A cell's biome is a freeform key validated by
-// format, not enum membership — the render lazy-GCs/handles unknown keys (flat
-// fallback / no tile), so strict enum membership is no longer the guard; a
-// charset+length check is. Shared by the projection fold and the server
-// paint_cells / anchor-write validators so they agree on what's storable.
-export function isTerrainKey(s: unknown): s is string {
-	return typeof s === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(s);
+// Slice 6 D15 — terrain is an asset-folder-driven vocabulary (manifest
+// categories like 'Grass', their specific tile keys like 'grass_01_tile_256_05',
+// and water colors like 'water_snow'), plus the legacy BIOMES enum and 'unset'.
+// A biome is valid iff it's a KNOWN, renderable key — not just any well-formed
+// string (/review #3): accepting unrenderable junk would store invisible cells
+// that still block grid resize and mis-route arbitrary 'water_*' keys to water.
+// TERRAIN_ASSET_KEYS is generated from the pack manifest. This ONE predicate
+// guards every biome gate (projection fold + server paint_cells/anchor writes)
+// so they can never disagree on what's storable.
+const KNOWN_TERRAIN_KEYS: ReadonlySet<string> = new Set([
+	...TERRAIN_ASSET_KEYS,
+	...BIOMES // legacy enum + 'unset' (BIOMES includes 'unset')
+]);
+export function isKnownTerrainKey(s: unknown): s is string {
+	return typeof s === 'string' && KNOWN_TERRAIN_KEYS.has(s);
 }
 
 export type ProjectionEvent = {
@@ -423,7 +430,7 @@ function applyPaintCells(
 			!Number.isInteger(x) ||
 			typeof y !== 'number' ||
 			!Number.isInteger(y) ||
-			!isTerrainKey(biome)
+			!isKnownTerrainKey(biome)
 		) {
 			// Lazy GC: malformed entries silently dropped at render
 			// (matches the cross-user ref policy in resolveRegionColor).
@@ -794,7 +801,7 @@ export function projectState(
 				cell &&
 				Number.isInteger(cell.x) &&
 				Number.isInteger(cell.y) &&
-				isTerrainKey(cell.biome)
+				isKnownTerrainKey(cell.biome)
 			) {
 				cells.set(`${cell.x},${cell.y}`, cell);
 			}
