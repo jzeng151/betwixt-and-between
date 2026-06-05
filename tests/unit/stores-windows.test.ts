@@ -321,6 +321,44 @@ describe('windowStore — Item 3 window geometry defaults', () => {
 		}
 	});
 
+	// Regression: ISSUE-001 — world-map tool palette unclickable on short viewports
+	// Found by /qa on 2026-06-05
+	// Report: .gstack/qa-reports/qa-report-localhost-2026-06-05.md
+	// A window taller than (innerHeight - taskbar) used to clamp position to 0
+	// and spill its bottom under the fixed taskbar, occluding the bottom-anchored
+	// map tool palette (Brush/Place/Move). clampOpenGeom now caps size to fit.
+	it('caps an opened window taller than the usable viewport so it clears the taskbar', () => {
+		// world-map default is 1024x720; at innerHeight 720 the usable area is
+		// 720 - 52 = 668, so the window must shrink to fit above the taskbar.
+		vi.stubGlobal('window', { innerWidth: 1280, innerHeight: 720 });
+		vi.stubGlobal('document', { documentElement: {} });
+		vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '52' }));
+		try {
+			windowStore.open('world-map');
+			const w = get(windowStore)[0];
+			expect(w.height).toBeLessThanOrEqual(720 - 52);
+			// the full window (top + height) stays above the taskbar
+			expect(w.y + w.height).toBeLessThanOrEqual(720 - 52);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('leaves window size untouched when the viewport is tall enough', () => {
+		vi.stubGlobal('window', { innerWidth: 1280, innerHeight: 1000 });
+		vi.stubGlobal('document', { documentElement: {} });
+		vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '52' }));
+		try {
+			windowStore.open('world-map');
+			const w = get(windowStore)[0];
+			// 720 fits within 1000 - 52 = 948, so the default height is preserved.
+			expect(w.width).toBe(1024);
+			expect(w.height).toBe(720);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it('setAsDefault persists size for a multi-instance app but not position', () => {
 		const id = windowStore.open('story-graph');
 		windowStore.resize(id, 800, 700);
