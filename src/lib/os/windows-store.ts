@@ -400,7 +400,7 @@ function createWindowStore() {
 					y = saved.y;
 				}
 				const clamped = clampOpenGeom(x, y, saved.width, saved.height);
-				return { ...w, width: saved.width, height: saved.height, x: clamped.x, y: clamped.y };
+				return { ...w, width: clamped.width, height: clamped.height, x: clamped.x, y: clamped.y };
 			})
 		);
 	});
