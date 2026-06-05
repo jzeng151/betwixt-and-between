@@ -19,7 +19,7 @@
 	// into the Cloudflare Worker SSR bundle — Δ1b-H worker-pixi-import
 	// guard depends on this discipline.
 
-	import { getContext, onDestroy, onMount } from 'svelte';
+	import { getContext, onDestroy, onMount, untrack } from 'svelte';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
 	import { get } from 'svelte/store';
 	import {
@@ -27,6 +27,8 @@
 		type PixiStageContext
 	} from './pixi-context.js';
 	import { NEUTRAL_REGION_COLOR, type RenderedState } from './projection.js';
+	import { easeToward } from './ease.js';
+	import { hexToRgb, rgbToTint, easeRgb, type Rgb } from './color-ease.js';
 	import { factions as factionsStore, type Faction } from './factions-store.js';
 	import { mapEventsStore } from './map-events-store.js';
 	import { mapAnchorsStore } from './map-anchors-store.js';
@@ -51,6 +53,7 @@
 		renderedState,
 		mapId,
 		dataLoading = false,
+		reducedMotion = false,
 		isInScope = null,
 		events = [],
 		onDrawHere,
@@ -71,6 +74,9 @@
 		// is incomplete and a snapshot persists silently-wrong null
 		// faction_ids. Gate menu + function on this signal.
 		dataLoading?: boolean;
+		// Cinematic Spotlight PR1 — prefers-reduced-motion: snap the tint/scope-dim
+		// to target (τ→0) instead of gliding (jump-cut).
+		reducedMotion?: boolean;
 		// T9 follow-up: out-of-scope regions render dimmed (matches
 		// Leaflet's RegionLayer treatment — regions whose locationId is
 		// not in the playhead-derived scope go to lower opacity). When
@@ -168,28 +174,39 @@
 		return m;
 	});
 
-	function parseHex(input: string): number {
-		// Pixi v8's .fill({ color }) takes RGB-only as a Number (alpha is a
-		// separate channel). We strip alpha from 4/8-digit hex and return
-		// just the RGB integer so the polygon's alpha is controlled by the
-		// fill's `alpha` option, not silently mangled by the hex parser.
-		// Codex P2 on PR #55: prior version treated `#RRGGBBAA` as a plain
-		// 8-digit integer, shifting channels and producing wrong colors.
-		let s = input.trim().replace(/^#/, '');
-		if (s.length === 3 || s.length === 4) {
-			// Expand short form: #abc → #aabbcc, #abcd → #aabbccdd
-			s = s.split('').map((c) => c + c).join('');
-		}
-		if (s.length === 8) {
-			// #RRGGBBAA — drop the AA alpha byte; Pixi handles alpha separately.
-			s = s.slice(0, 6);
-		}
-		if (s.length !== 6) {
-			return 0x9ca3af; // neutral gray fallback for malformed input
-		}
-		const n = parseInt(s, 16);
-		return Number.isFinite(n) && !Number.isNaN(n) ? n : 0x9ca3af;
-	}
+	// ── Cinematic Spotlight (Slice 8) PR0 — imperative tint/scope-dim ease ──
+	//
+	// The region "tide" must GLIDE between projected faction colors as the
+	// playhead steps scene-to-scene, not snap. Per anim-controller.ts Fix-4 the
+	// eased intermediate values are NEVER pushed through $state/renderedState
+	// (that would re-run the geometry $effect below at 60fps and re-enter the
+	// rebuild storm). Instead the geometry $effect draws each polygon ONCE in
+	// WHITE and these PLAIN MUTABLES drive a per-frame `Graphics.tint` (color)
+	// and `Graphics.alpha` (scope dim) from the shared anim ticker. The geometry
+	// $effect depends only on SHAPE (regions/mapId/visibility), so it rebuilds at
+	// most per scene boundary — the eased values flow imperatively, off the rune
+	// graph entirely.
+	const COLOR_TAU_MS = 150; // glide time constant (design: τ≈150ms colors)
+	const SCOPE_DIM = 0.3; // out-of-scope container alpha (was split fill/stroke)
+	// Handles + ease state keyed by regionId. Plain Maps, not $state.
+	const graphicsById = new Map<string, PixiGraphics>();
+	const targetRgb = new Map<string, Rgb>(); // set per boundary (appearance $effect)
+	const currentRgb = new Map<string, Rgb>(); // eased per frame (anim ticker)
+	const targetDim = new Map<string, number>();
+	const currentDim = new Map<string, number>();
+	// PR0 no-storm instrumentation: counts full geometry rebuilds vs anim-ticker
+	// frames. Exposed on the window so the spike's E2E can assert ticks ≫ rebuilds
+	// (rebuilds stay ≈ per-boundary, NOT ~60/sec) while playback runs. Opt-in:
+	// always on in dev; in the preview/prod build only when an E2E sets
+	// `window.__SPOTLIGHT_DIAG__` (so prod stays clean, no per-frame window write
+	// unless asked). Captured once — the flag is set via addInitScript before
+	// this layer mounts. `import.meta.env.DEV` folds to a constant so the dev
+	// branch tree-shakes out of the preview bundle.
+	let geometryRebuilds = 0;
+	const DIAG =
+		import.meta.env.DEV ||
+		(typeof window !== 'undefined' &&
+			(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ === true);
 
 	function clientXY(e: FederatedPointerEvent): { x: number; y: number } {
 		const x = (e.client?.x ?? e.nativeEvent?.clientX ?? 0) as number;
@@ -601,41 +618,77 @@
 		// layer hides geometry without disabling authoring gestures.
 		layer.visible = $visible;
 
+		// Cinematic Spotlight PR0 — rebuild GEOMETRY only. Color + scope-dim are
+		// NOT read here (untracked seed below), so this $effect depends only on
+		// SHAPE (regions/mapId/$visible) and re-runs at most per scene boundary,
+		// never per frame. The eased tint/alpha flow through the anim ticker.
+		// Clear handles + ease state so deleted regions don't accumulate over a
+		// long edit session; every active region is reseeded in the loop below.
+		// (A rebuild only fires on SHAPE change, where a color SNAP is wanted
+		// anyway — so dropping mid-glide `current` here is correct, not a loss.)
+		graphicsById.clear();
+		targetRgb.clear();
+		currentRgb.clear();
+		targetDim.clear();
+		currentDim.clear();
 		// Clear previous draws + listeners. removeChildren returns the
 		// removed nodes; destroying them releases their event handlers
 		// AND GPU buffers in one pass (per Pixi v8 docs).
 		for (const child of layer.removeChildren()) {
 			child.destroy();
 		}
+		// PR0 no-storm instrumentation: this counter must stay ≈ per-boundary
+		// (single digits over a playthrough), NOT track frame rate. Exposed on
+		// the window in dev so the spike can assert it.
+		geometryRebuilds++;
+		if (DIAG && typeof window !== 'undefined') {
+			(window as unknown as { __spotlightRegionRebuilds?: number }).__spotlightRegionRebuilds =
+				geometryRebuilds;
+		}
 
 		for (const region of regions) {
-			const colorStr =
-				renderedColorById.get(region.id) ?? region.color ?? NEUTRAL_REGION_COLOR;
-			const fill = parseHex(colorStr);
-
 			const flat: number[] = [];
 			for (const [lat, lng] of region.polygon) {
 				flat.push(lng, lat);
 			}
 			if (flat.length < 6) continue;
 
-			// T9 follow-up: scope-based dimming. In scope when the region's
-			// linked location is in the playhead's interval cone (matches
-			// Leaflet RegionLayer). Region without a locationId is treated
-			// as in-scope (geometry only, not tied to a location).
-			const inScope = isInScope && region.locationId
-				? isInScope(region.locationId)
-				: true;
-			const fillAlpha = inScope ? 0.35 : 0.08;
-			const strokeWidth = inScope ? 2 : 1;
-			const strokeAlpha = inScope ? 1 : 0.3;
-
+			// Draw WHITE: the per-frame `tint` multiply (anim ticker) paints the
+			// faction color and `alpha` applies the scope dim. Base alphas are the
+			// IN-SCOPE values; out-of-scope is a uniform container-alpha multiply
+			// (SCOPE_DIM) instead of the old split fill/stroke alphas — a small
+			// visual delta that lets the geometry survive across boundaries so the
+			// color can glide (PR0 trade, design-approved). Two further consequences
+			// of one shape-only white draw: the out-of-scope STROKE is now 2px (was
+			// narrowed to 1px before), and stroke/fill dim together via container
+			// alpha. Both immaterial; scope-dim is no longer a geometry property.
 			const g: PixiGraphics = new PIXI.Graphics();
 			g.poly(flat)
-				.fill({ color: fill, alpha: fillAlpha })
-				.stroke({ color: fill, width: strokeWidth, alpha: strokeAlpha });
+				.fill({ color: 0xffffff, alpha: 0.35 })
+				.stroke({ color: 0xffffff, width: 2, alpha: 1 });
 			g.eventMode = 'static';
 			g.cursor = 'pointer';
+
+			// Seed the ease state so a rebuild (map switch / region edit) SNAPS to
+			// the current projected color + scope rather than gliding from stale or
+			// black. Read rendered color + scope UNTRACKED so this $effect does not
+			// depend on them — depending would rebuild geometry every boundary and
+			// reset the glide. The appearance $effect below keeps the targets live.
+			const colorStr =
+				untrack(() => renderedColorById.get(region.id)) ?? region.color ?? NEUTRAL_REGION_COLOR;
+			const seedRgb = hexToRgb(colorStr);
+			const inScope = untrack(() =>
+				isInScope && region.locationId ? isInScope(region.locationId) : true
+			);
+			const seedDim = inScope ? 1 : SCOPE_DIM;
+			currentRgb.set(region.id, seedRgb);
+			targetRgb.set(region.id, seedRgb);
+			currentDim.set(region.id, seedDim);
+			targetDim.set(region.id, seedDim);
+			g.tint = rgbToTint(seedRgb);
+			g.alpha = seedDim;
+			graphicsById.set(region.id, g);
+
 			// Region right-click is NOT handled per-polygon anymore: an interactive
 			// layer on top (causal edges) would steal the hit-test and the region
 			// menu would never open over that strip. Instead the viewport-level
@@ -643,6 +696,54 @@
 			// regardless of overlays (FU3, Codex #66).
 			layer.addChild(g);
 		}
+	});
+
+	// Cinematic Spotlight PR0 — update ease TARGETS from the projected state +
+	// scope. Cheap: O(regions) Map writes, NO Pixi rebuild. Tracks
+	// renderedColorById + isInScope (both change per scene boundary) so the anim
+	// ticker glides the live tint/alpha toward these without destroying geometry.
+	$effect(() => {
+		const colorById = renderedColorById;
+		const scope = isInScope;
+		for (const region of regions) {
+			const colorStr = colorById.get(region.id) ?? region.color ?? NEUTRAL_REGION_COLOR;
+			targetRgb.set(region.id, hexToRgb(colorStr));
+			const inScope = scope && region.locationId ? scope(region.locationId) : true;
+			targetDim.set(region.id, inScope ? 1 : SCOPE_DIM);
+		}
+	});
+
+	// Cinematic Spotlight PR0 — the imperative ease (the mechanism this spike
+	// exists to prove). Registered on the SHARED anim-controller (single-ticker
+	// invariant). Each frame eases every region's live color + scope-dim toward
+	// its target and writes them straight to the Pixi Graphics (tint + alpha) —
+	// never through $state. 60fps visual motion with ZERO geometry rebuilds.
+	$effect(() => {
+		const app = stageCtx.app;
+		const anim = stageCtx.anim;
+		if (!app || !PIXI || !anim) return;
+		const off = anim.register(() => {
+			const dt = app.ticker.deltaMS;
+			const tau = reducedMotion ? 0 : COLOR_TAU_MS; // jump-cut under reduced motion
+			if (DIAG && typeof window !== 'undefined') {
+				const w = window as unknown as { __spotlightRegionTicks?: number };
+				w.__spotlightRegionTicks = (w.__spotlightRegionTicks ?? 0) + 1;
+			}
+			for (const [id, g] of graphicsById) {
+				if (g.destroyed) continue;
+				const tRgb = targetRgb.get(id);
+				if (tRgb) {
+					const next = easeRgb(currentRgb.get(id) ?? tRgb, tRgb, dt, tau);
+					currentRgb.set(id, next);
+					g.tint = rgbToTint(next);
+				}
+				const tDim = targetDim.get(id) ?? 1;
+				const nextDim = easeToward(currentDim.get(id) ?? tDim, tDim, dt, tau);
+				currentDim.set(id, nextDim);
+				g.alpha = nextDim;
+			}
+		});
+		return () => off();
 	});
 
 	onDestroy(() => {
