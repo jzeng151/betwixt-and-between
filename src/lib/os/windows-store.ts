@@ -110,14 +110,25 @@ function readTaskbarHeight(): number {
 }
 
 /**
- * Clamp an open position so the window lands fully inside the viewport (minus
- * the taskbar) — Item 3 (A2/F5): a saved default x/y that lands off-screen after
- * a viewport resize is corrected on every open, not just at save. No-op in SSR.
+ * Clamp an open position AND size so the window lands fully inside the viewport
+ * (minus the taskbar) — Item 3 (A2/F5): a saved default x/y that lands off-screen
+ * after a viewport resize is corrected on every open, not just at save. Size is
+ * also capped to the usable area so a window taller than (innerHeight - taskbar)
+ * never spills its bottom under the fixed taskbar (which would occlude bottom-
+ * anchored controls like the map tool palette). No-op in SSR.
  */
-function clampOpenGeom(x: number, y: number, width: number, height: number): { x: number; y: number } {
-	if (typeof window === 'undefined') return { x, y };
+function clampOpenGeom(
+	x: number,
+	y: number,
+	width: number,
+	height: number
+): { x: number; y: number; width: number; height: number } {
+	if (typeof window === 'undefined') return { x, y, width, height };
 	const usableH = Math.max(0, window.innerHeight - readTaskbarHeight());
-	return clampToViewport(x, y, width, height, window.innerWidth, usableH);
+	const w = Math.min(width, window.innerWidth);
+	const h = Math.min(height, usableH);
+	const pos = clampToViewport(x, y, w, h, window.innerWidth, usableH);
+	return { x: pos.x, y: pos.y, width: w, height: h };
 }
 
 function createWindowStore() {
@@ -146,8 +157,8 @@ function createWindowStore() {
 		// single-instance apps (persistsPosition) — multi-instance apps keep the
 		// open-stagger so instances don't stack.
 		const saved = get(preferences).windows.defaults[appId];
-		const width = saved?.width ?? defaults.width;
-		const height = saved?.height ?? defaults.height;
+		let width = saved?.width ?? defaults.width;
+		let height = saved?.height ?? defaults.height;
 		const savedPos =
 			saved && persistsPosition(appId) && saved.x !== undefined && saved.y !== undefined
 				? { x: saved.x, y: saved.y }
@@ -169,7 +180,7 @@ function createWindowStore() {
 		}
 		// Clamp every open so a saved (or staggered) position that now lands
 		// off-screen is corrected.
-		({ x, y } = clampOpenGeom(x, y, width, height));
+		({ x, y, width, height } = clampOpenGeom(x, y, width, height));
 		zCounter++;
 
 		update((all) => [
@@ -389,7 +400,7 @@ function createWindowStore() {
 					y = saved.y;
 				}
 				const clamped = clampOpenGeom(x, y, saved.width, saved.height);
-				return { ...w, width: saved.width, height: saved.height, x: clamped.x, y: clamped.y };
+				return { ...w, width: clamped.width, height: clamped.height, x: clamped.x, y: clamped.y };
 			})
 		);
 	});

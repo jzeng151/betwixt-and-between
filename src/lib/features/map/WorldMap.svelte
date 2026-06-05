@@ -5,7 +5,7 @@
 	import { isInScope } from '$lib/os/scope-store.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
-	import { playhead } from '$lib/features/timeline/playhead-store.js';
+	import { playhead, isPlaying } from '$lib/features/timeline/playhead-store.js';
 	import { jumpToCause } from '$lib/features/timeline/jump-to-cause.js';
 	import { get } from 'svelte/store';
 	import { windowStore } from '$lib/os/windows-store.js';
@@ -28,8 +28,12 @@
 	import PixiWaterLayer from '$lib/features/map/PixiWaterLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import PixiCausalEdgeLayer from '$lib/features/map/PixiCausalEdgeLayer.svelte';
+	import PixiPunctuationLayer from '$lib/features/map/PixiPunctuationLayer.svelte';
+	import PixiCameraLayer from '$lib/features/map/PixiCameraLayer.svelte';
 	import PixiPolygonDraw from '$lib/features/map/PixiPolygonDraw.svelte';
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
+	import { createPlaybackReaction } from '$lib/features/map/playback-controller.js';
+	import { computeCameraTarget, type CameraTarget } from '$lib/features/map/camera-director.js';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import MapToolSelector from '$lib/features/map/MapToolSelector.svelte';
 	import {
@@ -469,6 +473,17 @@
 			});
 	});
 
+	// Cinematic Spotlight (Slice 8) PR1 — track prefers-reduced-motion for the
+	// jump-cut. Kept in its own onMount so the matchMedia listener is cleaned up
+	// independently of the factions load above.
+	onMount(() => {
+		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+		reducedMotion = mq.matches;
+		const onChange = (e: MediaQueryListEvent) => (reducedMotion = e.matches);
+		mq.addEventListener('change', onChange);
+		return () => mq.removeEventListener('change', onChange);
+	});
+
 	// ── Slice 1b projection pipeline ────────────────────────────────────
 	//
 	// Computed RenderedState for the Pixi path. Refetches the cross-user-
@@ -645,6 +660,94 @@
 				: causalInput;
 		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore, causal);
 	});
+
+	// ── Cinematic Spotlight (Slice 8) PR1 — playback reaction ───────────────
+	//
+	// The map's cinematic reaction to the shipped autoplay. The pure controller
+	// (playback-controller.ts) owns the frame-diff baseline + pin state; this
+	// component just drives it with reactive values and renders the beats. Logic
+	// stays OUT of this file beyond the thin wiring below (eng decision #4).
+	const playback = createPlaybackReaction();
+	// prefers-reduced-motion → jump-cut: suppress the flashing FX (the owner
+	// change still reads via the region tint). Set from matchMedia on mount.
+	let reducedMotion = $state(false);
+	// Imperative handle to the FX layer (spawnConquest / clearAll).
+	let punctuationLayer = $state<ReturnType<typeof PixiPunctuationLayer> | null>(null);
+	// Within-map camera target — the changed-this-frame bbox the viewport eases
+	// toward. $state so PixiCameraLayer sees it; updated only when beats fire
+	// (per boundary), not per frame. Null = hold.
+	let cameraTarget = $state<CameraTarget | null>(null);
+
+	// A region's polygon in world [x, y] order (regions store [lat, lng] px, which
+	// PixiRegionLayer draws as [lng, lat]). For the camera bbox.
+	function regionPolyXY(regionId: string): number[][] | null {
+		const r = scopedRegions.find((x) => x.id === regionId);
+		if (!r?.polygon || r.polygon.length < 3) return null;
+		return r.polygon.map(([lat, lng]) => [lng, lat]);
+	}
+
+	// Frame-diff the projected state into punctuation beats; spawn FX and aim the
+	// camera at the changed regions. Runs whenever renderedState / playhead /
+	// activeMapId changes (the controller guards idle + map-switch + first-frame
+	// internally). Reads no $state it writes except cameraTarget (which nothing
+	// here reads back), so no reactive loop. FX fire on manual scrub too (by
+	// design); the pin flag gates only the camera, not punctuation.
+	$effect(() => {
+		const beats = playback.frame(renderedState, $playhead, activeMapId);
+		if (beats.length === 0) return;
+		punctuationLayer?.spawnConquest(beats);
+		// Aim the camera at the flipped regions — the actual event. PR1 frames the
+		// conquest only; mover-following (marches) is wired with PR2's march trail,
+		// where camera-director's mover input gets used deliberately. Framing ALL
+		// movers here would let an unrelated marker on the far side of the map pull
+		// the camera off the flip.
+		const polys = beats.map((b) => regionPolyXY(b.regionId)).filter((p): p is number[][] => !!p);
+		if (polys.length === 0) return;
+		const mapW = activeMap?.width ?? 0;
+		const mapH = activeMap?.height ?? 0;
+		const vp = pixiViewport as { screenWidth?: number; screenHeight?: number } | null;
+		const screen = { width: vp?.screenWidth ?? mapW, height: vp?.screenHeight ?? mapH };
+		const t = computeCameraTarget(polys, [], screen);
+		if (t) cameraTarget = t;
+	});
+
+	// A map switch drops the camera target so the camera doesn't drift toward the
+	// previous map's coordinates before the next flip on the new map.
+	$effect(() => {
+		void activeMapId;
+		cameraTarget = null;
+	});
+
+	// Unpin the view when playback (re)starts: pressing Play resumes camera-follow
+	// even if the user had pinned by panning. One-shot on the false→true edge.
+	let wasPlaying = false;
+	$effect(() => {
+		const playing = $isPlaying;
+		if (playing && !wasPlaying) {
+			playback.unpin();
+			// Replay / start-over: playhead.play() rewinds the playhead to 0 when it
+			// was idle or had reached maxT. The diff baseline is dropped in
+			// playback.frame() on that backward jump (no reverse flashes), but any FX
+			// still gliding from the final scene — and the last camera target — would
+			// otherwise linger over the rewound map; clear them so the replay starts clean.
+			if (get(playhead) === 0) {
+				punctuationLayer?.clearAll();
+				cameraTarget = null;
+			}
+		}
+		wasPlaying = playing;
+	});
+
+	// Camera-follow is active during playback when not pinned. Reduced motion does
+	// NOT disable it: the camera still frames conquests, but PixiCameraLayer eases
+	// with tau=0 so the move is an instant jump-cut rather than a glide — matching
+	// the changelog ("camera moves become instant jump-cuts") and the layer's own
+	// reduced-motion path. Suppressing follow here would leave a reduced-motion user
+	// panned away from a conquest with no way to see it. A getter (not reactive) the
+	// camera ticker calls each frame.
+	function cameraActive(): boolean {
+		return get(isPlaying) && !playback.pinned;
+	}
 
 	// Terrain cells, clamped to the current grid. projectState emits every
 	// STORED cell (sparse, bounds-agnostic by design), but a cell outside the
@@ -1515,7 +1618,14 @@
 			bind:toolbarNewLocationName
 			{toolbarNewLocationBusy}
 			{variantLabel}
-			onSwitchMap={switchMap}
+			onSwitchMap={(id) => {
+				// Manual map select pins the view (suspends camera-follow + PR2
+				// cycling) until playback restarts. Programmatic switchMap calls
+				// (auto-select / deep-link / drill) bypass this wrapper, so they
+				// don't pin.
+				playback.pin();
+				void switchMap(id);
+			}}
 			onCreateMap={handleCreateMap}
 			onOpenDeleteConfirm={openDeleteConfirm}
 			onImageUpload={handleImageUpload}
@@ -1568,6 +1678,7 @@
 					{renderedState}
 					mapId={activeMapId}
 					{dataLoading}
+					{reducedMotion}
 					isInScope={$isInScope}
 					events={causeEvents}
 					onDrawHere={startPixiDraw}
@@ -1597,11 +1708,29 @@
 					interactive={canvasMode === 'idle'}
 					onEdgeClick={(id) => jumpToCause($relationships.find((r) => r.id === id))}
 				/>
+				<!-- Cinematic Spotlight (Slice 8) PR1 — conquest-flash FX overlay.
+				     Over regions/edges, under markers; non-interactive. WorldMap
+				     calls spawnConquest() via the bound handle. -->
+				<PixiPunctuationLayer
+					bind:this={punctuationLayer}
+					regions={scopedRegions}
+					mapId={activeMapId}
+					{reducedMotion}
+				/>
+				<!-- Within-map camera: eases the viewport toward the changed-this-
+				     frame bbox during playback; pins on manual pan/pinch/wheel. -->
+				<PixiCameraLayer
+					target={cameraTarget}
+					active={cameraActive}
+					{reducedMotion}
+					onUserInteract={() => playback.pin()}
+				/>
 				<PixiPlacementLayer
 					{activeMap}
 					playhead={$playhead}
 					placements={$placementsStore}
 					entities={$entities}
+					{reducedMotion}
 					isInScope={$isInScope}
 					armedPlaceableId={canvasMode === 'place-armed' ? armedPlaceableId : null}
 					brushActive={brushActive}

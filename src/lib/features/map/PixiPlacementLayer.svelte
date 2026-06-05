@@ -51,6 +51,7 @@
 		playhead,
 		placements,
 		entities,
+		reducedMotion = false,
 		isInScope = null,
 		armedPlaceableId = null,
 		brushActive = false,
@@ -67,6 +68,9 @@
 		playhead: number | null;
 		placements: MapPlacement[];
 		entities: Entity[];
+		// Cinematic Spotlight PR1 — prefers-reduced-motion: snap marker position to
+		// target (τ→0) instead of gliding (jump-cut).
+		reducedMotion?: boolean;
 		// T9 follow-up: out-of-scope placements (the placeable entity has
 		// intervals that don't cover the current playhead) render dimmed.
 		// Mirrors the scope treatment Leaflet's RegionLayer applies to
@@ -140,8 +144,29 @@
 	const GLOW_PAD = 8; // px halo radius beyond the marker, at base scale
 	const GLOW_ALPHA = 0.45;
 	const HOVER_TAU_MS = 55;
-	type HoverAnim = { halo: PixiGraphics; scaleTarget: number; haloTarget: number };
+	// Cinematic Spotlight (Slice 8) PR0 — marker position glide. As the playhead
+	// steps scene-to-scene the projected (interpolated) position jumps; ease the
+	// marker toward it instead of snapping, written imperatively to the display
+	// object in the layer's existing ticker (the Fix-4 pattern, already proven
+	// here by the hover ease + the drag handler). τ≈150ms per the design.
+	const POS_TAU_MS = 150;
+	type Pt = { x: number; y: number };
+	type HoverAnim = {
+		halo: PixiGraphics;
+		scaleTarget: number;
+		haloTarget: number;
+		// Position ease state. posTarget is the projected target (px); posCurrent
+		// is the eased live value, written to marker.position each frame.
+		posTarget: Pt;
+		posCurrent: Pt;
+		placementId: string;
+	};
 	const hoverAnim = new WeakMap<PixiContainer, HoverAnim>();
+	// posCurrent must SURVIVE the per-boundary marker rebuild (markers are
+	// destroyed + recreated each scene boundary), so the glide isn't reset every
+	// boundary. Keyed by placement id; a marker re-entering after leaving scope is
+	// pruned (below) so it snaps fresh rather than gliding from a stale position.
+	const posCurrentById = new Map<string, Pt>();
 
 	type MenuState = {
 		x: number;
@@ -280,9 +305,15 @@
 		// so an uncustomized character reads the same color on both surfaces (F3a).
 		const characterIndexById = buildCharacterIndexById(entities);
 
+		// Cinematic Spotlight PR0 — track which placements drew this pass so stale
+		// position-ease state (left behind by a placement that has left scope) can
+		// be pruned; otherwise it would glide from a stale spot on re-entry.
+		const activeIds = new Set<string>();
+
 		for (const placement of activePlacements) {
 			const placeable = entityById.get(placement.placeableId);
 			if (!placeable) continue;
+			activeIds.add(placement.id);
 			// Slice 4 PR-F (D-PRF-4) — movement override wins over the static x,y.
 			// Reading artifactOverrides here (it changes identity each playhead
 			// tick) keeps this rebuild effect re-running on scrub so the marker
@@ -355,10 +386,18 @@
 			// Stable hit area on the container — independent of which child
 			// visual is shown (the circle may be hidden once an icon loads).
 			marker.hitArea = new PIXI.Circle(cx, cy, radius);
-			// PR-E: pivot+position at the marker centre so the hover pulse scales
-			// about the centre while children stay drawn at their (cx, cy) coords.
+			// PR-E: pivot at the marker centre so the hover pulse scales about the
+			// centre while children stay drawn at their (cx, cy) coords. The drag
+			// handler relies on pivot == children origin to move the marker 1:1.
 			marker.pivot.set(cx, cy);
-			marker.position.set(cx, cy);
+			// Cinematic Spotlight PR0 — ease position toward the projected target
+			// (cx,cy) rather than snapping. posCurrent persists across the rebuild
+			// (keyed by placement id) so the glide continues through marker
+			// re-creation; a NEW marker snaps to its spawn position.
+			const posTarget: Pt = { x: cx, y: cy };
+			const posCurrent: Pt = posCurrentById.get(placement.id) ?? { x: cx, y: cy };
+			posCurrentById.set(placement.id, posCurrent);
+			marker.position.set(posCurrent.x, posCurrent.y);
 
 			// PR-E: glow halo (behind the marker), resolved-color, hidden until
 			// hover. Added first so it paints under the circle / icon.
@@ -366,7 +405,14 @@
 			halo.circle(cx, cy, radius + GLOW_PAD).fill({ color: fillColor, alpha: 1 });
 			halo.alpha = 0;
 			marker.addChild(halo);
-			hoverAnim.set(marker, { halo, scaleTarget: 1, haloTarget: 0 });
+			hoverAnim.set(marker, {
+				halo,
+				scaleTarget: 1,
+				haloTarget: 0,
+				posTarget,
+				posCurrent,
+				placementId: placement.id
+			});
 
 			marker.on('pointerover', (e: FederatedPointerEvent) => {
 				const { x, y } = clientXY(e);
@@ -450,6 +496,12 @@
 				void loadIconSprite(resolved.icon, cx, cy, radius, fillAlpha, marker, g, ring, generation);
 			}
 		}
+
+		// Prune position-ease state for placements no longer drawn, so a
+		// re-entering marker snaps fresh instead of gliding from a stale spot.
+		for (const id of posCurrentById.keys()) {
+			if (!activeIds.has(id)) posCurrentById.delete(id);
+		}
 	});
 
 	// Slice 4 PR-F (DS4) — Move-tool drag. Grab handles pointerdown on a marker;
@@ -464,7 +516,15 @@
 	function startDrag(placementId: string, marker: PixiContainer, cx: number, cy: number): void {
 		const viewport = stageCtx.viewport;
 		if (!viewport || !PIXI || drag) return;
-		drag = { placementId, marker, baselineCx: cx, baselineCy: cy };
+		// Baseline the drag at the marker's CURRENT eased position, not the projected
+		// target (cx,cy). During playback the position-ease (PR0) lets marker.position
+		// lag its target, so a click on the visible (lagging) marker measured against
+		// the target would clear DRAG_THRESHOLD_PX and commit a stray keyframe — and
+		// the ghost line would emanate from the future target. The ease ticker writes
+		// the live value to marker.position each frame, so it's the visible spot.
+		const baselineCx = marker.position?.x ?? cx;
+		const baselineCy = marker.position?.y ?? cy;
+		drag = { placementId, marker, baselineCx, baselineCy };
 		marker.cursor = 'grabbing';
 		ghost = new PIXI.Graphics();
 		if (layer) layer.addChild(ghost);
@@ -503,15 +563,42 @@
 				const fx = Math.min(1, Math.max(0, local.x / activeMap.width));
 				const fy = Math.min(1, Math.max(0, local.y / activeMap.height));
 				committed = { x: fx, y: fy };
+				// PR0 — anchor the ease state at the drop point so the post-commit
+				// rebuild restores from here (and eases to the committed target,
+				// which is the same spot) rather than snapping back to the pre-drag
+				// position for a frame.
+				anchorEaseAt(captured, local.x, local.y);
 			} else {
 				// Treat as a click — snap the marker back and select it for keyboard
 				// nudging instead of authoring a near-zero-distance keyframe.
 				captured.marker.position.set(captured.baselineCx, captured.baselineCy);
+				anchorEaseAt(captured, captured.baselineCx, captured.baselineCy);
 				onMoveSelect?.(captured.placementId);
 			}
 		}
 		cleanupDrag();
 		if (committed) onMoveCommit?.(captured.placementId, committed.x, committed.y);
+	}
+
+	// Cinematic Spotlight PR0 — pin a marker's position-ease state to (x,y) px so
+	// the ticker holds it there (no glide-back) in the window between drag release
+	// and the rebuild the commit triggers. Mutates in place: posCurrent and the
+	// posCurrentById entry share one object ref, so this keeps them consistent.
+	function anchorEaseAt(captured: DragState, x: number, y: number): void {
+		const st = hoverAnim.get(captured.marker);
+		if (st) {
+			st.posCurrent.x = st.posTarget.x = x;
+			st.posCurrent.y = st.posTarget.y = y;
+		}
+		// Mutate the entry in place (it shares the object ref with st.posCurrent)
+		// rather than replacing it, so the shared-ref invariant holds.
+		const entry = posCurrentById.get(captured.placementId);
+		if (entry) {
+			entry.x = x;
+			entry.y = y;
+		} else {
+			posCurrentById.set(captured.placementId, { x, y });
+		}
 	}
 
 	function cleanupDrag(): void {
@@ -620,6 +707,16 @@
 				const m = child as PixiContainer;
 				m.scale.set(easeToward(m.scale.x, st.scaleTarget, dt, HOVER_TAU_MS));
 				st.halo.alpha = easeToward(st.halo.alpha, st.haloTarget, dt, HOVER_TAU_MS);
+				// Cinematic Spotlight PR0 — ease marker position toward its projected
+				// target, written straight to the display object (no $state, no
+				// rebuild). The dragged marker is owned by the drag handler this
+				// frame, so leave its position alone.
+				if (!(drag && drag.marker === m)) {
+					const tau = reducedMotion ? 0 : POS_TAU_MS; // jump-cut under reduced motion
+					st.posCurrent.x = easeToward(st.posCurrent.x, st.posTarget.x, dt, tau);
+					st.posCurrent.y = easeToward(st.posCurrent.y, st.posTarget.y, dt, tau);
+					m.position.set(st.posCurrent.x, st.posCurrent.y);
+				}
 			}
 		};
 		app.ticker.add(tick);

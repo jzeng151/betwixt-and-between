@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.12.0] - 2026-06-05
+
+World Map Cinematic Spotlight: the map reacts to timeline playback, and the editor's tools stay reachable on short screens.
+
+### Added
+
+- **Cinematic timeline playback on the world map.** When you play the timeline, region colors and entity markers now ease smoothly toward each moment's state instead of snapping. Conquests (a region changing faction owner) trigger a brief white flash on the changed region, and the camera pans and zooms within the map to follow where the action is. Dragging, pinching, or scrolling pins the camera so you stay in control; pressing play unpins it and resumes the follow.
+- **Reduced-motion support.** With `prefers-reduced-motion` set, the easing, flashes, and camera moves become instant jump-cuts so playback never animates against the user's preference.
+
+### Fixed
+
+- **World-map tool palette no longer hides behind the taskbar on short screens.** On viewports under ~765px tall (a 1280x720 window, or a 1366x768 laptop after browser chrome), the world-map window opened taller than the space above the dock, burying the Select/Brush/Place/Move toolbar under the taskbar so the terrain brush and placement tools could not be clicked. Windows now cap their opened size to the usable area, so the full toolbar stays reachable. Applies to every app window, not just the world map.
+
 ## [0.8.11.0] - 2026-06-04
 
 World Map v3 Slice 6: paint your map from a tile pack, with square cells.
