@@ -738,11 +738,15 @@
 		wasPlaying = playing;
 	});
 
-	// Camera-follow is active only during playback, when not pinned, and not under
-	// reduced motion (auto-panning is motion). A getter (not reactive) the camera
-	// ticker calls each frame.
+	// Camera-follow is active during playback when not pinned. Reduced motion does
+	// NOT disable it: the camera still frames conquests, but PixiCameraLayer eases
+	// with tau=0 so the move is an instant jump-cut rather than a glide — matching
+	// the changelog ("camera moves become instant jump-cuts") and the layer's own
+	// reduced-motion path. Suppressing follow here would leave a reduced-motion user
+	// panned away from a conquest with no way to see it. A getter (not reactive) the
+	// camera ticker calls each frame.
 	function cameraActive(): boolean {
-		return get(isPlaying) && !playback.pinned && !reducedMotion;
+		return get(isPlaying) && !playback.pinned;
 	}
 
 	// Terrain cells, clamped to the current grid. projectState emits every
