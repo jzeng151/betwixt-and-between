@@ -45,6 +45,7 @@ export type PlaybackReaction = {
 
 export function createPlaybackReaction(): PlaybackReaction {
 	let lastPlayed: RenderedState | null = null;
+	let lastPlayhead: number | null = null;
 	let mapId: string | null = null;
 	let pinned = false;
 
@@ -61,6 +62,15 @@ export function createPlaybackReaction(): PlaybackReaction {
 			// register instead of being swallowed.
 			if (renderedState === null || playhead === null) return [];
 
+			// Backward playhead jump = replay-from-end (Play at maxT rewinds to 0)
+			// or a reverse scrub. Diffing the rewound frame against the FORWARD
+			// baseline would read the un-conquest as a conquest and spawn phantom
+			// "reverse" flashes (and aim the camera at them). Drop the baseline so
+			// this frame just re-seeds it and emits nothing; forward motion from
+			// here diffs normally. (Conquest is a forward owner-flip by definition.)
+			if (lastPlayhead !== null && playhead < lastPlayhead) lastPlayed = null;
+			lastPlayhead = playhead;
+
 			const beats = diffPunctuation(lastPlayed, renderedState, playhead);
 			lastPlayed = renderedState;
 			return beats;
@@ -76,6 +86,7 @@ export function createPlaybackReaction(): PlaybackReaction {
 		},
 		reset() {
 			lastPlayed = null;
+			lastPlayhead = null;
 		}
 	};
 }

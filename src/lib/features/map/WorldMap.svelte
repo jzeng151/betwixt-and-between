@@ -723,7 +723,18 @@
 	let wasPlaying = false;
 	$effect(() => {
 		const playing = $isPlaying;
-		if (playing && !wasPlaying) playback.unpin();
+		if (playing && !wasPlaying) {
+			playback.unpin();
+			// Replay / start-over: playhead.play() rewinds the playhead to 0 when it
+			// was idle or had reached maxT. The diff baseline is dropped in
+			// playback.frame() on that backward jump (no reverse flashes), but any FX
+			// still gliding from the final scene — and the last camera target — would
+			// otherwise linger over the rewound map; clear them so the replay starts clean.
+			if (get(playhead) === 0) {
+				punctuationLayer?.clearAll();
+				cameraTarget = null;
+			}
+		}
 		wasPlaying = playing;
 	});
 

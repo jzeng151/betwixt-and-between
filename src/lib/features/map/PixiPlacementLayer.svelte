@@ -516,7 +516,15 @@
 	function startDrag(placementId: string, marker: PixiContainer, cx: number, cy: number): void {
 		const viewport = stageCtx.viewport;
 		if (!viewport || !PIXI || drag) return;
-		drag = { placementId, marker, baselineCx: cx, baselineCy: cy };
+		// Baseline the drag at the marker's CURRENT eased position, not the projected
+		// target (cx,cy). During playback the position-ease (PR0) lets marker.position
+		// lag its target, so a click on the visible (lagging) marker measured against
+		// the target would clear DRAG_THRESHOLD_PX and commit a stray keyframe — and
+		// the ghost line would emanate from the future target. The ease ticker writes
+		// the live value to marker.position each frame, so it's the visible spot.
+		const baselineCx = marker.position?.x ?? cx;
+		const baselineCy = marker.position?.y ?? cy;
+		drag = { placementId, marker, baselineCx, baselineCy };
 		marker.cursor = 'grabbing';
 		ghost = new PIXI.Graphics();
 		if (layer) layer.addChild(ghost);

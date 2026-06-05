@@ -56,6 +56,30 @@ describe('createPlaybackReaction — frame diffing', () => {
 		expect(r.frame(state([{ regionId: 'r1', factionId: 'B' }]), 0.2, 'map1')).toEqual([]);
 	});
 
+	it('a backward playhead jump (replay-from-end) drops the baseline → no reverse flash', () => {
+		const r = createPlaybackReaction();
+		// Play forward to an ending state where r1 is owned by B.
+		r.frame(state([{ regionId: 'r1', factionId: 'A' }]), 0.2, 'map1');
+		r.frame(state([{ regionId: 'r1', factionId: 'B' }]), 0.9, 'map1');
+		// Press Play at the end → playhead rewinds to 0, rendered state is the
+		// initial A. Diffing A against the B baseline would be a phantom B→A
+		// "reverse conquest"; the backward jump must suppress it.
+		expect(r.frame(state([{ regionId: 'r1', factionId: 'A' }]), 0, 'map1')).toEqual([]);
+		// Forward motion from the rewound baseline diffs normally again.
+		const beats = r.frame(state([{ regionId: 'r1', factionId: 'B' }]), 0.2, 'map1');
+		expect(beats[0]).toMatchObject({ fromFactionId: 'A', toFactionId: 'B' });
+	});
+
+	it('a forward playhead step after a backward jump still emits (baseline re-seeds)', () => {
+		const r = createPlaybackReaction();
+		r.frame(state([{ regionId: 'r1', factionId: 'A' }]), 0.5, 'map1');
+		// Reverse scrub: backward jump suppresses the un-conquest flash and re-seeds.
+		expect(r.frame(state([{ regionId: 'r1', factionId: 'A' }]), 0.1, 'map1')).toEqual([]);
+		// Scrubbing forward again past a real flip fires.
+		const beats = r.frame(state([{ regionId: 'r1', factionId: 'C' }]), 0.4, 'map1');
+		expect(beats[0]).toMatchObject({ fromFactionId: 'A', toFactionId: 'C' });
+	});
+
 	it('emits nothing for a null rendered state', () => {
 		const r = createPlaybackReaction();
 		expect(r.frame(null, 0.1, 'map1')).toEqual([]);
