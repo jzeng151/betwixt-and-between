@@ -424,6 +424,10 @@
 
 	// Drill-down offer state: a child Location has no map yet — surface CTA.
 	let createMapOffer = $state<{ childId: string; childName: string } | null>(null);
+	// Toolbar "New Location" flow open-state. Declared here (with the other form/modal
+	// state) so the `authoringOpen` cycling gate can read it; its sibling input vars
+	// live with the toolbar handlers below.
+	let creatingToolbarLocation = $state(false);
 
 	let scenesByAct = $derived.by(() => {
 		const map = new Map<string, typeof $entities[0][]>();
@@ -948,9 +952,24 @@
 		activeMapId = mapId;
 	}
 
+	// True while ANY authoring form/flow is open. Cycling must stay suspended for the
+	// whole flow — a playhead advance (or a Play that unpins) flipping activeMapId
+	// mid-edit would PATCH/create the captured form contents against a different map.
+	// This is the systemic backstop for the per-flow pins: even if a flow forgets to
+	// pin, or playback restarts while a modal is open, the open form gates cycling
+	// off (Codex PR #72 — repeated pin-gap findings #450/#959/#959/#061).
+	let authoringOpen = $derived(
+		showRegionForm ||
+			showVariantForm ||
+			renamingMapName !== null ||
+			creatingToolbarLocation ||
+			createMapOffer !== null ||
+			pixiDrawingActive
+	);
+
 	// The cycling driver. Re-runs on every playhead advance (and on play/pause):
 	// resolve the target, then commit-if-cached / prefetch-and-hold. Suspended
-	// while pinned or idle.
+	// while pinned, idle, or any authoring flow is open.
 	$effect(() => {
 		const playing = $isPlaying;
 		const t = $playhead;
@@ -959,7 +978,7 @@
 		void $relationships;
 		void $worldMaps;
 		void cyclePrefetchTick;
-		if (!playing || playback.pinned || t === null) return;
+		if (!playing || playback.pinned || authoringOpen || t === null) return;
 		const target = resolveCycleTarget(t);
 		const action = decideCycleAction(
 			target?.mapId ?? null,
@@ -1003,25 +1022,40 @@
 	// beat that fired before Pixi finished importing is retried once it can render,
 	// rather than dropped if the playhead doesn't advance again (Codex PR #72).
 	let captionReadyTick = $state(0);
+	// All loaded entity ids — lets the caption effect tell "this id's entity hasn't
+	// loaded yet" (retry) from "loaded and it's a non-Event" (genuinely skip), so an
+	// Event active before its entity load finishes isn't marked handled forever
+	// (Codex PR #72). Reading it in the effect also makes it re-run when entities land.
+	const allEntityIds = $derived(new Set($entities.map((e) => e.id)));
 	let lastActiveEventIds = new Set<string>();
+	// Last non-null playhead the caption diff saw, for backward-jump detection.
+	let lastCaptionT: number | null = null;
 	$effect(() => {
 		const t = $playhead;
 		void $relationships;
 		void captionReadyTick;
 		if (t === null) {
 			lastActiveEventIds = new Set();
+			lastCaptionT = null;
 			// Idle: no Event is active, so clear any caption still on screen rather
 			// than leaving the previous Event's title up for its remaining lifetime
 			// (Codex PR #72). FX are left to decay on their own.
 			punctuationLayer?.clearCaption();
 			return;
 		}
+		// Replay/reverse: playhead.play() rewinds end→0 WITHOUT passing through idle,
+		// so the baseline would retain Events active at the final position and an Event
+		// active at both end and start (timeless/full-story) would never re-title on
+		// replay. Drop the baseline on any backward jump so opening beats fire again
+		// (Codex PR #72).
+		if (lastCaptionT !== null && t < lastCaptionT) lastActiveEventIds = new Set();
+		lastCaptionT = t;
 		const ids = activeEventIdsAtT($relationships, t, takesPlaceAtIndex);
 		// Rebuild the baseline from the currently-active ids, but only record an id
 		// as titled if its caption actually rendered. If Pixi/the layer isn't ready
 		// yet, spawnCaption returns false and we leave the id OUT, so a still-active
 		// opening beat is retried next tick instead of being skipped forever
-		// (Codex PR #72). An id with no resolvable name is treated as handled.
+		// (Codex PR #72).
 		const next = new Set<string>();
 		// Carry over already-titled ids that are still active.
 		for (const id of ids) {
@@ -1029,8 +1063,15 @@
 		}
 		// Title each newly-active id; only record it as titled if it rendered.
 		for (const id of diffNewlyActiveEvents(lastActiveEventIds, ids)) {
-			const name = eventNameById.get(id); // non-Event ids resolve to undefined → skipped
-			const handled = name ? (punctuationLayer?.spawnCaption(name) ?? false) : true;
+			const name = eventNameById.get(id);
+			let handled: boolean;
+			if (name) {
+				handled = punctuationLayer?.spawnCaption(name) ?? false;
+			} else if (allEntityIds.has(id)) {
+				handled = true; // entity loaded but not an Event (no caption) → genuinely skip
+			} else {
+				handled = false; // entity not loaded yet → retry once its name arrives
+			}
 			if (handled) next.add(id);
 		}
 		lastActiveEventIds = next;
@@ -1361,11 +1402,16 @@
 		if (entityId) {
 			const variant = resolveActiveVariant($worldMaps, entityId, $playhead);
 			if (variant) {
+				// Window opened for a specific entity → explicit navigation intent. Pin
+				// so cycling can't switch away from it (the external deep-link watcher
+				// won't fire for this initial resolve — Codex PR #72).
+				pinView();
 				switchMap(variant.id);
 				return;
 			}
 			const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
 			if (targetRegion) {
+				pinView();
 				switchMap(targetRegion.mapId);
 				return;
 			}
@@ -1564,7 +1610,6 @@
 	// Inline "+ New Location" for the toolbar picker (T2). Closes the chicken-
 	// and-egg gap: a brand-new user can mint a Location at the moment they
 	// need one — right after importing a map image — without leaving WorldMap.
-	let creatingToolbarLocation = $state(false);
 	let toolbarNewLocationName = $state('');
 	let toolbarNewLocationError = $state('');
 	let toolbarNewLocationBusy = $state(false);
@@ -1630,11 +1675,15 @@
 			return;
 		}
 		if (!activeMapId || toolbarNewLocationBusy) return;
+		// `authoringOpen` (creatingToolbarLocation) gates cycling off for this whole
+		// flow, but capture the map id before the await anyway so the link lands on the
+		// map authoring began on regardless (Codex PR #72).
+		const mapId = activeMapId;
 		toolbarNewLocationBusy = true;
 		toolbarNewLocationError = '';
 		try {
 			const created = await entities.createEntity('Location', name);
-			await worldMapStore.updateMap(activeMapId, { locationId: created.id });
+			await worldMapStore.updateMap(mapId, { locationId: created.id });
 			creatingToolbarLocation = false;
 			toolbarNewLocationName = '';
 		} catch (err) {
@@ -1645,6 +1694,10 @@
 	}
 
 	async function handleCreateMap() {
+		// Creating a map is explicit navigation to a map the user wants to edit — pin
+		// so cycling doesn't immediately commit the story target and switch away from
+		// the new map before they can touch it (Codex PR #72).
+		pinView();
 		const map = await worldMapStore.createMap('New Map');
 		activeMapId = map.id;
 		mapRegionsHealthy = false;
@@ -1895,6 +1948,9 @@
 
 	async function handleDuplicate() {
 		if (!activeMapId || duplicating) return;
+		// Duplicating navigates to the clone for editing — pin so cycling doesn't
+		// switch away from it (Codex PR #72).
+		pinView();
 		duplicating = true;
 		try {
 			const clone = await worldMapStore.duplicateMap(activeMapId);
