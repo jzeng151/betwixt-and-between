@@ -1381,17 +1381,17 @@
 		if (entityId === lastAppliedEntityId) return;
 		lastAppliedEntityId = entityId;
 		const variant = resolveActiveVariant($worldMaps, entityId, $playhead);
+		const targetRegion = variant ? undefined : $mapRegions.find((r) => r.locationId === entityId);
+		// An external deep-link is explicit navigation intent and must take precedence
+		// over PR2 cycling. Pin as soon as we recognize a valid target — even when its
+		// map is ALREADY active — so the driver can't switch away from the requested
+		// map on the next playhead tick (Codex PR #72). Only a switch is conditional.
+		if (variant || targetRegion) pinView();
 		if (variant && variant.id !== activeMapId) {
-			// An external deep-link is explicit navigation intent and must take
-			// precedence over PR2 cycling — pin so the driver doesn't immediately
-			// commit a story target and switch away from the requested map (Codex PR #72).
-			pinView();
 			switchMap(variant.id);
 			return;
 		}
-		const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
 		if (targetRegion && targetRegion.mapId !== activeMapId) {
-			pinView();
 			switchMap(targetRegion.mapId);
 		}
 	});
@@ -1798,6 +1798,10 @@
 
 	function startRename() {
 		if (!activeMap) return;
+		// Map-level authoring: pin so a cycle can't flip activeMapId between opening
+		// the rename and commitRename(), which would PATCH the name onto another
+		// map (Codex PR #72).
+		pinView();
 		renamingMapName = activeMap.name;
 	}
 
@@ -1839,6 +1843,9 @@
 
 	function openVariantForm() {
 		if (!activeMap) return;
+		// Map-level authoring: pin so a cycle can't flip activeMapId between capturing
+		// this map's bounds here and saveVariant()'s PATCH (Codex PR #72).
+		pinView();
 		const isDefault = activeMap.startActId === null && activeMap.endActId === null;
 		variantFormIsDefault = isDefault;
 		variantFormStartActId = activeMap.startActId;

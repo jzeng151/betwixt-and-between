@@ -342,6 +342,13 @@
 	export function spawnCaption(title: string): boolean {
 		if (!PIXI || !captionContainer || !title) return false;
 		if (caption && !caption.g.destroyed) caption.g.destroy();
+		// Wrap long titles to the viewport. Without this a long Event name (or a
+		// narrow window) renders as one over-wide line, and the lower-center anchor
+		// just gives it a negative x — clipping both ends off-screen and making the
+		// caption unreadable (Codex PR #72). Cap at ~86% of the screen width, with a
+		// sane fallback if the app isn't measurable yet; align center so wrapped lines
+		// stay centered under the existing anchor math (which uses g.width).
+		const screenW = stageCtx.app?.screen.width ?? 720;
 		const g: PixiText = new PIXI.Text({
 			text: title,
 			style: {
@@ -353,7 +360,10 @@
 				fontSize: 22,
 				fontStyle: 'italic',
 				stroke: { color: 0x1a1a1a, width: 4 },
-				dropShadow: { color: 0x000000, alpha: 0.6, blur: 3, distance: 1, angle: Math.PI / 2 }
+				dropShadow: { color: 0x000000, alpha: 0.6, blur: 3, distance: 1, angle: Math.PI / 2 },
+				wordWrap: true,
+				wordWrapWidth: Math.max(240, Math.round(screenW * 0.86)),
+				align: 'center'
 			}
 		});
 		g.eventMode = 'none';
