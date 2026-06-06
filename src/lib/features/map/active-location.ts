@@ -116,6 +116,21 @@ export function activeLocationsAtT(
 }
 
 /**
+ * The Event ids "active" at T — those with a `takes_place_at` edge visible at T
+ * (via the same `eventLocationAtT` rule the camera/FX/cycling use). Pure. The
+ * caption layer (T9) diffs this set frame-to-frame and titles the newly-active
+ * Events, reusing the resolver instead of a second selection model.
+ */
+export function activeEventIdsAtT(relationships: Relationship[], t: number): string[] {
+	const byEvent = groupTakesPlaceAt(relationships);
+	const ids: string[] = [];
+	for (const [eventId, entries] of byEvent) {
+		if (eventLocationAtT(entries, t) !== null) ids.push(eventId);
+	}
+	return ids;
+}
+
+/**
  * Nearest map-bearing Location at or above `loc` — `loc` itself if it has a map,
  * else the closest ancestor that does, else null. The Edge-Cases "no map at T →
  * nearest ancestor with a map (walkAncestors)" fallback. Pure.

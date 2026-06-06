@@ -38,6 +38,7 @@
 	import {
 		groupTakesPlaceAt,
 		activeLocationsAtT,
+		activeEventIdsAtT,
 		pickCyclingTarget
 	} from '$lib/features/map/active-location.js';
 	import type {
@@ -842,6 +843,31 @@
 		const cached = cycleCache.get(targetMapId);
 		if (cached) commitCycle(targetMapId, cached);
 		else void prefetchCycle(targetMapId); // hold current map; commit when ready
+	});
+
+	// ── Diegetic captions (Slice 8) PR3 / T9 ────────────────────────────────
+	//
+	// Title each Event as it becomes active at T, reusing the SAME selection model
+	// as the camera/FX/cycling (activeEventIdsAtT → the resolver, no rework). Diff
+	// the active-event set frame to frame; a newly-active Event's name is shown as
+	// a lower-third card. The card layer supersedes, so a simultaneous burst just
+	// leaves the last one up rather than stacking. Idle resets the baseline (the
+	// next play re-titles the opening beats); fires on manual scrub too, like FX.
+	let lastActiveEventIds = new Set<string>();
+	$effect(() => {
+		const t = $playhead;
+		void $relationships;
+		if (t === null) {
+			lastActiveEventIds = new Set();
+			return;
+		}
+		const ids = activeEventIdsAtT($relationships, t);
+		for (const id of ids) {
+			if (lastActiveEventIds.has(id)) continue;
+			const name = $entities.find((e) => e.id === id)?.name;
+			if (name) punctuationLayer?.spawnCaption(name);
+		}
+		lastActiveEventIds = new Set(ids);
 	});
 
 	// Terrain cells, clamped to the current grid. projectState emits every
