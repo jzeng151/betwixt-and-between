@@ -122,8 +122,34 @@ function createLayerPrefsStore() {
 		}
 	}
 
+	// Cycle staged-prefetch (Codex PR #72 #505). `prefetch` reads a map's prefs
+	// WITHOUT touching the store (so the cycling driver can buffer them and apply on
+	// commit); like load() it's non-blocking — a network/404 failure yields an empty
+	// map (defaults-visible) rather than throwing, so a prefs miss can't fail the
+	// whole cycle commit. `applyPrefetched` installs the buffered prefs as the loaded
+	// state (bumping the token so an in-flight load() of another map no-ops), avoiding
+	// the load()-path flash to an empty 'loading' state during an auto-cycle.
+	async function prefetch(mapId: string): Promise<Map<string, boolean>> {
+		const prefs = new Map<string, boolean>();
+		try {
+			const res = await fetch(
+				`/api/world-map-layer-prefs?worldMapId=${encodeURIComponent(mapId)}`
+			);
+			if (!res.ok) return prefs; // 404/not-owned → defaults-visible
+			const rows = (await res.json()) as RawPref[];
+			for (const row of rows) prefs.set(row.layerKey, row.visible === 1);
+		} catch {
+			return prefs; // network failure → defaults-visible
+		}
+		return prefs;
+	}
+	function applyPrefetched(mapId: string, prefs: Map<string, boolean>): void {
+		loadToken += 1;
+		state.set({ mapId, prefs, status: 'loaded' });
+	}
+
 	const subscribe: Readable<MapState>['subscribe'] = state.subscribe;
-	return { subscribe, load, toggle, reset, isVisible };
+	return { subscribe, load, prefetch, applyPrefetched, toggle, reset, isVisible };
 }
 
 export const layerPrefs = createLayerPrefsStore();

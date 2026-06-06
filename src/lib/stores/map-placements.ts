@@ -145,6 +145,31 @@ function createPlacementsStore() {
 		placements.update((all) => all.filter((p) => p.id !== id));
 	}
 
+	// Cycle staged-prefetch (Codex PR #72 #505). `prefetch` fetches a context's
+	// placements WITHOUT touching the store, so the cycling driver can buffer the
+	// target map's placements and apply them on commit instead of letting the
+	// locationId-keyed load() effect replace the store a beat after the switch (old
+	// map's markers over the new map). `applyPrefetched` installs them, bumping the
+	// load token so an in-flight load() of another context no-ops.
+	async function prefetch(filters?: {
+		locationId?: string;
+		placeableId?: string;
+		mapId?: string;
+	}): Promise<MapPlacement[]> {
+		const params = new URLSearchParams();
+		if (filters?.locationId) params.set('locationId', filters.locationId);
+		if (filters?.placeableId) params.set('placeableId', filters.placeableId);
+		if (filters?.mapId) params.set('mapId', filters.mapId);
+		const qs = params.toString();
+		const res = await fetch(`/api/map-placements${qs ? `?${qs}` : ''}`);
+		if (!res.ok) throw new Error('Failed to load placements');
+		return (await res.json()) as MapPlacement[];
+	}
+	function applyPrefetched(rows: MapPlacement[]): void {
+		loadToken++;
+		placements.set(rows);
+	}
+
 	function reset(): void {
 		loadToken++;
 		// Do NOT clear updateChains/latestUpdate here. An in-flight PATCH for a
@@ -157,7 +182,16 @@ function createPlacementsStore() {
 		placements.set([]);
 	}
 
-	return { subscribe: placements.subscribe, load, create, update, delete: remove, reset };
+	return {
+		subscribe: placements.subscribe,
+		load,
+		prefetch,
+		applyPrefetched,
+		create,
+		update,
+		delete: remove,
+		reset
+	};
 }
 
 export const mapPlacements = createPlacementsStore();

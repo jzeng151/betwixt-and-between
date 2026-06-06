@@ -62,6 +62,34 @@ function createMapAnchorsStore() {
 		store.set(collected);
 	}
 
+	// Cycle staged-prefetch (Codex PR #72 #505). `prefetch` pages a map's anchors
+	// WITHOUT touching the store, so the between-map cycling driver can buffer a
+	// target map's full context and apply it all atomically on commit — no
+	// half-loaded flash (old-map markers over the new map). No stale guard: the
+	// caller (WorldMap's cycle-generation token) owns staleness. `applyPrefetched`
+	// installs a buffered set as the canonical state, recording lastLoadedMapId +
+	// bumping the load token so any load() still in flight for another map no-ops.
+	async function prefetch(mapId: string): Promise<MapAnchor[]> {
+		const collected: MapAnchor[] = [];
+		let cursor: string | null = null;
+		do {
+			const url = cursor
+				? `/api/maps/${mapId}/anchors?after=${encodeURIComponent(cursor)}`
+				: `/api/maps/${mapId}/anchors`;
+			const res = await fetch(url);
+			if (!res.ok) throw new Error(`Failed to load anchors: ${await errorMessage(res)}`);
+			const body = (await res.json()) as { rows: MapAnchor[]; next_cursor: string | null };
+			collected.push(...body.rows);
+			cursor = body.next_cursor;
+		} while (cursor != null);
+		return collected;
+	}
+	function applyPrefetched(mapId: string, rows: MapAnchor[]): void {
+		lastLoadedMapId = mapId;
+		++loadToken;
+		store.set(rows);
+	}
+
 	// Codex P1 on PR #55 (commit be1f09c): mutation responses must also
 	// honor lastLoadedMapId. If the user POSTs against map A, then
 	// switches to map B before the response returns, the A response
@@ -150,6 +178,8 @@ function createMapAnchorsStore() {
 	return {
 		subscribe: store.subscribe,
 		load,
+		prefetch,
+		applyPrefetched,
 		create,
 		update,
 		delete: remove,

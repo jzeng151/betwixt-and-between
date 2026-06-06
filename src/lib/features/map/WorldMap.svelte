@@ -7,6 +7,9 @@
 		type LoadRegionsResult
 	} from '$lib/features/map/store.js';
 	import type { MapRegion } from '$lib/features/map/types.js';
+	import type { MapAnchor } from '$lib/features/map/map-anchors-store.js';
+	import type { MapEvent } from '$lib/features/map/map-events-store.js';
+	import type { MapPlacement } from '$lib/types/map-placement.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/os/scope-store.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
@@ -569,6 +572,17 @@
 			anchorsEventsSettled = false;
 			return;
 		}
+		// Staged-prefetch commit (#505) already applied this map's anchors/events/
+		// layer-prefs and marked them healthy. Skip the redundant reload — crucially
+		// the layerPrefs.load() below would otherwise flash an empty 'loading' state
+		// over the just-committed prefs. One-shot: consume the flag so a later genuine
+		// switch to the same map reloads normally (Codex PR #72).
+		if (id === cyclePreloadedMapId) {
+			cyclePreloadedMapId = null;
+			projectionCtxHealthy = true;
+			anchorsEventsSettled = true;
+			return;
+		}
 		let cancelled = false;
 		projectionCtxHealthy = false;
 		anchorsEventsSettled = false;
@@ -803,7 +817,7 @@
 			// so edits only happen off-playback); re-prefetching on the next Play
 			// keeps cached commits in sync with the store. (review: cycleCache never
 			// invalidated — confirmed by codex + code-reviewer subagent.)
-			cycleCache.clear();
+			cycleDataCache.clear();
 			cyclePrefetching.clear();
 			cycleFailed.clear(); // give failed/absent targets one retry on this fresh Play
 			// Invalidate any prefetch still in flight from the previous run so its
@@ -850,11 +864,31 @@
 	//     ownership token) — a cycle is not a deep-link, so the existing one-shot +
 	//     external-entityId auto-switch (the T7 regression) behaves exactly as
 	//     before. Cycling writes only activeMapId + the regions store.
-	// Cached regions per prefetched map. Only the regions are needed: after the
-	// switch the active WorldMap object is re-derived from $worldMaps, so the
-	// prefetched map row itself is never read.
-	const cycleCache = new Map<string, MapRegion[]>();
+	// Cached full map CONTEXT per prefetched map. The cycling driver stages a target
+	// map's regions AND its projection context (anchors / events / placements /
+	// layer-prefs) so commit can apply them ALL atomically — switch-only-when-ready
+	// now covers every map-scoped store, not just regions, so an auto-cycle never
+	// shows the new map's background+regions combined with the previous map's markers,
+	// terrain, causal edges, or layer visibility (Codex PR #72 #505; product decision
+	// 2026-06-06 "Option 1: staged prefetch"). `locationId` is the target's anchor
+	// Location — needed to prefetch its placements (which load keyed on locationId).
+	type CycleBundle = {
+		regions: MapRegion[];
+		anchors: MapAnchor[];
+		events: MapEvent[];
+		placements: MapPlacement[];
+		layerPrefs: Map<string, boolean>;
+		locationId: string | null;
+	};
+	const cycleDataCache = new Map<string, CycleBundle>();
 	const cyclePrefetching = new Set<string>();
+	// One-shot signal: after commitCycle applies a target's buffered context and flips
+	// activeMapId, the activeMapId load effect would re-fetch anchors/events AND re-run
+	// layerPrefs.load (which flashes an empty 'loading' state). This tells that effect
+	// to skip the redundant load for the just-committed map exactly once (Codex PR #72
+	// #505). Placements/anchors/events load() set-at-end, so a redundant reload there
+	// causes no flash — only this effect (via layerPrefs) needs the guard.
+	let cyclePreloadedMapId: string | null = null;
 	// Maps whose prefetch returned not-found or threw this generation. The cycling
 	// effect re-runs every playback boundary while the same target stays active, so
 	// without this a 404/error target would be re-requested forever — recurring
@@ -886,7 +920,7 @@
 	// markers so any prefetch already mid-flight drops its (now stale) result and the
 	// cycling effect re-prefetches the fresh regions on its next tick.
 	function invalidateCycleCache(mapId: string): void {
-		cycleCache.delete(mapId);
+		cycleDataCache.delete(mapId);
 		cyclePrefetching.clear();
 		cycleFailed.clear();
 		cycleGeneration++;
@@ -910,20 +944,38 @@
 		return { mapId, loc: targetLoc };
 	}
 
-	// Fetch a target map's regions into the cache without disturbing the visible
-	// map. Deduped against in-flight prefetches; failures are non-fatal (the
-	// resolver just keeps holding the current map).
+	// Fetch a target map's FULL context (regions + anchors + events + placements +
+	// layer-prefs) into the cache without disturbing the visible map, so commit can
+	// apply it all at once (#505). Deduped against in-flight prefetches; failures are
+	// non-fatal (the resolver keeps holding the current map). Regions failure (null)
+	// counts as not-found; layer-prefs failures degrade to defaults (non-throwing).
 	async function prefetchCycle(mapId: string): Promise<void> {
-		if (cycleCache.has(mapId) || cyclePrefetching.has(mapId) || cycleFailed.has(mapId)) return;
+		if (cycleDataCache.has(mapId) || cyclePrefetching.has(mapId) || cycleFailed.has(mapId)) return;
 		const gen = cycleGeneration;
 		cyclePrefetching.add(mapId);
 		try {
-			const data = await worldMapStore.prefetchMapRegions(mapId);
-			// Superseded by a Play-reset while in flight: drop the (now-stale) result
-			// rather than caching pre-edit regions / waking a commit.
+			const locationId = $worldMaps.find((m) => m.id === mapId)?.locationId ?? null;
+			const [regionsData, anchors, events, placements, layerPrefsMap] = await Promise.all([
+				worldMapStore.prefetchMapRegions(mapId),
+				mapAnchorsStore.prefetch(mapId),
+				mapEventsStore.prefetch(mapId),
+				locationId
+					? placementsStore.prefetch({ locationId })
+					: Promise.resolve([] as MapPlacement[]),
+				layerPrefs.prefetch(mapId)
+			]);
+			// Superseded by a Play-reset / edit while in flight: drop the (now-stale)
+			// result rather than caching pre-edit data / waking a commit.
 			if (gen !== cycleGeneration) return;
-			if (data) {
-				cycleCache.set(mapId, data.regions);
+			if (regionsData) {
+				cycleDataCache.set(mapId, {
+					regions: regionsData.regions,
+					anchors,
+					events,
+					placements,
+					layerPrefs: layerPrefsMap,
+					locationId
+				});
 				cyclePrefetchTick++; // wake the cycling effect so it can commit now
 			} else {
 				cycleFailed.add(mapId); // not-found: don't re-request it this generation
@@ -937,17 +989,39 @@
 		}
 	}
 
-	// Commit a cached map switch: set the regions store from cache (no fetch, no
-	// loading flash) and flip activeMapId, which drives the anchors/events/
-	// layer-prefs load effect for the new map. The loading overlay is suppressed
-	// while auto-cycling so the brief post-commit anchors load doesn't strobe.
-	// Advancing the hysteresis cursor HERE (not at resolve time) anchors it on the
-	// map actually shown, so a pending/uncommitted target can't lock cycling
-	// (Codex PR #72).
-	function commitCycle(mapId: string, loc: string, regions: MapRegion[]): void {
-		worldMapStore.applyPrefetchedRegions(mapId, regions);
+	// Commit a staged map switch: apply the WHOLE buffered context (regions, anchors,
+	// events, placements, layer-prefs) atomically, mark every map-scoped readiness
+	// gate healthy, then flip activeMapId. Because all stores are populated for the
+	// target BEFORE the flip, the render never combines new-map regions with old-map
+	// markers/terrain/edges/layers — staged-prefetch closes the #505 flash. The
+	// activeMapId load effect is told (cyclePreloadedMapId) to skip its redundant
+	// reload (which would re-flash layer-prefs). Advancing the hysteresis cursor HERE
+	// anchors it on the map actually shown (Codex PR #72).
+	//
+	// NOTE: the placements load effect keys on activeMap.locationId (a SEPARATE effect
+	// we don't gate), so it re-fetches the just-applied placements once after the flip.
+	// That refetch is harmless — `load()` sets-at-end, so the prefetched placements
+	// stay visible (no flash) and the overlay is suppressed during cycling — it's only
+	// a small wasted round-trip. We still prefetch+apply placements so the NEW map's
+	// markers are correct the instant it shows rather than flashing the old map's.
+	function commitCycle(mapId: string, loc: string, bundle: CycleBundle): void {
+		// `decideCycleAction` only returns 'commit' for a DIFFERENT map, so this never
+		// fires for the active map. Guard it anyway: the one-shot cyclePreloadedMapId is
+		// consumed by the activeMapId load effect, which only re-runs if activeMapId
+		// actually changes — committing the already-active map would set the flag with
+		// nothing to consume it, wrongly skipping a later genuine reload of this map.
+		if (mapId === activeMapId) return;
+		worldMapStore.applyPrefetchedRegions(mapId, bundle.regions);
+		mapAnchorsStore.applyPrefetched(mapId, bundle.anchors);
+		mapEventsStore.applyPrefetched(mapId, bundle.events);
+		placementsStore.applyPrefetched(bundle.placements);
+		layerPrefs.applyPrefetched(mapId, bundle.layerPrefs);
 		mapRegionsHealthy = true;
 		regionsSettled = true;
+		projectionCtxHealthy = true;
+		anchorsEventsSettled = true;
+		placementsLoading = false;
+		cyclePreloadedMapId = mapId; // load effect skips the redundant reload once
 		cyclePrevTargetLoc = loc;
 		activeMapId = mapId;
 	}
@@ -983,7 +1057,7 @@
 		const action = decideCycleAction(
 			target?.mapId ?? null,
 			activeMapId,
-			target != null && cycleCache.has(target.mapId)
+			target != null && cycleDataCache.has(target.mapId)
 		);
 		if (action === 'hold') {
 			// Seed the hysteresis cursor when the resolved target's map is ALREADY
@@ -994,7 +1068,7 @@
 			if (target && target.mapId === activeMapId) cyclePrevTargetLoc = target.loc;
 			return;
 		}
-		if (action === 'commit') commitCycle(target!.mapId, target!.loc, cycleCache.get(target!.mapId)!);
+		if (action === 'commit') commitCycle(target!.mapId, target!.loc, cycleDataCache.get(target!.mapId)!);
 		else void prefetchCycle(target!.mapId); // hold current map; commit when ready
 	});
 
@@ -1050,7 +1124,11 @@
 		// (Codex PR #72).
 		if (lastCaptionT !== null && t < lastCaptionT) lastActiveEventIds = new Set();
 		lastCaptionT = t;
-		const ids = activeEventIdsAtT($relationships, t, takesPlaceAtIndex);
+		// scopedOnly: a caption titles an Event when its scene happens, so only an
+		// Event active via a SCOPED takes_place_at counts. A timeless link would
+		// otherwise mark every linked Event active at every T (all captioned on frame
+		// one, none re-titled at their real scene) — product decision 2026-06-06 / #889.
+		const ids = activeEventIdsAtT($relationships, t, takesPlaceAtIndex, { scopedOnly: true });
 		// Rebuild the baseline from the currently-active ids, but only record an id
 		// as titled if its caption actually rendered. If Pixi/the layer isn't ready
 		// yet, spawnCaption returns false and we leave the id OUT, so a still-active

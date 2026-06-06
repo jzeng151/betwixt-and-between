@@ -358,6 +358,34 @@ function createMapEventsStore() {
 		return created;
 	}
 
+	// Cycle staged-prefetch (Codex PR #72 #505) — see map-anchors-store.ts. `prefetch`
+	// pages a map's events without touching the store; `applyPrefetched` installs a
+	// buffered set as canonical (recording lastLoadedMapId so an in-flight load() of
+	// another map no-ops, and resetting the redo stack since switching maps does).
+	async function prefetch(mapId: string): Promise<MapEvent[]> {
+		const collected: MapEvent[] = [];
+		let cursor: string | null = null;
+		do {
+			const url = cursor
+				? `/api/maps/${mapId}/events?after=${encodeURIComponent(cursor)}`
+				: `/api/maps/${mapId}/events`;
+			const res = await fetch(url);
+			if (!res.ok) throw new Error(`Failed to load events: ${await errorMessage(res)}`);
+			const body = (await res.json()) as { rows: MapEvent[]; next_cursor: string | null };
+			collected.push(...body.rows);
+			cursor = body.next_cursor;
+		} while (cursor != null);
+		return collected;
+	}
+	function applyPrefetched(mapId: string, rows: MapEvent[]): void {
+		lastLoadedMapId = mapId;
+		if (redoStackForMapId !== mapId) {
+			redoStackForMapId = mapId;
+			redoStore.set([]);
+		}
+		store.set(rows);
+	}
+
 	function reset(): void {
 		lastLoadedMapId = null;
 		redoStackForMapId = null;
@@ -368,6 +396,8 @@ function createMapEventsStore() {
 	return {
 		subscribe: store.subscribe,
 		load,
+		prefetch,
+		applyPrefetched,
 		create,
 		delete: remove,
 		undo,

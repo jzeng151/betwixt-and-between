@@ -191,6 +191,20 @@ describe('activeEventIdsAtT — caption selection (T9 reuses the resolver)', () 
 		expect(activeEventIdsAtT(rels, 0.7).sort()).toEqual(['e1', 'e3']); // e2 closed
 	});
 
+	it('scopedOnly excludes timeless-linked Events (caption rule, #889)', () => {
+		const rels = [
+			tpa('e1', 'locA'), // timeless → not a caption beat
+			tpa('e2', 'locB', { startPosition: 0.0, endPosition: 0.3 }), // scoped, active at 0.1
+			tpa('e3', 'locC', { startPosition: 0.5, endPosition: 1.0 }) // scoped, closed at 0.1
+		];
+		// Without scopedOnly: timeless e1 + open scoped e2.
+		expect(activeEventIdsAtT(rels, 0.1).sort()).toEqual(['e1', 'e2']);
+		// With scopedOnly: only the open scoped beat (e2); the timeless e1 is dropped.
+		expect(activeEventIdsAtT(rels, 0.1, undefined, { scopedOnly: true })).toEqual(['e2']);
+		// At a T where no scoped window is open, scopedOnly yields nothing.
+		expect(activeEventIdsAtT(rels, 0.4, undefined, { scopedOnly: true })).toEqual([]);
+	});
+
 	it('excludes a reveal-gated Event until it is revealed (Codex PR #72)', () => {
 		const rels = [tpa('e1', 'locA', { revealedAtPosition: 0.6 })];
 		expect(activeEventIdsAtT(rels, 0.5)).toEqual([]); // before reveal → no caption
