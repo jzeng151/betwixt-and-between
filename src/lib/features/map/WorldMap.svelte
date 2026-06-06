@@ -773,10 +773,14 @@
 	});
 
 	// A map switch drops the camera target so the camera doesn't drift toward the
-	// previous map's coordinates before the next flip on the new map.
+	// previous map's coordinates before the next flip on the new map. It also drops
+	// any beats buffered while Pixi was still importing (G/#893): they belong to the
+	// previous map, so flushing them after the switch would render old-map march/
+	// ripple FX over the new map and pull its camera to stale coordinates (Codex PR #72).
 	$effect(() => {
 		void activeMapId;
 		cameraTarget = null;
+		pendingBeats = [];
 	});
 
 	// Unpin the view when playback (re)starts: pressing Play resumes camera-follow
@@ -1141,6 +1145,11 @@
 	}
 
 	function startPixiDraw(stageX: number, stageY: number) {
+		// Beginning a polygon draw is region authoring: pin so PR2 cycling can't
+		// switch maps before the user saves, which would create the new region on
+		// the wrong map (the save handler runs against the live activeMapId).
+		// (Codex PR #72)
+		pinView();
 		pixiDrawSeed = { x: stageX, y: stageY };
 		pixiDrawingActive = true;
 	}
@@ -1432,6 +1441,9 @@
 	function startEditRegion(regionId: string) {
 		const region = $mapRegions.find((r) => r.id === regionId);
 		if (!region || !activeMapId) return;
+		// Opening the edit form is region authoring: pin so cycling can't switch maps
+		// before Save sends this map's region id to a different map (Codex PR #72).
+		pinView();
 		editingRegionId = regionId;
 		editingOriginalLocationId = region.locationId;
 		regionFormLocationId = region.locationId;
@@ -1450,10 +1462,14 @@
 
 	async function handleDeleteRegion(regionId: string) {
 		if (!activeMapId) return;
+		// Capture the map id before awaiting: delete has no authoring session to pin,
+		// so an automatic cycle could flip activeMapId mid-flight and we'd delete the
+		// region from / invalidate the wrong map's cache (Codex PR #72).
+		const mapId = activeMapId;
 		const region = $mapRegions.find((r) => r.id === regionId);
 		try {
-			await worldMapStore.deleteRegion(activeMapId, regionId);
-			invalidateCycleCache(activeMapId);
+			await worldMapStore.deleteRegion(mapId, regionId);
+			invalidateCycleCache(mapId);
 		} catch (err) {
 			console.error('Failed to delete region:', err);
 		}
@@ -1681,6 +1697,11 @@
 		if (!editingRegionId && !pendingPolygon) return;
 			// Snapshot form state before any async work — the pre-fill $effect
 			// re-fires when deletes update $intervalsStore and can clear sceneIds.
+			// Capture the map id too: an automatic cycle can flip activeMapId while
+			// a write awaits, so reading it again post-await would target/invalidate
+			// the wrong map (Codex PR #72). Authoring also pins (suspending cycling),
+			// but the captured id is the robust guarantee.
+			const saveMapId = activeMapId;
 			const saveLocationId = regionFormLocationId;
 			const saveSceneIds = new Set(regionFormSceneIds);
 			const saveColor = regionFormColor;
@@ -1691,11 +1712,11 @@
 
 		if (editingRegionId) {
 			try {
-				await worldMapStore.updateRegion(activeMapId, editingRegionId, {
+				await worldMapStore.updateRegion(saveMapId, editingRegionId, {
 					locationId: regionFormLocationId,
 					color: regionFormColor
 				});
-				invalidateCycleCache(activeMapId);
+				invalidateCycleCache(saveMapId);
 			} catch (err) {
 				console.error('Failed to update region:', err);
 			}
@@ -1709,12 +1730,12 @@
 			}
 		} else {
 			try {
-				await worldMapStore.createRegion(activeMapId, {
+				await worldMapStore.createRegion(saveMapId, {
 					locationId: regionFormLocationId,
 					polygon: pendingPolygon!,
 					color: regionFormColor
 				});
-				invalidateCycleCache(activeMapId);
+				invalidateCycleCache(saveMapId);
 			} catch (err) {
 				console.error('Failed to create region:', err);
 			}
