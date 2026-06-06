@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { worldMapStore, worldMaps, mapRegions } from '$lib/features/map/store.js';
+	import {
+		worldMapStore,
+		worldMaps,
+		mapRegions,
+		type LoadRegionsResult
+	} from '$lib/features/map/store.js';
 	import type { MapRegion } from '$lib/features/map/types.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/os/scope-store.js';
@@ -912,7 +917,15 @@
 			activeMapId,
 			target != null && cycleCache.has(target.mapId)
 		);
-		if (action === 'hold') return;
+		if (action === 'hold') {
+			// Seed the hysteresis cursor when the resolved target's map is ALREADY
+			// shown (the common "no initial cycle needed" case): without this the
+			// cursor stays null and the first brief overlap with a more-specific
+			// Location would strobe to its map. A null/pending target is still never
+			// recorded — only a resolved target whose map is on screen (Codex PR #72).
+			if (target && target.mapId === activeMapId) cyclePrevTargetLoc = target.loc;
+			return;
+		}
 		if (action === 'commit') commitCycle(target!.mapId, target!.loc, cycleCache.get(target!.mapId)!);
 		else void prefetchCycle(target!.mapId); // hold current map; commit when ready
 	});
@@ -926,12 +939,26 @@
 	// leaves the last one up rather than stacking. Idle resets the baseline (the
 	// next play re-titles the opening beats); fires on manual scrub too, like FX.
 	// Event id → name, built once per entities snapshot so the caption diff is a
-	// keyed lookup rather than a linear scan per newly-active Event.
-	const entityNameById = $derived(new Map($entities.map((e) => [e.id, e.name] as const)));
+	// keyed lookup rather than a linear scan. Restricted to type === 'Event':
+	// takes_place_at endpoints are not type-enforced (the Character relationship
+	// editor can author Character→Event/Scene rows), and a caption must title an
+	// Event, never a Character/Scene that happens to be a takes_place_at fromId
+	// (Codex PR #72). A non-Event id resolves to no name and is skipped.
+	const eventNameById = $derived(
+		new Map(
+			$entities.filter((e) => e.type === 'Event').map((e) => [e.id, e.name] as const)
+		)
+	);
+	// Bumped when the FX layer's caption pipeline becomes ready (Pixi imported).
+	// Reading it in the caption effect creates a reactive dependency so an opening
+	// beat that fired before Pixi finished importing is retried once it can render,
+	// rather than dropped if the playhead doesn't advance again (Codex PR #72).
+	let captionReadyTick = $state(0);
 	let lastActiveEventIds = new Set<string>();
 	$effect(() => {
 		const t = $playhead;
 		void $relationships;
+		void captionReadyTick;
 		if (t === null) {
 			lastActiveEventIds = new Set();
 			return;
@@ -949,7 +976,7 @@
 		}
 		// Title each newly-active id; only record it as titled if it rendered.
 		for (const id of diffNewlyActiveEvents(lastActiveEventIds, ids)) {
-			const name = entityNameById.get(id);
+			const name = eventNameById.get(id); // non-Event ids resolve to undefined → skipped
 			const handled = name ? (punctuationLayer?.spawnCaption(name) ?? false) : true;
 			if (handled) next.add(id);
 		}
@@ -1427,20 +1454,24 @@
 
 	// ── Actions ────────────────────────────────────────────────────────────
 
+	// Apply a loadMapRegions result to the readiness gate. Only a `loaded` result
+	// for the still-active map marks healthy; `not-found` settles the overlay but
+	// stays unhealthy; a `superseded` result is a no-op so an A→B→A stale load
+	// can't flip the gate (and permit writes) against an old snapshot before the
+	// authoritative load lands (Codex PR #72). Also guards activeMapId so a load
+	// for a map we've since switched away from never touches the gate.
+	function applyRegionLoad(result: LoadRegionsResult, mapId: string): void {
+		if (activeMapId !== mapId || result.status === 'superseded') return;
+		mapRegionsHealthy = result.status === 'loaded';
+		regionsSettled = true;
+	}
+
 	async function switchMap(mapId: string) {
 		activeMapId = mapId;
 		mapRegionsHealthy = false;
 		regionsSettled = false;
 		try {
-			await worldMapStore.loadMapRegions(mapId);
-			// Only mark healthy if THIS switchMap call is still the active
-			// one. A rapid switch A → B could leave switchMap(A) resolving
-			// after switchMap(B) started; checking activeMapId avoids
-			// flipping healthy on stale data.
-			if (activeMapId === mapId) {
-				mapRegionsHealthy = true;
-				regionsSettled = true;
-			}
+			applyRegionLoad(await worldMapStore.loadMapRegions(mapId), mapId);
 		} catch (err) {
 			console.error('Failed to load regions for map:', mapId, err);
 			// Stay unhealthy — dataLoading remains true, blocking writes — but
@@ -1544,11 +1575,7 @@
 		mapRegionsHealthy = false;
 		regionsSettled = false;
 		try {
-			await worldMapStore.loadMapRegions(map.id);
-			if (activeMapId === map.id) {
-				mapRegionsHealthy = true;
-				regionsSettled = true;
-			}
+			applyRegionLoad(await worldMapStore.loadMapRegions(map.id), map.id);
 		} catch (err) {
 			console.error('Failed to load regions for new map:', err);
 			if (activeMapId === map.id) regionsSettled = true;
@@ -1585,11 +1612,7 @@
 		regionsSettled = false;
 		if (nextId) {
 			try {
-				await worldMapStore.loadMapRegions(nextId);
-				if (activeMapId === nextId) {
-					mapRegionsHealthy = true;
-					regionsSettled = true;
-				}
+				applyRegionLoad(await worldMapStore.loadMapRegions(nextId), nextId);
 			} catch (err) {
 				console.error('Failed to load regions for switched map:', err);
 				if (activeMapId === nextId) regionsSettled = true;
@@ -1940,6 +1963,7 @@
 					mapWidth={activeMap?.width ?? 0}
 					mapHeight={activeMap?.height ?? 0}
 					{reducedMotion}
+					onReady={() => captionReadyTick++}
 				/>
 				<!-- Within-map camera: eases the viewport toward the changed-this-
 				     frame bbox during playback; pins on manual pan/pinch/wheel. -->

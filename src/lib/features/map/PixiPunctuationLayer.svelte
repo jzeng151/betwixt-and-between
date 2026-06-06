@@ -35,7 +35,8 @@
 		mapId,
 		mapWidth = 0,
 		mapHeight = 0,
-		reducedMotion = false
+		reducedMotion = false,
+		onReady
 	}: {
 		regions: MapRegion[];
 		mapId: string | null;
@@ -48,6 +49,11 @@
 		// tint (which snaps under reduced motion); the moving FX are suppressed so
 		// there's no motion to trigger on.
 		reducedMotion?: boolean;
+		// Fired once the caption pipeline can accept captions (Pixi imported +
+		// captionContainer created). Lets the parent's caption $effect retry an
+		// opening beat that arrived before the dynamic Pixi import finished, instead
+		// of dropping it (Codex PR #72).
+		onReady?: () => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -152,6 +158,9 @@
 			captionContainer = new PIXI.Container();
 			captionContainer.eventMode = 'none';
 			app.stage.addChild(captionContainer);
+			// Caption pipeline is now live — let the parent retry any opening beat
+			// that fired before the dynamic Pixi import finished (Codex PR #72).
+			onReady?.();
 		}
 
 		const off = anim.register(() => {
