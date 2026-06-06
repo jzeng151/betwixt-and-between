@@ -209,20 +209,42 @@ test('Play on the seeded demo world cycles between maps, fires FX + captions, an
 	const switcher = win.locator('.map-switcher');
 	await expect(switcher).toBeVisible();
 	await expect(switcher.locator('option')).toHaveCount(2);
-	const initialMap = await switcher.inputValue();
+	// Pin to the Northmarch map first. The Act-0 conquest (the Ash Host taking the
+	// Fen, whose region lives on the Northmarch map) must be on the VISIBLE map when
+	// its owner flips during forward playback, so the flash is a legitimate
+	// during-playback beat — NOT the old load-order artifact where a cycled-to map's
+	// async region load produced a spurious flash of an already-past conquest. Play
+	// unpins, so cycling still resumes from t=0.
+	await switcher.selectOption({ label: 'Northmarch' });
+	const startMap = await switcher.inputValue();
 
-	// Open the Story Player and start autoplay (fast speed so the run is short).
+	// Open the Story Player + timeline scrubber.
 	await page.click('button[title="Timeline"]');
 	const tlWin = page.locator('.window[aria-label="Timeline"]');
 	await tlWin.locator('.scrub-toggle').click();
 	const playerWin = page.locator('.window[aria-label="Story Player"]');
 	await playerWin.locator('.speed-select').selectOption('2');
-	await playerWin.locator('.play-btn').click();
-	await expect(playerWin.locator('.play-btn')).toHaveClass(/playing/);
+
+	// On load WorldMap auto-scrubs the playhead PAST the latest event, so play() would
+	// otherwise start beyond the Act-0 conquest. Scrub back to the start (click the
+	// timeline track near its left edge) so play() crosses the flip going forward
+	// (mirrors world-map-spotlight-ease.spec.ts).
+	const rowsBox = await tlWin.locator('.rows').boundingBox();
+	if (!rowsBox) throw new Error('timeline rows have no bounding box');
+	await page.mouse.click(rowsBox.x + rowsBox.width * 0.02, rowsBox.y + 30);
+	await expect
+		.poll(async () => Number(await tlWin.locator('.playhead').getAttribute('aria-valuenow')), {
+			timeout: 8000
+		})
+		.toBeLessThan(0.25);
+	// The scrub-back itself can flip an owner and flash; reset so we only count a
+	// flash that fires during forward PLAYBACK.
+	await page.evaluate(() => {
+		(window as unknown as { __spotlightFlashCount?: number }).__spotlightFlashCount = 0;
+	});
 
 	// The loading overlay must NEVER appear while playing — switch-only-when-ready
-	// commits cached regions, so a cycle doesn't flash the overlay. Watch it for
-	// the duration we also watch for the cycle.
+	// stages the whole target map before committing, so a cycle doesn't flash it.
 	const overlay = win.locator('.map-loading-overlay');
 	let overlayEverVisible = false;
 	const overlayWatch = setInterval(() => {
@@ -234,22 +256,38 @@ test('Play on the seeded demo world cycles between maps, fires FX + captions, an
 			.catch(() => {});
 	}, 100);
 
-	// The view cycles to a different map without any manual interaction — the
-	// switcher value changes as the playhead crosses into Greyhold.
+	await playerWin.locator('.play-btn').click();
+	await expect(playerWin.locator('.play-btn')).toHaveClass(/playing/);
+
+	// A conquest flash fires as the Fen's owner flips on the visible Northmarch map
+	// during forward playback, and a diegetic caption fires for a scoped beat — both
+	// proving the FX + T9 caption pipelines end-to-end on real data.
+	await expect
+		.poll(
+			async () =>
+				page.evaluate(
+					() => (window as unknown as { __spotlightFlashCount?: number }).__spotlightFlashCount ?? 0
+				),
+			{ timeout: 15000, intervals: [200] }
+		)
+		.toBeGreaterThan(0);
+	await expect
+		.poll(
+			async () =>
+				page.evaluate(
+					() =>
+						(window as unknown as { __spotlightCaptionCount?: number }).__spotlightCaptionCount ?? 0
+				),
+			{ timeout: 8000, intervals: [200] }
+		)
+		.toBeGreaterThan(0);
+
+	// Headline T6 behavior: the view then cycles to a DIFFERENT map with no manual
+	// input as the playhead crosses into Greyhold's act.
 	await expect
 		.poll(async () => await switcher.inputValue(), { timeout: 25000, intervals: [200] })
-		.not.toBe(initialMap);
+		.not.toBe(startMap);
 
 	clearInterval(overlayWatch);
 	expect(overlayEverVisible).toBe(false);
-
-	// The playhead advanced and the FX + caption pipelines fired on real data.
-	const flashes = await page.evaluate(
-		() => (window as unknown as { __spotlightFlashCount?: number }).__spotlightFlashCount ?? 0
-	);
-	const captions = await page.evaluate(
-		() => (window as unknown as { __spotlightCaptionCount?: number }).__spotlightCaptionCount ?? 0
-	);
-	expect(flashes).toBeGreaterThan(0);
-	expect(captions).toBeGreaterThan(0);
 });
