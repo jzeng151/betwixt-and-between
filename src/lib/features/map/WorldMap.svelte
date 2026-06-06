@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { worldMapStore, worldMaps, mapRegions } from '$lib/features/map/store.js';
-	import type { MapRegion, WorldMap as WorldMapType } from '$lib/features/map/types.js';
+	import type { MapRegion } from '$lib/features/map/types.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/os/scope-store.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
@@ -39,6 +39,8 @@
 		groupTakesPlaceAt,
 		activeLocationsAtT,
 		activeEventIdsAtT,
+		diffNewlyActiveEvents,
+		decideCycleAction,
 		pickCyclingTarget
 	} from '$lib/features/map/active-location.js';
 	import type {
@@ -606,6 +608,12 @@
 	// recomputes only when relationships / regions change, not per playhead tick,
 	// which is where the per-frame-cost (T7) concern is handled. Relationship is
 	// structurally assignable to ProjectionCausalEdge.
+	// The takes_place_at grouping, built ONCE per relationships snapshot (eng
+	// decision #5). Shared by causalInput, the cycling resolver, and the caption
+	// diff so the indexing isn't rebuilt 3× per playhead tick. Depends only on
+	// $relationships, not on regions/activeMap (unlike causalInput).
+	const takesPlaceAtIndex = $derived(groupTakesPlaceAt($relationships));
+
 	const causalInput = $derived.by(() => {
 		const edges = $relationships.filter((r) => r.type === 'caused_by');
 		// Group every takes_place_at edge (with its bounds) by Event id. The active
@@ -616,7 +624,7 @@
 		// t-dependent pick is per-tick but small. Shared with the between-map
 		// cycling resolver (active-location.ts, eng decision #5) so the
 		// takes_place_at indexing exists once.
-		const takesPlaceAt = groupTakesPlaceAt($relationships);
+		const takesPlaceAt = takesPlaceAtIndex;
 		// Location → centroid from scopedRegions (already user- and scope-filtered).
 		// First region wins per Location (deterministic: scopedRegions order).
 		// MapRegion.polygon is stored as [[lat, lng], …] in source-image PIXELS
@@ -791,7 +799,10 @@
 	//     ownership token) — a cycle is not a deep-link, so the existing one-shot +
 	//     external-entityId auto-switch (the T7 regression) behaves exactly as
 	//     before. Cycling writes only activeMapId + the regions store.
-	const cycleCache = new Map<string, { map: WorldMapType; regions: MapRegion[] }>();
+	// Cached regions per prefetched map. Only the regions are needed: after the
+	// switch the active WorldMap object is re-derived from $worldMaps, so the
+	// prefetched map row itself is never read.
+	const cycleCache = new Map<string, MapRegion[]>();
 	const cyclePrefetching = new Set<string>();
 	// Previous map-bearing target Location (resolver hysteresis state). Reset on
 	// each Play (above) and when a manual switch pins.
@@ -806,7 +817,7 @@
 	// Resolve the map the story occupies at T → its active variant's mapId, or
 	// null to hold. Mutates the hysteresis cursor, so call once per evaluation.
 	function resolveCycleTargetMapId(t: number): string | null {
-		const ranked = activeLocationsAtT($relationships, t, hierarchyIndex);
+		const ranked = activeLocationsAtT($relationships, t, hierarchyIndex, takesPlaceAtIndex);
 		const hasMap = (locId: string) => resolveActiveVariant($worldMaps, locId, t) != null;
 		const targetLoc = pickCyclingTarget(ranked, hasMap, hierarchyIndex, cyclePrevTargetLoc);
 		cyclePrevTargetLoc = targetLoc;
@@ -823,7 +834,7 @@
 		try {
 			const data = await worldMapStore.prefetchMapRegions(mapId);
 			if (data) {
-				cycleCache.set(mapId, data);
+				cycleCache.set(mapId, data.regions);
 				cyclePrefetchTick++; // wake the cycling effect so it can commit now
 			}
 		} catch (err) {
@@ -837,8 +848,8 @@
 	// loading flash) and flip activeMapId, which drives the anchors/events/
 	// layer-prefs load effect for the new map. The loading overlay is suppressed
 	// while playing so the brief post-commit anchors load doesn't strobe.
-	function commitCycle(mapId: string, cached: { map: WorldMapType; regions: MapRegion[] }): void {
-		worldMapStore.applyPrefetchedRegions(mapId, cached.regions);
+	function commitCycle(mapId: string, regions: MapRegion[]): void {
+		worldMapStore.applyPrefetchedRegions(mapId, regions);
 		mapRegionsHealthy = true;
 		regionsSettled = true;
 		activeMapId = mapId;
@@ -857,10 +868,14 @@
 		void cyclePrefetchTick;
 		if (!playing || playback.pinned || t === null) return;
 		const targetMapId = resolveCycleTargetMapId(t);
-		if (!targetMapId || targetMapId === activeMapId) return;
-		const cached = cycleCache.get(targetMapId);
-		if (cached) commitCycle(targetMapId, cached);
-		else void prefetchCycle(targetMapId); // hold current map; commit when ready
+		const action = decideCycleAction(
+			targetMapId,
+			activeMapId,
+			targetMapId != null && cycleCache.has(targetMapId)
+		);
+		if (action === 'hold') return;
+		if (action === 'commit') commitCycle(targetMapId!, cycleCache.get(targetMapId!)!);
+		else void prefetchCycle(targetMapId!); // hold current map; commit when ready
 	});
 
 	// ── Diegetic captions (Slice 8) PR3 / T9 ────────────────────────────────
@@ -871,6 +886,9 @@
 	// a lower-third card. The card layer supersedes, so a simultaneous burst just
 	// leaves the last one up rather than stacking. Idle resets the baseline (the
 	// next play re-titles the opening beats); fires on manual scrub too, like FX.
+	// Event id → name, built once per entities snapshot so the caption diff is a
+	// keyed lookup rather than a linear scan per newly-active Event.
+	const entityNameById = $derived(new Map($entities.map((e) => [e.id, e.name] as const)));
 	let lastActiveEventIds = new Set<string>();
 	$effect(() => {
 		const t = $playhead;
@@ -879,10 +897,9 @@
 			lastActiveEventIds = new Set();
 			return;
 		}
-		const ids = activeEventIdsAtT($relationships, t);
-		for (const id of ids) {
-			if (lastActiveEventIds.has(id)) continue;
-			const name = $entities.find((e) => e.id === id)?.name;
+		const ids = activeEventIdsAtT($relationships, t, takesPlaceAtIndex);
+		for (const id of diffNewlyActiveEvents(lastActiveEventIds, ids)) {
+			const name = entityNameById.get(id);
 			if (name) punctuationLayer?.spawnCaption(name);
 		}
 		lastActiveEventIds = new Set(ids);

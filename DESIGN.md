@@ -35,6 +35,22 @@ Near-black surfaces, warm amber accents, off-white text. Nothing competes with t
 }
 ```
 
+### Cinematic Spotlight FX (world-map playback)
+
+The map's punctuation FX (`PixiPunctuationLayer`) render as additive-blend canvas
+graphics over the map during playback, not as DOM/CSS. Their colors are blessed
+exceptions tuned for additive contrast over arbitrary map imagery, semantically
+coded by beat kind:
+
+| Beat | Color | Why off-palette |
+|------|-------|-----------------|
+| Conquest flash | white additive `#ffffff` | a neutral flash reads as "something just changed" on any region tint |
+| March trail | amber `#ffe08a` | within the `--color-accent` amber family (movement = active state) |
+| Causal ripple | cyan arc `#9fd8ff` / dot `#dff1ff` | deliberately distinct from amber ownership/march so a causal chain reads as a *different* kind of event; no palette token is reused to avoid conflating causality with ownership |
+
+Caption title cards use **Fraunces** (the entity-name typeface) — captions title
+Events by their entity name, so they follow the entity-name typography rule.
+
 ---
 
 ## Typography

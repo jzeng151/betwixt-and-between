@@ -169,6 +169,21 @@ describe('diffPunctuation — march trails', () => {
 		expect(diffPunctuation(prev, cur, 0.5)).toEqual([]);
 	});
 
+	it('emits when ONE axis exceeds epsilon even if the other is sub-epsilon (guard is AND, not OR)', () => {
+		const prev = movers({ p1: { x: 0.1, y: 0.1 } });
+		const cur = movers({ p1: { x: 0.1 + 1e-5, y: 0.5 } }); // dx jitter, dy real
+		const out = diffPunctuation(prev, cur, 0.5);
+		expect(out).toHaveLength(1);
+		expect(out[0]).toMatchObject({ type: 'march', placementId: 'p1', toY: 0.5 });
+	});
+
+	it('honors a custom moveEpsilon — a move below the custom threshold is dropped', () => {
+		const prev = movers({ p1: { x: 0.1, y: 0.1 } });
+		const cur = movers({ p1: { x: 0.13, y: 0.1 } }); // 0.03 displacement
+		expect(diffPunctuation(prev, cur, 0.5, { moveEpsilon: 0.05 })).toEqual([]); // below custom eps
+		expect(diffPunctuation(prev, cur, 0.5, { moveEpsilon: 0.01 })).toHaveLength(1); // above
+	});
+
 	it('staggers simultaneous marches deterministically by placementId', () => {
 		const prev = movers({ pB: { x: 0, y: 0 }, pA: { x: 0, y: 0 } });
 		const cur = movers({ pB: { x: 0.5, y: 0.5 }, pA: { x: 0.5, y: 0.5 } });
