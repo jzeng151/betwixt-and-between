@@ -160,16 +160,27 @@ export function activeLocationsAtT(
  * (via the same `eventLocationAtT` rule the camera/FX/cycling use). Pure. The
  * caption layer (T9) diffs this set frame-to-frame and titles the newly-active
  * Events, reusing the resolver instead of a second selection model.
+ *
+ * `opts.scopedOnly` (the caption path, product decision 2026-06-06): only count an
+ * Event whose winning edge is SCOPED at T. A timeless `takes_place_at` says WHERE an
+ * Event is, not WHEN — without this every timeless-linked Event is "active" at every
+ * T, so all of them fire captions on the first frame and none re-title at their real
+ * scene (Codex PR #72 #889). The camera/FX path leaves this off (timeless is valid
+ * ambient context for the map).
  */
 export function activeEventIdsAtT(
 	relationships: Relationship[],
 	t: number,
-	byEventIndex?: Map<string, TakesPlaceAtEntry[]>
+	byEventIndex?: Map<string, TakesPlaceAtEntry[]>,
+	opts?: { scopedOnly?: boolean }
 ): string[] {
 	const byEvent = byEventIndex ?? groupTakesPlaceAt(relationships);
 	const ids: string[] = [];
 	for (const [eventId, entries] of byEvent) {
-		if (eventLocationAtT(entries, t) !== null) ids.push(eventId);
+		const res = resolveEventLocation(entries, t);
+		if (!res) continue;
+		if (opts?.scopedOnly && !res.scoped) continue;
+		ids.push(eventId);
 	}
 	return ids;
 }

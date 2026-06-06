@@ -14,6 +14,15 @@ export type LoadRegionsResult =
 
 function createWorldMapStore() {
 	const maps = writable<WorldMap[]>([]);
+	// SINGLE-ACTIVE-WINDOW assumption: `regions` is a singleton holding exactly ONE
+	// map's regions at a time — every load/apply does `regions.set(...)`, replacing
+	// the whole list, and each WorldMap instance filters it by its own activeMapId.
+	// This is correct only because the app surfaces ONE map view at a time. If two
+	// World Map windows are ever mounted at once, a load/commit in one would blank the
+	// other's regions (it would filter the shared store to an absent map). Known
+	// follow-up (Codex PR #72 #449): multi-window support needs window-local region
+	// state (a per-instance store, or keying this by mapId). Confirmed 2026-06-06 that
+	// multi-window maps are NOT reachable today, so this is deferred, not a live bug.
 	const regions = writable<MapRegion[]>([]);
 	// Codex P1 on PR #55 (commit e32c973): rapid map switches A→B→C
 	// could let B's loadMapRegions response arrive AFTER C's started and
