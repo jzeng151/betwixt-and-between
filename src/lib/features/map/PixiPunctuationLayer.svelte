@@ -378,12 +378,19 @@
 		fx = [];
 	}
 
+	/** Destroy only the screen-space caption, leaving map FX alone. Used when the
+	 * playhead is dismissed to idle: no Event is active, so the previous Event's
+	 * title must not linger on screen for its remaining lifetime (Codex PR #72). */
+	export function clearCaption(): void {
+		if (caption && !caption.g.destroyed) caption.g.destroy();
+		caption = null;
+	}
+
 	/** Destroy every in-flight FX AND the caption (replay-from-start, interrupt,
 	 * teardown). */
 	export function clearAll(): void {
 		clearFx();
-		if (caption && !caption.g.destroyed) caption.g.destroy();
-		caption = null;
+		clearCaption();
 	}
 
 	onDestroy(() => {

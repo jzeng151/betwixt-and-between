@@ -329,6 +329,11 @@ export type ProjectionTakesPlaceAt = {
 	locationId: string; // the `to` endpoint (Event AT Location — edge-policy.ts:14)
 	startPosition: number | null;
 	endPosition: number | null;
+	// Mystery reveal gate (isMysteryEdgeAtT): a takes_place_at hidden until
+	// revealedAtPosition must not resolve a Location before its reveal, or a causal
+	// edge would spatially leak the hidden endpoint. Optional so callers/fixtures
+	// that predate the gate still type-check; absent/null = no gate. (Codex PR #72)
+	revealedAtPosition?: number | null;
 };
 
 // Slice 5 PR-C — pre-resolved causal-render input, supplied by the (client)
@@ -721,15 +726,17 @@ function foldCausalEdges(t: number, causal: CausalProjectionInput): RenderedCaus
 	if (causal.edges.length === 0 || centroidByLocation.size === 0) return [];
 
 	// Resolve the Location an Event is AT during time T. An Event's takes_place_at
-	// can be temporally scoped (FU1/#66), so only edges visible at T count; among
-	// those, prefer a scoped (bounded) one over a timeless default, then lowest
-	// locationId for determinism. null = no active location → endpoint omitted.
+	// can be temporally scoped (FU1/#66), so only edges visible at T AND not still
+	// reveal-gated (isMysteryEdgeAtT) count; among those, prefer a scoped (bounded)
+	// one over a timeless default, then lowest locationId for determinism. null = no
+	// active location → endpoint omitted. (mystery gate: Codex PR #72)
 	function locationAtT(eventId: string): string | null {
 		const edges = takesPlaceAt.get(eventId);
 		if (!edges || edges.length === 0) return null;
 		let best: ProjectionTakesPlaceAt | null = null;
 		for (const tp of edges) {
 			if (!isEdgeVisibleAtT(tp, t)) continue;
+			if (isMysteryEdgeAtT(tp, t)) continue; // reveal-gated: hidden until revealedAtPosition
 			if (best === null) {
 				best = tp;
 				continue;

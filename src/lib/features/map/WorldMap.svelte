@@ -51,7 +51,8 @@
 	import type {
 		ConquestFlip,
 		MarchTrail,
-		CausalRipple
+		CausalRipple,
+		Punctuation
 	} from '$lib/features/map/punctuation-diff.js';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import MapToolSelector from '$lib/features/map/MapToolSelector.svelte';
@@ -704,6 +705,14 @@
 	let reducedMotion = $state(false);
 	// Imperative handle to the FX layer (spawnConquest / clearAll).
 	let punctuationLayer = $state<ReturnType<typeof PixiPunctuationLayer> | null>(null);
+	// The FX layer's spawn*() methods no-op until the dynamic Pixi import + overlay
+	// container are live (onReady). Unlike captions, the non-caption beats had no
+	// retry path, so an opening conquest/march/ripple that fired before Pixi finished
+	// importing was lost even though playback.frame() had already advanced its diff
+	// baseline. Buffer those beats here and flush them once onReady fires (Codex
+	// PR #72). pixiReady is the readiness flag; pendingBeats holds the init-window beats.
+	let pixiReady = false;
+	let pendingBeats: Punctuation[] = [];
 	// Within-map camera target — the changed-this-frame bbox the viewport eases
 	// toward. $state so PixiCameraLayer sees it; updated only when beats fire
 	// (per boundary), not per frame. Null = hold.
@@ -724,7 +733,18 @@
 	// here reads back), so no reactive loop. FX fire on manual scrub too (by
 	// design); the pin flag gates only the camera, not punctuation.
 	$effect(() => {
-		const beats = playback.frame(renderedState, $playhead, activeMapId);
+		// Re-run when the FX layer becomes ready so buffered init-window beats flush.
+		void captionReadyTick;
+		const fresh = playback.frame(renderedState, $playhead, activeMapId);
+		if (!pixiReady) {
+			// Pixi import not finished — spawn*() would silently no-op and the beats
+			// would be lost (the diff baseline already advanced). Buffer and flush on
+			// ready (Codex PR #72).
+			if (fresh.length) pendingBeats.push(...fresh);
+			return;
+		}
+		const beats = pendingBeats.length ? pendingBeats.concat(fresh) : fresh;
+		pendingBeats = [];
 		if (beats.length === 0) return;
 		const conquests = beats.filter((b): b is ConquestFlip => b.type === 'conquest');
 		const marches = beats.filter((b): b is MarchTrail => b.type === 'march');
@@ -841,6 +861,19 @@
 	// pause+edit+Play can't repopulate the cache with pre-edit regions or delete a
 	// newer request's marker (Codex PR #72).
 	let cycleGeneration = 0;
+
+	// Drop a prefetched regions snapshot when that map's regions are edited in the
+	// same playback run (region create/update/delete). Without this, a later A→B→A
+	// cycle would re-commit the pre-edit snapshot from cache and make the saved edit
+	// disappear from the client (Codex PR #72). Edits can happen while playback
+	// continues unpinned, so we also bump the generation + clear the in-flight
+	// markers so any prefetch already mid-flight drops its (now stale) result and the
+	// cycling effect re-prefetches the fresh regions on its next tick.
+	function invalidateCycleCache(mapId: string): void {
+		cycleCache.delete(mapId);
+		cyclePrefetching.clear();
+		cycleGeneration++;
+	}
 
 	// Resolve the map the story occupies at T → the map-bearing target Location
 	// and its variant's mapId, or null to hold. PURE w.r.t. the hysteresis cursor:
@@ -961,6 +994,10 @@
 		void captionReadyTick;
 		if (t === null) {
 			lastActiveEventIds = new Set();
+			// Idle: no Event is active, so clear any caption still on screen rather
+			// than leaving the previous Event's title up for its remaining lifetime
+			// (Codex PR #72). FX are left to decay on their own.
+			punctuationLayer?.clearCaption();
 			return;
 		}
 		const ids = activeEventIdsAtT($relationships, t, takesPlaceAtIndex);
@@ -1416,6 +1453,7 @@
 		const region = $mapRegions.find((r) => r.id === regionId);
 		try {
 			await worldMapStore.deleteRegion(activeMapId, regionId);
+			invalidateCycleCache(activeMapId);
 		} catch (err) {
 			console.error('Failed to delete region:', err);
 		}
@@ -1657,6 +1695,7 @@
 					locationId: regionFormLocationId,
 					color: regionFormColor
 				});
+				invalidateCycleCache(activeMapId);
 			} catch (err) {
 				console.error('Failed to update region:', err);
 			}
@@ -1675,6 +1714,7 @@
 					polygon: pendingPolygon!,
 					color: regionFormColor
 				});
+				invalidateCycleCache(activeMapId);
 			} catch (err) {
 				console.error('Failed to create region:', err);
 			}
@@ -1935,8 +1975,16 @@
 						const drilled = drillIntoLocation(locId);
 						if (!drilled) {
 							const loc = $entities.find((e) => e.id === locId);
-							if (loc)
+							if (loc) {
+								// Drilling into a mapless child is manual map-navigation
+								// intent just like the variant path (which pins inside
+								// drillIntoLocation). Pin here too so cycling is suspended
+								// while the offer is open AND after acceptCreateMapOffer()
+								// switches to the freshly-created map — otherwise the next
+								// playhead tick would cycle straight off it (Codex PR #72).
+								pinView();
 								createMapOffer = { childId: locId, childName: loc.name };
+							}
 						}
 					}}
 					onOpenLocation={(locId) => windowStore.open('entity-detail', locId)}
@@ -1963,7 +2011,10 @@
 					mapWidth={activeMap?.width ?? 0}
 					mapHeight={activeMap?.height ?? 0}
 					{reducedMotion}
-					onReady={() => captionReadyTick++}
+					onReady={() => {
+					pixiReady = true;
+					captionReadyTick++;
+				}}
 				/>
 				<!-- Within-map camera: eases the viewport toward the changed-this-
 				     frame bbox during playback; pins on manual pan/pinch/wheel. -->

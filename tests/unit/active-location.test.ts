@@ -24,7 +24,11 @@ function rel(
 	type: RelationshipType,
 	fromId: string,
 	toId: string,
-	opts: { startPosition?: number | null; endPosition?: number | null } = {}
+	opts: {
+		startPosition?: number | null;
+		endPosition?: number | null;
+		revealedAtPosition?: number | null;
+	} = {}
 ): Relationship {
 	return {
 		id: `${type}:${fromId}->${toId}`,
@@ -38,14 +42,18 @@ function rel(
 		endSceneId: null,
 		startPosition: opts.startPosition ?? null,
 		endPosition: opts.endPosition ?? null,
-		revealedAtPosition: null
+		revealedAtPosition: opts.revealedAtPosition ?? null
 	};
 }
 
 const tpa = (
 	event: string,
 	loc: string,
-	bounds?: { startPosition?: number | null; endPosition?: number | null }
+	bounds?: {
+		startPosition?: number | null;
+		endPosition?: number | null;
+		revealedAtPosition?: number | null;
+	}
 ) => rel('takes_place_at', event, loc, bounds);
 const partOf = (child: string, parent: string) => rel('part_of', child, parent);
 
@@ -59,10 +67,12 @@ describe('groupTakesPlaceAt', () => {
 			rel('caused_by', 'e2', 'e1')
 		]);
 		expect(g.get('e1')).toEqual<TakesPlaceAtEntry[]>([
-			{ locationId: 'locA', startPosition: null, endPosition: null },
-			{ locationId: 'locB', startPosition: 0.2, endPosition: 0.8 }
+			{ locationId: 'locA', startPosition: null, endPosition: null, revealedAtPosition: null },
+			{ locationId: 'locB', startPosition: 0.2, endPosition: 0.8, revealedAtPosition: null }
 		]);
-		expect(g.get('e2')).toEqual([{ locationId: 'locC', startPosition: null, endPosition: null }]);
+		expect(g.get('e2')).toEqual([
+			{ locationId: 'locC', startPosition: null, endPosition: null, revealedAtPosition: null }
+		]);
 		expect(g.has('caused_by:e2->e1' as never)).toBe(false);
 	});
 });
@@ -98,6 +108,24 @@ describe('eventLocationAtT — mirrors foldCausalEdges.locationAtT', () => {
 		];
 		expect(eventLocationAtT(entries, 0.5)).toBe('locA');
 	});
+
+	it('skips a reveal-gated edge until its revealedAtPosition (Codex PR #72)', () => {
+		const entries: TakesPlaceAtEntry[] = [
+			{ locationId: 'locSecret', startPosition: null, endPosition: null, revealedAtPosition: 0.6 }
+		];
+		expect(eventLocationAtT(entries, 0.5)).toBeNull(); // before reveal → hidden
+		expect(eventLocationAtT(entries, 0.6)).toBe('locSecret'); // at reveal → visible
+		expect(eventLocationAtT(entries, 0.9)).toBe('locSecret'); // after reveal → visible
+	});
+
+	it('falls back to a visible edge while another is still reveal-gated', () => {
+		const entries: TakesPlaceAtEntry[] = [
+			{ locationId: 'locSecret', startPosition: null, endPosition: null, revealedAtPosition: 0.6 },
+			{ locationId: 'locPublic', startPosition: null, endPosition: null }
+		];
+		// Before reveal the gated edge is skipped, so the public one wins.
+		expect(eventLocationAtT(entries, 0.5)).toBe('locPublic');
+	});
 });
 
 describe('activeLocationsAtT — specificity ranking', () => {
@@ -124,6 +152,16 @@ describe('activeLocationsAtT — specificity ranking', () => {
 		expect(activeLocationsAtT(rels, 0.5)).toEqual(['root']); // leaf's window closed
 		expect(activeLocationsAtT(rels, 0.1)).toEqual(['leaf', 'root']);
 	});
+
+	it('excludes a reveal-gated Location so cycling never spoils a hidden map (Codex PR #72)', () => {
+		const rels = [
+			...hierarchy,
+			tpa('e1', 'leaf', { revealedAtPosition: 0.6 }), // mystery: leaf hidden until 0.6
+			tpa('e2', 'root')
+		];
+		expect(activeLocationsAtT(rels, 0.5)).toEqual(['root']); // before reveal → leaf not a cycle target
+		expect(activeLocationsAtT(rels, 0.7)).toEqual(['leaf', 'root']); // after reveal → leaf active
+	});
 });
 
 describe('activeEventIdsAtT — caption selection (T9 reuses the resolver)', () => {
@@ -135,6 +173,12 @@ describe('activeEventIdsAtT — caption selection (T9 reuses the resolver)', () 
 		];
 		expect(activeEventIdsAtT(rels, 0.1).sort()).toEqual(['e1', 'e2']); // e3 closed
 		expect(activeEventIdsAtT(rels, 0.7).sort()).toEqual(['e1', 'e3']); // e2 closed
+	});
+
+	it('excludes a reveal-gated Event until it is revealed (Codex PR #72)', () => {
+		const rels = [tpa('e1', 'locA', { revealedAtPosition: 0.6 })];
+		expect(activeEventIdsAtT(rels, 0.5)).toEqual([]); // before reveal → no caption
+		expect(activeEventIdsAtT(rels, 0.7)).toEqual(['e1']); // after reveal → caption fires
 	});
 
 	it('returns [] when no Event is active at T', () => {
