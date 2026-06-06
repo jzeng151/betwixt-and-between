@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.13.0] - 2026-06-06
+
+World Map Cinematic Spotlight, continued: the camera now follows the story across maps, and the map narrates what is happening as it plays.
+
+### Added
+
+- **Between-map cycling.** As the timeline plays, the world map now switches itself to follow where the story is. When the playhead crosses into a moment that takes place in a different Location, the view moves to that Location's map (falling back to the nearest ancestor that has a map). The switch only happens once the target map's regions are ready, so you never see a half-loaded map flash, and a brief overlap between scenes won't strobe the view back and forth. Manually picking a map, panning, or zooming pins the view and suspends cycling until you press play again.
+- **Causal ripples.** When a cause-and-effect link lights up during playback, a bright pulse now travels along the edge from cause to effect over a fading arc, so a chain of consequences reads as it fires.
+- **March trails.** A moving entity now leaves a fading trail from its previous position to its new one, so movement reads as movement rather than a jump.
+- **Diegetic captions.** As each Event becomes active, its name appears as a lower-third title card on the map, so you can read the beat that is playing. Captions render in the same Fraunces typeface used for entity names elsewhere.
+
 ## [0.8.12.0] - 2026-06-05
 
 World Map Cinematic Spotlight: the map reacts to timeline playback, and the editor's tools stay reachable on short screens.
