@@ -2,6 +2,16 @@ import { writable } from 'svelte/store';
 import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } from './types.js';
 import { errorMessage } from '$lib/util/api-error-message.js';
 
+// Result of loadMapRegions. `superseded` is distinct from `not-found` so the
+// caller does NOT flip its region-readiness gate on a stale A→B→A load that
+// resolved after a newer load became authoritative (Codex PR #72): only a
+// `loaded` result is healthy; `not-found` settles the overlay but stays
+// unhealthy; `superseded` is a no-op (the newer load owns the gate).
+export type LoadRegionsResult =
+	| { status: 'loaded'; map: WorldMap }
+	| { status: 'not-found' }
+	| { status: 'superseded' };
+
 function createWorldMapStore() {
 	const maps = writable<WorldMap[]>([]);
 	const regions = writable<MapRegion[]>([]);
@@ -27,19 +37,19 @@ function createWorldMapStore() {
 		maps.set(data);
 	}
 
-	async function loadMapRegions(mapId: string): Promise<WorldMap | null> {
+	async function loadMapRegions(mapId: string): Promise<LoadRegionsResult> {
 		const seq = ++loadSeq;
 		const res = await fetch(`/api/maps/${mapId}`);
-		if (seq !== loadSeq) return null; // stale — a newer load/commit superseded this
+		if (seq !== loadSeq) return { status: 'superseded' }; // a newer load/commit superseded this
 		if (!res.ok) {
-			if (res.status === 404) return null;
+			if (res.status === 404) return { status: 'not-found' };
 			throw new Error('Failed to load map');
 		}
 		const data = await res.json();
-		if (seq !== loadSeq) return null; // stale — re-check after JSON parse
+		if (seq !== loadSeq) return { status: 'superseded' }; // re-check after JSON parse
 		const { regions: loadedRegions, ...map } = data;
 		regions.set(loadedRegions as MapRegion[]);
-		return map as WorldMap;
+		return { status: 'loaded', map: map as WorldMap };
 	}
 
 	// Cinematic Spotlight (Slice 8) PR2 — between-map cycling, switch-only-when-

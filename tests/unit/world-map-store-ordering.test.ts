@@ -91,7 +91,7 @@ describe('applyPrefetchedRegions', () => {
 		resolveLoad(makeResponse(mapPayload('A'))); // stale: token already bumped
 		const loaded = await loadPromise;
 
-		expect(loaded).toBeNull(); // load saw it was superseded
+		expect(loaded.status).toBe('superseded'); // load saw it was superseded
 		expect(get(mapRegions).map((r) => r.id)).toEqual(['committed']); // not clobbered
 	});
 });
@@ -110,19 +110,19 @@ describe('loadMapRegions — generation guard', () => {
 
 		// B (second, newest generation) resolves first and commits.
 		resolvers[1](makeResponse(mapPayload('B')));
-		expect(await p2).not.toBeNull();
+		expect((await p2).status).toBe('loaded');
 		expect(get(mapRegions).map((r) => r.id)).toEqual(['B-r']);
 
-		// A (older generation) resolves late and must be dropped.
+		// A (older generation) resolves late and must be dropped as superseded.
 		resolvers[0](makeResponse(mapPayload('A')));
-		expect(await p1).toBeNull();
+		expect((await p1).status).toBe('superseded');
 		expect(get(mapRegions).map((r) => r.id)).toEqual(['B-r']); // still B
 	});
 
-	it('returns null on 404 without throwing', async () => {
+	it('returns not-found on 404 without throwing', async () => {
 		globalThis.fetch = vi
 			.fn()
 			.mockResolvedValue(makeResponse('nope', false, 404)) as unknown as typeof fetch;
-		expect(await worldMapStore.loadMapRegions('gone')).toBeNull();
+		expect((await worldMapStore.loadMapRegions('gone')).status).toBe('not-found');
 	});
 });
