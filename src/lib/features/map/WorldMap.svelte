@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { worldMapStore, worldMaps, mapRegions } from '$lib/features/map/store.js';
+	import type { MapRegion, WorldMap as WorldMapType } from '$lib/features/map/types.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { isInScope } from '$lib/os/scope-store.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
@@ -34,6 +35,16 @@
 	import PixiPlacementLayer from '$lib/features/map/PixiPlacementLayer.svelte';
 	import { createPlaybackReaction } from '$lib/features/map/playback-controller.js';
 	import { computeCameraTarget, type CameraTarget } from '$lib/features/map/camera-director.js';
+	import {
+		groupTakesPlaceAt,
+		activeLocationsAtT,
+		pickCyclingTarget
+	} from '$lib/features/map/active-location.js';
+	import type {
+		ConquestFlip,
+		MarchTrail,
+		CausalRipple
+	} from '$lib/features/map/punctuation-diff.js';
 	import MapSidebar from '$lib/features/map/MapSidebar.svelte';
 	import MapToolSelector from '$lib/features/map/MapToolSelector.svelte';
 	import {
@@ -601,18 +612,10 @@
 		// isEdgeVisibleAtT — an Event's location can be temporally scoped, so a
 		// timeless lowest-id pick could anchor an edge to an inactive/off-map
 		// Location at T (FU1, Codex #66). Cheap t-independent grouping here; the
-		// t-dependent pick is per-tick but small.
-		const takesPlaceAt = new Map<
-			string,
-			{ locationId: string; startPosition: number | null; endPosition: number | null }[]
-		>();
-		for (const r of $relationships) {
-			if (r.type !== 'takes_place_at') continue;
-			const list = takesPlaceAt.get(r.fromId);
-			const entry = { locationId: r.toId, startPosition: r.startPosition, endPosition: r.endPosition };
-			if (list) list.push(entry);
-			else takesPlaceAt.set(r.fromId, [entry]);
-		}
+		// t-dependent pick is per-tick but small. Shared with the between-map
+		// cycling resolver (active-location.ts, eng decision #5) so the
+		// takes_place_at indexing exists once.
+		const takesPlaceAt = groupTakesPlaceAt($relationships);
 		// Location → centroid from scopedRegions (already user- and scope-filtered).
 		// First region wins per Location (deterministic: scopedRegions order).
 		// MapRegion.polygon is stored as [[lat, lng], …] in source-image PIXELS
@@ -695,19 +698,29 @@
 	$effect(() => {
 		const beats = playback.frame(renderedState, $playhead, activeMapId);
 		if (beats.length === 0) return;
-		punctuationLayer?.spawnConquest(beats);
-		// Aim the camera at the flipped regions — the actual event. PR1 frames the
-		// conquest only; mover-following (marches) is wired with PR2's march trail,
-		// where camera-director's mover input gets used deliberately. Framing ALL
-		// movers here would let an unrelated marker on the far side of the map pull
-		// the camera off the flip.
-		const polys = beats.map((b) => regionPolyXY(b.regionId)).filter((p): p is number[][] => !!p);
-		if (polys.length === 0) return;
+		const conquests = beats.filter((b): b is ConquestFlip => b.type === 'conquest');
+		const marches = beats.filter((b): b is MarchTrail => b.type === 'march');
+		const ripples = beats.filter((b): b is CausalRipple => b.type === 'ripple');
+		punctuationLayer?.spawnConquest(conquests);
+		punctuationLayer?.spawnMarch(marches);
+		punctuationLayer?.spawnRipple(ripples);
+
+		// Aim the camera at the LOCALIZED changes this frame — flipped regions and
+		// the markers that actually moved. Marches only (not every mover): an
+		// unrelated marker elsewhere shouldn't pull the camera off the action.
+		// Ripples can span the whole map (cause↔effect far apart), so they don't
+		// drive the camera — framing them would yank it out on every causal link.
 		const mapW = activeMap?.width ?? 0;
 		const mapH = activeMap?.height ?? 0;
+		const polys = conquests
+			.map((b) => regionPolyXY(b.regionId))
+			.filter((p): p is number[][] => !!p);
+		const movers =
+			mapW > 0 && mapH > 0 ? marches.map((m) => ({ x: m.toX * mapW, y: m.toY * mapH })) : [];
+		if (polys.length === 0 && movers.length === 0) return;
 		const vp = pixiViewport as { screenWidth?: number; screenHeight?: number } | null;
 		const screen = { width: vp?.screenWidth ?? mapW, height: vp?.screenHeight ?? mapH };
-		const t = computeCameraTarget(polys, [], screen);
+		const t = computeCameraTarget(polys, movers, screen);
 		if (t) cameraTarget = t;
 	});
 
@@ -725,6 +738,10 @@
 		const playing = $isPlaying;
 		if (playing && !wasPlaying) {
 			playback.unpin();
+			// Restart cycling hysteresis from a clean slate: the previous run's
+			// target Location must not stick across a fresh Play (or the user may
+			// have manually navigated while paused).
+			cyclePrevTargetLoc = null;
 			// Replay / start-over: playhead.play() rewinds the playhead to 0 when it
 			// was idle or had reached maxT. The diff baseline is dropped in
 			// playback.frame() on that backward jump (no reverse flashes), but any FX
@@ -748,6 +765,84 @@
 	function cameraActive(): boolean {
 		return get(isPlaying) && !playback.pinned;
 	}
+
+	// ── Between-map Spotlight cycling (Slice 8) PR2 ─────────────────────────
+	//
+	// The macro camera: as the playhead crosses into a different most-specific
+	// active Location's map, the view switches to that map. Built on the pure
+	// resolver (active-location.ts) + switch-only-when-ready so a switch never
+	// flashes a half-loaded map.
+	//
+	// Invariants (eng decisions #1, #3, T7):
+	//   - Cycles ONLY during unpinned playback. Any manual map-select / pan / zoom
+	//     pins (playback.pin()) and suspends cycling until the next Play.
+	//   - switch-only-when-ready: commit a target map only when its regions are
+	//     CACHED (prefetched off the shared store); else hold the current map and
+	//     catch up once the prefetch lands.
+	//   - Cycling NEVER touches `lastAppliedEntityId` (the deep-link arbiter's
+	//     ownership token) — a cycle is not a deep-link, so the existing one-shot +
+	//     external-entityId auto-switch (the T7 regression) behaves exactly as
+	//     before. Cycling writes only activeMapId + the regions store.
+	const cycleCache = new Map<string, { map: WorldMapType; regions: MapRegion[] }>();
+	const cyclePrefetching = new Set<string>();
+	// Previous map-bearing target Location (resolver hysteresis state). Reset on
+	// each Play (above) and when a manual switch pins.
+	let cyclePrevTargetLoc: string | null = null;
+
+	// Resolve the map the story occupies at T → its active variant's mapId, or
+	// null to hold. Mutates the hysteresis cursor, so call once per evaluation.
+	function resolveCycleTargetMapId(t: number): string | null {
+		const ranked = activeLocationsAtT($relationships, t, hierarchyIndex);
+		const hasMap = (locId: string) => resolveActiveVariant($worldMaps, locId, t) != null;
+		const targetLoc = pickCyclingTarget(ranked, hasMap, hierarchyIndex, cyclePrevTargetLoc);
+		cyclePrevTargetLoc = targetLoc;
+		if (!targetLoc) return null;
+		return resolveActiveVariant($worldMaps, targetLoc, t)?.id ?? null;
+	}
+
+	// Fetch a target map's regions into the cache without disturbing the visible
+	// map. Deduped against in-flight prefetches; failures are non-fatal (the
+	// resolver just keeps holding the current map).
+	async function prefetchCycle(mapId: string): Promise<void> {
+		if (cycleCache.has(mapId) || cyclePrefetching.has(mapId)) return;
+		cyclePrefetching.add(mapId);
+		try {
+			const data = await worldMapStore.prefetchMapRegions(mapId);
+			if (data) cycleCache.set(mapId, data);
+		} catch (err) {
+			console.error('Spotlight cycle prefetch failed:', mapId, err);
+		} finally {
+			cyclePrefetching.delete(mapId);
+		}
+	}
+
+	// Commit a cached map switch: set the regions store from cache (no fetch, no
+	// loading flash) and flip activeMapId, which drives the anchors/events/
+	// layer-prefs load effect for the new map. The loading overlay is suppressed
+	// while playing so the brief post-commit anchors load doesn't strobe.
+	function commitCycle(mapId: string, cached: { map: WorldMapType; regions: MapRegion[] }): void {
+		worldMapStore.applyPrefetchedRegions(mapId, cached.regions);
+		mapRegionsHealthy = true;
+		regionsSettled = true;
+		activeMapId = mapId;
+	}
+
+	// The cycling driver. Re-runs on every playhead advance (and on play/pause):
+	// resolve the target, then commit-if-cached / prefetch-and-hold. Suspended
+	// while pinned or idle.
+	$effect(() => {
+		const playing = $isPlaying;
+		const t = $playhead;
+		// Touch the stores the resolver reads so the effect tracks them.
+		void $relationships;
+		void $worldMaps;
+		if (!playing || playback.pinned || t === null) return;
+		const targetMapId = resolveCycleTargetMapId(t);
+		if (!targetMapId || targetMapId === activeMapId) return;
+		const cached = cycleCache.get(targetMapId);
+		if (cached) commitCycle(targetMapId, cached);
+		else void prefetchCycle(targetMapId); // hold current map; commit when ready
+	});
 
 	// Terrain cells, clamped to the current grid. projectState emits every
 	// STORED cell (sparse, bounds-agnostic by design), but a cell outside the
@@ -1655,10 +1750,14 @@
 			ondragover={handleAssetDragOver}
 			ondrop={handleAssetDrop}
 		>
-		{#if mapLoading}
+		{#if mapLoading && !$isPlaying}
 			<!-- Bug 2: cover the canvas while the saved layer config AND the
 			     placements load, so the user sees an intentional loading state
-			     instead of layers/markers flashing or popping in. -->
+			     instead of layers/markers flashing or popping in.
+			     Slice 8 PR2: suppressed while playing — a between-map cycle commits
+			     cached regions, then anchors/events load behind the scenes; the
+			     overlay would otherwise strobe on every cycle. The mapLoading
+			     write-gate (undo/redo/place) still holds; only the visual is hidden. -->
 			<div class="map-loading-overlay" role="status" aria-live="polite">
 				<span class="map-loading-spinner" aria-hidden="true"></span>
 				<span class="map-loading-text">Loading map…</span>
@@ -1708,13 +1807,17 @@
 					interactive={canvasMode === 'idle'}
 					onEdgeClick={(id) => jumpToCause($relationships.find((r) => r.id === id))}
 				/>
-				<!-- Cinematic Spotlight (Slice 8) PR1 — conquest-flash FX overlay.
-				     Over regions/edges, under markers; non-interactive. WorldMap
-				     calls spawnConquest() via the bound handle. -->
+				<!-- Cinematic Spotlight (Slice 8) — punctuation FX overlay (conquest
+				     flash + march trail + causal ripple). Over regions/edges, under
+				     markers; non-interactive. WorldMap calls spawn*() via the bound
+				     handle. mapWidth/mapHeight convert the march/ripple fractional
+				     positions to the viewport's world px. -->
 				<PixiPunctuationLayer
 					bind:this={punctuationLayer}
 					regions={scopedRegions}
 					mapId={activeMapId}
+					mapWidth={activeMap?.width ?? 0}
+					mapHeight={activeMap?.height ?? 0}
 					{reducedMotion}
 				/>
 				<!-- Within-map camera: eases the viewport toward the changed-this-
