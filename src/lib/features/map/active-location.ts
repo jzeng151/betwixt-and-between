@@ -24,7 +24,7 @@
 // Window/Pixi-free (SSR-safe, unit-tested).
 
 import type { Relationship } from '$lib/stores/relationships.js';
-import { isEdgeVisibleAtT } from '$lib/features/timeline/playhead-store.js';
+import { isEdgeVisibleAtT, isMysteryEdgeAtT } from '$lib/features/timeline/playhead-store.js';
 import { buildHierarchyIndex, walkAncestors, type HierarchyIndex } from '$lib/location-hierarchy.js';
 
 // One takes_place_at edge reduced to what the scope rule reads. Matches the
@@ -34,6 +34,10 @@ export type TakesPlaceAtEntry = {
 	locationId: string;
 	startPosition: number | null;
 	endPosition: number | null;
+	// Mystery reveal gate: while t < revealedAtPosition the edge exists but is
+	// hidden from the reader (isMysteryEdgeAtT). Optional so existing fixtures that
+	// predate the gate still type-check; absent/null = no gate. (Codex PR #72)
+	revealedAtPosition?: number | null;
 };
 
 /**
@@ -49,7 +53,8 @@ export function groupTakesPlaceAt(relationships: Relationship[]): Map<string, Ta
 		const entry: TakesPlaceAtEntry = {
 			locationId: r.toId,
 			startPosition: r.startPosition,
-			endPosition: r.endPosition
+			endPosition: r.endPosition,
+			revealedAtPosition: r.revealedAtPosition
 		};
 		const list = byEvent.get(r.fromId);
 		if (list) list.push(entry);
@@ -60,14 +65,22 @@ export function groupTakesPlaceAt(relationships: Relationship[]): Map<string, Ta
 
 /**
  * The Location an Event is AT during time T, or null if none is active. Mirrors
- * `foldCausalEdges.locationAtT` (projection.ts:727-746): visible-at-T only,
- * scoped beats timeless, lowest locationId breaks ties. Pure.
+ * `foldCausalEdges.locationAtT` (projection.ts): visible-at-T only, NOT still
+ * reveal-gated (mystery), scoped beats timeless, lowest locationId breaks ties.
+ * Pure.
+ *
+ * The mystery gate matters here too: a `takes_place_at` with a future
+ * `revealedAtPosition` must not resolve a Location before its reveal, or the
+ * camera/cycling would switch the whole view to the hidden Location's map and the
+ * caption layer would title its Event — leaking story information the projection
+ * already hides for causal edges (projection.ts mystery policy). (Codex PR #72)
  */
 export function eventLocationAtT(entries: TakesPlaceAtEntry[] | undefined, t: number): string | null {
 	if (!entries || entries.length === 0) return null;
 	let best: TakesPlaceAtEntry | null = null;
 	for (const tp of entries) {
 		if (!isEdgeVisibleAtT(tp, t)) continue;
+		if (isMysteryEdgeAtT(tp, t)) continue; // reveal-gated: hidden until revealedAtPosition
 		if (best === null) {
 			best = tp;
 			continue;

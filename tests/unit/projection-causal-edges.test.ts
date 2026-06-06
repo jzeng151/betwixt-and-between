@@ -60,8 +60,13 @@ function edge(over: Partial<ProjectionCausalEdge> = {}): ProjectionCausalEdge {
 }
 
 // One timeless takes_place_at edge (no bounds) for an Event → Location.
-function tpa(locationId: string, startPosition: number | null = null, endPosition: number | null = null) {
-	return [{ locationId, startPosition, endPosition }];
+function tpa(
+	locationId: string,
+	startPosition: number | null = null,
+	endPosition: number | null = null,
+	revealedAtPosition: number | null = null
+) {
+	return [{ locationId, startPosition, endPosition, revealedAtPosition }];
 }
 
 // Default: effect at LOC_A, cause at LOC_B, both timeless, both with centroids.
@@ -196,6 +201,20 @@ describe('projectState causal-edge fold — causalEdges', () => {
 		const mystery = causal({ edges: [edge({ revealedAtPosition: 5 })] }); // timeless but reveal-gated
 		expect(projectState(3, [ANCHOR], [], emptyCtx, [], mystery).causalEdges).toHaveLength(0);
 		expect(projectState(6, [ANCHOR], [], emptyCtx, [], mystery).causalEdges).toHaveLength(1);
+	});
+
+	it('endpoint resolved through a reveal-gated takes_place_at → omitted until revealed (Codex PR #72)', () => {
+		// The causal edge itself is public, but the cause endpoint's only location
+		// link is reveal-gated. Before the reveal the endpoint must not resolve, or a
+		// drawn arrow would spatially leak the hidden Location.
+		const gated = causal({
+			takesPlaceAt: new Map([
+				[EV_EFFECT, tpa(LOC_A)],
+				[EV_CAUSE, tpa(LOC_B, null, null, 5)] // reveal-gated takes_place_at
+			])
+		});
+		expect(projectState(3, [ANCHOR], [], emptyCtx, [], gated).causalEdges).toHaveLength(0);
+		expect(projectState(6, [ANCHOR], [], emptyCtx, [], gated).causalEdges).toHaveLength(1);
 	});
 
 	it('idle (t = -Infinity): no active anchor → no causal edges at all', () => {
