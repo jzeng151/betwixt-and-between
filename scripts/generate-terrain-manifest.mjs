@@ -114,14 +114,17 @@ const manifest = {
 writeFileSync(OUT, JSON.stringify(manifest, null, 2) + '\n');
 
 // Emit the authoritative allowlist of asset-backed terrain keys (category
-// names + base-tile basenames + water color keys). The server validator and
+// names + every tile basename — base, road, and water-edge — + water color
+// keys; all three tile kinds are directly paintable). The server validator and
 // the projection fold check painted biomes against this set so a junk key
 // can't be stored as invisible, grid-blocking terrain (Slice 6 D15 + /review
 // #3). Declaration-only `as const` → safe to import from server code.
 const keyOf = (u) => u.split('/').pop().replace(/\.png$/i, '');
 const assetKeys = [
 	...Object.keys(categories),
-	...Object.values(categories).flatMap((c) => c.base.map(keyOf)),
+	...Object.values(categories).flatMap((c) =>
+		[...c.base, ...c.road, ...c.waterEdge].map(keyOf)
+	),
 	...waterColors.map((wc) => wc.key)
 ].sort();
 const KEYS_OUT = join(ROOT, 'src', 'lib', 'features', 'map', 'terrain-keys.generated.ts');

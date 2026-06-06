@@ -161,6 +161,30 @@ describe('texturesForType (popover contents)', () => {
 		expect(texturesForType(null, 'Grass')).toEqual([]);
 		expect(texturesForType(MANIFEST, WATER_TYPE)).toEqual([]); // no water section
 	});
+
+	it('lists base + road + water-edge variants as paintable swatches, base first', () => {
+		const manifest: TerrainManifest = {
+			tileSize: 256,
+			categories: {
+				Clay: {
+					base: ['/api/sprites/Clay/clay/clay_tile_256_01.png'],
+					road: ['/api/sprites/Clay/clay/clay_tile_road_256_01.png'],
+					waterEdge: ['/api/sprites/Clay/clay/clay_tile_water_256_01.png']
+				}
+			}
+		};
+		const t = texturesForType(manifest, 'Clay');
+		expect(t.map((x) => [x.key, x.label])).toEqual([
+			['clay_tile_256_01', 'clay · 01'], // base, first
+			['clay_tile_road_256_01', 'clay road · 01'], // road variant keeps its kind token
+			['clay_tile_water_256_01', 'clay water · 01']
+		]);
+		// road/water variants must also render + arm their category chip.
+		expect(tileUrlForKey(manifest, 'clay_tile_road_256_01')).toBe(
+			'/api/sprites/Clay/clay/clay_tile_road_256_01.png'
+		);
+		expect(typeForKey(manifest, 'clay_tile_water_256_01')).toBe('Clay');
+	});
 });
 
 describe('loadTerrainManifest', () => {
