@@ -6,9 +6,10 @@
 // the client — projection.ts stays pure, no new map_event kinds. This module is
 // the pure diff; the Pixi layer (PixiPunctuationLayer) renders what it emits.
 //
-// PR1 emits only the conquest flip (owner change). March trail + causal ripple
-// land in PR2; the `Punctuation` union and the RenderedState-in/-out signature
-// are shaped so they extend by adding cases, not reshaping.
+// Emits three beat kinds: the conquest flip (owner change), the march trail
+// (a mover's displacement), and the causal ripple (a lit causal chain). The
+// `Punctuation` union and the RenderedState-in/-out signature are shaped so
+// they extend by adding cases, not reshaping.
 //
 // Window/Pixi-free (SSR-safe, unit-tested).
 //

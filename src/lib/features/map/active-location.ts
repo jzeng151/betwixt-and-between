@@ -95,9 +95,10 @@ export function eventLocationAtT(entries: TakesPlaceAtEntry[] | undefined, t: nu
 export function activeLocationsAtT(
 	relationships: Relationship[],
 	t: number,
-	index?: HierarchyIndex
+	index?: HierarchyIndex,
+	byEventIndex?: Map<string, TakesPlaceAtEntry[]>
 ): string[] {
-	const byEvent = groupTakesPlaceAt(relationships);
+	const byEvent = byEventIndex ?? groupTakesPlaceAt(relationships);
 	const idx = index ?? buildHierarchyIndex(relationships);
 
 	const active = new Set<string>();
@@ -121,13 +122,57 @@ export function activeLocationsAtT(
  * caption layer (T9) diffs this set frame-to-frame and titles the newly-active
  * Events, reusing the resolver instead of a second selection model.
  */
-export function activeEventIdsAtT(relationships: Relationship[], t: number): string[] {
-	const byEvent = groupTakesPlaceAt(relationships);
+export function activeEventIdsAtT(
+	relationships: Relationship[],
+	t: number,
+	byEventIndex?: Map<string, TakesPlaceAtEntry[]>
+): string[] {
+	const byEvent = byEventIndex ?? groupTakesPlaceAt(relationships);
 	const ids: string[] = [];
 	for (const [eventId, entries] of byEvent) {
 		if (eventLocationAtT(entries, t) !== null) ids.push(eventId);
 	}
 	return ids;
+}
+
+/**
+ * Frame-to-frame diff for the diegetic caption layer (T9): the Event ids in
+ * `ids` that were NOT already active in `prev`. Pure — the caller owns the
+ * baseline Set (and resets it to empty at idle so the next play re-titles the
+ * opening beats). Order follows `ids` so captions fire in resolver order; the
+ * card layer supersedes, so a simultaneous burst leaves the last one up.
+ */
+export function diffNewlyActiveEvents(prev: ReadonlySet<string>, ids: string[]): string[] {
+	const fresh: string[] = [];
+	for (const id of ids) {
+		if (!prev.has(id)) fresh.push(id);
+	}
+	return fresh;
+}
+
+/**
+ * What the cycling driver should do once it has resolved a target map for T.
+ * Pure — the caller (WorldMap's cycling $effect) supplies the resolved target,
+ * the currently-shown map, and whether the target's regions are already cached.
+ * Encodes the switch-only-when-ready invariant (eng decision #1/#3):
+ *
+ *   - 'hold'     — no target, or the target is already the active map: do nothing.
+ *   - 'commit'   — target differs AND its regions are cached: switch now (no flash).
+ *   - 'prefetch' — target differs but is NOT cached: keep the current map and
+ *                  fetch the target's regions; the commit happens on a later tick
+ *                  once the cache lands (so a switch never shows a half-loaded map).
+ *
+ * Whether to run at all (playing, not pinned, non-idle playhead) is the caller's
+ * gate; that state lives in the component and the playback controller.
+ */
+export type CycleAction = 'hold' | 'commit' | 'prefetch';
+export function decideCycleAction(
+	targetMapId: string | null,
+	activeMapId: string | null,
+	targetCached: boolean
+): CycleAction {
+	if (!targetMapId || targetMapId === activeMapId) return 'hold';
+	return targetCached ? 'commit' : 'prefetch';
 }
 
 /**

@@ -118,6 +118,13 @@
 			if (cancelled) return;
 			PIXI = mod;
 		})();
+		// Warm the Fraunces face (DESIGN.md's entity-name typeface) so the first
+		// caption rasterizes in it rather than the serif fallback. Pixi canvas text
+		// reads from the browser font set; Google Fonts loads with display=swap, so
+		// without this nudge an early caption could paint as Georgia. Fire-and-forget.
+		if (typeof document !== 'undefined' && document.fonts?.load) {
+			document.fonts.load('italic 22px Fraunces').catch(() => {});
+		}
 		return () => {
 			cancelled = true;
 		};
@@ -324,7 +331,10 @@
 			text: title,
 			style: {
 				fill: 0xf5f0e6,
-				fontFamily: 'Georgia, "Times New Roman", serif',
+				// Fraunces — the entity-name typeface (DESIGN.md --font-display);
+				// captions title Events by their entity name. Georgia/serif is the
+				// fallback while the web font warms (see onMount preload).
+				fontFamily: 'Fraunces, Georgia, "Times New Roman", serif',
 				fontSize: 22,
 				fontStyle: 'italic',
 				stroke: { color: 0x1a1a1a, width: 4 },

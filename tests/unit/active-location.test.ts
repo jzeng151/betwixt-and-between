@@ -9,6 +9,8 @@ import {
 	eventLocationAtT,
 	activeLocationsAtT,
 	activeEventIdsAtT,
+	diffNewlyActiveEvents,
+	decideCycleAction,
 	pickCyclingTarget,
 	type TakesPlaceAtEntry
 } from '../../src/lib/features/map/active-location.js';
@@ -174,5 +176,74 @@ describe('pickCyclingTarget — ancestor fallback + hysteresis', () => {
 
 	it('holds prevTarget when there are no active Locations at all', () => {
 		expect(pickCyclingTarget([], hasMap, index, 'mid')).toBe('mid');
+	});
+});
+
+describe('diffNewlyActiveEvents — caption frame diff', () => {
+	it('returns only ids absent from the previous frame', () => {
+		expect(diffNewlyActiveEvents(new Set(['a']), ['a', 'b'])).toEqual(['b']);
+	});
+
+	it('returns all ids when the previous frame was empty', () => {
+		expect(diffNewlyActiveEvents(new Set(), ['a', 'b'])).toEqual(['a', 'b']);
+	});
+
+	it('does not re-emit an id that was already active', () => {
+		expect(diffNewlyActiveEvents(new Set(['a', 'b']), ['a', 'b'])).toEqual([]);
+	});
+
+	it('re-emits after an idle reset (baseline cleared to empty)', () => {
+		// active → idle(clear) → active again: the same id must re-title.
+		const afterIdle = new Set<string>();
+		expect(diffNewlyActiveEvents(afterIdle, ['a'])).toEqual(['a']);
+	});
+
+	it('preserves the input order so captions fire in resolver order', () => {
+		expect(diffNewlyActiveEvents(new Set(['b']), ['c', 'b', 'a'])).toEqual(['c', 'a']);
+	});
+});
+
+describe('decideCycleAction — switch-only-when-ready', () => {
+	it('holds when there is no target', () => {
+		expect(decideCycleAction(null, 'mapA', false)).toBe('hold');
+		expect(decideCycleAction(null, 'mapA', true)).toBe('hold');
+	});
+
+	it('holds when the target is already the active map', () => {
+		expect(decideCycleAction('mapA', 'mapA', true)).toBe('hold');
+		expect(decideCycleAction('mapA', 'mapA', false)).toBe('hold');
+	});
+
+	it('commits when the target differs and its regions are cached', () => {
+		expect(decideCycleAction('mapB', 'mapA', true)).toBe('commit');
+	});
+
+	it('prefetches (holds the current map) when the target differs but is not cached', () => {
+		expect(decideCycleAction('mapB', 'mapA', false)).toBe('prefetch');
+	});
+
+	it('commits a first switch from no active map when cached', () => {
+		expect(decideCycleAction('mapA', null, true)).toBe('commit');
+		expect(decideCycleAction('mapA', null, false)).toBe('prefetch');
+	});
+});
+
+describe('shared takes_place_at index passthrough (eng decision #5)', () => {
+	const hierarchy = [partOf('mid', 'root'), partOf('leaf', 'mid')];
+	const rels = [...hierarchy, tpa('e1', 'root'), tpa('e2', 'leaf'), tpa('e3', 'mid')];
+
+	it('activeLocationsAtT yields the same result with a pre-built byEvent index', () => {
+		const byEvent = groupTakesPlaceAt(rels);
+		const index = buildHierarchyIndex(rels);
+		expect(activeLocationsAtT(rels, 0.5, index, byEvent)).toEqual(
+			activeLocationsAtT(rels, 0.5, index)
+		);
+	});
+
+	it('activeEventIdsAtT yields the same result with a pre-built byEvent index', () => {
+		const byEvent = groupTakesPlaceAt(rels);
+		expect(activeEventIdsAtT(rels, 0.5, byEvent).sort()).toEqual(
+			activeEventIdsAtT(rels, 0.5).sort()
+		);
 	});
 });
