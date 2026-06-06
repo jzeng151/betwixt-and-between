@@ -128,7 +128,10 @@ function keyIndex(manifest: TerrainManifest): Map<string, { url: string; type: s
 	if (idx) return idx;
 	idx = new Map();
 	for (const [type, cat] of Object.entries(manifest.categories)) {
-		for (const url of cat.base) idx.set(keyForUrl(url), { url, type });
+		// base + road + waterEdge are all directly paintable swatches, so every
+		// one must resolve to its tile URL (render) and its category (armed chip).
+		for (const url of [...cat.base, ...cat.road, ...cat.waterEdge])
+			idx.set(keyForUrl(url), { url, type });
 	}
 	for (const wc of waterColors(manifest)) idx.set(wc.key, { url: wc.url, type: WATER_TYPE });
 	indexCache.set(manifest, idx);
@@ -159,10 +162,13 @@ export function typeForKey(manifest: TerrainManifest | null, key: string): strin
 	return null;
 }
 
-// "grass_01_tile_256_05" → "grass_01 · 05"; falls back to the raw key.
+// "grass_01_tile_256_05" → "grass_01 · 05"; road/water variants keep the kind
+// token ("clay_tile_road_256_01" → "clay road · 01"). Falls back to the raw key.
 function landTextureLabel(key: string): string {
-	const m = key.match(/^(.*)_tile_\d+_(\d+)$/);
-	return m ? `${m[1]} · ${m[2]}` : key;
+	const m = key.match(/^(.*)_tile(?:_(road|water))?_\d+_(\d+)$/);
+	if (!m) return key;
+	const [, name, kind, num] = m;
+	return kind ? `${name} ${kind} · ${num}` : `${name} · ${num}`;
 }
 
 /**
@@ -180,7 +186,9 @@ export function texturesForType(manifest: TerrainManifest | null, type: string):
 	}
 	const cat = manifest.categories[type];
 	if (!cat) return [];
-	return cat.base.map((url) => {
+	// All tiles in the category are paintable: base fill, then road + water-edge
+	// variants (grouped after the base tiles in the popover).
+	return [...cat.base, ...cat.road, ...cat.waterEdge].map((url) => {
 		const key = keyForUrl(url);
 		return { key, url, label: landTextureLabel(key) };
 	});
