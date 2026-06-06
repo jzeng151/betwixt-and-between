@@ -12,7 +12,8 @@ import {
 	diffNewlyActiveEvents,
 	decideCycleAction,
 	pickCyclingTarget,
-	type TakesPlaceAtEntry
+	type TakesPlaceAtEntry,
+	type ActiveLocation
 } from '../../src/lib/features/map/active-location.js';
 import { buildHierarchyIndex } from '../../src/lib/location-hierarchy.js';
 import type { Relationship } from '../../src/lib/stores/relationships.js';
@@ -131,6 +132,9 @@ describe('eventLocationAtT — mirrors foldCausalEdges.locationAtT', () => {
 describe('activeLocationsAtT — specificity ranking', () => {
 	// Hierarchy: root → mid → leaf (depths 0,1,2).
 	const hierarchy = [partOf('mid', 'root'), partOf('leaf', 'mid')];
+	// Helper: just the ranked ids (most of these tests only care about ordering).
+	const ids = (rels: Relationship[], t: number) =>
+		activeLocationsAtT(rels, t).map((l) => l.locationId);
 
 	it('returns distinct active Locations, deepest-first', () => {
 		const rels = [
@@ -140,7 +144,7 @@ describe('activeLocationsAtT — specificity ranking', () => {
 			tpa('e3', 'mid'),
 			tpa('e4', 'leaf') // duplicate active loc — distinct in output
 		];
-		expect(activeLocationsAtT(rels, 0.5)).toEqual(['leaf', 'mid', 'root']);
+		expect(ids(rels, 0.5)).toEqual(['leaf', 'mid', 'root']);
 	});
 
 	it('excludes Locations whose only event is out of window at T', () => {
@@ -149,8 +153,8 @@ describe('activeLocationsAtT — specificity ranking', () => {
 			tpa('e1', 'leaf', { startPosition: 0.0, endPosition: 0.3 }),
 			tpa('e2', 'root')
 		];
-		expect(activeLocationsAtT(rels, 0.5)).toEqual(['root']); // leaf's window closed
-		expect(activeLocationsAtT(rels, 0.1)).toEqual(['leaf', 'root']);
+		expect(ids(rels, 0.5)).toEqual(['root']); // leaf's window closed
+		expect(ids(rels, 0.1)).toEqual(['leaf', 'root']);
 	});
 
 	it('excludes a reveal-gated Location so cycling never spoils a hidden map (Codex PR #72)', () => {
@@ -159,8 +163,20 @@ describe('activeLocationsAtT — specificity ranking', () => {
 			tpa('e1', 'leaf', { revealedAtPosition: 0.6 }), // mystery: leaf hidden until 0.6
 			tpa('e2', 'root')
 		];
-		expect(activeLocationsAtT(rels, 0.5)).toEqual(['root']); // before reveal → leaf not a cycle target
-		expect(activeLocationsAtT(rels, 0.7)).toEqual(['leaf', 'root']); // after reveal → leaf active
+		expect(ids(rels, 0.5)).toEqual(['root']); // before reveal → leaf not a cycle target
+		expect(ids(rels, 0.7)).toEqual(['leaf', 'root']); // after reveal → leaf active
+	});
+
+	it('tags each active Location with whether it is scoped at T', () => {
+		const rels = [
+			...hierarchy,
+			tpa('e1', 'leaf', { startPosition: 0.0, endPosition: 0.6 }), // scoped, active at 0.3
+			tpa('e2', 'root') // timeless
+		];
+		expect(activeLocationsAtT(rels, 0.3)).toEqual([
+			{ locationId: 'leaf', scoped: true },
+			{ locationId: 'root', scoped: false }
+		]);
 	});
 });
 
@@ -187,35 +203,60 @@ describe('activeEventIdsAtT — caption selection (T9 reuses the resolver)', () 
 	});
 });
 
-describe('pickCyclingTarget — ancestor fallback + hysteresis', () => {
+describe('pickCyclingTarget — scoped precedence + ancestor fallback + hysteresis', () => {
 	// root → mid → leaf. Only root and mid have maps; leaf does not.
 	const index = buildHierarchyIndex([partOf('mid', 'root'), partOf('leaf', 'mid')]);
 	const hasMap = (id: string) => id === 'root' || id === 'mid';
+	// ActiveLocation builders: scoped (transient beat) vs timeless (always-on link).
+	const sc = (locationId: string): ActiveLocation => ({ locationId, scoped: true });
+	const tl = (locationId: string): ActiveLocation => ({ locationId, scoped: false });
 
 	it('resolves the most-specific active Location to its own map when it has one', () => {
-		expect(pickCyclingTarget(['mid', 'root'], hasMap, index, null)).toBe('mid');
+		expect(pickCyclingTarget([sc('mid'), sc('root')], hasMap, index, null)).toBe('mid');
 	});
 
 	it('falls back to the nearest map-bearing ancestor when the deepest has no map', () => {
 		// leaf is most specific but mapless → nearest ancestor with a map is mid.
-		expect(pickCyclingTarget(['leaf'], hasMap, index, null)).toBe('mid');
+		expect(pickCyclingTarget([sc('leaf')], hasMap, index, null)).toBe('mid');
 	});
 
-	it('holds prevTarget while it still covers an active Location (anti-strobe)', () => {
-		// Story is at root (prev). A brief simultaneous scope adds leaf→mid; since
-		// root still resolves an active Location, hold root rather than strobe to mid.
-		expect(pickCyclingTarget(['leaf', 'root'], hasMap, index, 'root')).toBe('root');
+	it('holds prevTarget while it is still a SCOPED target (anti-strobe)', () => {
+		// On root (prev). A brief simultaneous scoped beat adds leaf→mid; since root
+		// is still a scoped target, hold root rather than strobe to mid.
+		expect(pickCyclingTarget([sc('leaf'), sc('root')], hasMap, index, 'root')).toBe('root');
 	});
 
-	it('moves to the most-specific map when prevTarget no longer covers any active Location', () => {
-		// root is no longer active; only leaf (→mid) is → switch to mid.
-		expect(pickCyclingTarget(['leaf'], hasMap, index, 'root')).toBe('mid');
+	it('moves to the most-specific scoped map when prevTarget is no longer scoped-active', () => {
+		// root no longer active; only scoped leaf (→mid) is → switch to mid.
+		expect(pickCyclingTarget([sc('leaf')], hasMap, index, 'root')).toBe('mid');
+	});
+
+	// ── Scoped-over-timeless (product decision 2026-06-06 / #384) ──────────────
+	it('a scoped map displays over a timeless one', () => {
+		// root is timeless-active (always on); mid is scoped-active now → mid wins.
+		expect(pickCyclingTarget([sc('mid'), tl('root')], hasMap, index, null)).toBe('mid');
+	});
+
+	it('a timeless prevTarget does NOT lock the camera — a scoped beat elsewhere wins (#384)', () => {
+		// On root via a timeless edge (prev=root). A scoped beat fires at mid. The old
+		// rule held root forever; now mid wins because timeless never triggers hysteresis.
+		expect(pickCyclingTarget([sc('mid'), tl('root')], hasMap, index, 'root')).toBe('mid');
+	});
+
+	it('switches back to the timeless map once no scoped target remains', () => {
+		// Scoped beat ended; only the timeless root link is active → return to root,
+		// even though we were previously showing mid.
+		expect(pickCyclingTarget([tl('root')], hasMap, index, 'mid')).toBe('root');
+	});
+
+	it('among timeless-only targets, the most-specific wins (deterministic, no strobe)', () => {
+		expect(pickCyclingTarget([tl('mid'), tl('root')], hasMap, index, 'root')).toBe('mid');
 	});
 
 	it('holds (returns prevTarget) when no active Location resolves to a map', () => {
 		const noMaps = () => false;
-		expect(pickCyclingTarget(['leaf', 'root'], noMaps, index, 'root')).toBe('root');
-		expect(pickCyclingTarget(['leaf'], noMaps, index, null)).toBeNull();
+		expect(pickCyclingTarget([sc('leaf'), tl('root')], noMaps, index, 'root')).toBe('root');
+		expect(pickCyclingTarget([sc('leaf')], noMaps, index, null)).toBeNull();
 	});
 
 	it('holds prevTarget when there are no active Locations at all', () => {

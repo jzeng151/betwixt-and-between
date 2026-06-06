@@ -801,6 +801,7 @@
 			// invalidated — confirmed by codex + code-reviewer subagent.)
 			cycleCache.clear();
 			cyclePrefetching.clear();
+			cycleFailed.clear(); // give failed/absent targets one retry on this fresh Play
 			// Invalidate any prefetch still in flight from the previous run so its
 			// late result can't repopulate the just-cleared cache (Codex PR #72).
 			cycleGeneration++;
@@ -850,6 +851,13 @@
 	// prefetched map row itself is never read.
 	const cycleCache = new Map<string, MapRegion[]>();
 	const cyclePrefetching = new Set<string>();
+	// Maps whose prefetch returned not-found or threw this generation. The cycling
+	// effect re-runs every playback boundary while the same target stays active, so
+	// without this a 404/error target would be re-requested forever — recurring
+	// traffic + console noise. Skipped here and reset whenever the generation rolls
+	// (Play-reset / cache invalidation), since a 404 won't resolve itself mid-run
+	// and a transient error is worth one retry on the next Play (Codex PR #72).
+	const cycleFailed = new Set<string>();
 	// Previous map-bearing target Location (resolver hysteresis state). Reset on
 	// each Play (above) and when a manual switch pins.
 	let cyclePrevTargetLoc: string | null = null;
@@ -876,6 +884,7 @@
 	function invalidateCycleCache(mapId: string): void {
 		cycleCache.delete(mapId);
 		cyclePrefetching.clear();
+		cycleFailed.clear();
 		cycleGeneration++;
 	}
 
@@ -901,7 +910,7 @@
 	// map. Deduped against in-flight prefetches; failures are non-fatal (the
 	// resolver just keeps holding the current map).
 	async function prefetchCycle(mapId: string): Promise<void> {
-		if (cycleCache.has(mapId) || cyclePrefetching.has(mapId)) return;
+		if (cycleCache.has(mapId) || cyclePrefetching.has(mapId) || cycleFailed.has(mapId)) return;
 		const gen = cycleGeneration;
 		cyclePrefetching.add(mapId);
 		try {
@@ -912,9 +921,12 @@
 			if (data) {
 				cycleCache.set(mapId, data.regions);
 				cyclePrefetchTick++; // wake the cycling effect so it can commit now
+			} else {
+				cycleFailed.add(mapId); // not-found: don't re-request it this generation
 			}
 		} catch (err) {
 			console.error('Spotlight cycle prefetch failed:', mapId, err);
+			if (gen === cycleGeneration) cycleFailed.add(mapId); // back off until next Play
 		} finally {
 			// Only clear the marker we own; after a reset a newer request may hold it.
 			if (gen === cycleGeneration) cyclePrefetching.delete(mapId);
@@ -1370,11 +1382,16 @@
 		lastAppliedEntityId = entityId;
 		const variant = resolveActiveVariant($worldMaps, entityId, $playhead);
 		if (variant && variant.id !== activeMapId) {
+			// An external deep-link is explicit navigation intent and must take
+			// precedence over PR2 cycling — pin so the driver doesn't immediately
+			// commit a story target and switch away from the requested map (Codex PR #72).
+			pinView();
 			switchMap(variant.id);
 			return;
 		}
 		const targetRegion = $mapRegions.find((r) => r.locationId === entityId);
 		if (targetRegion && targetRegion.mapId !== activeMapId) {
+			pinView();
 			switchMap(targetRegion.mapId);
 		}
 	});
@@ -1462,9 +1479,13 @@
 
 	async function handleDeleteRegion(regionId: string) {
 		if (!activeMapId) return;
-		// Capture the map id before awaiting: delete has no authoring session to pin,
-		// so an automatic cycle could flip activeMapId mid-flight and we'd delete the
-		// region from / invalidate the wrong map's cache (Codex PR #72).
+		// Deleting a region is manual interaction: pin so PR2 cycling can't switch
+		// maps across the awaited DELETE + post-delete interval cleanup. The cleanup's
+		// `otherRegions` check reads the singleton `$mapRegions`, so a mid-flight cycle
+		// would let the switched map's rows make `otherRegions` look empty and wrongly
+		// delete the location's scene intervals. Pinning keeps the store on this map;
+		// the captured `mapId` additionally guards the DELETE + cache call (Codex PR #72).
+		pinView();
 		const mapId = activeMapId;
 		const region = $mapRegions.find((r) => r.id === regionId);
 		try {
