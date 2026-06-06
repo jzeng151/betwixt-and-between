@@ -39,28 +39,70 @@ export type ConquestFlip = {
 	staggerMs: number;
 };
 
-// The punctuation union. PR2 adds 'march' (trail) and 'ripple' (causal chain);
-// consumers switch on `type` so new kinds are additive.
-export type Punctuation = ConquestFlip;
+// One mover-segment beat (PR2): a placement that moved between prev and cur
+// leaves a fading trail behind it. from/to are FRACTIONAL [0,1] positions (the
+// artifactOverrides convention); the renderer multiplies by map dims.
+export type MarchTrail = {
+	type: 'march';
+	placementId: string;
+	fromX: number;
+	fromY: number;
+	toX: number;
+	toY: number;
+	staggerMs: number;
+};
+
+// One causal-chain beat (PR2, the headline): a caused_by edge that became newly
+// lit at T ripples along its already-drawn arc. from/to are FRACTIONAL [0,1]
+// (the causalEdges convention), fromPos = effect centroid, toPos = cause
+// centroid (projection.ts:298-308). The ripple travels cause→effect.
+export type CausalRipple = {
+	type: 'ripple';
+	relationshipId: string;
+	fromX: number;
+	fromY: number;
+	toX: number;
+	toY: number;
+	staggerMs: number;
+};
+
+// The punctuation union. Consumers switch on `type` so kinds stay additive.
+export type Punctuation = ConquestFlip | MarchTrail | CausalRipple;
 
 export type DiffOptions = {
-	// Per-beat stagger for simultaneous flips (design: ~80ms). The Nth flip in
-	// the deterministic order starts N×step later.
+	// Per-beat stagger for simultaneous beats of one kind (design: ~80ms). The
+	// Nth beat in the deterministic order starts N×step later. Stagger is applied
+	// WITHIN each kind, so the existing conquest staggering is unchanged.
 	staggerStepMs?: number;
+	// Minimum fractional displacement for a move to register as a march trail —
+	// guards sub-pixel interpolation jitter from emitting hairline trails.
+	moveEpsilon?: number;
 };
 
 const DEFAULT_STAGGER_MS = 80;
+const DEFAULT_MOVE_EPSILON = 1e-3; // 0.1% of the map's span
 
 /**
  * Diff two consecutive RenderedStates into punctuation beats. Pure: same inputs
  * → same output, no time/Pixi/DOM. Returns [] when the diff is suppressed (null
  * prev/cur or idle playhead) — see the contract above.
  *
- * PR1: emits a ConquestFlip for every region whose factionId changed between
- * prev and cur. A region present in `cur` but absent from `prev` is NOT a flip
- * (it has no prior owner to flip FROM — treating it as one would flash every
- * region on the first post-switch frame, the phantom-FX case the baseline reset
- * guards against).
+ * Emits, all from the SAME forward frame diff:
+ *   - a ConquestFlip for every region whose factionId changed. A region present
+ *     in `cur` but absent from `prev` is NOT a flip (no prior owner to flip FROM
+ *     — treating it as one would flash every region on the first post-switch
+ *     frame, the phantom-FX case the baseline reset guards against);
+ *   - a MarchTrail for every placement whose interpolated position moved (in
+ *     BOTH frames' artifactOverrides, displaced ≥ moveEpsilon). A placement that
+ *     just entered (absent from prev) has no from-position → no trail;
+ *   - a CausalRipple for every caused_by edge newly lit in `cur` (present in
+ *     cur.causalEdges, absent from prev's) — the edge becoming visible at T is
+ *     the beat.
+ *
+ * Stagger is per-kind so simultaneous beats of one kind read distinctly; the
+ * conquest staggering is byte-for-byte what PR1 shipped. (The richer
+ * t_position/created_at/id tiebreak needs event data this diff doesn't carry;
+ * regionId / placementId / relationshipId give a stable deterministic order.)
  */
 export function diffPunctuation(
 	prev: RenderedState | null,
@@ -72,7 +114,9 @@ export function diffPunctuation(
 	if (playhead === null) return []; // idle: no punctuation
 
 	const step = opts.staggerStepMs ?? DEFAULT_STAGGER_MS;
+	const moveEps = opts.moveEpsilon ?? DEFAULT_MOVE_EPSILON;
 
+	// ── Conquest flips (owner change, keyed on factionId not color) ──────────
 	const prevFactionByRegion = new Map<string, string | null>();
 	for (const r of prev.regions) prevFactionByRegion.set(r.regionId, r.factionId);
 
@@ -89,13 +133,51 @@ export function diffPunctuation(
 			staggerMs: 0
 		});
 	}
-
-	// Deterministic order (by regionId) so simultaneous flips stagger stably
-	// across runs; assign the per-beat offset. (The richer event-tiebreak order —
-	// t_position, created_at, id — needs event data this diff doesn't carry; it
-	// matters most for the causal ripple in PR2, where the edge data is present.)
 	flips.sort((a, b) => (a.regionId < b.regionId ? -1 : a.regionId > b.regionId ? 1 : 0));
 	for (let i = 0; i < flips.length; i++) flips[i].staggerMs = i * step;
 
-	return flips;
+	// ── March trails (placement moved between frames) ────────────────────────
+	const marches: MarchTrail[] = [];
+	for (const [placementId, to] of cur.artifactOverrides) {
+		const from = prev.artifactOverrides.get(placementId);
+		if (!from) continue; // just entered → no prior position to trail from
+		const dx = to.x - from.x;
+		const dy = to.y - from.y;
+		if (Math.abs(dx) < moveEps && Math.abs(dy) < moveEps) continue; // jitter
+		marches.push({
+			type: 'march',
+			placementId,
+			fromX: from.x,
+			fromY: from.y,
+			toX: to.x,
+			toY: to.y,
+			staggerMs: 0
+		});
+	}
+	marches.sort((a, b) => (a.placementId < b.placementId ? -1 : a.placementId > b.placementId ? 1 : 0));
+	for (let i = 0; i < marches.length; i++) marches[i].staggerMs = i * step;
+
+	// ── Causal ripples (caused_by edge newly lit at T) ───────────────────────
+	const prevEdgeIds = new Set<string>();
+	for (const e of prev.causalEdges) prevEdgeIds.add(e.relationshipId);
+
+	const ripples: CausalRipple[] = [];
+	for (const e of cur.causalEdges) {
+		if (prevEdgeIds.has(e.relationshipId)) continue; // already lit → not a new beat
+		ripples.push({
+			type: 'ripple',
+			relationshipId: e.relationshipId,
+			fromX: e.fromPos.x,
+			fromY: e.fromPos.y,
+			toX: e.toPos.x,
+			toY: e.toPos.y,
+			staggerMs: 0
+		});
+	}
+	ripples.sort((a, b) =>
+		a.relationshipId < b.relationshipId ? -1 : a.relationshipId > b.relationshipId ? 1 : 0
+	);
+	for (let i = 0; i < ripples.length; i++) ripples[i].staggerMs = i * step;
+
+	return [...flips, ...marches, ...ripples];
 }

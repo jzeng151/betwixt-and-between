@@ -36,6 +36,31 @@ function createWorldMapStore() {
 		return map as WorldMap;
 	}
 
+	// Cinematic Spotlight (Slice 8) PR2 — between-map cycling, switch-only-when-
+	// ready. Fetch a candidate map's regions WITHOUT touching the shared regions
+	// store, so the cycling resolver can cache them and commit a switch only once
+	// the data is in hand (no loading flash mid-playback). Returns null on 404.
+	async function prefetchMapRegions(
+		mapId: string
+	): Promise<{ map: WorldMap; regions: MapRegion[] } | null> {
+		const res = await fetch(`/api/maps/${mapId}`);
+		if (!res.ok) {
+			if (res.status === 404) return null;
+			throw new Error('Failed to prefetch map');
+		}
+		const data = await res.json();
+		const { regions: loadedRegions, ...map } = data;
+		return { map: map as WorldMap, regions: loadedRegions as MapRegion[] };
+	}
+
+	// Commit regions already fetched by prefetchMapRegions. Stamps lastLoadedMapId
+	// so any in-flight loadMapRegions for a different map is correctly dropped as
+	// stale, keeping the A→B→C ordering guarantee intact across a cached commit.
+	function applyPrefetchedRegions(mapId: string, loadedRegions: MapRegion[]): void {
+		lastLoadedMapId = mapId;
+		regions.set(loadedRegions);
+	}
+
 	async function createMap(
 		name: string,
 		locationId: string | null = null,
@@ -160,6 +185,8 @@ function createWorldMapStore() {
 		regions,
 		loadMaps,
 		loadMapRegions,
+		prefetchMapRegions,
+		applyPrefetchedRegions,
 		createMap,
 		updateMap,
 		deleteMap,
