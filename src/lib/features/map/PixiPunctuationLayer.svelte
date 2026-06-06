@@ -28,6 +28,7 @@
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
 	type PixiGraphics = import('pixi.js').Graphics;
+	type PixiText = import('pixi.js').Text;
 
 	let {
 		regions,
@@ -76,6 +77,15 @@
 	type Fx = { g: PixiGraphics; ageMs: number; delayMs: number; durMs: number; update: (localT: number) => void };
 	let fx: Fx[] = [];
 
+	// Captions (T9): a screen-fixed lower-third title card on app.stage (NOT the
+	// viewport — it must not pan/zoom). One caption at a time; a new one supersedes.
+	const CAPTION_MS = 2600; // fade-in + hold + fade-out
+	const CAPTION_FADE_IN = 200;
+	const CAPTION_FADE_OUT = 500;
+	const CAPTION_PEAK = 0.95;
+	let captionContainer: PixiContainer | null = null;
+	let caption: { g: PixiText; ageMs: number } | null = null;
+
 	function regionPolyById(id: string): MapRegion | undefined {
 		return regions.find((r) => r.id === id);
 	}
@@ -114,29 +124,66 @@
 			layer.eventMode = 'none';
 			viewport.addChild(layer);
 		}
+		// Caption container lives on the STAGE (screen space), so it stays a fixed
+		// lower-third while the viewport pans/zooms under it.
+		if (!captionContainer) {
+			captionContainer = new PIXI.Container();
+			captionContainer.eventMode = 'none';
+			app.stage.addChild(captionContainer);
+		}
 
 		const off = anim.register(() => {
-			if (!fx.length) return;
 			const dt = app.ticker.deltaMS;
-			const survivors: Fx[] = [];
-			for (const item of fx) {
-				if (item.g.destroyed) continue;
-				item.ageMs += dt;
-				const localT = item.ageMs - item.delayMs;
-				if (localT < 0) {
-					item.g.alpha = 0; // staggered: not started yet
-					survivors.push(item);
-				} else if (localT >= item.durMs) {
-					item.g.destroy(); // decay complete
+			if (fx.length) {
+				const survivors: Fx[] = [];
+				for (const item of fx) {
+					if (item.g.destroyed) continue;
+					item.ageMs += dt;
+					const localT = item.ageMs - item.delayMs;
+					if (localT < 0) {
+						item.g.alpha = 0; // staggered: not started yet
+						survivors.push(item);
+					} else if (localT >= item.durMs) {
+						item.g.destroy(); // decay complete
+					} else {
+						item.update(localT);
+						survivors.push(item);
+					}
+				}
+				fx = survivors;
+			}
+			if (caption) {
+				const c = caption;
+				if (c.g.destroyed) {
+					caption = null;
 				} else {
-					item.update(localT);
-					survivors.push(item);
+					c.ageMs += dt;
+					if (c.ageMs >= CAPTION_MS) {
+						c.g.destroy();
+						caption = null;
+					} else {
+						// Fade in, hold, fade out. Under reduced motion the envelope is
+						// skipped (instant on/off) — captions are informational, so they
+						// still show, just without the glide.
+						const a = reducedMotion ? CAPTION_PEAK : captionAlpha(c.ageMs);
+						c.g.alpha = a;
+						// Re-anchor lower-center each tick (handles window resize).
+						c.g.x = Math.round((app.screen.width - c.g.width) / 2);
+						c.g.y = Math.round(app.screen.height - c.g.height - 28);
+					}
 				}
 			}
-			fx = survivors;
 		});
 		return () => off();
 	});
+
+	// Caption alpha envelope over its lifetime.
+	function captionAlpha(ageMs: number): number {
+		if (ageMs < CAPTION_FADE_IN) return CAPTION_PEAK * (ageMs / CAPTION_FADE_IN);
+		const outStart = CAPTION_MS - CAPTION_FADE_OUT;
+		if (ageMs > outStart) return CAPTION_PEAK * (1 - (ageMs - outStart) / CAPTION_FADE_OUT);
+		return CAPTION_PEAK;
+	}
 
 	// FX are scoped to a map: a map switch destroys any in-flight FX so they can't
 	// bleed onto the new map. Reading mapId makes this $effect re-run on switch.
@@ -247,12 +294,43 @@
 		}
 	}
 
-	/** Destroy every in-flight FX (map switch, replay-from-start, interrupt). */
+	/**
+	 * Show a caption title card (T9). Called imperatively by WorldMap when an Event
+	 * becomes active at T. Supersedes any current caption. Shown even under reduced
+	 * motion (informational text), just without the fade envelope.
+	 */
+	export function spawnCaption(title: string): void {
+		if (!PIXI || !captionContainer || !title) return;
+		if (caption && !caption.g.destroyed) caption.g.destroy();
+		const g: PixiText = new PIXI.Text({
+			text: title,
+			style: {
+				fill: 0xf5f0e6,
+				fontFamily: 'Georgia, "Times New Roman", serif',
+				fontSize: 22,
+				fontStyle: 'italic',
+				stroke: { color: 0x1a1a1a, width: 4 },
+				dropShadow: { color: 0x000000, alpha: 0.6, blur: 3, distance: 1, angle: Math.PI / 2 }
+			}
+		});
+		g.eventMode = 'none';
+		g.alpha = 0;
+		captionContainer.addChild(g);
+		caption = { g, ageMs: 0 };
+		if (DIAG && typeof window !== 'undefined') {
+			const w = window as unknown as { __spotlightCaptionCount?: number };
+			w.__spotlightCaptionCount = (w.__spotlightCaptionCount ?? 0) + 1;
+		}
+	}
+
+	/** Destroy every in-flight FX + caption (map switch, replay-from-start, interrupt). */
 	export function clearAll(): void {
 		for (const item of fx) {
 			if (!item.g.destroyed) item.g.destroy();
 		}
 		fx = [];
+		if (caption && !caption.g.destroyed) caption.g.destroy();
+		caption = null;
 	}
 
 	onDestroy(() => {
@@ -264,6 +342,14 @@
 				/* PixiStage may have destroyed the app first */
 			}
 			layer = null;
+		}
+		if (captionContainer) {
+			try {
+				captionContainer.destroy({ children: true });
+			} catch (_) {
+				/* app already destroyed */
+			}
+			captionContainer = null;
 		}
 	});
 </script>

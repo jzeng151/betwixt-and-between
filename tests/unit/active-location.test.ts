@@ -8,6 +8,7 @@ import {
 	groupTakesPlaceAt,
 	eventLocationAtT,
 	activeLocationsAtT,
+	activeEventIdsAtT,
 	pickCyclingTarget,
 	type TakesPlaceAtEntry
 } from '../../src/lib/features/map/active-location.js';
@@ -120,6 +121,23 @@ describe('activeLocationsAtT — specificity ranking', () => {
 		];
 		expect(activeLocationsAtT(rels, 0.5)).toEqual(['root']); // leaf's window closed
 		expect(activeLocationsAtT(rels, 0.1)).toEqual(['leaf', 'root']);
+	});
+});
+
+describe('activeEventIdsAtT — caption selection (T9 reuses the resolver)', () => {
+	it('returns Events with a takes_place_at visible at T', () => {
+		const rels = [
+			tpa('e1', 'locA'),
+			tpa('e2', 'locB', { startPosition: 0.0, endPosition: 0.3 }),
+			tpa('e3', 'locC', { startPosition: 0.5, endPosition: 1.0 })
+		];
+		expect(activeEventIdsAtT(rels, 0.1).sort()).toEqual(['e1', 'e2']); // e3 closed
+		expect(activeEventIdsAtT(rels, 0.7).sort()).toEqual(['e1', 'e3']); // e2 closed
+	});
+
+	it('returns [] when no Event is active at T', () => {
+		const rels = [tpa('e1', 'locA', { startPosition: 0.0, endPosition: 0.2 })];
+		expect(activeEventIdsAtT(rels, 0.9)).toEqual([]);
 	});
 });
 
