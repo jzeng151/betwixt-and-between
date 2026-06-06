@@ -76,6 +76,20 @@ export function groupTakesPlaceAt(relationships: Relationship[]): Map<string, Ta
  * already hides for causal edges (projection.ts mystery policy). (Codex PR #72)
  */
 export function eventLocationAtT(entries: TakesPlaceAtEntry[] | undefined, t: number): string | null {
+	return resolveEventLocation(entries, t)?.locationId ?? null;
+}
+
+/**
+ * Like `eventLocationAtT` but also reports whether the winning edge is SCOPED (has
+ * a start/end bound) vs timeless. The cycling driver needs this: a scoped beat is a
+ * transient "happening now" that should grab the camera, while a timeless edge is
+ * visible at every T and must NOT permanently hold the view (Codex PR #72 #384).
+ * Same selection rule as `eventLocationAtT` (it delegates here). Pure.
+ */
+function resolveEventLocation(
+	entries: TakesPlaceAtEntry[] | undefined,
+	t: number
+): { locationId: string; scoped: boolean } | null {
 	if (!entries || entries.length === 0) return null;
 	let best: TakesPlaceAtEntry | null = null;
 	for (const tp of entries) {
@@ -93,8 +107,16 @@ export function eventLocationAtT(entries: TakesPlaceAtEntry[] | undefined, t: nu
 			best = tp; // deterministic tie-break
 		}
 	}
-	return best?.locationId ?? null;
+	if (best === null) return null;
+	return { locationId: best.locationId, scoped: best.startPosition != null || best.endPosition != null };
 }
+
+/**
+ * An active Location at T, plus whether it is active via a SCOPED (bounded) edge.
+ * `scoped` is true if ANY active Event resolves to this Location through a bounded
+ * `takes_place_at` at T.
+ */
+export type ActiveLocation = { locationId: string; scoped: boolean };
 
 /**
  * The distinct Locations the story occupies at T, ranked MOST-SPECIFIC first
@@ -110,23 +132,27 @@ export function activeLocationsAtT(
 	t: number,
 	index?: HierarchyIndex,
 	byEventIndex?: Map<string, TakesPlaceAtEntry[]>
-): string[] {
+): ActiveLocation[] {
 	const byEvent = byEventIndex ?? groupTakesPlaceAt(relationships);
 	const idx = index ?? buildHierarchyIndex(relationships);
 
-	const active = new Set<string>();
+	// locationId → scoped (true if ANY active Event reaches it via a bounded edge).
+	const active = new Map<string, boolean>();
 	for (const entries of byEvent.values()) {
-		const loc = eventLocationAtT(entries, t);
-		if (loc) active.add(loc);
+		const res = resolveEventLocation(entries, t);
+		if (!res) continue;
+		active.set(res.locationId, (active.get(res.locationId) ?? false) || res.scoped);
 	}
 
 	// Rank deepest-first (most specific); depth = ancestor-chain length.
-	return [...active].sort((a, b) => {
-		const da = walkAncestors(idx, a).length;
-		const db = walkAncestors(idx, b).length;
-		if (da !== db) return db - da; // deeper first
-		return a < b ? -1 : a > b ? 1 : 0; // deterministic tie-break
-	});
+	return [...active.entries()]
+		.map(([locationId, scoped]) => ({ locationId, scoped }))
+		.sort((a, b) => {
+			const da = walkAncestors(idx, a.locationId).length;
+			const db = walkAncestors(idx, b.locationId).length;
+			if (da !== db) return db - da; // deeper first
+			return a.locationId < b.locationId ? -1 : a.locationId > b.locationId ? 1 : 0; // tie-break
+		});
 }
 
 /**
@@ -217,34 +243,43 @@ function resolveMapBearing(
  *     Location wins;
  *   - ancestor fallback: each candidate resolves to its nearest map-bearing
  *     self-or-ancestor (`resolveMapBearing`);
- *   - hysteresis: if `prevTarget` is still the map-resolution of ANY currently
- *     active Location, keep it — this is what stops a brief simultaneous-scope
- *     flicker from strobing the view between two maps. Only when no active
- *     Location still resolves to `prevTarget` does the view move, and then to the
- *     most-specific active Location's map. (Time-based anti-thrash debounce is
- *     layered on in Step D via switch-only-when-ready; this is the structural
- *     hysteresis.)
+ *   - scoped precedence (product decision 2026-06-06): a SCOPED (defined-window)
+ *     map displays over a timeless one. A scoped beat active at T grabs the view;
+ *     when no scoped target remains the view returns to the timeless map. This is
+ *     also the fix for the timeless-lock (#384): a timeless edge is visible at
+ *     EVERY T, so the old "hold prevTarget while it covers any active Location"
+ *     rule, applied to a timeless edge, locked the camera permanently.
+ *   - hysteresis (anti-strobe): applies ONLY among scoped overlaps — if `prevTarget`
+ *     is still one of the scoped targets, keep it so two briefly-co-active scoped
+ *     maps don't strobe. Timeless targets never trigger hysteresis (they are always
+ *     active, so a deterministic most-specific pick is already stable). (Time-based
+ *     anti-thrash is layered on in Step D via switch-only-when-ready.)
  *
  * Returns null only when there is no active map-bearing Location AND no prior
  * target — i.e. nothing to show; the caller holds the current map.
  */
 export function pickCyclingTarget(
-	rankedActive: string[],
+	rankedActive: ActiveLocation[],
 	hasMap: (locationId: string) => boolean,
 	index: HierarchyIndex,
 	prevTarget: string | null
 ): string | null {
-	// Hysteresis: hold prevTarget while it still covers an active Location.
-	if (prevTarget !== null) {
-		for (const loc of rankedActive) {
-			if (resolveMapBearing(loc, hasMap, index) === prevTarget) return prevTarget;
-		}
+	// Resolve each active Location to its nearest map-bearing self/ancestor, split by
+	// whether the Location is active via a scoped (transient) or timeless edge.
+	// rankedActive is most-specific-first, so each list preserves that order.
+	const scopedTargets: string[] = [];
+	const timelessTargets: string[] = [];
+	for (const { locationId, scoped } of rankedActive) {
+		const target = resolveMapBearing(locationId, hasMap, index);
+		if (!target) continue;
+		(scoped ? scopedTargets : timelessTargets).push(target);
 	}
-	// Otherwise move to the most-specific active Location that resolves to a map.
-	for (const loc of rankedActive) {
-		const target = resolveMapBearing(loc, hasMap, index);
-		if (target) return target;
-	}
-	// No active Location has a map (or no active Locations at all): hold.
+	// Anti-strobe: hold prevTarget while it's still a SCOPED target.
+	if (prevTarget !== null && scopedTargets.includes(prevTarget)) return prevTarget;
+	// Scoped maps take precedence over timeless ones.
+	if (scopedTargets.length > 0) return scopedTargets[0];
+	// No scoped target active: fall back to the most-specific timeless map.
+	if (timelessTargets.length > 0) return timelessTargets[0];
+	// Nothing active resolves to a map: hold the current map.
 	return prevTarget;
 }
