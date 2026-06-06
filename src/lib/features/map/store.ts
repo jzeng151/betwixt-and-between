@@ -8,11 +8,17 @@ function createWorldMapStore() {
 	// Codex P1 on PR #55 (commit e32c973): rapid map switches A→B→C
 	// could let B's loadMapRegions response arrive AFTER C's started and
 	// clobber the regions store with B's data. Mirror the pattern from
-	// map-anchors-store / map-events-store: track lastLoadedMapId and
-	// drop out-of-order writes. The caller's activeMapId === mapId
-	// guard alone isn't enough because this function writes to the
-	// shared regions store unconditionally.
-	let lastLoadedMapId: string | null = null;
+	// map-anchors-store / map-events-store: drop out-of-order writes. The
+	// caller's activeMapId === mapId guard alone isn't enough because this
+	// function writes to the shared regions store unconditionally.
+	//
+	// Slice 8 PR2 review (Codex): a map-id-only guard has an A→B→A ABA hole —
+	// after load(A-old) → applyPrefetched(B) → applyPrefetched(A), the stale
+	// load(A-old) response would match "A" again and clobber the newer commit.
+	// Use a monotonic generation token instead (same pattern as the relationships
+	// store): every commit — load OR cached apply — bumps it, so any older
+	// in-flight load is dropped regardless of which map it was for.
+	let loadSeq = 0;
 
 	async function loadMaps(): Promise<void> {
 		const res = await fetch('/api/maps');
@@ -22,15 +28,15 @@ function createWorldMapStore() {
 	}
 
 	async function loadMapRegions(mapId: string): Promise<WorldMap | null> {
-		lastLoadedMapId = mapId;
+		const seq = ++loadSeq;
 		const res = await fetch(`/api/maps/${mapId}`);
-		if (lastLoadedMapId !== mapId) return null; // stale — newer load() in flight
+		if (seq !== loadSeq) return null; // stale — a newer load/commit superseded this
 		if (!res.ok) {
 			if (res.status === 404) return null;
 			throw new Error('Failed to load map');
 		}
 		const data = await res.json();
-		if (lastLoadedMapId !== mapId) return null; // stale — re-check after JSON parse
+		if (seq !== loadSeq) return null; // stale — re-check after JSON parse
 		const { regions: loadedRegions, ...map } = data;
 		regions.set(loadedRegions as MapRegion[]);
 		return map as WorldMap;
@@ -53,11 +59,12 @@ function createWorldMapStore() {
 		return { map: map as WorldMap, regions: loadedRegions as MapRegion[] };
 	}
 
-	// Commit regions already fetched by prefetchMapRegions. Stamps lastLoadedMapId
-	// so any in-flight loadMapRegions for a different map is correctly dropped as
-	// stale, keeping the A→B→C ordering guarantee intact across a cached commit.
-	function applyPrefetchedRegions(mapId: string, loadedRegions: MapRegion[]): void {
-		lastLoadedMapId = mapId;
+	// Commit regions already fetched by prefetchMapRegions. Bumps the generation
+	// token so any in-flight loadMapRegions (for any map) is dropped as stale,
+	// keeping the ordering guarantee intact across a cached commit. mapId is
+	// retained for call-site clarity; the guard is generation-based, not map-based.
+	function applyPrefetchedRegions(_mapId: string, loadedRegions: MapRegion[]): void {
+		++loadSeq;
 		regions.set(loadedRegions);
 	}
 
