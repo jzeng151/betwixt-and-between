@@ -15,13 +15,21 @@
  *      partial-unique guarantees at most one default per Location.
  *   4. If no default exists either, return null (the Location has no map
  *      authored for this story-time slice — UI should surface as "no map").
+ *
+ * `opts.strict` drops rule-4's first-candidate fallback: a Location counts as
+ * map-bearing at T ONLY if a scoped variant covers T or a default exists. The
+ * UI wants the fallback (always render something); the spotlight cycling
+ * resolver wants strict so an out-of-window-only variant doesn't masquerade as
+ * a current map and pre-empt the nearest-map-bearing-ancestor fallback (Codex
+ * PR #72).
  */
 import type { WorldMap } from './types.js';
 
 export function resolveActiveVariant(
 	maps: WorldMap[],
 	locationId: string | null | undefined,
-	playheadPosition: number | null | undefined
+	playheadPosition: number | null | undefined,
+	opts?: { strict?: boolean }
 ): WorldMap | null {
 	if (!locationId) return null;
 	const candidates = maps.filter((m) => m.locationId === locationId);
@@ -43,9 +51,11 @@ export function resolveActiveVariant(
 	);
 	if (defaultVariant) return defaultVariant;
 
-	// No default + playhead doesn't cover any scoped variant. Fall back to
-	// the first candidate by createdAt order (caller's input order) so the UI
-	// always renders *something* when maps exist; caller may surface a warning.
+	// No default + playhead doesn't cover any scoped variant. Strict callers
+	// (cycling) treat this as "no current map" so the ancestor fallback applies;
+	// the UI falls back to the first candidate by createdAt order (caller's input
+	// order) so it always renders *something* when maps exist.
+	if (opts?.strict) return null;
 	return candidates[0] ?? null;
 }
 

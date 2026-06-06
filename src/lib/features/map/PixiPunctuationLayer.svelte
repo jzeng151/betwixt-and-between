@@ -208,10 +208,12 @@
 	}
 
 	// FX are scoped to a map: a map switch destroys any in-flight FX so they can't
-	// bleed onto the new map. Reading mapId makes this $effect re-run on switch.
+	// bleed onto the new map. The caption is screen-space and titles the current
+	// beat (which can span an auto map switch), so it is preserved — clearFx, not
+	// clearAll (Codex PR #72). Reading mapId makes this $effect re-run on switch.
 	$effect(() => {
 		void mapId;
-		clearAll();
+		clearFx();
 	});
 
 	/**
@@ -323,9 +325,13 @@
 	 * Show a caption title card (T9). Called imperatively by WorldMap when an Event
 	 * becomes active at T. Supersedes any current caption. Shown even under reduced
 	 * motion (informational text), just without the fade envelope.
+	 *
+	 * Returns true if the caption was shown, false if Pixi/the container isn't ready
+	 * yet (so the caller can retry on a later tick rather than mark it as titled and
+	 * skip it forever — Codex PR #72).
 	 */
-	export function spawnCaption(title: string): void {
-		if (!PIXI || !captionContainer || !title) return;
+	export function spawnCaption(title: string): boolean {
+		if (!PIXI || !captionContainer || !title) return false;
 		if (caption && !caption.g.destroyed) caption.g.destroy();
 		const g: PixiText = new PIXI.Text({
 			text: title,
@@ -349,14 +355,24 @@
 			const w = window as unknown as { __spotlightCaptionCount?: number };
 			w.__spotlightCaptionCount = (w.__spotlightCaptionCount ?? 0) + 1;
 		}
+		return true;
 	}
 
-	/** Destroy every in-flight FX + caption (map switch, replay-from-start, interrupt). */
-	export function clearAll(): void {
+	/** Destroy in-flight map-scoped FX (conquest/march/ripple). Does NOT touch the
+	 * caption, which lives in screen space and titles the current beat — a beat can
+	 * span an automatic map switch, so the switch must not truncate its caption
+	 * (Codex PR #72). Used by the map-switch effect. */
+	function clearFx(): void {
 		for (const item of fx) {
 			if (!item.g.destroyed) item.g.destroy();
 		}
 		fx = [];
+	}
+
+	/** Destroy every in-flight FX AND the caption (replay-from-start, interrupt,
+	 * teardown). */
+	export function clearAll(): void {
+		clearFx();
 		if (caption && !caption.g.destroyed) caption.g.destroy();
 		caption = null;
 	}
