@@ -89,6 +89,25 @@ describe('resolveActiveVariant', () => {
 		expect(resolveActiveVariant([a, b], LOC_A, 10)?.id).toBe('a');
 	});
 
+	it('strict: returns null when no default and no scoped match (no first-candidate fallback)', () => {
+		const a = mkMap({ id: 'a', locationId: LOC_A, startPosition: 0, endPosition: 1 });
+		const b = mkMap({ id: 'b', locationId: LOC_A, startPosition: 5, endPosition: 6 });
+		// Cycling resolver: an out-of-window-only variant must NOT count as the
+		// current map, so the nearest-map-bearing-ancestor fallback can apply.
+		expect(resolveActiveVariant([a, b], LOC_A, 10, { strict: true })).toBeNull();
+	});
+
+	it('strict: still returns a scoped variant that covers T', () => {
+		const scoped = mkMap({ id: 's', locationId: LOC_A, startPosition: 2, endPosition: 5 });
+		expect(resolveActiveVariant([scoped], LOC_A, 3, { strict: true })?.id).toBe('s');
+	});
+
+	it('strict: still returns the default variant when one exists', () => {
+		const def = mkMap({ id: 'def', locationId: LOC_A });
+		const scoped = mkMap({ id: 's', locationId: LOC_A, startPosition: 2, endPosition: 5 });
+		expect(resolveActiveVariant([def, scoped], LOC_A, 10, { strict: true })?.id).toBe('def');
+	});
+
 	it('filters out maps belonging to other locations', () => {
 		const aMap = mkMap({ id: 'a', locationId: LOC_A });
 		const bMap = mkMap({ id: 'b', locationId: LOC_B, startPosition: 0, endPosition: 100 });

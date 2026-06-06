@@ -680,6 +680,20 @@
 	// component just drives it with reactive values and renders the beats. Logic
 	// stays OUT of this file beyond the thin wiring below (eng decision #4).
 	const playback = createPlaybackReaction();
+	// Reactive mirror of playback.pinned (the controller's pin flag is a plain
+	// getter, not a rune, so the template can't react to it). Kept in sync via
+	// pinView()/unpinView(). Used to distinguish an automatic cycle (playing AND
+	// not pinned) from a manual map switch during playback (which pins) — the
+	// loading overlay is suppressed only for the former (Codex PR #72).
+	let viewPinned = $state(false);
+	function pinView(): void {
+		playback.pin();
+		viewPinned = true;
+	}
+	function unpinView(): void {
+		playback.unpin();
+		viewPinned = false;
+	}
 	// prefers-reduced-motion → jump-cut: suppress the flashing FX (the owner
 	// change still reads via the region tint). Set from matchMedia on mount.
 	let reducedMotion = $state(false);
@@ -746,7 +760,7 @@
 	$effect(() => {
 		const playing = $isPlaying;
 		if (playing && !wasPlaying) {
-			playback.unpin();
+			unpinView();
 			// Restart cycling hysteresis from a clean slate: the previous run's
 			// target Location must not stick across a fresh Play (or the user may
 			// have manually navigated while paused).
@@ -758,6 +772,9 @@
 			// invalidated — confirmed by codex + code-reviewer subagent.)
 			cycleCache.clear();
 			cyclePrefetching.clear();
+			// Invalidate any prefetch still in flight from the previous run so its
+			// late result can't repopulate the just-cleared cache (Codex PR #72).
+			cycleGeneration++;
 			// Replay / start-over: playhead.play() rewinds the playhead to 0 when it
 			// was idle or had reached maxT. The diff baseline is dropped in
 			// playback.frame() on that backward jump (no reverse flashes), but any FX
@@ -813,16 +830,29 @@
 	// be prefetched-then-skipped. Reading it in the effect makes a completed
 	// prefetch re-evaluate (and commit) immediately. (review: Codex prefetch-commit.)
 	let cyclePrefetchTick = $state(0);
+	// Playback-generation token. Bumped on each Play-reset; a prefetch captures it
+	// at dispatch and drops its result (and skips clearing the in-flight marker) if
+	// the generation moved while it was in flight — so a prefetch started before a
+	// pause+edit+Play can't repopulate the cache with pre-edit regions or delete a
+	// newer request's marker (Codex PR #72).
+	let cycleGeneration = 0;
 
-	// Resolve the map the story occupies at T → its active variant's mapId, or
-	// null to hold. Mutates the hysteresis cursor, so call once per evaluation.
-	function resolveCycleTargetMapId(t: number): string | null {
+	// Resolve the map the story occupies at T → the map-bearing target Location
+	// and its variant's mapId, or null to hold. PURE w.r.t. the hysteresis cursor:
+	// it READS cyclePrevTargetLoc but does NOT write it, so a not-yet-shown target
+	// is never recorded as the hysteresis winner (Codex PR #72). The cursor is
+	// advanced only on an actual commit (commitCycle). `hasMap` uses strict variant
+	// resolution so a Location whose only map is out of the current window doesn't
+	// count as map-bearing and pre-empt the ancestor fallback.
+	function resolveCycleTarget(t: number): { mapId: string; loc: string } | null {
 		const ranked = activeLocationsAtT($relationships, t, hierarchyIndex, takesPlaceAtIndex);
-		const hasMap = (locId: string) => resolveActiveVariant($worldMaps, locId, t) != null;
+		const hasMap = (locId: string) =>
+			resolveActiveVariant($worldMaps, locId, t, { strict: true }) != null;
 		const targetLoc = pickCyclingTarget(ranked, hasMap, hierarchyIndex, cyclePrevTargetLoc);
-		cyclePrevTargetLoc = targetLoc;
 		if (!targetLoc) return null;
-		return resolveActiveVariant($worldMaps, targetLoc, t)?.id ?? null;
+		const mapId = resolveActiveVariant($worldMaps, targetLoc, t, { strict: true })?.id ?? null;
+		if (!mapId) return null;
+		return { mapId, loc: targetLoc };
 	}
 
 	// Fetch a target map's regions into the cache without disturbing the visible
@@ -830,9 +860,13 @@
 	// resolver just keeps holding the current map).
 	async function prefetchCycle(mapId: string): Promise<void> {
 		if (cycleCache.has(mapId) || cyclePrefetching.has(mapId)) return;
+		const gen = cycleGeneration;
 		cyclePrefetching.add(mapId);
 		try {
 			const data = await worldMapStore.prefetchMapRegions(mapId);
+			// Superseded by a Play-reset while in flight: drop the (now-stale) result
+			// rather than caching pre-edit regions / waking a commit.
+			if (gen !== cycleGeneration) return;
 			if (data) {
 				cycleCache.set(mapId, data.regions);
 				cyclePrefetchTick++; // wake the cycling effect so it can commit now
@@ -840,18 +874,23 @@
 		} catch (err) {
 			console.error('Spotlight cycle prefetch failed:', mapId, err);
 		} finally {
-			cyclePrefetching.delete(mapId);
+			// Only clear the marker we own; after a reset a newer request may hold it.
+			if (gen === cycleGeneration) cyclePrefetching.delete(mapId);
 		}
 	}
 
 	// Commit a cached map switch: set the regions store from cache (no fetch, no
 	// loading flash) and flip activeMapId, which drives the anchors/events/
 	// layer-prefs load effect for the new map. The loading overlay is suppressed
-	// while playing so the brief post-commit anchors load doesn't strobe.
-	function commitCycle(mapId: string, regions: MapRegion[]): void {
+	// while auto-cycling so the brief post-commit anchors load doesn't strobe.
+	// Advancing the hysteresis cursor HERE (not at resolve time) anchors it on the
+	// map actually shown, so a pending/uncommitted target can't lock cycling
+	// (Codex PR #72).
+	function commitCycle(mapId: string, loc: string, regions: MapRegion[]): void {
 		worldMapStore.applyPrefetchedRegions(mapId, regions);
 		mapRegionsHealthy = true;
 		regionsSettled = true;
+		cyclePrevTargetLoc = loc;
 		activeMapId = mapId;
 	}
 
@@ -867,15 +906,15 @@
 		void $worldMaps;
 		void cyclePrefetchTick;
 		if (!playing || playback.pinned || t === null) return;
-		const targetMapId = resolveCycleTargetMapId(t);
+		const target = resolveCycleTarget(t);
 		const action = decideCycleAction(
-			targetMapId,
+			target?.mapId ?? null,
 			activeMapId,
-			targetMapId != null && cycleCache.has(targetMapId)
+			target != null && cycleCache.has(target.mapId)
 		);
 		if (action === 'hold') return;
-		if (action === 'commit') commitCycle(targetMapId!, cycleCache.get(targetMapId!)!);
-		else void prefetchCycle(targetMapId!); // hold current map; commit when ready
+		if (action === 'commit') commitCycle(target!.mapId, target!.loc, cycleCache.get(target!.mapId)!);
+		else void prefetchCycle(target!.mapId); // hold current map; commit when ready
 	});
 
 	// ── Diegetic captions (Slice 8) PR3 / T9 ────────────────────────────────
@@ -898,11 +937,23 @@
 			return;
 		}
 		const ids = activeEventIdsAtT($relationships, t, takesPlaceAtIndex);
+		// Rebuild the baseline from the currently-active ids, but only record an id
+		// as titled if its caption actually rendered. If Pixi/the layer isn't ready
+		// yet, spawnCaption returns false and we leave the id OUT, so a still-active
+		// opening beat is retried next tick instead of being skipped forever
+		// (Codex PR #72). An id with no resolvable name is treated as handled.
+		const next = new Set<string>();
+		// Carry over already-titled ids that are still active.
+		for (const id of ids) {
+			if (lastActiveEventIds.has(id)) next.add(id);
+		}
+		// Title each newly-active id; only record it as titled if it rendered.
 		for (const id of diffNewlyActiveEvents(lastActiveEventIds, ids)) {
 			const name = entityNameById.get(id);
-			if (name) punctuationLayer?.spawnCaption(name);
+			const handled = name ? (punctuationLayer?.spawnCaption(name) ?? false) : true;
+			if (handled) next.add(id);
 		}
-		lastActiveEventIds = new Set(ids);
+		lastActiveEventIds = next;
 	});
 
 	// Terrain cells, clamped to the current grid. projectState emits every
@@ -1278,7 +1329,7 @@
 			// switch the map back to the spotlight target on the next playhead tick.
 			// (The toolbar dropdown pins in its own wrapper; this covers the other
 			// two manual nav paths. review: drill/breadcrumb clobbered — codex.)
-			playback.pin();
+			pinView();
 			switchMap(variant.id);
 			return true;
 		}
@@ -1785,7 +1836,7 @@
 				// cycling) until playback restarts. Programmatic switchMap calls
 				// (auto-select / deep-link / drill) bypass this wrapper, so they
 				// don't pin.
-				playback.pin();
+				pinView();
 				void switchMap(id);
 			}}
 			onCreateMap={handleCreateMap}
@@ -1817,14 +1868,17 @@
 			ondragover={handleAssetDragOver}
 			ondrop={handleAssetDrop}
 		>
-		{#if mapLoading && !$isPlaying}
+		{#if mapLoading && !($isPlaying && !viewPinned)}
 			<!-- Bug 2: cover the canvas while the saved layer config AND the
 			     placements load, so the user sees an intentional loading state
 			     instead of layers/markers flashing or popping in.
-			     Slice 8 PR2: suppressed while playing — a between-map cycle commits
-			     cached regions, then anchors/events load behind the scenes; the
-			     overlay would otherwise strobe on every cycle. The mapLoading
-			     write-gate (undo/redo/place) still holds; only the visual is hidden. -->
+			     Slice 8 PR2: suppressed only during an AUTOMATIC cycle (playing AND
+			     not pinned) — a between-map cycle commits cached regions, then
+			     anchors/events load behind the scenes; the overlay would otherwise
+			     strobe on every cycle. A manual map switch during playback pins the
+			     view, so it is NOT an auto-cycle and DOES show the overlay (its
+			     regions aren't prefetched, so the load is a real async wait — Codex
+			     PR #72). The mapLoading write-gate (undo/redo/place) still holds. -->
 			<div class="map-loading-overlay" role="status" aria-live="polite">
 				<span class="map-loading-spinner" aria-hidden="true"></span>
 				<span class="map-loading-text">Loading map…</span>
@@ -1893,7 +1947,7 @@
 					target={cameraTarget}
 					active={cameraActive}
 					{reducedMotion}
-					onUserInteract={() => playback.pin()}
+					onUserInteract={() => pinView()}
 				/>
 				<PixiPlacementLayer
 					{activeMap}
