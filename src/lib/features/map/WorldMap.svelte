@@ -743,6 +743,13 @@
 			// target Location must not stick across a fresh Play (or the user may
 			// have manually navigated while paused).
 			cyclePrevTargetLoc = null;
+			// Drop the prefetch cache so a fresh Play never commits a STALE region
+			// snapshot. A map's regions can be edited while paused (manual nav pins,
+			// so edits only happen off-playback); re-prefetching on the next Play
+			// keeps cached commits in sync with the store. (review: cycleCache never
+			// invalidated — confirmed by codex + code-reviewer subagent.)
+			cycleCache.clear();
+			cyclePrefetching.clear();
 			// Replay / start-over: playhead.play() rewinds the playhead to 0 when it
 			// was idle or had reached maxT. The diff baseline is dropped in
 			// playback.frame() on that backward jump (no reverse flashes), but any FX
@@ -789,6 +796,12 @@
 	// Previous map-bearing target Location (resolver hysteresis state). Reset on
 	// each Play (above) and when a manual switch pins.
 	let cyclePrevTargetLoc: string | null = null;
+	// Reactive nonce bumped when a prefetch lands. cycleCache is a plain Map (not
+	// reactive), so without this a prefetch that completes BETWEEN playhead ticks
+	// wouldn't wake the cycling effect — a Location active for only one scene could
+	// be prefetched-then-skipped. Reading it in the effect makes a completed
+	// prefetch re-evaluate (and commit) immediately. (review: Codex prefetch-commit.)
+	let cyclePrefetchTick = $state(0);
 
 	// Resolve the map the story occupies at T → its active variant's mapId, or
 	// null to hold. Mutates the hysteresis cursor, so call once per evaluation.
@@ -809,7 +822,10 @@
 		cyclePrefetching.add(mapId);
 		try {
 			const data = await worldMapStore.prefetchMapRegions(mapId);
-			if (data) cycleCache.set(mapId, data);
+			if (data) {
+				cycleCache.set(mapId, data);
+				cyclePrefetchTick++; // wake the cycling effect so it can commit now
+			}
 		} catch (err) {
 			console.error('Spotlight cycle prefetch failed:', mapId, err);
 		} finally {
@@ -834,9 +850,11 @@
 	$effect(() => {
 		const playing = $isPlaying;
 		const t = $playhead;
-		// Touch the stores the resolver reads so the effect tracks them.
+		// Touch the stores the resolver reads + the prefetch nonce so the effect
+		// re-runs when relationships/maps change or a prefetch lands.
 		void $relationships;
 		void $worldMaps;
+		void cyclePrefetchTick;
 		if (!playing || playback.pinned || t === null) return;
 		const targetMapId = resolveCycleTargetMapId(t);
 		if (!targetMapId || targetMapId === activeMapId) return;
@@ -1238,6 +1256,12 @@
 	function drillIntoLocation(locationId: string) {
 		const variant = resolveActiveVariant($worldMaps, locationId, $playhead);
 		if (variant) {
+			// Manual drill (region popup / breadcrumb) is user map-navigation, so it
+			// pins the view and suspends PR2 cycling — else the cycling effect would
+			// switch the map back to the spotlight target on the next playhead tick.
+			// (The toolbar dropdown pins in its own wrapper; this covers the other
+			// two manual nav paths. review: drill/breadcrumb clobbered — codex.)
+			playback.pin();
 			switchMap(variant.id);
 			return true;
 		}

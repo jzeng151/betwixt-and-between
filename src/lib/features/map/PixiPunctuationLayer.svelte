@@ -59,6 +59,21 @@
 	const RIPPLE_MS = 650; // ripple travel + decay — the longest, it's the headline
 	const RIPPLE_PEAK = 0.9;
 	const RIPPLE_DOT_R = 7; // travelling pulse radius (world px)
+	// Defensive cap on concurrent FX Graphics. Normal playback spawns a handful of
+	// beats per boundary; this only trips on a pathological authored world (e.g.
+	// thousands of placements moving at one T), where it sheds new FX rather than
+	// letting unbounded Graphics exhaust the GPU. Logged once, never silent.
+	// (review: Codex unbounded-FX.)
+	const MAX_FX = 240;
+	let fxCapWarned = false;
+	function fxCapped(): boolean {
+		if (fx.length < MAX_FX) return false;
+		if (!fxCapWarned) {
+			fxCapWarned = true;
+			console.warn(`PixiPunctuationLayer: FX cap (${MAX_FX}) reached — shedding excess beats this frame.`);
+		}
+		return true;
+	}
 	// Opt-in diagnostic (same gate as PixiRegionLayer): in the preview/E2E build
 	// only when window.__SPOTLIGHT_DIAG__ is set, so the ship-gate spec can assert
 	// FX actually fired under playback. Prod stays clean.
@@ -200,6 +215,7 @@
 	export function spawnConquest(flips: ConquestFlip[]): void {
 		if (reducedMotion || !PIXI || !layer) return;
 		for (const flip of flips) {
+			if (fxCapped()) break;
 			const region = regionPolyById(flip.regionId);
 			if (!region?.polygon || region.polygon.length < 3) continue;
 			const flat: number[] = [];
@@ -231,6 +247,7 @@
 	export function spawnMarch(marches: MarchTrail[]): void {
 		if (reducedMotion || !PIXI || !layer || mapWidth <= 0 || mapHeight <= 0) return;
 		for (const m of marches) {
+			if (fxCapped()) break;
 			const x0 = m.fromX * mapWidth;
 			const y0 = m.fromY * mapHeight;
 			const x1 = m.toX * mapWidth;
@@ -262,6 +279,7 @@
 	export function spawnRipple(ripples: CausalRipple[]): void {
 		if (reducedMotion || !PIXI || !layer || mapWidth <= 0 || mapHeight <= 0) return;
 		for (const r of ripples) {
+			if (fxCapped()) break;
 			// effect endpoint (arrow tail) and cause endpoint (arrow head), world px.
 			const ex = r.fromX * mapWidth;
 			const ey = r.fromY * mapHeight;
