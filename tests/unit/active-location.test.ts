@@ -77,6 +77,20 @@ describe('groupTakesPlaceAt', () => {
 		]);
 		expect(g.has('caused_by:e2->e1' as never)).toBe(false);
 	});
+
+	it('with eventIds, drops takes_place_at whose source is not an Event (#084-cycling)', () => {
+		const rels = [
+			tpa('e1', 'locA'), // e1 is an Event
+			tpa('char1', 'locB') // char1 is NOT an Event — editor can author this
+		];
+		// Filtered: only the Event-sourced edge survives, so cycling/captions never
+		// treat a Character's takes_place_at as an active beat.
+		const filtered = groupTakesPlaceAt(rels, new Set(['e1']));
+		expect(filtered.has('e1')).toBe(true);
+		expect(filtered.has('char1')).toBe(false);
+		// Unfiltered (no eventIds) keeps both — back-compat for callers that don't pass it.
+		expect(groupTakesPlaceAt(rels).has('char1')).toBe(true);
+	});
 });
 
 describe('eventLocationAtT — mirrors foldCausalEdges.locationAtT', () => {

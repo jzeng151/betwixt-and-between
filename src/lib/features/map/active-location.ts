@@ -45,11 +45,24 @@ export type TakesPlaceAtEntry = {
  * carrying the temporal bounds. Pure, t-independent — the t-dependent pick is
  * `eventLocationAtT`. This is the grouping WorldMap's `causalInput` consumes
  * (eng decision #5), so it is built once.
+ *
+ * `eventIds` (optional): endpoint types are NOT enforced by the API — the relationship
+ * editor can author a `takes_place_at` from a non-Event (e.g. a Character) to a
+ * Location. Such an edge is not "an Event occurs here", so when the caller passes the
+ * loaded Event ids, edges whose `fromId` isn't an Event are dropped — otherwise the
+ * cycling driver (activeLocationsAtT) would treat them as active Events and auto-cycle
+ * the map to a Location where nothing happens (Codex PR #72 #084-cycling). Omitted =
+ * no filter (back-compat for pure tests). Captions already filter names to Events;
+ * this filters the shared selection index the camera/cycling use too.
  */
-export function groupTakesPlaceAt(relationships: Relationship[]): Map<string, TakesPlaceAtEntry[]> {
+export function groupTakesPlaceAt(
+	relationships: Relationship[],
+	eventIds?: ReadonlySet<string>
+): Map<string, TakesPlaceAtEntry[]> {
 	const byEvent = new Map<string, TakesPlaceAtEntry[]>();
 	for (const r of relationships) {
 		if (r.type !== 'takes_place_at') continue;
+		if (eventIds && !eventIds.has(r.fromId)) continue; // non-Event source → not a beat
 		const entry: TakesPlaceAtEntry = {
 			locationId: r.toId,
 			startPosition: r.startPosition,
