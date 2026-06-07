@@ -25,6 +25,7 @@
 		onCreateMap,
 		onOpenDeleteConfirm,
 		onImageUpload,
+		onImagePickerOpen,
 		onChangeLinkedLocation,
 		onStartRename,
 		onCommitRename,
@@ -50,6 +51,9 @@
 		onCreateMap: () => void;
 		onOpenDeleteConfirm: () => void;
 		onImageUpload: (e: Event) => void;
+		// Fired when the "Replace image" file dialog opens, so the parent can pin the
+		// view and suspend cycling for the open→pick gap (Codex PR #72 #954).
+		onImagePickerOpen?: () => void;
 		onChangeLinkedLocation: (value: string) => void;
 		onStartRename: () => void;
 		onCommitRename: () => void;
@@ -108,7 +112,14 @@
 	{#if hasImage}
 		<label class="btn-icon" title="Replace image">
 			📁
-			<input type="file" accept=".jpg,.jpeg,.png,.webp" onchange={onImageUpload} hidden />
+			<!-- onclick fires as the dialog opens → parent pins to suspend cycling (#954). -->
+			<input
+				type="file"
+				accept=".jpg,.jpeg,.png,.webp"
+				onclick={() => onImagePickerOpen?.()}
+				onchange={onImageUpload}
+				hidden
+			/>
 		</label>
 	{/if}
 	{#if activeMap}

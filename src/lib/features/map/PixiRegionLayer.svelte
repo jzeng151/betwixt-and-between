@@ -60,7 +60,8 @@
 		onEditRegion,
 		onDeleteRegion,
 		onDrillIntoLocation,
-		onOpenLocation
+		onOpenLocation,
+		authoringOpen = $bindable(false)
 	}: {
 		regions: MapRegion[];
 		renderedState: RenderedState | null;
@@ -97,6 +98,11 @@
 		// codex PR#57 iter3 P2: Leaflet popup made the Location name
 		// clickable → opened entity-detail. Restore as a menu item.
 		onOpenLocation?: (locationId: string) => void;
+		// Bindable: true while this layer owns an open authoring surface (the region
+		// context menu or the "set cause" modal). The parent reads it to suspend
+		// between-map cycling, so a cycle can't flip activeMapId mid-action and route
+		// a captured region id / snapshot through a different map (Codex PR #72 #953).
+		authoringOpen?: boolean;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -357,6 +363,14 @@
 	let provenance = $state<
 		{ regionId: string; loading: boolean; error: string | null; result: ProvenanceResult | null }
 	| null>(null);
+
+	// Surface "an authoring surface is open" to the parent (bindable) so it can
+	// suspend between-map cycling for the duration (Codex PR #72 #953). The context
+	// menu and the cause modal both read/commit against the live map; a mid-action
+	// cycle would route them through the wrong map.
+	$effect(() => {
+		authoringOpen = menu !== null || causeModal !== null;
+	});
 
 	function openCauseModal(regionId: string) {
 		const currentFactionId =
