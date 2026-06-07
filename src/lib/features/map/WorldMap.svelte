@@ -732,6 +732,18 @@
 	// PR #72). pixiReady is the readiness flag; pendingBeats holds the init-window beats.
 	let pixiReady = false;
 	let pendingBeats: Punctuation[] = [];
+	// Reset readiness when the FX layer unmounts (e.g. the last map is deleted → the
+	// {#if !hasMaps} branch destroys PixiPunctuationLayer). A later remount re-imports
+	// Pixi asynchronously and fires onReady again; without this reset, pixiReady would
+	// still be true, so the FX effect would call the not-yet-ready layer's no-op spawn*
+	// and permanently lose beats in that window instead of buffering them (Codex PR #72
+	// #955). Reading punctuationLayer tracks it; null = unmounted.
+	$effect(() => {
+		if (!punctuationLayer) {
+			pixiReady = false;
+			pendingBeats = [];
+		}
+	});
 	// Within-map camera target — the changed-this-frame bbox the viewport eases
 	// toward. $state so PixiCameraLayer sees it; updated only when beats fire
 	// (per boundary), not per frame. Null = hold.
@@ -931,6 +943,25 @@
 		cycleGeneration++;
 	}
 
+	// Drop the active map's staged bundle whenever ANY of its cached map-scoped data
+	// changes — events (incl. brush authoring + undo/redo), placements, layer-prefs, or
+	// regions. The staged cache now holds all of these, so without this a mutation on
+	// cached map A during playback followed by an A→B→A cycle would re-apply A's
+	// PRE-edit bundle and visibly revert the change (Codex PR #72 #952). These stores
+	// are static during passive playback (only the playhead moves), so this fires only
+	// on a real load / commit / edit — not per frame. Over-invalidation (the load or
+	// commit that populated the stores also trips it) is harmless: a return-cycle just
+	// re-prefetches fresh data, and the look-ahead re-warms it. Plain delete (no
+	// generation bump) so an in-flight prefetch of another map is undisturbed; region
+	// edits additionally call invalidateCycleCache for the in-flight-prefetch race.
+	$effect(() => {
+		void $mapEventsStore;
+		void $placementsStore;
+		void $layerPrefs;
+		void $mapRegions;
+		if (activeMapId) cycleDataCache.delete(activeMapId);
+	});
+
 	// Resolve the map the story occupies at T → the map-bearing target Location
 	// and its variant's mapId, or null to hold. PURE w.r.t. the hysteresis cursor:
 	// it READS cyclePrevTargetLoc but does NOT write it, so a not-yet-shown target
@@ -1031,19 +1062,30 @@
 		activeMapId = mapId;
 	}
 
-	// True while ANY authoring form/flow is open. Cycling must stay suspended for the
-	// whole flow — a playhead advance (or a Play that unpins) flipping activeMapId
-	// mid-edit would PATCH/create the captured form contents against a different map.
-	// This is the systemic backstop for the per-flow pins: even if a flow forgets to
-	// pin, or playback restarts while a modal is open, the open form gates cycling
-	// off (Codex PR #72 — repeated pin-gap findings #450/#959/#959/#061).
+	// Bound from PixiRegionLayer: true while its region context-menu or cause modal is
+	// open. Feeds the authoringOpen gate so cycling can't switch maps mid-action
+	// (Codex PR #72 #953).
+	let childAuthoringOpen = $state(false);
+
+	// True while ANY authoring form/flow OR canvas interaction is open. Cycling must
+	// stay suspended for the whole flow — a playhead advance (or a Play that unpins)
+	// flipping activeMapId mid-edit would PATCH/create the captured contents against a
+	// different map. This is the systemic backstop for the per-flow pins: even if a
+	// flow forgets to pin, or playback restarts while a modal is open, the open
+	// form/interaction gates cycling off (Codex PR #72 — repeated pin-gap findings
+	// #450/#959/#061/#950). `canvasMode !== 'idle'` covers active brush / place / move
+	// / polygon-draw gestures (a cycle mid-brush-stroke would post the stroke's cells
+	// to the wrong map on pointer-up); `childAuthoringOpen` covers the region-layer
+	// context-menu / cause modal the child owns (#953).
 	let authoringOpen = $derived(
 		showRegionForm ||
 			showVariantForm ||
 			renamingMapName !== null ||
 			creatingToolbarLocation ||
 			createMapOffer !== null ||
-			pixiDrawingActive
+			pixiDrawingActive ||
+			canvasMode !== 'idle' ||
+			childAuthoringOpen
 	);
 
 	// The cycling driver. Re-runs on every playhead advance (and on play/pause):
@@ -2112,6 +2154,7 @@
 			onCreateMap={handleCreateMap}
 			onOpenDeleteConfirm={openDeleteConfirm}
 			onImageUpload={handleImageUpload}
+			onImagePickerOpen={() => pinView()}
 			onChangeLinkedLocation={changeLinkedLocation}
 			onStartRename={startRename}
 			onCommitRename={commitRename}
@@ -2167,6 +2210,7 @@
 					regions={scopedRegions}
 					{renderedState}
 					mapId={activeMapId}
+					bind:authoringOpen={childAuthoringOpen}
 					{dataLoading}
 					{reducedMotion}
 					isInScope={$isInScope}
@@ -2355,7 +2399,16 @@
 				<p>Import a map image to get started</p>
 				<label class="btn-primary upload-btn">
 					Import image
-					<input type="file" accept=".jpg,.jpeg,.png,.webp" onchange={handleImageUpload} hidden />
+					<!-- Pin on picker-open (input click fires as the dialog opens) so a cycle
+					     can't flip activeMapId between opening the file dialog and onchange,
+					     uploading to the wrong map (Codex PR #72 #954). -->
+					<input
+						type="file"
+						accept=".jpg,.jpeg,.png,.webp"
+						onclick={() => pinView()}
+						onchange={handleImageUpload}
+						hidden
+					/>
 				</label>
 				{#if uploadError}
 					<p class="upload-error">{uploadError} <button onclick={() => uploadError = null}>✕</button></p>

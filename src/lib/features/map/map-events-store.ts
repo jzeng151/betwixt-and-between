@@ -49,6 +49,11 @@ function createMapEventsStore() {
 	const store = writable<MapEvent[]>([]);
 	// See map-anchors-store.ts for the rationale. Codex P1 on PR #55.
 	let lastLoadedMapId: string | null = null;
+	// Monotonic load token (mirrors map-anchors-store). lastLoadedMapId alone has an
+	// A→B→A ABA hole: a slow load(A) resolving after an applyPrefetched(A) commit
+	// passes the map-id check and clobbers the committed bundle. applyPrefetched bumps
+	// this so any older in-flight load is dropped regardless of map (Codex PR #72 #949).
+	let loadToken = 0;
 
 	// Slice 2 D3 (T7) — client-side redo stack. Server holds no redo
 	// state; an undone event lives here until it's redone or until a
@@ -79,6 +84,8 @@ function createMapEventsStore() {
 	// PR #55).
 	async function load(mapId: string): Promise<void> {
 		lastLoadedMapId = mapId;
+		const token = ++loadToken;
+		const stale = () => lastLoadedMapId !== mapId || token !== loadToken;
 		// Switching maps invalidates the redo stack.
 		if (redoStackForMapId !== mapId) {
 			redoStackForMapId = mapId;
@@ -91,14 +98,14 @@ function createMapEventsStore() {
 				? `/api/maps/${mapId}/events?after=${encodeURIComponent(cursor)}`
 				: `/api/maps/${mapId}/events`;
 			const res = await fetch(url);
-			if (lastLoadedMapId !== mapId) return;
+			if (stale()) return;
 			if (!res.ok) throw new Error(`Failed to load events: ${await errorMessage(res)}`);
 			const body = (await res.json()) as { rows: MapEvent[]; next_cursor: string | null };
-			if (lastLoadedMapId !== mapId) return;
+			if (stale()) return;
 			collected.push(...body.rows);
 			cursor = body.next_cursor;
 		} while (cursor != null);
-		if (lastLoadedMapId !== mapId) return;
+		if (stale()) return;
 		store.set(collected);
 	}
 
@@ -379,6 +386,7 @@ function createMapEventsStore() {
 	}
 	function applyPrefetched(mapId: string, rows: MapEvent[]): void {
 		lastLoadedMapId = mapId;
+		++loadToken; // supersede any in-flight load (incl. a same-map A→B→A ABA load)
 		if (redoStackForMapId !== mapId) {
 			redoStackForMapId = mapId;
 			redoStore.set([]);
