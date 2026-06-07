@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.13.1] - 2026-06-07
+
+Test-infrastructure only; no user-facing changes.
+
+### Fixed
+
+- **Deploy gate no longer fails on transient E2E flakes.** The production deploy ran the Playwright E2E suite with no retries, so a single timing flake on a loaded CI runner (e.g. the Characters list waiting on the app's on-mount data load) failed the whole deploy and skipped the release. The suite now retries twice in CI (and zero times locally, so flakes still surface during development), and the initial list-population assertions in `features.spec.ts` get a budget that accounts for the on-mount load instead of an arbitrary 3s cap.
+
 ## [0.8.13.0] - 2026-06-06
 
 World Map Cinematic Spotlight, continued: the camera now follows the story across maps, and the map narrates what is happening as it plays.

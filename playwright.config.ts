@@ -36,6 +36,11 @@ export default defineConfig({
 		}
 	},
 	testDir: 'tests/e2e',
+	// A single transient flake (e.g. a slow on-mount store load on a loaded CI
+	// runner) otherwise sinks the whole deploy gate — there are no per-test
+	// retries by default. Retry twice in CI only; keep local runs at 0 so flakes
+	// surface loudly during development.
+	retries: process.env.CI ? 2 : 0,
 	// Tests share a single PGlite instance, so they must run serially
 	// to avoid one test's beforeEach cleanup racing with another test's
 	// data creation.
