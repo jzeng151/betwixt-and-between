@@ -3,6 +3,14 @@ import { E2E_USER_HEADERS } from './pglite-config.js';
 
 test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
 
+// The first list-population assertion after goto('/app') is gated on the page's
+// on-mount Promise.all([entities.load(), relationships.load(), ...,
+// worldMapStore.loadMaps()]) (src/routes/app/+page.svelte). On a loaded CI
+// runner that 4-way load can exceed a few seconds, so give these initial waits a
+// generous budget. Post-interaction assertions stay tight to catch real UI
+// regressions fast.
+const LIST_LOAD_TIMEOUT = 10_000;
+
 async function clearEntities(request: APIRequestContext) {
 	const ents: Array<{ id: string }> = await (await request.get('/api/entities')).json();
 	await Promise.all(ents.map((e) => request.delete(`/api/entities/${e.id}`)));
@@ -114,7 +122,7 @@ test.describe('Characters', () => {
 
 		await page.click('button[title="Characters"]');
 		const win = page.locator('.window[aria-label="Characters"]');
-		await expect(win.locator('.char-role-badge').first()).toHaveText('Protagonist', { timeout: 3000 });
+		await expect(win.locator('.char-role-badge').first()).toHaveText('Protagonist', { timeout: LIST_LOAD_TIMEOUT });
 		await expect(win.locator('.char-affiliation').first()).toHaveText('The Conclave');
 	});
 
@@ -124,7 +132,7 @@ test.describe('Characters', () => {
 
 		await page.click('button[title="Characters"]');
 		const listWin = page.locator('.window[aria-label="Characters"]');
-		await expect(listWin.locator('.char-row')).toHaveCount(1, { timeout: 3000 });
+		await expect(listWin.locator('.char-row')).toHaveCount(1, { timeout: LIST_LOAD_TIMEOUT });
 		await listWin.locator('.char-row').first().click();
 
 		const detailWin = page.locator('.window[aria-label="Elara"]');
@@ -144,7 +152,7 @@ test.describe('Characters', () => {
 
 		await page.click('button[title="Characters"]');
 		const listWin = page.locator('.window[aria-label="Characters"]');
-		await expect(listWin.locator('.char-row')).toHaveCount(1, { timeout: 3000 });
+		await expect(listWin.locator('.char-row')).toHaveCount(1, { timeout: LIST_LOAD_TIMEOUT });
 		await listWin.locator('.char-row').first().click();
 
 		const detailWin = page.locator('.window[aria-label="Elara"]');
@@ -165,7 +173,7 @@ test.describe('Characters', () => {
 
 		await page.click('button[title="Characters"]');
 		const listWin = page.locator('.window[aria-label="Characters"]');
-		await expect(listWin.locator('.char-row')).toHaveCount(1, { timeout: 3000 });
+		await expect(listWin.locator('.char-row')).toHaveCount(1, { timeout: LIST_LOAD_TIMEOUT });
 		await listWin.locator('.char-row').first().click();
 
 		const detailWin = page.locator('.window[aria-label="Elara"]');
