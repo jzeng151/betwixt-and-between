@@ -243,15 +243,30 @@ test('Play on the seeded demo world cycles between maps, fires FX + captions, an
 		(window as unknown as { __spotlightFlashCount?: number }).__spotlightFlashCount = 0;
 	});
 
-	// The loading overlay must NEVER appear while playing — switch-only-when-ready
-	// stages the whole target map before committing, so a cycle doesn't flash it.
+	// Two continuous watches running for the whole playback, set up BEFORE play:
+	//   - the loading overlay must NEVER appear while playing (switch-only-when-ready
+	//     stages the whole target map before committing, so a cycle doesn't flash it);
+	//   - the map-switcher value must change at least once (the headline T6 cycle).
+	// We watch the switcher continuously (rather than polling after the FX assertions)
+	// because the cycle to Greyhold is TRANSIENT — the playhead crosses into Greyhold's
+	// act and later returns to Northmarch (Act 2), so a post-hoc poll can miss the
+	// window in slow CI. Recording "ever cycled" from play-start is timing-robust.
 	const overlay = win.locator('.map-loading-overlay');
 	let overlayEverVisible = false;
+	let everCycled = false;
 	const overlayWatch = setInterval(() => {
 		overlay
 			.isVisible()
 			.then((v) => {
 				if (v) overlayEverVisible = true;
+			})
+			.catch(() => {});
+	}, 100);
+	const switcherWatch = setInterval(() => {
+		switcher
+			.inputValue()
+			.then((v) => {
+				if (v && v !== startMap) everCycled = true;
 			})
 			.catch(() => {});
 	}, 100);
@@ -282,12 +297,11 @@ test('Play on the seeded demo world cycles between maps, fires FX + captions, an
 		)
 		.toBeGreaterThan(0);
 
-	// Headline T6 behavior: the view then cycles to a DIFFERENT map with no manual
-	// input as the playhead crosses into Greyhold's act.
-	await expect
-		.poll(async () => await switcher.inputValue(), { timeout: 25000, intervals: [200] })
-		.not.toBe(startMap);
+	// Headline T6 behavior: the view cycled to a DIFFERENT map with no manual input as
+	// the playhead crossed into Greyhold's act (observed by the continuous watch above).
+	await expect.poll(() => everCycled, { timeout: 25000, intervals: [200] }).toBe(true);
 
 	clearInterval(overlayWatch);
+	clearInterval(switcherWatch);
 	expect(overlayEverVisible).toBe(false);
 });
