@@ -49,6 +49,7 @@
 		activeEventIdsAtT,
 		diffNewlyActiveEvents,
 		decideCycleAction,
+		cycleLookaheadTarget,
 		pickCyclingTarget
 	} from '$lib/features/map/active-location.js';
 	import type {
@@ -899,6 +900,10 @@
 	// Previous map-bearing target Location (resolver hysteresis state). Reset on
 	// each Play (above) and when a manual switch pins.
 	let cyclePrevTargetLoc: string | null = null;
+	// Last playhead position the cycling driver saw, for the look-ahead prefetch's
+	// velocity estimate (Codex PR #72 — cycle latency). null when not cycling so the
+	// estimate never spans a pause gap.
+	let lastCyclePlayheadT: number | null = null;
 	// Reactive nonce bumped when a prefetch lands. cycleCache is a plain Map (not
 	// reactive), so without this a prefetch that completes BETWEEN playhead ticks
 	// wouldn't wake the cycling effect — a Location active for only one scene could
@@ -1052,7 +1057,10 @@
 		void $relationships;
 		void $worldMaps;
 		void cyclePrefetchTick;
-		if (!playing || playback.pinned || authoringOpen || t === null) return;
+		if (!playing || playback.pinned || authoringOpen || t === null) {
+			lastCyclePlayheadT = null; // velocity estimate must not span a pause/idle gap
+			return;
+		}
 		const target = resolveCycleTarget(t);
 		const action = decideCycleAction(
 			target?.mapId ?? null,
@@ -1066,10 +1074,26 @@
 			// Location would strobe to its map. A null/pending target is still never
 			// recorded — only a resolved target whose map is on screen (Codex PR #72).
 			if (target && target.mapId === activeMapId) cyclePrevTargetLoc = target.loc;
-			return;
+		} else if (action === 'commit') {
+			commitCycle(target!.mapId, target!.loc, cycleDataCache.get(target!.mapId)!);
+		} else {
+			void prefetchCycle(target!.mapId); // hold current map; commit when ready
 		}
-		if (action === 'commit') commitCycle(target!.mapId, target!.loc, cycleDataCache.get(target!.mapId)!);
-		else void prefetchCycle(target!.mapId); // hold current map; commit when ready
+
+		// Look-ahead: warm the cache for the map the story is ABOUT to enter, so the
+		// commit is INSTANT when the playhead crosses the boundary instead of stalling
+		// a prefetch round-trip into the new act (Codex PR #72 — cycle latency: an
+		// auto-cycle was otherwise committing near the act's end). Decision is the pure
+		// `cycleLookaheadTarget`; this only prefetches the result (never commits).
+		const warmMapId = cycleLookaheadTarget(
+			t,
+			lastCyclePlayheadT,
+			resolveCycleTarget,
+			activeMapId,
+			(id) => cycleDataCache.has(id)
+		);
+		if (warmMapId) void prefetchCycle(warmMapId);
+		lastCyclePlayheadT = t;
 	});
 
 	// ── Diegetic captions (Slice 8) PR3 / T9 ────────────────────────────────

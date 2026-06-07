@@ -11,6 +11,7 @@ import {
 	activeEventIdsAtT,
 	diffNewlyActiveEvents,
 	decideCycleAction,
+	cycleLookaheadTarget,
 	pickCyclingTarget,
 	type TakesPlaceAtEntry,
 	type ActiveLocation
@@ -324,6 +325,53 @@ describe('decideCycleAction — switch-only-when-ready', () => {
 	it('commits a first switch from no active map when cached', () => {
 		expect(decideCycleAction('mapA', null, true)).toBe('commit');
 		expect(decideCycleAction('mapA', null, false)).toBe('prefetch');
+	});
+});
+
+describe('cycleLookaheadTarget — warm the next map before the boundary (#72 cycle latency)', () => {
+	const never = () => false; // nothing cached
+	// resolveAt that returns a fixed upcoming map, and records the t it was asked for.
+	const resolverTo = (mapId: string | null) => {
+		const calls: number[] = [];
+		const fn = (t: number) => {
+			calls.push(t);
+			return mapId ? { mapId } : null;
+		};
+		return { fn, calls };
+	};
+
+	it('returns null on the first tick (no prior position to estimate velocity)', () => {
+		expect(cycleLookaheadTarget(1.0, null, resolverTo('mapB').fn, 'mapA', never)).toBeNull();
+	});
+
+	it('returns null on a backward jump (replay rewind / reverse scrub)', () => {
+		const r = resolverTo('mapB');
+		expect(cycleLookaheadTarget(0, 3, r.fn, 'mapA', never)).toBeNull();
+		expect(r.calls).toEqual([]); // never even resolves on a backward jump
+	});
+
+	it('returns null when the playhead did not move (dt = 0)', () => {
+		expect(cycleLookaheadTarget(1.5, 1.5, resolverTo('mapB').fn, 'mapA', never)).toBeNull();
+	});
+
+	it('warms the upcoming map, resolving 2 ticks ahead of the current position', () => {
+		const r = resolverTo('mapB');
+		// dt = 1.5 - 1.0 = 0.5 → looks ahead to 1.5 + 0.5*2 = 2.5.
+		expect(cycleLookaheadTarget(1.5, 1.0, r.fn, 'mapA', never)).toBe('mapB');
+		expect(r.calls).toEqual([2.5]);
+	});
+
+	it('does not warm a map that is already active', () => {
+		expect(cycleLookaheadTarget(1.5, 1.0, resolverTo('mapA').fn, 'mapA', never)).toBeNull();
+	});
+
+	it('does not warm a map that is already cached', () => {
+		const cached = (id: string) => id === 'mapB';
+		expect(cycleLookaheadTarget(1.5, 1.0, resolverTo('mapB').fn, 'mapA', cached)).toBeNull();
+	});
+
+	it('returns null when nothing resolves ahead (e.g. past the end)', () => {
+		expect(cycleLookaheadTarget(2.9, 2.5, resolverTo(null).fn, 'mapA', never)).toBeNull();
 	});
 });
 
