@@ -633,11 +633,18 @@
 	// recomputes only when relationships / regions change, not per playhead tick,
 	// which is where the per-frame-cost (T7) concern is handled. Relationship is
 	// structurally assignable to ProjectionCausalEdge.
+	// Loaded Event ids — used to filter the takes_place_at index to genuine Events.
+	// Endpoint types aren't API-enforced, so a non-Event (e.g. Character) can author a
+	// takes_place_at to a Location; that's not "an Event occurs here" and must not feed
+	// the cycling/caption selection (Codex PR #72 #084-cycling).
+	const eventIds = $derived(
+		new Set($entities.filter((e) => e.type === 'Event').map((e) => e.id))
+	);
 	// The takes_place_at grouping, built ONCE per relationships snapshot (eng
 	// decision #5). Shared by causalInput, the cycling resolver, and the caption
-	// diff so the indexing isn't rebuilt 3× per playhead tick. Depends only on
-	// $relationships, not on regions/activeMap (unlike causalInput).
-	const takesPlaceAtIndex = $derived(groupTakesPlaceAt($relationships));
+	// diff so the indexing isn't rebuilt 3× per playhead tick. Filtered to Event
+	// sources (above). Depends on $relationships + $entities.
+	const takesPlaceAtIndex = $derived(groupTakesPlaceAt($relationships, eventIds));
 
 	const causalInput = $derived.by(() => {
 		const edges = $relationships.filter((r) => r.type === 'caused_by');
