@@ -2381,6 +2381,14 @@
 				<PixiPlacementLayer
 					{activeMap}
 					bind:authoringOpen={placementAuthoringOpen}
+					onStylePersisted={() => {
+						// Post-PATCH: re-invalidate the Location's cycle bundles so a prefetch
+						// that raced the PATCH (caching the pre-edit style) can't survive
+						// (Codex PR #72 #521). The reactive effect already invalidated on the
+						// optimistic write; this covers the authoritative-write window.
+						const loc = activeMap?.locationId;
+						if (loc) invalidateCycleCacheForLocation(loc);
+					}}
 					playhead={$playhead}
 					placements={$placementsStore}
 					entities={$entities}

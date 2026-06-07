@@ -63,6 +63,7 @@
 		onOpenEntity,
 		onDeletePlacement,
 		onCanvasClick,
+		onStylePersisted,
 		authoringOpen = $bindable(false)
 	}: {
 		activeMap: WorldMap | null;
@@ -112,6 +113,8 @@
 		onOpenEntity: (id: string) => void;
 		onDeletePlacement: (id: string) => void;
 		onCanvasClick?: (fx: number, fy: number) => void;
+		// Fired after a placement style PATCH resolves (Codex PR #72 #521).
+		onStylePersisted?: () => void;
 		// Bindable: true while this layer owns an open authoring surface (the marker
 		// context menu or the style popover). The parent reads it to suspend cycling so
 		// a cycle can't flip activeMapId while a menu is open and route a captured
@@ -860,6 +863,7 @@
 		x={styleTarget.x}
 		y={styleTarget.y}
 		onClose={() => (styleTarget = null)}
+		onPersisted={() => onStylePersisted?.()}
 	/>
 {/if}
 {#if tooltip}

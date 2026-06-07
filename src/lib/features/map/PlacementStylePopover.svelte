@@ -30,8 +30,13 @@
 		x: number;
 		y: number;
 		onClose: () => void;
+		// Fired AFTER a style PATCH resolves so the parent can invalidate the cycling
+		// cache for this placement's Location — the optimistic-write invalidation runs
+		// before the PATCH is authoritative, so a racing prefetch could otherwise cache
+		// the pre-PATCH style (Codex PR #72 #521).
+		onPersisted?: () => void;
 	}
-	let { placement, placeable, x, y, onClose }: Props = $props();
+	let { placement, placeable, x, y, onClose, onPersisted }: Props = $props();
 
 	let panelEl: HTMLDivElement | undefined = $state();
 	let pos = $state({ x: 0, y: 0 });
@@ -57,6 +62,7 @@
 		if (Object.keys(next).length === 0) delete data.style;
 		else data.style = next;
 		await mapPlacements.update(placement.id, { data });
+		onPersisted?.(); // post-PATCH → parent re-invalidates the Location's cycle bundles
 	}
 
 	async function setInPalette(v: boolean) {
