@@ -984,18 +984,14 @@
 		cycleGeneration++;
 	}
 
-	// Drop the active map's staged bundle whenever ANY of its cached map-scoped data
-	// changes — events (incl. brush authoring + undo/redo), placements, layer-prefs, or
-	// regions. The staged cache now holds all of these, so without this a mutation on
-	// cached map A during playback followed by an A→B→A cycle would re-apply A's
-	// PRE-edit bundle and visibly revert the change (Codex PR #72 #952). These stores
-	// are static during passive playback (only the playhead moves), so this fires only
-	// on a real load / commit / edit — not per frame. Over-invalidation (the load or
-	// commit that populated the stores also trips it) is harmless: a return-cycle just
-	// re-prefetches fresh data, and the look-ahead re-warms it.
+	// Drop the active map's staged bundle whenever its PER-MAP cached data changes —
+	// events (incl. brush authoring + undo/redo), layer-prefs, or regions. The staged
+	// cache holds these, so without this a mutation on cached map A during playback then
+	// an A→B→A cycle would re-apply A's PRE-edit bundle and visibly revert the change
+	// (Codex PR #72 #952). These stores are static during passive playback (only the
+	// playhead moves), so this fires only on a real load/commit/edit — not per frame.
 	$effect(() => {
 		void $mapEventsStore;
-		void $placementsStore;
 		void $layerPrefs;
 		void $mapRegions;
 		const id = activeMapId;
@@ -1010,6 +1006,26 @@
 			// No in-flight request for this map → a plain delete suffices and leaves
 			// other maps' look-ahead prefetches undisturbed.
 			cycleDataCache.delete(id);
+		}
+	});
+
+	// Placements are LOCATION-scoped (loaded/prefetched by locationId) and shared across
+	// a Location's map variants, so a placement change — including a style edit via the
+	// popover, which goes through mapPlacements.update and bypasses the create/delete
+	// handlers' invalidation — must drop every cached bundle for that Location, not just
+	// the active map's (Codex PR #72 #736; create/delete already do this in their
+	// handlers). Plain delete (no generation bump) keeps other maps' look-ahead
+	// prefetches undisturbed; #736's race is a COMPLETED stale sibling bundle, which a
+	// delete clears.
+	$effect(() => {
+		void $placementsStore;
+		const loc = activeMap?.locationId;
+		if (loc) {
+			for (const [mid, bundle] of cycleDataCache) {
+				if (bundle.locationId === loc) cycleDataCache.delete(mid);
+			}
+		} else if (activeMapId) {
+			cycleDataCache.delete(activeMapId);
 		}
 	});
 
@@ -1140,7 +1156,8 @@
 			pixiDrawingActive ||
 			canvasMode !== 'idle' ||
 			childAuthoringOpen ||
-			placementAuthoringOpen
+			placementAuthoringOpen ||
+			deleteConfirm !== null
 	);
 
 	// The cycling driver. Re-runs on every playhead advance (and on play/pause):

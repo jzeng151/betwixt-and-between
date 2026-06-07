@@ -264,6 +264,17 @@
 		styleTarget ? (entityById.get(styleTarget!.placeableId) ?? null) : null
 	);
 
+	// Close the menu / style popover when their target placement disappears from the
+	// loaded set — e.g. an external deep-link swaps maps while the popover is open and
+	// the new placement load drops the row. The popover already hides (its derived
+	// target goes null), but `styleTarget`/`menu` would stay non-null, leaving the
+	// parent's bound `authoringOpen` stuck true with no UI to dismiss — permanently
+	// blocking between-map cycling (Codex PR #72 #741).
+	$effect(() => {
+		if (styleTarget !== null && styleTargetPlacement === null) styleTarget = null;
+		if (menu !== null && !placements.some((p) => p.id === menu!.placementId)) menu = null;
+	});
+
 	// codex P2 (PR #58): monotonic render token. Icon textures load
 	// asynchronously; if this effect re-runs (and destroys the current markers)
 	// while a load is in flight, the resolved sprite must NOT be added to a
