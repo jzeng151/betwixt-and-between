@@ -144,8 +144,13 @@
 		// is up — and undo would POST /events/undo against the NEW map, deleting
 		// its latest event. mapLoading stays true until anchors/events settle.
 		if (mapLoading) return;
+		// Capture before await: undo/redo are keyboard-triggerable (no pointerdown to
+		// pin), so a cycle can move on mid-request; invalidate the mutated map's staged
+		// bundle, not the active one (Codex PR #72 #104).
+		const mapId = activeMapId;
 		try {
 			await mapEventsStore.undo(activeMapId);
+			invalidateCycleCache(mapId);
 		} catch (err) {
 			console.error('Undo failed:', err);
 		}
@@ -153,8 +158,10 @@
 	async function handleRedo() {
 		if (!activeMapId) return;
 		if (mapLoading) return;
+		const mapId = activeMapId;
 		try {
 			await mapEventsStore.redo(activeMapId);
+			invalidateCycleCache(mapId);
 		} catch (err) {
 			console.error('Redo failed:', err);
 		}
@@ -725,6 +732,18 @@
 	function unpinView(): void {
 		playback.unpin();
 		viewPinned = false;
+	}
+	// Systemic cycling-suspend on DIRECT interaction: any pointerdown inside the map
+	// window during unpinned playback pins the view, so an auto-cycle can't flip
+	// activeMapId while the user is acting on a surface that reads it — toolbar selects
+	// (linked-location), palette drag-and-drop, the canvas, the region menu, file
+	// pickers, etc. This is the catch-all backstop for the recurring per-flow pin gaps
+	// (Codex PR #72 #101/#102/… — the specific gates/pins remain for the
+	// "form stays open across a Play" case the pin alone wouldn't cover). Capture phase
+	// so the pin lands BEFORE the child handler reads activeMapId. Idempotent; only
+	// during playback (a Play unpins, restoring camera-follow).
+	function pinOnMapInteraction(): void {
+		if (get(isPlaying) && !playback.pinned) pinView();
 	}
 	// prefers-reduced-motion → jump-cut: suppress the flashing FX (the owner
 	// change still reads via the region tint). Set from matchMedia on mount.
@@ -1385,6 +1404,10 @@
 
 	async function createPlacementAt(placeableId: string, x: number, y: number) {
 		placementError = '';
+		// Capture the target map before the await: the staged-cache invalidation must
+		// drop THIS map's bundle, not whichever map is active when the request resolves
+		// (a cycle could move on during the round-trip — Codex PR #72 #104).
+		const mapId = activeMap?.id ?? null;
 		try {
 			// Slice 4 PR-A (D1 reference model): a placement references the
 			// existing entity directly, so the old `source_asset_id` provenance
@@ -1394,10 +1417,11 @@
 			await placementsStore.create({
 				placeableId,
 				locationId: activeMap?.locationId ?? null,
-				mapId: activeMap?.id ?? null,
+				mapId,
 				x,
 				y
 			});
+			if (mapId) invalidateCycleCache(mapId);
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
 		}
@@ -1484,8 +1508,12 @@
 	}
 
 	async function deletePlacement(id: string) {
+		// Capture the owning map before the await so the bundle invalidation targets
+		// the mutated map even if a cycle moves on mid-request (Codex PR #72 #104).
+		const mapId = activeMap?.id ?? null;
 		try {
 			await placementsStore.delete(id);
+			if (mapId) invalidateCycleCache(mapId);
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
 		}
@@ -2130,6 +2158,7 @@
 	<div
 		class="map-wrapper"
 		class:has-breadcrumb={breadcrumbAncestors.length > 0 && activeMap}
+		onpointerdowncapture={pinOnMapInteraction}
 	>
 		{#if breadcrumbAncestors.length > 0 && activeMap}
 			<MapBreadcrumb
