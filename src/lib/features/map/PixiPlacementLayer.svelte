@@ -62,7 +62,8 @@
 		onMoveSelect,
 		onOpenEntity,
 		onDeletePlacement,
-		onCanvasClick
+		onCanvasClick,
+		authoringOpen = $bindable(false)
 	}: {
 		activeMap: WorldMap | null;
 		playhead: number | null;
@@ -111,6 +112,11 @@
 		onOpenEntity: (id: string) => void;
 		onDeletePlacement: (id: string) => void;
 		onCanvasClick?: (fx: number, fy: number) => void;
+		// Bindable: true while this layer owns an open authoring surface (the marker
+		// context menu or the style popover). The parent reads it to suspend cycling so
+		// a cycle can't flip activeMapId while a menu is open and route a captured
+		// placement id through a different map (Codex PR #72 #857).
+		authoringOpen?: boolean;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -184,6 +190,13 @@
 	let styleTarget = $state<{ x: number; y: number; placementId: string; placeableId: string } | null>(
 		null
 	);
+
+	// Surface "an authoring surface is open" to the parent (bindable) so it can suspend
+	// cycling while the marker menu / style popover is open — a mid-action cycle would
+	// route the captured placement id through the wrong map (Codex PR #72 #857).
+	$effect(() => {
+		authoringOpen = menu !== null || styleTarget !== null;
+	});
 
 	onMount(() => {
 		let cancelled = false;

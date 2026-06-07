@@ -104,17 +104,23 @@ describe('mapEventsStore prefetch / applyPrefetched', () => {
 });
 
 describe('layerPrefs prefetch / applyPrefetched', () => {
-	it('prefetch returns the prefs map and never throws on error (defaults-visible)', async () => {
+	it('prefetch returns prefs on ok, empty on 404, and THROWS on other failures (#859)', async () => {
 		globalThis.fetch = vi
 			.fn()
 			.mockResolvedValue(resp([{ layerKey: 'regions', visible: 0 }])) as unknown as typeof fetch;
 		const prefs = await layerPrefs.prefetch('A');
 		expect(prefs.get('regions')).toBe(false);
 
+		// 404 (map has no prefs row) is a genuine empty → defaults-visible.
 		globalThis.fetch = vi.fn().mockResolvedValue(resp('nope', false, 404)) as unknown as typeof fetch;
-		await expect(layerPrefs.prefetch('A')).resolves.toEqual(new Map()); // 404 → empty (defaults)
+		await expect(layerPrefs.prefetch('A')).resolves.toEqual(new Map());
+
+		// A transient failure must NOT be masked as authoritative defaults — it throws so
+		// the cycle bundle fails and holds/retries instead of turning hidden layers on.
+		globalThis.fetch = vi.fn().mockResolvedValue(resp('boom', false, 500)) as unknown as typeof fetch;
+		await expect(layerPrefs.prefetch('A')).rejects.toThrow();
 		globalThis.fetch = vi.fn().mockRejectedValue(new Error('net')) as unknown as typeof fetch;
-		await expect(layerPrefs.prefetch('A')).resolves.toEqual(new Map()); // network → empty
+		await expect(layerPrefs.prefetch('A')).rejects.toThrow();
 	});
 
 	it('applyPrefetched installs loaded state and supersedes an in-flight load (no flash to empty)', async () => {
