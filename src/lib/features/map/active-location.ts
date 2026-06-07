@@ -226,6 +226,39 @@ export function decideCycleAction(
 }
 
 /**
+ * Which map (if any) the cycling driver should WARM into its cache ahead of time,
+ * so the commit is instant when the playhead crosses into a new act instead of
+ * stalling a prefetch round-trip (the cycle-latency fix). Pure: the caller injects
+ * `resolveAt` (its `resolveCycleTarget`) and `isCached` (its cache lookup).
+ *
+ *   - Looks ahead only on FORWARD motion (`t > lastT`); a backward jump (replay
+ *     rewind / reverse scrub) has no "about to enter" map and would otherwise look an
+ *     arbitrary distance past the end.
+ *   - Distance scales with the last observed per-tick gap (`(t - lastT) * 2`), so it
+ *     adapts to playback speed and the story's position scale rather than a brittle
+ *     fixed window — ~2 ticks ahead to cover the fetch.
+ *   - Returns null (warm nothing) when there's no prior tick, motion isn't forward,
+ *     the upcoming map is already active, already cached, or unresolved.
+ *
+ * WARM-UP ONLY — it never commits; the actual switch still waits for the real
+ * playhead position via `decideCycleAction`, so this can't switch early.
+ */
+export function cycleLookaheadTarget(
+	t: number,
+	lastT: number | null,
+	resolveAt: (t: number) => { mapId: string } | null,
+	activeMapId: string | null,
+	isCached: (mapId: string) => boolean
+): string | null {
+	if (lastT === null) return null;
+	const dt = t - lastT;
+	if (dt <= 0) return null; // forward only
+	const ahead = resolveAt(t + dt * 2);
+	if (!ahead || ahead.mapId === activeMapId || isCached(ahead.mapId)) return null;
+	return ahead.mapId;
+}
+
+/**
  * Nearest map-bearing Location at or above `loc` — `loc` itself if it has a map,
  * else the closest ancestor that does, else null. The Edge-Cases "no map at T →
  * nearest ancestor with a map (walkAncestors)" fallback. Pure.
