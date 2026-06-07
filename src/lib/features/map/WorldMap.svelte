@@ -1020,12 +1020,26 @@
 	$effect(() => {
 		void $placementsStore;
 		const loc = activeMap?.locationId;
-		if (loc) {
+		if (!loc) {
+			if (activeMapId) cycleDataCache.delete(activeMapId);
+			return;
+		}
+		// If a prefetch for a map of THIS Location is in flight, a GET started before
+		// the edit could complete afterward and repopulate the cache with the stale
+		// placement (e.g. a style edit while a sibling variant is mid-prefetch — the
+		// popover suspends cycling but the marker tap doesn't pin). Supersede it via the
+		// generation bump, exactly as the create/delete handlers do (Codex PR #72 #840).
+		// Otherwise a plain location-wide delete suffices (the common #736 case: a
+		// completed stale sibling bundle) and leaves other maps' look-aheads undisturbed.
+		const siblingInFlight = [...cyclePrefetching].some(
+			(mid) => $worldMaps.find((m) => m.id === mid)?.locationId === loc
+		);
+		if (siblingInFlight) {
+			invalidateCycleCacheForLocation(loc);
+		} else {
 			for (const [mid, bundle] of cycleDataCache) {
 				if (bundle.locationId === loc) cycleDataCache.delete(mid);
 			}
-		} else if (activeMapId) {
-			cycleDataCache.delete(activeMapId);
 		}
 	});
 
