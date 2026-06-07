@@ -131,16 +131,19 @@ function createLayerPrefsStore() {
 	// the load()-path flash to an empty 'loading' state during an auto-cycle.
 	async function prefetch(mapId: string): Promise<Map<string, boolean>> {
 		const prefs = new Map<string, boolean>();
-		try {
-			const res = await fetch(
-				`/api/world-map-layer-prefs?worldMapId=${encodeURIComponent(mapId)}`
-			);
-			if (!res.ok) return prefs; // 404/not-owned → defaults-visible
-			const rows = (await res.json()) as RawPref[];
-			for (const row of rows) prefs.set(row.layerKey, row.visible === 1);
-		} catch {
-			return prefs; // network failure → defaults-visible
-		}
+		// Unlike load() (which falls back to defaults-visible to avoid a permanent blank
+		// on the ACTIVE map), prefetch must NOT mask a transient failure as authoritative
+		// defaults: the cycle commit installs the result as status:'loaded' and skips the
+		// normal load(), so a network/500 error would silently turn every saved-hidden
+		// layer visible with no retry. A genuine 404 (map has no prefs row) IS a real
+		// empty → defaults. So: 404 → empty; any other failure → throw, which fails the
+		// cycle bundle (prefetchCycle → cycleFailed → hold + retry next Play) (Codex PR
+		// #72 #859).
+		const res = await fetch(`/api/world-map-layer-prefs?worldMapId=${encodeURIComponent(mapId)}`);
+		if (res.status === 404) return prefs;
+		if (!res.ok) throw new Error(`Failed to prefetch layer prefs: ${res.status}`);
+		const rows = (await res.json()) as RawPref[];
+		for (const row of rows) prefs.set(row.layerKey, row.visible === 1);
 		return prefs;
 	}
 	function applyPrefetched(mapId: string, prefs: Map<string, boolean>): void {

@@ -733,15 +733,15 @@
 		playback.unpin();
 		viewPinned = false;
 	}
-	// Systemic cycling-suspend on DIRECT interaction: any pointerdown inside the map
-	// window during unpinned playback pins the view, so an auto-cycle can't flip
+	// Systemic cycling-suspend on DIRECT interaction: any pointerdown OR focus-in inside
+	// the map window during unpinned playback pins the view, so an auto-cycle can't flip
 	// activeMapId while the user is acting on a surface that reads it — toolbar selects
-	// (linked-location), palette drag-and-drop, the canvas, the region menu, file
-	// pickers, etc. This is the catch-all backstop for the recurring per-flow pin gaps
-	// (Codex PR #72 #101/#102/… — the specific gates/pins remain for the
-	// "form stays open across a Play" case the pin alone wouldn't cover). Capture phase
-	// so the pin lands BEFORE the child handler reads activeMapId. Idempotent; only
-	// during playback (a Play unpins, restoring camera-follow).
+	// (linked-location, incl. KEYBOARD focus → focusin), palette drag-and-drop, the
+	// canvas, the region menu, file pickers, etc. This is the catch-all backstop for the
+	// recurring per-flow pin gaps (Codex PR #72 #101/#102/#856/… — the specific
+	// gates/pins remain for the "form stays open across a Play" case the pin alone
+	// wouldn't cover). Capture phase so the pin lands BEFORE the child handler reads
+	// activeMapId. Idempotent; only during playback (a Play unpins, restoring follow).
 	function pinOnMapInteraction(): void {
 		if (get(isPlaying) && !playback.pinned) pinView();
 	}
@@ -969,6 +969,21 @@
 		cycleGeneration++;
 	}
 
+	// Like invalidateCycleCache but drops EVERY cached bundle whose anchor Location
+	// matches `locationId`. Placements are loaded/prefetched by locationId, so all map
+	// VARIANTS of the same Location share a placement set — a placement create/delete
+	// must invalidate every cached sibling variant or cycling to one would resurrect a
+	// deleted marker / drop a new one (Codex PR #72 #861). The generation bump cancels
+	// any in-flight prefetch too (they re-issue with fresh data).
+	function invalidateCycleCacheForLocation(locationId: string): void {
+		for (const [mid, bundle] of cycleDataCache) {
+			if (bundle.locationId === locationId) cycleDataCache.delete(mid);
+		}
+		cyclePrefetching.clear();
+		cycleFailed.clear();
+		cycleGeneration++;
+	}
+
 	// Drop the active map's staged bundle whenever ANY of its cached map-scoped data
 	// changes — events (incl. brush authoring + undo/redo), placements, layer-prefs, or
 	// regions. The staged cache now holds all of these, so without this a mutation on
@@ -977,15 +992,25 @@
 	// are static during passive playback (only the playhead moves), so this fires only
 	// on a real load / commit / edit — not per frame. Over-invalidation (the load or
 	// commit that populated the stores also trips it) is harmless: a return-cycle just
-	// re-prefetches fresh data, and the look-ahead re-warms it. Plain delete (no
-	// generation bump) so an in-flight prefetch of another map is undisturbed; region
-	// edits additionally call invalidateCycleCache for the in-flight-prefetch race.
+	// re-prefetches fresh data, and the look-ahead re-warms it.
 	$effect(() => {
 		void $mapEventsStore;
 		void $placementsStore;
 		void $layerPrefs;
 		void $mapRegions;
-		if (activeMapId) cycleDataCache.delete(activeMapId);
+		const id = activeMapId;
+		if (!id) return;
+		if (cyclePrefetching.has(id)) {
+			// The active map is mid-prefetch (e.g. a look-ahead started before a manual
+			// switch onto it) and its staged data just changed; the in-flight request
+			// would otherwise complete and repopulate the cache with the PRE-edit
+			// snapshot. Supersede it via the generation bump (Codex PR #72 #860).
+			invalidateCycleCache(id);
+		} else {
+			// No in-flight request for this map → a plain delete suffices and leaves
+			// other maps' look-ahead prefetches undisturbed.
+			cycleDataCache.delete(id);
+		}
 	});
 
 	// Resolve the map the story occupies at T → the map-bearing target Location
@@ -1092,6 +1117,9 @@
 	// open. Feeds the authoringOpen gate so cycling can't switch maps mid-action
 	// (Codex PR #72 #953).
 	let childAuthoringOpen = $state(false);
+	// Bound from PixiPlacementLayer: true while its marker menu / style popover is
+	// open. Also feeds the authoringOpen gate (Codex PR #72 #857).
+	let placementAuthoringOpen = $state(false);
 
 	// True while ANY authoring form/flow OR canvas interaction is open. Cycling must
 	// stay suspended for the whole flow — a playhead advance (or a Play that unpins)
@@ -1111,7 +1139,8 @@
 			createMapOffer !== null ||
 			pixiDrawingActive ||
 			canvasMode !== 'idle' ||
-			childAuthoringOpen
+			childAuthoringOpen ||
+			placementAuthoringOpen
 	);
 
 	// The cycling driver. Re-runs on every playhead advance (and on play/pause):
@@ -1404,10 +1433,12 @@
 
 	async function createPlacementAt(placeableId: string, x: number, y: number) {
 		placementError = '';
-		// Capture the target map before the await: the staged-cache invalidation must
-		// drop THIS map's bundle, not whichever map is active when the request resolves
-		// (a cycle could move on during the round-trip — Codex PR #72 #104).
+		// Capture the target map + Location before the await: placements are keyed by
+		// locationId and shared across that Location's map variants, so invalidate ALL
+		// cached bundles for this Location — not just the active map, and not whichever
+		// map is active when the request resolves (Codex PR #72 #104 + #861).
 		const mapId = activeMap?.id ?? null;
+		const locationId = activeMap?.locationId ?? null;
 		try {
 			// Slice 4 PR-A (D1 reference model): a placement references the
 			// existing entity directly, so the old `source_asset_id` provenance
@@ -1416,12 +1447,13 @@
 			// placement; per-instance differences live in placement.data.style.
 			await placementsStore.create({
 				placeableId,
-				locationId: activeMap?.locationId ?? null,
+				locationId,
 				mapId,
 				x,
 				y
 			});
-			if (mapId) invalidateCycleCache(mapId);
+			if (locationId) invalidateCycleCacheForLocation(locationId);
+			else if (mapId) invalidateCycleCache(mapId);
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
 		}
@@ -1508,12 +1540,15 @@
 	}
 
 	async function deletePlacement(id: string) {
-		// Capture the owning map before the await so the bundle invalidation targets
-		// the mutated map even if a cycle moves on mid-request (Codex PR #72 #104).
+		// Capture the owning Location before the await; placements are shared across the
+		// Location's map variants, so invalidate every cached bundle for it even if a
+		// cycle moves on mid-request (Codex PR #72 #104 + #861).
 		const mapId = activeMap?.id ?? null;
+		const locationId = activeMap?.locationId ?? null;
 		try {
 			await placementsStore.delete(id);
-			if (mapId) invalidateCycleCache(mapId);
+			if (locationId) invalidateCycleCacheForLocation(locationId);
+			else if (mapId) invalidateCycleCache(mapId);
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
 		}
@@ -2159,6 +2194,7 @@
 		class="map-wrapper"
 		class:has-breadcrumb={breadcrumbAncestors.length > 0 && activeMap}
 		onpointerdowncapture={pinOnMapInteraction}
+		onfocusincapture={pinOnMapInteraction}
 	>
 		{#if breadcrumbAncestors.length > 0 && activeMap}
 			<MapBreadcrumb
@@ -2313,6 +2349,7 @@
 				/>
 				<PixiPlacementLayer
 					{activeMap}
+					bind:authoringOpen={placementAuthoringOpen}
 					playhead={$playhead}
 					placements={$placementsStore}
 					entities={$entities}
