@@ -1,18 +1,16 @@
 /**
  * Integration tests for transaction-threading behavior on the interval write
- * helpers. Decision D17 / Issue 11A + 17A — REVISED 2026-04-29 during
- * implementation: better-sqlite3's `db.transaction()` requires a synchronous
- * callback, but our helper chain is async/await for Drizzle compatibility.
- * Wrapping the helpers in transactions requires the sync refactor (TODO T1)
- * which is deferred to a follow-up PR.
+ * helpers. Decision D17 / Issue 11A + 17A.
  *
- * HISTORICAL skip: these tests were paused while the codebase was on
- * better-sqlite3 (sync-callback-only db.transaction). The Postgres port
- * retired that constraint — see docs/adr/0004-neon-postgres-better-auth.md
- * and docs/adr/0005-editor-and-entity-detail.md → "Endpoints — extend,
- * don't proliferate" (handler bodies now wrap in db.transaction(async tx
- * => ...)). The Db type alias is in place; un-skipping should pass against
- * the current contract.
+ * REACTIVATED 2026-06-08: these were paused while the codebase was on
+ * better-sqlite3, whose `db.transaction()` accepts only synchronous callbacks —
+ * the async/await helper chain could not be wrapped. The Postgres port retired
+ * that constraint (pg native async transactions; see
+ * docs/adr/0004-neon-postgres-better-auth.md and
+ * docs/adr/0005-editor-and-entity-detail.md → "Endpoints — extend, don't
+ * proliferate", handler bodies now wrap in db.transaction(async tx => ...)).
+ * Verified green against the current contract; the historical skip reason is
+ * obsolete.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -46,7 +44,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 		ellie = c.id;
 	});
 
-	it.skip('writeInterval composes inside db.transaction without nested tx errors', async () => {
+	it('writeInterval composes inside db.transaction without nested tx errors', async () => {
 		await db.transaction(async (tx) => {
 			await writeInterval(tx as unknown as Db, {
 				entityId: ellie,
@@ -58,7 +56,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 		expect(all).toHaveLength(1);
 	});
 
-	it.skip('updateInterval composes inside db.transaction', async () => {
+	it('updateInterval composes inside db.transaction', async () => {
 		const created = await writeInterval(db, {
 			entityId: ellie,
 			startActId: acts.act0,
@@ -73,7 +71,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 		expect(row.endPosition).toBeCloseTo(3.0, 9);
 	});
 
-	it.skip('splitInterval composes inside db.transaction', async () => {
+	it('splitInterval composes inside db.transaction', async () => {
 		const original = await writeInterval(db, {
 			entityId: ellie,
 			startActId: acts.act0,
@@ -88,7 +86,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 		expect(all).toHaveLength(2);
 	});
 
-	it.skip('moveSceneToAct composes inside db.transaction', async () => {
+	it('moveSceneToAct composes inside db.transaction', async () => {
 		const [s] = await db
 			.insert(entities)
 			.values({ userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
@@ -102,7 +100,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 		expect(moved.parentId).toBe(acts.act2);
 	});
 
-	it.skip('rollback: throwing inside a tx undoes prior writeInterval calls atomically', async () => {
+	it('rollback: throwing inside a tx undoes prior writeInterval calls atomically', async () => {
 		await expect(
 			db.transaction(async (tx) => {
 				await writeInterval(tx as unknown as Db, {
@@ -123,7 +121,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 		expect(all).toHaveLength(0);
 	});
 
-	it.skip('rollback: failure mid-split leaves both old and new rows untouched', async () => {
+	it('rollback: failure mid-split leaves both old and new rows untouched', async () => {
 		const original = await writeInterval(db, {
 			entityId: ellie,
 			startActId: acts.act0,
@@ -145,7 +143,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 		expect(all[0].endPosition).toBeCloseTo(2.0, 9);
 	});
 
-	it.skip('rollback: failure mid-moveSceneToAct leaves scene + intervals untouched', async () => {
+	it('rollback: failure mid-moveSceneToAct leaves scene + intervals untouched', async () => {
 		const [s] = await db
 			.insert(entities)
 			.values({ userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })

@@ -649,28 +649,10 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 		expect(body.locationId).toBeNull();
 	});
 
-	// Slice 2 D1: color column removed. Test below kept disabled as a
-	// historical marker; restore as a faction_id test if useful.
-	it.skip('PATCH sets color to null (obsolete: color removed in Slice 2 D1)', async () => {
-		const { map, region } = await setupMapWithRegion();
-		// First set a color
-		await regionIdRoute.PATCH(
-			mkEvent({
-				params: { id: map.id, rid: region.id },
-				body: { color: '#ff0000' }
-			})
-		);
-		// Now set it to null
-		const res = await regionIdRoute.PATCH(
-			mkEvent({
-				params: { id: map.id, rid: region.id },
-				body: { color: null }
-			})
-		);
-		expect(res.status).toBe(200);
-		const body = await readJson(res);
-		expect(body.color).toBeNull();
-	});
+	// (Removed 2026-06-08) The "PATCH region color to null" test was obsolete: the
+	// region-level color column was removed in Slice 2 D1 — visual color now derives
+	// from faction_id (see the region faction PATCH test above, and the e2e
+	// edit-in-place-recolor / world-map-faction-edit / settings-recolor specs).
 
 	it('PATCH returns 400 with no valid fields', async () => {
 		const { map, region } = await setupMapWithRegion();

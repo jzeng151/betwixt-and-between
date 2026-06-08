@@ -103,14 +103,12 @@ describe('POST /api/entities/batch — atomic multi-entity creation (D21)', () =
 		expect(afterCount).toBe(beforeCount);
 	});
 
-	// SKIP rationale (HISTORICAL — likely reactivatable):
-	// This test was originally skipped while the codebase was on better-sqlite3,
-	// whose `db.transaction()` only accepts sync callbacks (the async helper
-	// chain could not be wrapped). The Postgres port (docs/adr/0004-neon-postgres-better-auth.md)
-	// retired that constraint — pg's native async transactions now allow the
-	// batch handler to wrap in db.transaction(async tx => ...). Verify the
-	// route still wraps in a transaction before unskipping.
-	it.skip('atomic on FK violation: zero rows persist when any insert fails', async () => {
+	// REACTIVATED 2026-06-08: originally skipped on better-sqlite3 (sync-only
+	// db.transaction couldn't wrap the async helper chain). The Postgres port
+	// (docs/adr/0004-neon-postgres-better-auth.md) retired that constraint — the
+	// batch handler wraps in db.transaction(async tx => ...), so an FK violation
+	// rolls the whole batch back. Verified green.
+	it('atomic on FK violation: zero rows persist when any insert fails', async () => {
 		const beforeCount = (await currentDb.select().from(entities)).length;
 
 		await expect(
