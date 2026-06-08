@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.13.2] - 2026-06-08
+
+Test-infrastructure only; no user-facing changes. (Outcome of the World Map v3 harden-phase T1 dogfood: the one production fix it prompted — making causal ripples replay during auto-cycle — was reverted before merge because it re-introduced the PR #72/#505 "re-flash an already-active event on cycle" class; the correct fix is deferred to the re-derive session. See `docs/adr/0007`.)
+
+### Fixed
+
+- **The demo world's "march trail" flourish now actually renders in tests.** The `seedAshHostWar` E2E fixture created its marching-warband placement with only a `mapId`, but the `move_entity` validator scopes placements by `location_id` (D-PRF-8), so every movement keyframe was silently rejected and the march never appeared. The fixture now passes `locationId` (matching what the real editor always sent — user-authored maps were never affected) and fails loudly if a keyframe is rejected. No app behavior changes.
+
+### Changed
+
+- **Test suite: zero skipped tests.** Reactivated eight transaction-atomicity tests (interval write helpers + the entities batch endpoint) that had been parked since the better-sqlite3 era — the Postgres port made their `db.transaction(async …)` composition valid, and they now pass. Removed one obsolete test for a region `color` column that was dropped in Slice 2. Two cross-window E2E placeholders remain intentionally skipped (untestable without a server push channel; the logic is covered by component tests).
+
 ## [0.8.13.1] - 2026-06-07
 
 Test-infrastructure only; no user-facing changes.
