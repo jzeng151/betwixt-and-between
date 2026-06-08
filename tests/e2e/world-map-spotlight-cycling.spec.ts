@@ -158,10 +158,18 @@ async function seedAshHostWar(request: APIRequestContext) {
 
 	// ── A march: a placement on the Northmarch map with two move_entity
 	//    keyframes straddling a sampled boundary, so its interpolated position
-	//    changes frame-to-frame → a march trail. (GIF flourish; not asserted.) ──
+	//    changes frame-to-frame → a march trail. (GIF flourish; not asserted.)
+	//    The placement MUST carry locationId (the map's anchor location), not just
+	//    mapId: the move_entity validator scopes placements through location_id +
+	//    user_id (world-map-v3.ts D-PRF-8), so a locationId-less placement 400s
+	//    every keyframe ("placement_id not found on this map") and the march never
+	//    renders. The real editor passes both (WorldMap.svelte placement create);
+	//    the original seed omitted locationId, which is why this flourish silently
+	//    never fired (T1 dogfood finding). ──
 	const warband = await post<Ent>(request, '/api/entities', { type: 'Character', name: 'Ash warband' });
 	const placement = await post<{ id: string }>(request, '/api/map-placements', {
 		placeableId: warband.id,
+		locationId: north.id,
 		mapId: mapNorth.id,
 		x: 0.2,
 		y: 0.5
@@ -171,13 +179,16 @@ async function seedAshHostWar(request: APIRequestContext) {
 		[0.2, 0.2],
 		[0.7, 0.72]
 	] as const) {
-		await request.post(`/api/maps/${mapNorth.id}/events`, {
+		const res = await request.post(`/api/maps/${mapNorth.id}/events`, {
 			data: {
 				tPosition: w0.startPosition + (w0.endPosition - w0.startPosition) * frac,
 				kind: 'move_entity',
 				payloadJsonb: { placement_id: placement.id, position: { x, y: 0.5 }, tween: 'ease_in_out' }
 			}
 		});
+		// Guard: a silent 400 here is exactly how the march flourish was dead for so
+		// long. Fail the seed loudly if a keyframe doesn't persist.
+		if (!res.ok()) throw new Error(`seed move_entity keyframe failed: ${res.status()} ${await res.text()}`);
 		eventCount++;
 	}
 
