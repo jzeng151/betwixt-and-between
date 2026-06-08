@@ -248,10 +248,15 @@ test('Play on the seeded demo world cycles between maps, fires FX + captions, an
 			timeout: 8000
 		})
 		.toBeLessThan(0.25);
-	// The scrub-back itself can flip an owner and flash; reset so we only count a
-	// flash that fires during forward PLAYBACK.
+	// The scrub-back itself can flip an owner and move a placement, producing a
+	// flash/march; reset both so we only count what fires during forward PLAYBACK.
 	await page.evaluate(() => {
-		(window as unknown as { __spotlightFlashCount?: number }).__spotlightFlashCount = 0;
+		const w = window as unknown as {
+			__spotlightFlashCount?: number;
+			__spotlightMarchCount?: number;
+		};
+		w.__spotlightFlashCount = 0;
+		w.__spotlightMarchCount = 0;
 	});
 
 	// Two continuous watches running for the whole playback, set up BEFORE play:
@@ -305,6 +310,25 @@ test('Play on the seeded demo world cycles between maps, fires FX + captions, an
 						(window as unknown as { __spotlightCaptionCount?: number }).__spotlightCaptionCount ?? 0
 				),
 			{ timeout: 8000, intervals: [200] }
+		)
+		.toBeGreaterThan(0);
+
+	// The seeded march (two move_entity keyframes straddling a sampled boundary on the
+	// Northmarch map) must actually project into a march trail during playback — not
+	// merely have its keyframes accepted by the API at seed time. punctuation-diff emits
+	// a MarchTrail for every placement whose interpolated position moved, WorldMap calls
+	// spawnMarch, and PixiPunctuationLayer bumps __spotlightMarchCount per rendered trail.
+	// Poll it like the flash/caption counters so a regression in loading, projection,
+	// punctuation diffing, or rendering of move_entity events fails this test instead of
+	// silently leaving it green (codex P2, 2026-06-08).
+	await expect
+		.poll(
+			async () =>
+				page.evaluate(
+					() =>
+						(window as unknown as { __spotlightMarchCount?: number }).__spotlightMarchCount ?? 0
+				),
+			{ timeout: 15000, intervals: [200] }
 		)
 		.toBeGreaterThan(0);
 

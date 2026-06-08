@@ -19,6 +19,7 @@ import { eq, and } from 'drizzle-orm';
 import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
 import { entities, intervals } from '../../src/lib/server/db/schema.js';
 import { writeInterval } from '../../src/lib/server/intervals.js';
+import * as intervalsModule from '../../src/lib/server/intervals.js';
 
 let currentDb: Awaited<ReturnType<typeof createTestDb>>;
 let userId: string;
@@ -106,28 +107,43 @@ describe('POST /api/entities/batch — atomic multi-entity creation (D21)', () =
 	// REACTIVATED 2026-06-08: originally skipped on better-sqlite3 (sync-only
 	// db.transaction couldn't wrap the async helper chain). The Postgres port
 	// (docs/adr/0004-neon-postgres-better-auth.md) retired that constraint — the
-	// batch handler wraps in db.transaction(async tx => ...), so an FK violation
-	// rolls the whole batch back. Verified green.
-	it('atomic on FK violation: zero rows persist when any insert fails', async () => {
+	// batch handler wraps in db.transaction(async tx => ...), so a failure inside
+	// the tx rolls the whole batch back.
+	//
+	// NOTE: the original FK-violation input (parentId: 'nonexistent-parent') can
+	// no longer exercise the transaction. assertParentsOwned (auth-gate.ts) runs a
+	// preflight ownership check BEFORE db.transaction and rejects any unknown
+	// parentId there, so a bad parentId never produces a partial insert to roll
+	// back — the rejection happens before the tx opens. To genuinely test the
+	// wrapper we force a failure AFTER the inserts succeed: recomputeIntervalsForAct
+	// runs inside the same tx (once per affected Act), so making it throw must roll
+	// back the already-inserted scenes. If the db.transaction wrapper were removed,
+	// the scenes would persist and this test would fail. (codex P2, 2026-06-08.)
+	it('atomic on mid-transaction failure: post-insert throw rolls the whole batch back', async () => {
 		const beforeCount = (await currentDb.select().from(entities)).length;
 
-		await expect(
-			batchRoute.POST(
-				mkEvent({
-					body: {
-						entities: [
-							{ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 },
-							{
-								type: 'Scene',
-								name: 'Orphan',
-								parentId: 'nonexistent-parent',
-								position: 0
-							}
-						]
-					}
-				})
-			)
-		).rejects.toBeDefined();
+		const spy = vi
+			.spyOn(intervalsModule, 'recomputeIntervalsForAct')
+			.mockRejectedValue(new Error('boom: simulated post-insert failure'));
+		try {
+			await expect(
+				batchRoute.POST(
+					mkEvent({
+						body: {
+							// Both Scenes pass validation + the ownership preflight (act1 is
+							// owned) and insert successfully; the per-Act recompute then throws
+							// inside the tx → the inserts must roll back.
+							entities: [
+								{ type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 },
+								{ type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 }
+							]
+						}
+					})
+				)
+			).rejects.toMatchObject({ status: 400 });
+		} finally {
+			spy.mockRestore();
+		}
 
 		const afterCount = (await currentDb.select().from(entities)).length;
 		expect(afterCount).toBe(beforeCount);
