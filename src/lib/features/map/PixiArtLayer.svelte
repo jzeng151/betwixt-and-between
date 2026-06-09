@@ -1,5 +1,9 @@
 <script lang="ts">
 	// WM3 Slice A — freeform brush render layer.
+	// WM3 Slice B — layered canvas: strokes route into per-layer containers
+	// (world_maps.art_layers_jsonb order; base group at the bottom for
+	// layerId-less / orphaned strokes), each carrying the layer's blendMode +
+	// opacity + per-user visibility pref (`art:<id>` / static 'art' for base).
 	//
 	// Renders RenderedState.strokes (paint_stroke fold output) over the
 	// background bitmap, in painter's order. Two modes (spike findings):
@@ -32,7 +36,9 @@
 		stampUrlForKey,
 		type TerrainManifest
 	} from './terrain-tilesets.js';
-	import type { StoredStroke } from './projection.js';
+	import { layerPrefs } from './layer-prefs-store.js';
+	import { artLayerPrefKey } from './layers.js';
+	import type { MapArtLayer, StoredStroke } from './projection.js';
 	import type { WorldMap } from './types.js';
 
 	type PixiModule = typeof import('pixi.js');
@@ -40,6 +46,18 @@
 	type PixiTexture = import('pixi.js').Texture;
 
 	let { activeMap, strokes }: { activeMap: WorldMap | null; strokes: StoredStroke[] } = $props();
+
+	// Slice B — ordered art-layer defs ride the world_maps row. Array order is
+	// render order (index 0 bottom); strokes without a (known) layerId render in
+	// the implicit base group beneath all defined layers.
+	let artLayers = $derived<MapArtLayer[]>(activeMap?.artLayersJsonb ?? []);
+	// Per-art-layer visibility (prefs key `art:<id>`). While prefs are loading,
+	// hide (matches layerVisibility's loading contract for the static keys).
+	function artLayerVisible(id: string): boolean {
+		if ($layerPrefs.status === 'loading') return false;
+		const v = $layerPrefs.prefs.get(artLayerPrefKey(id));
+		return v === undefined ? true : v;
+	}
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
 
@@ -173,6 +191,17 @@
 		// Reference reactive deps up front.
 		const ss = strokes;
 		const map = activeMap;
+		const defs = artLayers;
+		// Snapshot per-layer view state so the effect re-runs on prefs/def edits.
+		const layerView = defs.map((d) => ({
+			id: d.id,
+			blendMode: d.blendMode,
+			opacity: d.opacity,
+			visible: artLayerVisible(d.id)
+		}));
+		// Base (Slice A implicit layer) toggle — the static 'art' pref key.
+		const baseVisible =
+			$layerPrefs.status === 'loading' ? false : ($layerPrefs.prefs.get('art') ?? true);
 		if (!PIXI || !viewport || !manifest || !map?.width || !map?.height) {
 			if (layer) layer.removeChildren().forEach((c) => c.destroy());
 			return;
@@ -206,9 +235,30 @@
 			}
 			if (cancelled || !layer) return;
 			layer.removeChildren().forEach((c) => c.destroy());
+			// Slice B — per-layer containers: base group first (bottom), then one
+			// group per def in array order. Each def group carries the layer's
+			// blendMode (Pixi v8 container blend isolates a render group) +
+			// opacity (alpha cascades) + visibility pref. Strokes route by
+			// layerId; unknown/absent → base (lazy GC keeps orphaned art visible).
+			const knownIds = new Set(layerView.map((v) => v.id));
+			const baseGroup = new PIXI!.Container();
+			baseGroup.visible = baseVisible;
+			layer.addChild(baseGroup);
+			const groupById = new Map<string, PixiContainer>();
+			for (const v of layerView) {
+				const g = new PIXI!.Container();
+				g.blendMode = v.blendMode;
+				g.alpha = v.opacity;
+				g.visible = v.visible;
+				groupById.set(v.id, g);
+				layer.addChild(g);
+			}
 			ss.forEach((s, i) => {
 				const g = buildStroke(s, texMap, width, height, i);
-				if (g) layer!.addChild(g);
+				if (!g) return;
+				const target =
+					s.layerId && knownIds.has(s.layerId) ? groupById.get(s.layerId)! : baseGroup;
+				target.addChild(g);
 			});
 		})();
 		return () => {

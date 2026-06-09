@@ -439,6 +439,15 @@ export const worldMaps = pgTable('world_maps', {
 	gridScaleUnit: text('grid_scale_unit').notNull().default('m'),
 	gridScaleValue: doublePrecision('grid_scale_value').notNull().default(5.0),
 	gridVisible: boolean('grid_visible').notNull().default(true),
+	// WM3 Slice B — ordered freeform-art layer definitions
+	// (drizzle/0027_world_maps_art_layers.sql). Array of
+	// { id, name, blendMode, opacity }; array order is render order and the
+	// background bitmap is the implicit bottom layer. Shape validated by
+	// artLayersValidationError (projection.ts) at the PATCH gate — jsonb
+	// carries no CHECK. paint_stroke.layerId references entries by id;
+	// strokes referencing a deleted layer fall back to the base art layer
+	// at render (lazy GC, same posture as layer_key prefs).
+	artLayersJsonb: jsonb('art_layers_jsonb').notNull().default(sql`'[]'::jsonb`),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [

@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } from './types.js';
+import type { MapArtLayer } from './projection.js';
 import { errorMessage } from '$lib/util/api-error-message.js';
 
 // Result of loadMapRegions. `superseded` is distinct from `not-found` so the
@@ -120,6 +121,7 @@ function createWorldMapStore() {
 			startSceneId?: string | null;
 			endActId?: string | null;
 			endSceneId?: string | null;
+			artLayersJsonb?: MapArtLayer[];
 		}
 	): Promise<WorldMap> {
 		const res = await fetch(`/api/maps/${id}`, {

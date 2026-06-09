@@ -193,6 +193,53 @@ export type StrokePoint = { x: number; y: number };
 export type StrokeMode = 'fill' | 'stamp';
 export type StrokeStampParams = { spacing: number; jitter: number };
 
+// WM3 Slice B — layered canvas. Art-layer definitions live on the world_maps
+// row (art_layers_jsonb), not a join table — same posture as regions moving
+// into map_anchors.state_jsonb (Slice 2 D2): map-structural metadata rides the
+// row the client already loads, so cycling prefetch / staged commit need no new
+// wiring. Array order IS render order (index 0 paints first, i.e. bottom); the
+// background bitmap is the implicit layer beneath them all. Blend modes are
+// Pixi v8 CORE modes only — 'overlay' etc. require the advanced-blend-modes
+// import and are deferred to Slice C if real use wants them.
+export const ART_BLEND_MODES = ['normal', 'multiply', 'screen', 'add'] as const;
+export type ArtBlendMode = (typeof ART_BLEND_MODES)[number];
+export const MAX_ART_LAYERS = 16;
+export const ART_LAYER_NAME_MAX = 64;
+export type MapArtLayer = {
+	id: string; // uuid minted at create; paint_stroke.layerId references it
+	name: string;
+	blendMode: ArtBlendMode;
+	opacity: number; // [0,1] — container alpha at render
+};
+
+/**
+ * Validate an art_layers_jsonb value (shared client/server — the server PATCH
+ * gate and any client form reuse one rule set). Returns an error message, or
+ * null when valid. Pure.
+ */
+export function artLayersValidationError(value: unknown): string | null {
+	if (!Array.isArray(value)) return 'artLayersJsonb must be an array';
+	if (value.length > MAX_ART_LAYERS) return `artLayersJsonb exceeds cap of ${MAX_ART_LAYERS} layers`;
+	const seen = new Set<string>();
+	for (const l of value) {
+		if (!l || typeof l !== 'object' || Array.isArray(l)) return 'art layer must be an object';
+		const { id, name, blendMode, opacity } = l as Partial<MapArtLayer>;
+		if (typeof id !== 'string' || id.length === 0 || id.length > 64)
+			return 'art layer id must be a non-empty string ≤ 64 chars';
+		if (seen.has(id)) return 'art layer ids must be unique';
+		seen.add(id);
+		if (typeof name !== 'string' || name.length === 0 || name.length > ART_LAYER_NAME_MAX)
+			return `art layer name must be a non-empty string ≤ ${ART_LAYER_NAME_MAX} chars`;
+		if (!ART_BLEND_MODES.includes(blendMode as ArtBlendMode))
+			return `art layer blendMode must be one of ${ART_BLEND_MODES.join(', ')}`;
+		if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1)
+			return 'art layer opacity must be a finite number in [0, 1]';
+		// Extra keys are tolerated (forward-compat lazy GC) but the four known
+		// fields must be exactly valid — partial rows never persist.
+	}
+	return null;
+}
+
 // The stored/painted shape (also the persisted AnchorState.strokes element).
 // The event payload IS this shape — strokes carry no merge key (append-only),
 // so there is no event-only field to strip (contrast paint_cells/command_complete).
@@ -203,6 +250,10 @@ export type PaintStrokePayload = {
 	mode: StrokeMode;
 	textureKey: string;
 	stamp?: StrokeStampParams; // meaningful only when mode === 'stamp'
+	// Slice B: target art layer (world_maps.art_layers_jsonb id). Absent =
+	// the implicit base art layer (every Slice A stroke). A stroke whose
+	// layer was later deleted falls back to base at render (lazy GC).
+	layerId?: string;
 };
 export type StoredStroke = PaintStrokePayload;
 
@@ -569,13 +620,21 @@ export function applyPaintStroke(strokes: StoredStroke[], payload: unknown): voi
 			stamp = { spacing, jitter };
 		}
 	}
+	// Slice B: layerId passes through when it's a plausible string; a malformed
+	// value strips to base rather than dropping the stroke (the art is intact —
+	// only its layer routing is unusable, and base render keeps it visible).
+	const layerId =
+		typeof p.layerId === 'string' && p.layerId.length > 0 && p.layerId.length <= 64
+			? p.layerId
+			: undefined;
 	strokes.push({
 		path,
 		brushSize: p.brushSize,
 		softness: p.softness,
 		mode: p.mode,
 		textureKey: p.textureKey,
-		...(stamp ? { stamp } : {})
+		...(stamp ? { stamp } : {}),
+		...(layerId ? { layerId } : {})
 	});
 }
 

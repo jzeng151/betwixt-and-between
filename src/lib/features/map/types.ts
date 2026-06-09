@@ -3,6 +3,8 @@
 // load; pulling it into client bundles is forbidden by CLAUDE.md.
 export type GridType = 'square' | 'hex';
 
+import type { MapArtLayer } from './projection.js';
+
 export type WorldMap = {
 	id: string;
 	name: string;
@@ -28,6 +30,9 @@ export type WorldMap = {
 	gridScaleUnit: string;
 	gridScaleValue: number;
 	gridVisible: boolean;
+	// WM3 Slice B — ordered art-layer defs (drizzle/0027). Array order is
+	// render order; background bitmap is the implicit bottom layer.
+	artLayersJsonb: MapArtLayer[];
 	createdAt: string;
 	updatedAt: string;
 };

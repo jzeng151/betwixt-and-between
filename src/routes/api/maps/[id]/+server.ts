@@ -8,6 +8,7 @@ import {
 	resolveWorldMapVariantBounds
 } from '$lib/server/world-maps.js';
 import { readBaselineRegions } from '$lib/server/world-map-v3.js';
+import { artLayersValidationError } from '$lib/features/map/projection.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -87,6 +88,15 @@ export const PATCH: RequestHandler = async (event) => {
 			error(400, 'gridVisible must be a boolean');
 		}
 		updates.gridVisible = body.gridVisible;
+	}
+
+	// WM3 Slice B — art layer definitions (whole-array replace; single-user
+	// tool, last-write-wins is acceptable). Shape gate is the shared
+	// artLayersValidationError — jsonb has no CHECK constraint backing it.
+	if ('artLayersJsonb' in body) {
+		const layersError = artLayersValidationError(body.artLayersJsonb);
+		if (layersError) error(400, layersError);
+		updates.artLayersJsonb = body.artLayersJsonb;
 	}
 
 	// locationId: explicit presence (including null) is meaningful — null means unlink.

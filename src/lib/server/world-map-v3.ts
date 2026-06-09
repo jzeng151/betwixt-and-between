@@ -883,7 +883,7 @@ async function validateEventPayload(
 		}
 	}
 	if (kind === 'paint_stroke') {
-		validatePaintStrokePayload(payload);
+		await validatePaintStrokePayload(db, worldMapId, payload);
 	}
 	if (kind === 'move_entity') {
 		await validateMoveEntityPayload(db, userId, worldMapId, payload, tPosition);
@@ -899,7 +899,15 @@ async function validateEventPayload(
 // world_maps.user_id like every map_events write (there is no per-stroke user
 // field to forge). Coords are normalized [0,1] (not grid cells), so the
 // grid-shrink bounds recheck that paint_cells does under-lock does not apply.
-function validatePaintStrokePayload(payload: unknown): void {
+// Slice B: optional layerId must reference an entry of THIS map's
+// art_layers_jsonb (the map is already ownership-checked upstream, so the
+// layer set is the caller's own — a foreign/unknown id is rejected at write,
+// same posture as transfer_region.region_id).
+async function validatePaintStrokePayload(
+	db: Db,
+	worldMapId: string,
+	payload: unknown
+): Promise<void> {
 	const p = payload as Partial<PaintStrokePayload>;
 	if (p.mode !== 'fill' && p.mode !== 'stamp') {
 		error(400, "paint_stroke payload.mode must be 'fill' or 'stamp'");
@@ -962,6 +970,24 @@ function validatePaintStrokePayload(payload: unknown): void {
 			s.jitter < 0
 		) {
 			error(400, 'paint_stroke payload.stamp must be { spacing > 0, jitter >= 0 } finite numbers');
+		}
+	}
+	// Slice B: layerId optional; when present it must name an entry of this
+	// map's art_layers_jsonb. Absent = the implicit base art layer.
+	if (p.layerId !== undefined) {
+		if (typeof p.layerId !== 'string' || p.layerId.length === 0 || p.layerId.length > 64) {
+			error(400, 'paint_stroke payload.layerId must be a non-empty string ≤ 64 chars');
+		}
+		const [map] = await db
+			.select({ artLayersJsonb: worldMaps.artLayersJsonb })
+			.from(worldMaps)
+			.where(eq(worldMaps.id, worldMapId));
+		if (!map) error(404, 'world_map not found');
+		const layers = Array.isArray(map.artLayersJsonb)
+			? (map.artLayersJsonb as Array<{ id?: unknown }>)
+			: [];
+		if (!layers.some((l) => l && typeof l === 'object' && l.id === p.layerId)) {
+			error(400, 'paint_stroke payload.layerId not found on this map');
 		}
 	}
 }

@@ -20,19 +20,35 @@
 		objectStampGroups,
 		type TerrainManifest
 	} from '$lib/features/map/terrain-tilesets.js';
+	import type { MapArtLayer } from '$lib/features/map/projection.js';
 
 	interface Props {
 		mode: 'fill' | 'stamp';
 		textureKey: string;
 		brushSize: number;
 		softness: number;
+		// Slice B — layered canvas: paint target. null = base art layer.
+		artLayers: MapArtLayer[];
+		layerId: string | null;
 		onSetMode: (mode: 'fill' | 'stamp') => void;
 		onSetTexture: (key: string) => void;
 		onSetBrushSize: (n: number) => void;
 		onSetSoftness: (n: number) => void;
+		onSetLayer: (id: string | null) => void;
 	}
-	let { mode, textureKey, brushSize, softness, onSetMode, onSetTexture, onSetBrushSize, onSetSoftness }: Props =
-		$props();
+	let {
+		mode,
+		textureKey,
+		brushSize,
+		softness,
+		artLayers,
+		layerId,
+		onSetMode,
+		onSetTexture,
+		onSetBrushSize,
+		onSetSoftness,
+		onSetLayer
+	}: Props = $props();
 
 	let manifest = $state<TerrainManifest | null>(null);
 	onMount(async () => {
@@ -105,6 +121,21 @@
 				{/each}
 			{/if}
 		</div>
+
+		{#if artLayers.length > 0}
+			<label class="layer-select">
+				<span>Layer</span>
+				<select
+					value={layerId ?? ''}
+					onchange={(e) => onSetLayer((e.currentTarget as HTMLSelectElement).value || null)}
+				>
+					<option value="">Base</option>
+					{#each artLayers as l (l.id)}
+						<option value={l.id}>{l.name}</option>
+					{/each}
+				</select>
+			</label>
+		{/if}
 
 		<label class="slider">
 			<span>Size</span>
@@ -228,5 +259,21 @@
 	}
 	.slider input {
 		width: 70px;
+	}
+	.layer-select {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		color: var(--color-text-muted, #aaa);
+		font-size: 11px;
+	}
+	.layer-select select {
+		background: var(--color-bg, #1a1a1a);
+		color: var(--color-text, #ddd);
+		border: 1px solid var(--color-border, #333);
+		border-radius: 6px;
+		font-size: 11px;
+		padding: 2px 4px;
+		max-width: 120px;
 	}
 </style>

@@ -78,14 +78,17 @@ function createLayerPrefsStore() {
 	}
 
 	/** Read the visibility for a layer on the currently-loaded map.
-	 * Missing keys default to true (per the schema's column default). */
-	function isVisible(layerKey: LayerKey): boolean {
+	 * Missing keys default to true (per the schema's column default).
+	 * Accepts the static LayerKey enum or a namespaced free-text key
+	 * (WM3 Slice B `art:<layerId>` — the DB column is free text and the
+	 * reader lazy-GCs unknown keys). */
+	function isVisible(layerKey: LayerKey | string): boolean {
 		const s = get(state);
 		const v = s.prefs.get(layerKey);
 		return v === undefined ? true : v;
 	}
 
-	async function toggle(mapId: string, layerKey: LayerKey): Promise<void> {
+	async function toggle(mapId: string, layerKey: LayerKey | string): Promise<void> {
 		const prior = isVisible(layerKey);
 		const next = !prior;
 		// Optimistic update so the canvas reflects the toggle before the
