@@ -14,6 +14,7 @@
 
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { E2E_USER_HEADERS } from './pglite-config.js';
+import { STAMP_GROUP_KEYS } from '../../src/lib/features/map/terrain-keys.generated.js';
 
 test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
 
@@ -160,9 +161,59 @@ test('stamp stroke: switching to Stamp commits a paint_stroke (mode=stamp) and r
 	expect(events).toHaveLength(1);
 	const p = events[0].payloadJsonb;
 	expect(p.mode).toBe('stamp');
-	expect(p.textureKey).toMatch(/_object_\d+$|_\d+$/); // an Objects/ stamp key
+	// Slice C: the palette arms a FAMILY key (varied scatter), not a member key.
+	expect(STAMP_GROUP_KEYS as readonly string[]).toContain(p.textureKey);
 
 	await page.waitForTimeout(500);
 	await canvas.screenshot({ path: '.gstack/qa-reports/screenshots/freeform-stamp.png' });
+	expect(errors, errors.join('\n')).toEqual([]);
+});
+
+test('erase stroke: erasing across a fill removes art within the layer (Slice C mask)', async ({
+	page,
+	request
+}) => {
+	await clearAll(request);
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+
+	const errors: string[] = [];
+	page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+	page.on('console', (m) => {
+		if (m.type() === 'error') errors.push(`console.error: ${m.text()}`);
+	});
+
+	const map = await seedMapWithImage(request);
+	const { win, canvas } = await openFreeformBrush(page);
+
+	// Paint a fill stroke, let it rasterize.
+	await dragStroke(page, canvas);
+	await expect
+		.poll(async () => (await strokeEvents(request, map.id)).length, { timeout: 8000 })
+		.toBe(1);
+	await page.waitForTimeout(600);
+	const painted = await canvas.screenshot();
+
+	// Erase along the same path.
+	await win
+		.locator('[data-testid="freeform-brush-palette"] .mode-toggle button', { hasText: 'Erase' })
+		.click();
+	await dragStroke(page, canvas);
+
+	await expect
+		.poll(async () => (await strokeEvents(request, map.id)).length, { timeout: 8000 })
+		.toBe(2);
+	const events = await strokeEvents(request, map.id);
+	const erase = events.find((e) => e.payloadJsonb.mode === 'erase');
+	expect(erase).toBeTruthy();
+	expect(erase!.payloadJsonb.textureKey).toBeUndefined(); // an eraser has no material
+
+	// The erase must actually remove painted pixels — the RenderTexture pass
+	// with 'erase' blend is the guard; a no-op erase (blend applied outside an
+	// isolated target) would leave painted === erased.
+	await page.waitForTimeout(600);
+	const erased = await canvas.screenshot({
+		path: '.gstack/qa-reports/screenshots/freeform-erase.png'
+	});
+	expect(Buffer.compare(painted, erased)).not.toBe(0);
 	expect(errors, errors.join('\n')).toEqual([]);
 });

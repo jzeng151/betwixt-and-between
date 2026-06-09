@@ -1,31 +1,37 @@
 <script lang="ts">
 	// WM3 Slice A — freeform brush render layer.
-	// WM3 Slice B — layered canvas: strokes route into per-layer containers
+	// WM3 Slice B — layered canvas: strokes route into per-layer groups
 	// (world_maps.art_layers_jsonb order; base group at the bottom for
 	// layerId-less / orphaned strokes), each carrying the layer's blendMode +
 	// opacity + per-user visibility pref (`art:<id>` / static 'art' for base).
+	// WM3 Slice C — each group renders into its own RenderTexture (eng-review
+	// #6 direction): erase strokes ('erase' blend) clip WITHIN their layer's
+	// texture — the freeform layer-mask — and can never eat the background or
+	// other layers. The RT also removes per-frame filter cost: strokes render
+	// once per rebuild, the displayed Sprite is static between rebuilds.
 	//
 	// Renders RenderedState.strokes (paint_stroke fold output) over the
-	// background bitmap, in painter's order. Two modes (spike findings):
-	//   • fill  — the resolved terrain tile, tiled and MASKED to the stroke shape
-	//             (a round-capped stroke of the vector path), with a feathered
-	//             alpha edge scaled by `softness` (BlurFilter on the mask). Default
-	//             composite is source-over (NOT multiply — re-spike: multiply
-	//             muddies real tiles).
+	// background bitmap, in painter's order. Three modes (spike findings):
+	//   • fill  — the resolved terrain tile stroked along the path (Pixi v8
+	//             texture stroke), feathered alpha edge via BlurFilter scaled by
+	//             `softness`. Default composite is source-over (NOT multiply —
+	//             re-spike: multiply muddies real tiles).
 	//   • stamp — the resolved Objects/ sprite scattered along the path at
-	//             `spacing` intervals with deterministic `jitter` (so re-renders
-	//             don't make stamps jump).
+	//             `spacing` intervals with deterministic `jitter`. Slice C: a
+	//             FAMILY textureKey ("tree_object") scatters varied members with
+	//             deterministic size variation — painterly, not repeated.
+	//   • erase — a round-capped 'erase'-blend pass that removes art beneath it
+	//             within the SAME layer (Slice C mask mechanism).
 	//
 	// Coords: paint_stroke.path is normalized [0,1] of the map extent (same
 	// convention as placements). brushSize/spacing/jitter are normalized to
 	// min(width,height). Grid-independent — unlike PixiTerrainTileLayer this layer
 	// works on hex maps too (freeform doesn't snap to cells).
 	//
-	// Perf: rebuilds the container on strokes/map change (same pattern as
-	// PixiTerrainTileLayer rebuilding on cells). Stroke count is bounded by the
-	// auto-anchor bake (AUTO_ANCHOR_K), so the single-baseline path stays cheap.
-	// Incremental raster-to-RenderTexture is the perf follow-up if counts grow
-	// (design OQ4 / eng-review #6).
+	// Perf: rebuilds the RenderTextures on strokes/defs/prefs change. Stroke
+	// count is bounded by the auto-anchor bake (AUTO_ANCHOR_K); RT size is
+	// capped at RT_MAX on the long side so a huge base image can't allocate an
+	// unbounded texture (strokes are vectors — they scale cleanly).
 
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { PIXI_STAGE_CONTEXT, MAP_LAYER_Z, type PixiStageContext } from './pixi-context.js';
@@ -33,7 +39,7 @@
 		loadTerrainManifest,
 		tileUrlForKey,
 		firstBaseTile,
-		stampUrlForKey,
+		stampsForKey,
 		type TerrainManifest
 	} from './terrain-tilesets.js';
 	import { layerPrefs } from './layer-prefs-store.js';
@@ -44,6 +50,7 @@
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
 	type PixiTexture = import('pixi.js').Texture;
+	type PixiRenderTexture = import('pixi.js').RenderTexture;
 
 	let { activeMap, strokes }: { activeMap: WorldMap | null; strokes: StoredStroke[] } = $props();
 
@@ -66,10 +73,16 @@
 	// thousands of sprites — built synchronously and rebuilt on every change.
 	// Cap per stroke so a pathological stored payload can't lock up render.
 	const MAX_STAMPS_PER_STROKE = 2048;
+	// RenderTexture long-side cap (Slice C). Strokes are resolution-independent
+	// vectors; the RT scale-down on a >2048px base image is visually negligible
+	// at map zoom and bounds GPU memory per layer.
+	const RT_MAX = 2048;
 
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
 	let layer: PixiContainer | null = null;
+	// RTs owned by the current build; destroyed on each rebuild + unmount.
+	let ownedTextures: PixiRenderTexture[] = [];
 
 	onMount(() => {
 		let cancelled = false;
@@ -86,11 +99,13 @@
 		};
 	});
 
-	// Resolve a stroke's texture URL by mode. fill → terrain tile (specific key or
-	// the category's representative tile); stamp → Objects/ sprite.
-	function urlForStroke(s: StoredStroke): string | null {
-		if (s.mode === 'stamp') return stampUrlForKey(manifest, s.textureKey);
-		return tileUrlForKey(manifest, s.textureKey) ?? firstBaseTile(manifest, s.textureKey);
+	// Texture URLs a stroke needs loaded. fill → one tile; stamp → every member
+	// of the (possibly family) key; erase → none.
+	function urlsForStroke(s: StoredStroke): string[] {
+		if (s.mode === 'erase' || s.textureKey === undefined) return [];
+		if (s.mode === 'stamp') return stampsForKey(manifest, s.textureKey).map((m) => m.url);
+		const u = tileUrlForKey(manifest, s.textureKey) ?? firstBaseTile(manifest, s.textureKey);
+		return u ? [u] : [];
 	}
 
 	// Deterministic per-index jitter in [-0.5, 0.5] (mulberry-ish hash) so a
@@ -128,6 +143,26 @@
 		return out;
 	}
 
+	// Round-capped path Graphics shared by fill (texture stroke) and erase
+	// (white stroke + 'erase' blend) — the path geometry is identical.
+	function pathGraphics(
+		path: Array<{ x: number; y: number }>,
+		widthPx: number,
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		strokeStyle: any,
+		softness: number
+	): import('pixi.js').Graphics {
+		const g = new PIXI!.Graphics();
+		g.moveTo(path[0].x, path[0].y);
+		if (path.length === 1) g.lineTo(path[0].x + 0.01, path[0].y);
+		else for (let i = 1; i < path.length; i++) g.lineTo(path[i].x, path[i].y);
+		g.stroke({ width: widthPx, cap: 'round', join: 'round', ...strokeStyle });
+		if (softness > 0) {
+			g.filters = [new PIXI!.BlurFilter({ strength: softness * widthPx * 0.25 })];
+		}
+		return g;
+	}
+
 	function buildStroke(
 		s: StoredStroke,
 		texMap: Record<string, unknown>,
@@ -136,58 +171,84 @@
 		strokeIndex: number
 	): PixiContainer | null {
 		if (!PIXI) return null;
-		const url = urlForStroke(s);
-		const tex = url ? (texMap[url] as PixiTexture | undefined) : undefined;
-		if (!tex) return null; // unknown/unloaded texture → skip (lazy GC)
-
 		const extent = Math.min(width, height);
 		const path = s.path.map((p) => ({ x: p.x * width, y: p.y * height }));
 		const group = new PIXI.Container();
 
+		if (s.mode === 'erase') {
+			// Slice C — erase within the layer's RenderTexture. The blend applies
+			// during the RT pass, so it only removes THIS layer's art.
+			const widthPx = Math.max(1, s.brushSize * extent);
+			const g = pathGraphics(path, widthPx, { color: 0xffffff }, s.softness);
+			g.blendMode = 'erase';
+			group.addChild(g);
+			return group;
+		}
+
 		if (s.mode === 'fill') {
+			const url = s.textureKey
+				? (tileUrlForKey(manifest, s.textureKey) ?? firstBaseTile(manifest, s.textureKey))
+				: null;
+			const tex = url ? (texMap[url] as PixiTexture | undefined) : undefined;
+			if (!tex) return null; // unknown/unloaded texture → skip (lazy GC)
 			const widthPx = Math.max(1, s.brushSize * extent);
 			// Stroke the path WITH the tile texture (Pixi v8 fill/stroke styles
-			// accept a texture). This renders the tile along the stroke shape
-			// directly — the matching codebase pattern is Graphics.stroke/fill,
-			// not masking (which is unused here and silently clipped to nothing
-			// in the first cut). softness feathers the edge via a BlurFilter on
-			// the whole graphics (a proven filter target, unlike a mask).
-			const g = new PIXI.Graphics();
-			g.moveTo(path[0].x, path[0].y);
-			if (path.length === 1) g.lineTo(path[0].x + 0.01, path[0].y);
-			else for (let i = 1; i < path.length; i++) g.lineTo(path[i].x, path[i].y);
-			g.stroke({ width: widthPx, texture: tex, cap: 'round', join: 'round' });
-			if (s.softness > 0) {
-				g.filters = [new PIXI.BlurFilter({ strength: s.softness * widthPx * 0.25 })];
-			}
-			group.addChild(g);
-		} else {
-			// Stamp: scatter the sprite along the path.
-			const sizePx = Math.max(2, s.brushSize * extent);
-			const spacingPx = Math.max(1, (s.stamp?.spacing ?? s.brushSize) * extent);
-			const jitterPx = (s.stamp?.jitter ?? 0) * extent;
-			const allPlacements = pointsAlongPath(path, spacingPx);
-			const placements =
-				allPlacements.length > MAX_STAMPS_PER_STROKE
-					? allPlacements.slice(0, MAX_STAMPS_PER_STROKE)
-					: allPlacements;
-			placements.forEach((pt, i) => {
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				const sprite = new PIXI!.Sprite(tex as any);
-				sprite.anchor.set(0.5, 0.5);
-				sprite.width = sizePx;
-				sprite.height = sizePx;
-				const seed = strokeIndex * 4096 + i;
-				sprite.x = pt.x + jitter01(seed) * jitterPx;
-				sprite.y = pt.y + jitter01(seed + 1) * jitterPx;
-				group.addChild(sprite);
-			});
+			// accept a texture). softness feathers the edge via a BlurFilter.
+			// Default composite source-over (re-spike: multiply muddies real tiles).
+			group.addChild(pathGraphics(path, widthPx, { texture: tex }, s.softness));
+			return group;
 		}
+
+		// Stamp: scatter sprites along the path. A family key scatters varied
+		// members with deterministic per-placement pick + size variation
+		// (Slice C); an individual key keeps the uniform Slice A look.
+		const members = s.textureKey ? stampsForKey(manifest, s.textureKey) : [];
+		const textures = members
+			.map((m) => texMap[m.url] as PixiTexture | undefined)
+			.filter((t): t is PixiTexture => !!t);
+		if (textures.length === 0) return null;
+		const varied = textures.length > 1;
+		const sizePx = Math.max(2, s.brushSize * extent);
+		const spacingPx = Math.max(1, (s.stamp?.spacing ?? s.brushSize) * extent);
+		const jitterPx = (s.stamp?.jitter ?? 0) * extent;
+		const allPlacements = pointsAlongPath(path, spacingPx);
+		const placements =
+			allPlacements.length > MAX_STAMPS_PER_STROKE
+				? allPlacements.slice(0, MAX_STAMPS_PER_STROKE)
+				: allPlacements;
+		placements.forEach((pt, i) => {
+			const seed = strokeIndex * 4096 + i;
+			const tex = varied
+				? textures[Math.floor((jitter01(seed + 2) + 0.5) * textures.length) % textures.length]
+				: textures[0];
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const sprite = new PIXI!.Sprite(tex as any);
+			sprite.anchor.set(0.5, 0.5);
+			// ±20% deterministic size variation for family scatters.
+			const sizeScale = varied ? 1 + jitter01(seed + 3) * 0.4 : 1;
+			sprite.width = sizePx * sizeScale;
+			sprite.height = sizePx * sizeScale;
+			sprite.x = pt.x + jitter01(seed) * jitterPx;
+			sprite.y = pt.y + jitter01(seed + 1) * jitterPx;
+			group.addChild(sprite);
+		});
 		return group;
+	}
+
+	function destroyOwnedTextures(): void {
+		for (const rt of ownedTextures) {
+			try {
+				rt.destroy(true);
+			} catch (_) {
+				/* renderer torn down first */
+			}
+		}
+		ownedTextures = [];
 	}
 
 	$effect(() => {
 		const viewport = stageCtx.viewport;
+		const app = stageCtx.app;
 		// Reference reactive deps up front.
 		const ss = strokes;
 		const map = activeMap;
@@ -202,8 +263,11 @@
 		// Base (Slice A implicit layer) toggle — the static 'art' pref key.
 		const baseVisible =
 			$layerPrefs.status === 'loading' ? false : ($layerPrefs.prefs.get('art') ?? true);
-		if (!PIXI || !viewport || !manifest || !map?.width || !map?.height) {
-			if (layer) layer.removeChildren().forEach((c) => c.destroy());
+		if (!PIXI || !viewport || !app || !manifest || !map?.width || !map?.height) {
+			if (layer) {
+				layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+				destroyOwnedTextures();
+			}
 			return;
 		}
 
@@ -218,10 +282,7 @@
 
 		// Collect texture urls, load (idempotent + cached), then rebuild.
 		const urls = new Set<string>();
-		for (const s of ss) {
-			const u = urlForStroke(s);
-			if (u) urls.add(u);
-		}
+		for (const s of ss) for (const u of urlsForStroke(s)) urls.add(u);
 
 		let cancelled = false;
 		(async () => {
@@ -234,32 +295,66 @@
 				}
 			}
 			if (cancelled || !layer) return;
-			layer.removeChildren().forEach((c) => c.destroy());
-			// Slice B — per-layer containers: base group first (bottom), then one
-			// group per def in array order. Each def group carries the layer's
-			// blendMode (Pixi v8 container blend isolates a render group) +
-			// opacity (alpha cascades) + visibility pref. Strokes route by
-			// layerId; unknown/absent → base (lazy GC keeps orphaned art visible).
+			layer.removeChildren().forEach((c) => c.destroy({ children: true }));
+			destroyOwnedTextures();
+
+			// Group strokes: base (layerId-less / orphaned) + one bucket per def.
 			const knownIds = new Set(layerView.map((v) => v.id));
-			const baseGroup = new PIXI!.Container();
-			baseGroup.visible = baseVisible;
-			layer.addChild(baseGroup);
-			const groupById = new Map<string, PixiContainer>();
-			for (const v of layerView) {
-				const g = new PIXI!.Container();
-				g.blendMode = v.blendMode;
-				g.alpha = v.opacity;
-				g.visible = v.visible;
-				groupById.set(v.id, g);
-				layer.addChild(g);
-			}
+			const buckets = new Map<string | null, Array<{ s: StoredStroke; i: number }>>();
 			ss.forEach((s, i) => {
-				const g = buildStroke(s, texMap, width, height, i);
-				if (!g) return;
-				const target =
-					s.layerId && knownIds.has(s.layerId) ? groupById.get(s.layerId)! : baseGroup;
-				target.addChild(g);
+				const key = s.layerId && knownIds.has(s.layerId) ? s.layerId : null;
+				const b = buckets.get(key) ?? [];
+				b.push({ s, i });
+				buckets.set(key, b);
 			});
+
+			// RT scale: cap the long side so a huge base image can't allocate an
+			// unbounded texture. Strokes are vectors — they render cleanly scaled.
+			const rtScale = Math.min(1, RT_MAX / Math.max(width, height));
+			const rtW = Math.max(1, Math.round(width * rtScale));
+			const rtH = Math.max(1, Math.round(height * rtScale));
+
+			// Render one bucket into a RenderTexture, displayed as a Sprite. The
+			// 'erase' blend on erase strokes applies inside this pass — masking
+			// stays scoped to the layer.
+			const renderBucket = (
+				entries: Array<{ s: StoredStroke; i: number }>
+			): import('pixi.js').Sprite | null => {
+				if (entries.length === 0) return null;
+				const tmp = new PIXI!.Container();
+				tmp.scale.set(rtScale);
+				for (const { s, i } of entries) {
+					const g = buildStroke(s, texMap, width, height, i);
+					if (g) tmp.addChild(g);
+				}
+				if (tmp.children.length === 0) {
+					tmp.destroy({ children: true });
+					return null;
+				}
+				const rt = PIXI!.RenderTexture.create({ width: rtW, height: rtH });
+				app.renderer.render({ container: tmp, target: rt, clear: true });
+				tmp.destroy({ children: true });
+				ownedTextures.push(rt);
+				const sprite = new PIXI!.Sprite(rt);
+				sprite.scale.set(1 / rtScale);
+				return sprite;
+			};
+
+			// Base group first (bottom), then defs in array order. Sprite carries
+			// the layer's blendMode/opacity/visibility.
+			const baseSprite = renderBucket(buckets.get(null) ?? []);
+			if (baseSprite) {
+				baseSprite.visible = baseVisible;
+				layer.addChild(baseSprite);
+			}
+			for (const v of layerView) {
+				const sprite = renderBucket(buckets.get(v.id) ?? []);
+				if (!sprite) continue;
+				sprite.blendMode = v.blendMode;
+				sprite.alpha = v.opacity;
+				sprite.visible = v.visible;
+				layer.addChild(sprite);
+			}
 		})();
 		return () => {
 			cancelled = true;
@@ -275,5 +370,6 @@
 			}
 			layer = null;
 		}
+		destroyOwnedTextures();
 	});
 </script>

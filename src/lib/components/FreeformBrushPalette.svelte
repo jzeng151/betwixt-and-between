@@ -23,14 +23,14 @@
 	import type { MapArtLayer } from '$lib/features/map/projection.js';
 
 	interface Props {
-		mode: 'fill' | 'stamp';
+		mode: 'fill' | 'stamp' | 'erase';
 		textureKey: string;
 		brushSize: number;
 		softness: number;
 		// Slice B — layered canvas: paint target. null = base art layer.
 		artLayers: MapArtLayer[];
 		layerId: string | null;
-		onSetMode: (mode: 'fill' | 'stamp') => void;
+		onSetMode: (mode: 'fill' | 'stamp' | 'erase') => void;
 		onSetTexture: (key: string) => void;
 		onSetBrushSize: (n: number) => void;
 		onSetSoftness: (n: number) => void;
@@ -62,14 +62,16 @@
 		return firstBaseTile(manifest, type);
 	}
 
-	function selectMode(m: 'fill' | 'stamp') {
+	function selectMode(m: 'fill' | 'stamp' | 'erase') {
 		if (m === mode) return;
 		onSetMode(m);
-		// Reset to a valid key for the new mode.
+		// Reset to a valid key for the new mode (erase has no material — Slice C).
 		if (m === 'fill') {
 			onSetTexture(fillTypes[0] ?? 'Grass');
-		} else {
-			onSetTexture(stampGroups[0]?.stamps[0]?.key ?? '');
+		} else if (m === 'stamp') {
+			// Family key (Slice C varied scatter) — the renderer scatters varied
+			// members; individual member keys remain valid for old strokes.
+			onSetTexture(stampGroups[0]?.group ?? '');
 		}
 	}
 </script>
@@ -88,39 +90,46 @@
 			<button type="button" class:armed={mode === 'stamp'} aria-pressed={mode === 'stamp'} onclick={() => selectMode('stamp')}>
 				Stamp
 			</button>
+			<button type="button" class:armed={mode === 'erase'} aria-pressed={mode === 'erase'} onclick={() => selectMode('erase')}>
+				Erase
+			</button>
 		</div>
 
-		<div class="chips" aria-label={mode === 'fill' ? 'Fill terrain' : 'Stamp object'}>
-			{#if mode === 'fill'}
-				{#each fillTypes as type (type)}
-					<button
-						type="button"
-						class="chip"
-						class:armed={textureKey === type}
-						aria-pressed={textureKey === type}
-						onclick={() => onSetTexture(type)}
-						title={type}
-					>
-						<img class="chip-tile" src={fillThumb(type)} alt="" aria-hidden="true" />
-						<span class="chip-name">{type}</span>
-					</button>
-				{/each}
-			{:else}
-				{#each stampGroups as g (g.group)}
-					<button
-						type="button"
-						class="chip"
-						class:armed={g.stamps.some((s) => s.key === textureKey)}
-						aria-pressed={g.stamps.some((s) => s.key === textureKey)}
-						onclick={() => onSetTexture(g.stamps[0].key)}
-						title={g.label}
-					>
-						<img class="chip-tile" src={g.stamps[0].url} alt="" aria-hidden="true" />
-						<span class="chip-name">{g.label}</span>
-					</button>
-				{/each}
-			{/if}
-		</div>
+		{#if mode !== 'erase'}
+			<div class="chips" aria-label={mode === 'fill' ? 'Fill terrain' : 'Stamp object'}>
+				{#if mode === 'fill'}
+					{#each fillTypes as type (type)}
+						<button
+							type="button"
+							class="chip"
+							class:armed={textureKey === type}
+							aria-pressed={textureKey === type}
+							onclick={() => onSetTexture(type)}
+							title={type}
+						>
+							<img class="chip-tile" src={fillThumb(type)} alt="" aria-hidden="true" />
+							<span class="chip-name">{type}</span>
+						</button>
+					{/each}
+				{:else}
+					{#each stampGroups as g (g.group)}
+						<button
+							type="button"
+							class="chip"
+							class:armed={textureKey === g.group || g.stamps.some((s) => s.key === textureKey)}
+							aria-pressed={textureKey === g.group || g.stamps.some((s) => s.key === textureKey)}
+							onclick={() => onSetTexture(g.group)}
+							title="{g.label} (varied)"
+						>
+							<img class="chip-tile" src={g.stamps[0].url} alt="" aria-hidden="true" />
+							<span class="chip-name">{g.label}</span>
+						</button>
+					{/each}
+				{/if}
+			</div>
+		{:else}
+			<span class="erase-hint">Erases painted art on the selected layer.</span>
+		{/if}
 
 		{#if artLayers.length > 0}
 			<label class="layer-select">
@@ -148,7 +157,7 @@
 				oninput={(e) => onSetBrushSize(parseFloat((e.currentTarget as HTMLInputElement).value))}
 			/>
 		</label>
-		{#if mode === 'fill'}
+		{#if mode === 'fill' || mode === 'erase'}
 			<label class="slider">
 				<span>Soft</span>
 				<input
@@ -275,5 +284,10 @@
 		font-size: 11px;
 		padding: 2px 4px;
 		max-width: 120px;
+	}
+	.erase-hint {
+		color: var(--color-text-muted, #888);
+		font-style: italic;
+		font-size: 11px;
 	}
 </style>
