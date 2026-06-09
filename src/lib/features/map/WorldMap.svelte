@@ -115,6 +115,23 @@
 	let strokeTextureKey = $state<string>('Grass'); // fill→terrain key, stamp→Objects/ key
 	let strokeBrushSize = $state<number>(0.04);
 	let strokeSoftness = $state<number>(0.5);
+	// Slice D — time-varying terrain authoring. Both brushes commit at the
+	// CURRENT playhead T (paint_cells PixiBrushLayer.svelte:156, paint_stroke
+	// PixiFreeformBrushLayer commitStroke), and the fold windows events by
+	// (anchorT, t] — so scrubbing the playhead and painting authors a terrain
+	// BEAT (forest→ash) that appears from that story-time onward. The data path
+	// shipped with Slices A–C; what makes it an authoring feature is telling
+	// the author WHEN they're painting — invisible-T painting reads as "my art
+	// vanished" the first time they scrub backward.
+	let paintAtLabel = $derived.by(() => {
+		const t = $playhead;
+		if (t === null || t <= 0) return 'from the story start';
+		const act = [...acts].reverse().find((a) => (a.position ?? 0) <= t);
+		return act
+			? `from “${act.name}” (t=${t.toFixed(2)}) onward`
+			: `from t=${t.toFixed(2)} onward`;
+	});
+
 	// Slice B — paint-target art layer (world_maps.art_layers_jsonb id). null =
 	// the implicit base art layer. Reset on map switch (ids are per-map) and
 	// when the selected layer is deleted from the defs.
@@ -2593,6 +2610,13 @@
 				>
 					Freeform
 				</button>
+				<!-- Slice D — the terrain-beat affordance: painting is anchored at the
+				     CURRENT playhead, so scrubbing then painting authors terrain change
+				     over story-time. Surfacing the T is what turns the (existing) data
+				     behavior into an intentional authoring tool. -->
+				<span class="paint-at-indicator" role="status" data-testid="paint-at-indicator">
+					Painting {paintAtLabel}
+				</span>
 			</div>
 			{#if brushMode === 'grid'}
 				<!-- Slice 3 T5 brush palette. PR-F (DS4): shown only under the Brush
@@ -2744,6 +2768,14 @@
 	.brush-mode-toggle button.armed {
 		border-color: var(--color-accent, #c8942a);
 		background: color-mix(in srgb, var(--color-accent, #c8942a) 25%, transparent);
+	}
+	/* Slice D — paint-time indicator (terrain beats). */
+	.paint-at-indicator {
+		align-self: center;
+		margin-left: 8px;
+		font-size: 10px;
+		font-style: italic;
+		color: var(--color-text-muted, #999);
 	}
 
 	:global(.map-toolbar) {
