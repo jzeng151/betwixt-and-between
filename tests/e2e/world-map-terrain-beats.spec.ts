@@ -82,6 +82,16 @@ test('painting at a later playhead authors a terrain beat: absent before, presen
 
 	const map = await seedTimelineAndMap(request);
 
+	// Slice D2 diag: PixiArtLayer bumps __artTransitionCount once per
+	// terrain-transition dissolve when __SPOTLIGHT_DIAG__ is set.
+	await page.addInitScript(() => {
+		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ = true;
+	});
+	const transitionCount = () =>
+		page.evaluate(
+			() => (window as unknown as { __artTransitionCount?: number }).__artTransitionCount ?? 0
+		);
+
 	await page.goto('/app');
 	await page.click('button[title="World Map"]');
 	const win = page.locator('.window[aria-label="World Map"]');
@@ -157,12 +167,18 @@ test('painting at a later playhead authors a terrain beat: absent before, presen
 	const lateAfter = await canvas.screenshot();
 	expect(Buffer.compare(lateBefore, lateAfter)).not.toBe(0);
 
+	// Slice D2: AUTHORING the stroke (constant playhead) snapped — no dissolve.
+	expect(await transitionCount()).toBe(0);
+
 	// …and does NOT exist before it: the EARLY canvas is pixel-identical to its
 	// pre-paint baseline. (Same click coords → same playhead T → same state.)
 	// Switch off the brush first so the brush overlay can't differ.
 	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Select' }).click();
 	await page.mouse.click(earlyX, rowsY);
 	await expect.poll(playheadT, { timeout: 8000 }).toBeLessThan(0.5);
+	// Slice D2: the playhead CROSSING the stroke's T is a terrain beat — it
+	// dissolves (counter bumps) rather than popping.
+	await expect.poll(transitionCount, { timeout: 4000 }).toBeGreaterThan(0);
 	await page.waitForTimeout(600);
 	const earlyAfter = await canvas.screenshot();
 	expect(Buffer.compare(earlyBefore, earlyAfter)).toBe(0);
