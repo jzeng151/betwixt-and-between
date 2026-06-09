@@ -432,5 +432,511 @@
         "url": "/api/sprites/Water/snow_water_256_04.png"
       }
     ]
-  }
+  },
+  "objects": [
+    {
+      "key": "board_object_01",
+      "group": "board_object",
+      "label": "Board",
+      "url": "/api/sprites/Objects/board_object_01.png"
+    },
+    {
+      "key": "bones_object_01",
+      "group": "bones_object",
+      "label": "Bones",
+      "url": "/api/sprites/Objects/bones_object_01.png"
+    },
+    {
+      "key": "bones_object_02",
+      "group": "bones_object",
+      "label": "Bones",
+      "url": "/api/sprites/Objects/bones_object_02.png"
+    },
+    {
+      "key": "bones_object_03",
+      "group": "bones_object",
+      "label": "Bones",
+      "url": "/api/sprites/Objects/bones_object_03.png"
+    },
+    {
+      "key": "bones_object_04",
+      "group": "bones_object",
+      "label": "Bones",
+      "url": "/api/sprites/Objects/bones_object_04.png"
+    },
+    {
+      "key": "bones_object_05",
+      "group": "bones_object",
+      "label": "Bones",
+      "url": "/api/sprites/Objects/bones_object_05.png"
+    },
+    {
+      "key": "bones_object_06",
+      "group": "bones_object",
+      "label": "Bones",
+      "url": "/api/sprites/Objects/bones_object_06.png"
+    },
+    {
+      "key": "bones_object_07",
+      "group": "bones_object",
+      "label": "Bones",
+      "url": "/api/sprites/Objects/bones_object_07.png"
+    },
+    {
+      "key": "bush_object_01",
+      "group": "bush_object",
+      "label": "Bush",
+      "url": "/api/sprites/Objects/bush_object_01.png"
+    },
+    {
+      "key": "bush_object_02",
+      "group": "bush_object",
+      "label": "Bush",
+      "url": "/api/sprites/Objects/bush_object_02.png"
+    },
+    {
+      "key": "bush_object_03",
+      "group": "bush_object",
+      "label": "Bush",
+      "url": "/api/sprites/Objects/bush_object_03.png"
+    },
+    {
+      "key": "bush_object_04",
+      "group": "bush_object",
+      "label": "Bush",
+      "url": "/api/sprites/Objects/bush_object_04.png"
+    },
+    {
+      "key": "bush_object_05",
+      "group": "bush_object",
+      "label": "Bush",
+      "url": "/api/sprites/Objects/bush_object_05.png"
+    },
+    {
+      "key": "bush_object_06",
+      "group": "bush_object",
+      "label": "Bush",
+      "url": "/api/sprites/Objects/bush_object_06.png"
+    },
+    {
+      "key": "coin_object_01",
+      "group": "coin_object",
+      "label": "Coin",
+      "url": "/api/sprites/Objects/coin_object_01.png"
+    },
+    {
+      "key": "flovers_blue_object_10",
+      "group": "flovers_blue_object",
+      "label": "Flovers Blue",
+      "url": "/api/sprites/Objects/flovers_blue_object_10.png"
+    },
+    {
+      "key": "flovers_blue_object_11",
+      "group": "flovers_blue_object",
+      "label": "Flovers Blue",
+      "url": "/api/sprites/Objects/flovers_blue_object_11.png"
+    },
+    {
+      "key": "flovers_blue_object_12",
+      "group": "flovers_blue_object",
+      "label": "Flovers Blue",
+      "url": "/api/sprites/Objects/flovers_blue_object_12.png"
+    },
+    {
+      "key": "flovers_green_object_01",
+      "group": "flovers_green_object",
+      "label": "Flovers Green",
+      "url": "/api/sprites/Objects/flovers_green_object_01.png"
+    },
+    {
+      "key": "flovers_green_object_02",
+      "group": "flovers_green_object",
+      "label": "Flovers Green",
+      "url": "/api/sprites/Objects/flovers_green_object_02.png"
+    },
+    {
+      "key": "flovers_green_object_03",
+      "group": "flovers_green_object",
+      "label": "Flovers Green",
+      "url": "/api/sprites/Objects/flovers_green_object_03.png"
+    },
+    {
+      "key": "flovers_pink_object_04",
+      "group": "flovers_pink_object",
+      "label": "Flovers Pink",
+      "url": "/api/sprites/Objects/flovers_pink_object_04.png"
+    },
+    {
+      "key": "flovers_pink_object_05",
+      "group": "flovers_pink_object",
+      "label": "Flovers Pink",
+      "url": "/api/sprites/Objects/flovers_pink_object_05.png"
+    },
+    {
+      "key": "flovers_pink_object_06",
+      "group": "flovers_pink_object",
+      "label": "Flovers Pink",
+      "url": "/api/sprites/Objects/flovers_pink_object_06.png"
+    },
+    {
+      "key": "flovers_yellow_object_07",
+      "group": "flovers_yellow_object",
+      "label": "Flovers Yellow",
+      "url": "/api/sprites/Objects/flovers_yellow_object_07.png"
+    },
+    {
+      "key": "flovers_yellow_object_08",
+      "group": "flovers_yellow_object",
+      "label": "Flovers Yellow",
+      "url": "/api/sprites/Objects/flovers_yellow_object_08.png"
+    },
+    {
+      "key": "flovers_yellow_object_09",
+      "group": "flovers_yellow_object",
+      "label": "Flovers Yellow",
+      "url": "/api/sprites/Objects/flovers_yellow_object_09.png"
+    },
+    {
+      "key": "pole_object_01",
+      "group": "pole_object",
+      "label": "Pole",
+      "url": "/api/sprites/Objects/pole_object_01.png"
+    },
+    {
+      "key": "pole_object_02",
+      "group": "pole_object",
+      "label": "Pole",
+      "url": "/api/sprites/Objects/pole_object_02.png"
+    },
+    {
+      "key": "pole_object_03",
+      "group": "pole_object",
+      "label": "Pole",
+      "url": "/api/sprites/Objects/pole_object_03.png"
+    },
+    {
+      "key": "pole_object_04",
+      "group": "pole_object",
+      "label": "Pole",
+      "url": "/api/sprites/Objects/pole_object_04.png"
+    },
+    {
+      "key": "pole_object_05",
+      "group": "pole_object",
+      "label": "Pole",
+      "url": "/api/sprites/Objects/pole_object_05.png"
+    },
+    {
+      "key": "pole_object_06",
+      "group": "pole_object",
+      "label": "Pole",
+      "url": "/api/sprites/Objects/pole_object_06.png"
+    },
+    {
+      "key": "pole_object_07",
+      "group": "pole_object",
+      "label": "Pole",
+      "url": "/api/sprites/Objects/pole_object_07.png"
+    },
+    {
+      "key": "rope_object_01",
+      "group": "rope_object",
+      "label": "Rope",
+      "url": "/api/sprites/Objects/rope_object_01.png"
+    },
+    {
+      "key": "rope_object_02",
+      "group": "rope_object",
+      "label": "Rope",
+      "url": "/api/sprites/Objects/rope_object_02.png"
+    },
+    {
+      "key": "rope_object_03",
+      "group": "rope_object",
+      "label": "Rope",
+      "url": "/api/sprites/Objects/rope_object_03.png"
+    },
+    {
+      "key": "rope_object_04",
+      "group": "rope_object",
+      "label": "Rope",
+      "url": "/api/sprites/Objects/rope_object_04.png"
+    },
+    {
+      "key": "rope_object_05",
+      "group": "rope_object",
+      "label": "Rope",
+      "url": "/api/sprites/Objects/rope_object_05.png"
+    },
+    {
+      "key": "shadow_01",
+      "group": "shadow",
+      "label": "Shadow",
+      "url": "/api/sprites/Objects/shadow_01.png"
+    },
+    {
+      "key": "snow_overlay_01",
+      "group": "snow_overlay",
+      "label": "Snow Overlay",
+      "url": "/api/sprites/Objects/snow_overlay_01.png"
+    },
+    {
+      "key": "snow_overlay_02",
+      "group": "snow_overlay",
+      "label": "Snow Overlay",
+      "url": "/api/sprites/Objects/snow_overlay_02.png"
+    },
+    {
+      "key": "snow_overlay_03",
+      "group": "snow_overlay",
+      "label": "Snow Overlay",
+      "url": "/api/sprites/Objects/snow_overlay_03.png"
+    },
+    {
+      "key": "stone_object_01",
+      "group": "stone_object",
+      "label": "Stone",
+      "url": "/api/sprites/Objects/stone_object_01.png"
+    },
+    {
+      "key": "stone_object_02",
+      "group": "stone_object",
+      "label": "Stone",
+      "url": "/api/sprites/Objects/stone_object_02.png"
+    },
+    {
+      "key": "stone_object_03",
+      "group": "stone_object",
+      "label": "Stone",
+      "url": "/api/sprites/Objects/stone_object_03.png"
+    },
+    {
+      "key": "stone_object_04",
+      "group": "stone_object",
+      "label": "Stone",
+      "url": "/api/sprites/Objects/stone_object_04.png"
+    },
+    {
+      "key": "stone_object_05",
+      "group": "stone_object",
+      "label": "Stone",
+      "url": "/api/sprites/Objects/stone_object_05.png"
+    },
+    {
+      "key": "stone_object_06",
+      "group": "stone_object",
+      "label": "Stone",
+      "url": "/api/sprites/Objects/stone_object_06.png"
+    },
+    {
+      "key": "stone_object_07",
+      "group": "stone_object",
+      "label": "Stone",
+      "url": "/api/sprites/Objects/stone_object_07.png"
+    },
+    {
+      "key": "stone_object_08",
+      "group": "stone_object",
+      "label": "Stone",
+      "url": "/api/sprites/Objects/stone_object_08.png"
+    },
+    {
+      "key": "stone_object_09",
+      "group": "stone_object",
+      "label": "Stone",
+      "url": "/api/sprites/Objects/stone_object_09.png"
+    },
+    {
+      "key": "stone_object_10",
+      "group": "stone_object",
+      "label": "Stone",
+      "url": "/api/sprites/Objects/stone_object_10.png"
+    },
+    {
+      "key": "stump_object_0",
+      "group": "stump_object",
+      "label": "Stump",
+      "url": "/api/sprites/Objects/stump_object_0.png"
+    },
+    {
+      "key": "stump_object_02",
+      "group": "stump_object",
+      "label": "Stump",
+      "url": "/api/sprites/Objects/stump_object_02.png"
+    },
+    {
+      "key": "stump_object_03",
+      "group": "stump_object",
+      "label": "Stump",
+      "url": "/api/sprites/Objects/stump_object_03.png"
+    },
+    {
+      "key": "stump_object_04",
+      "group": "stump_object",
+      "label": "Stump",
+      "url": "/api/sprites/Objects/stump_object_04.png"
+    },
+    {
+      "key": "sword_object_01",
+      "group": "sword_object",
+      "label": "Sword",
+      "url": "/api/sprites/Objects/sword_object_01.png"
+    },
+    {
+      "key": "tomb_object_01",
+      "group": "tomb_object",
+      "label": "Tomb",
+      "url": "/api/sprites/Objects/tomb_object_01.png"
+    },
+    {
+      "key": "tomb_object_02",
+      "group": "tomb_object",
+      "label": "Tomb",
+      "url": "/api/sprites/Objects/tomb_object_02.png"
+    },
+    {
+      "key": "tomb_object_03",
+      "group": "tomb_object",
+      "label": "Tomb",
+      "url": "/api/sprites/Objects/tomb_object_03.png"
+    },
+    {
+      "key": "tree_object_01",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_01.png"
+    },
+    {
+      "key": "tree_object_02",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_02.png"
+    },
+    {
+      "key": "tree_object_03",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_03.png"
+    },
+    {
+      "key": "tree_object_04",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_04.png"
+    },
+    {
+      "key": "tree_object_05",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_05.png"
+    },
+    {
+      "key": "tree_object_06",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_06.png"
+    },
+    {
+      "key": "tree_object_07",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_07.png"
+    },
+    {
+      "key": "tree_object_08",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_08.png"
+    },
+    {
+      "key": "tree_object_09",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_09.png"
+    },
+    {
+      "key": "tree_object_10",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_10.png"
+    },
+    {
+      "key": "tree_object_11",
+      "group": "tree_object",
+      "label": "Tree",
+      "url": "/api/sprites/Objects/tree_object_11.png"
+    },
+    {
+      "key": "trunk_object_01",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_01.png"
+    },
+    {
+      "key": "trunk_object_02",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_02.png"
+    },
+    {
+      "key": "trunk_object_03",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_03.png"
+    },
+    {
+      "key": "trunk_object_04",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_04.png"
+    },
+    {
+      "key": "trunk_object_05",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_05.png"
+    },
+    {
+      "key": "trunk_object_06",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_06.png"
+    },
+    {
+      "key": "trunk_object_07",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_07.png"
+    },
+    {
+      "key": "trunk_object_08",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_08.png"
+    },
+    {
+      "key": "trunk_object_09",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_09.png"
+    },
+    {
+      "key": "trunk_object_10",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_10.png"
+    },
+    {
+      "key": "trunk_object_11",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_11.png"
+    },
+    {
+      "key": "trunk_object_12",
+      "group": "trunk_object",
+      "label": "Trunk",
+      "url": "/api/sprites/Objects/trunk_object_12.png"
+    }
+  ]
 }
