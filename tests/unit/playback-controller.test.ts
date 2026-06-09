@@ -13,6 +13,7 @@ function state(regions: Array<{ regionId: string; factionId: string | null }>): 
 		),
 		artifacts: [],
 		cells: [],
+		strokes: [],
 		artifactOverrides: new Map(),
 		causalEdges: []
 	};

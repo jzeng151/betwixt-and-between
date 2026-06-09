@@ -50,7 +50,7 @@
 // is a harmless, isomorphic no-op when this module loads server-side.
 
 import { isEdgeVisibleAtT, isMysteryEdgeAtT } from '$lib/features/timeline/playhead-store.js';
-import { TERRAIN_ASSET_KEYS } from './terrain-keys.generated.js';
+import { STAMP_ASSET_KEYS, TERRAIN_ASSET_KEYS } from './terrain-keys.generated.js';
 
 export const NEUTRAL_REGION_COLOR = '#9ca3af';
 
@@ -120,6 +120,13 @@ export type AnchorState = {
 	// Slice 3: terrain cells. Backfilled to [] by drizzle/0022; new
 	// anchors must include this key (PR A invariant test enforces).
 	cells?: AnchorCell[];
+	// WM3 Slice A: freeform brush strokes baked into the anchor. Append-only
+	// (painter's order). Optional so historical anchors (pre-Slice-A) read as
+	// "no strokes"; new anchors include it (invariant test enforces). Strokes
+	// MUST live here — projectState excludes events with t_position <= anchorT,
+	// so a stroke painted below an anchor's T is lost unless the anchor carries
+	// it (the "scrub playhead, base art persists" criterion; eng-review §1).
+	strokes?: StoredStroke[];
 };
 
 export type ProjectionAnchor = {
@@ -144,7 +151,7 @@ export type ProjectionAnchor = {
 //      projectState and the server-side anchor snapshot in world-map-v3.ts)
 // (move_entity is not a baked kind — it folds via foldMovement, not here.)
 
-export const EVENT_KINDS = ['transfer_region', 'paint_cells', 'move_entity'] as const;
+export const EVENT_KINDS = ['transfer_region', 'paint_cells', 'paint_stroke', 'move_entity'] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
 export type TransferRegionPayload = {
@@ -165,6 +172,33 @@ export type PaintCellsPayload = {
 	// either set it true or omit it (defaults to true server-side).
 	command_complete?: boolean;
 };
+
+// WM3 Slice A — freeform brush. `paint_stroke` generalizes `paint_cells`: a
+// grid cell is a quantized stroke. Each event is ONE brush gesture; unlike
+// `paint_cells` (last-write-wins on a grid key) strokes are append-only marks
+// (painter's order — later strokes draw on top). Vector representation (OQ1):
+// `path[]` is normalized fractional [0,1] map coords, same convention as
+// placements. Two render modes (spike findings): `fill` masks a tiling terrain
+// tile to the stroke shape, `stamp` scatters an Objects/ sprite along the path.
+// `textureKey` resolves against TERRAIN_ASSET_KEYS (fill) or STAMP_ASSET_KEYS
+// (stamp). Baked into AnchorState.strokes so it survives anchor writes.
+export const STROKE_MAX_POINTS = 4096; // path[] cap — DoS/storage bound (parity w/ PAINT_CELLS_MAX_PER_EVENT)
+export type StrokePoint = { x: number; y: number };
+export type StrokeMode = 'fill' | 'stamp';
+export type StrokeStampParams = { spacing: number; jitter: number };
+
+// The stored/painted shape (also the persisted AnchorState.strokes element).
+// The event payload IS this shape — strokes carry no merge key (append-only),
+// so there is no event-only field to strip (contrast paint_cells/command_complete).
+export type PaintStrokePayload = {
+	path: StrokePoint[];
+	brushSize: number; // normalized (0,1] — fraction of map extent
+	softness: number; // [0,1] feathered-edge alpha falloff
+	mode: StrokeMode;
+	textureKey: string;
+	stamp?: StrokeStampParams; // meaningful only when mode === 'stamp'
+};
+export type StoredStroke = PaintStrokePayload;
 
 // Slice 4 PR-F (D5) — continuous-movement event. Each event is ONE keyframe:
 // the moving unit's position at this event's t_position. The moving unit is a
@@ -219,6 +253,15 @@ const KNOWN_TERRAIN_KEYS: ReadonlySet<string> = new Set([
 ]);
 export function isKnownTerrainKey(s: unknown): s is string {
 	return typeof s === 'string' && KNOWN_TERRAIN_KEYS.has(s);
+}
+
+// Stamp-mode (paint_stroke) textureKeys reference Objects/ sprites, a separate
+// generated set from terrain tiles. Same gate role as isKnownTerrainKey: the
+// server validator + the fold reject unknown stamp keys so a junk key can't be
+// stored as an unrenderable stroke.
+const KNOWN_STAMP_KEYS: ReadonlySet<string> = new Set(STAMP_ASSET_KEYS);
+export function isKnownStampKey(s: unknown): s is string {
+	return typeof s === 'string' && KNOWN_STAMP_KEYS.has(s);
 }
 
 export type ProjectionEvent = {
@@ -276,6 +319,11 @@ export type RenderedState = {
 	// `AnchorState.chains` INPUT key is kept (harmless residue) but is no longer
 	// folded into the rendered output.
 	cells: RenderedCell[];
+	// WM3 Slice A — freeform brush strokes to render, in painter's order
+	// (anchor-baked strokes first, then post-anchor stroke events). The render
+	// layer (PixiArtLayer) rasterizes these into a RenderTexture over the
+	// background. Empty when the map has no freeform art.
+	strokes: StoredStroke[];
 	// Slice 4 PR-F (D5, D-PRF-3/4) — per-placement position OVERRIDES from the
 	// movement engine, keyed by placement_id. Present only for placements that
 	// are active at T AND carry ≥1 move_entity keyframe. The render layer
@@ -467,6 +515,60 @@ function applyTransferRegion(
 	regions.set(p.region_id, { region_id: p.region_id, faction_id: p.new_faction_id });
 }
 
+// WM3 Slice A — append one freeform stroke from a paint_stroke payload.
+// Defensive lazy-GC (same posture as applyPaintCells): a malformed stroke is
+// dropped rather than throwing — the server validator is the real write gate;
+// this guards the fold against legacy/forged rows. Shares the isKnown*Key
+// predicates + STROKE_MAX_POINTS with the server validator so the two cannot
+// disagree on what is storable. A bad point drops the WHOLE stroke (a corrupt
+// path has no safe partial render), unlike a single bad cell. Exported so the
+// server-side anchor-snapshot builder seeds baked strokes through the SAME gate
+// the read path uses (snapshot stays byte-equal to projectState).
+export function applyPaintStroke(strokes: StoredStroke[], payload: unknown): void {
+	if (!payload || typeof payload !== 'object') return;
+	const p = payload as Partial<PaintStrokePayload>;
+	if (p.mode !== 'fill' && p.mode !== 'stamp') return;
+	if (typeof p.textureKey !== 'string') return;
+	const keyOk = p.mode === 'stamp' ? isKnownStampKey(p.textureKey) : isKnownTerrainKey(p.textureKey);
+	if (!keyOk) return;
+	if (typeof p.brushSize !== 'number' || !Number.isFinite(p.brushSize) || p.brushSize <= 0 || p.brushSize > 1)
+		return;
+	if (typeof p.softness !== 'number' || !Number.isFinite(p.softness) || p.softness < 0 || p.softness > 1)
+		return;
+	if (!Array.isArray(p.path) || p.path.length === 0 || p.path.length > STROKE_MAX_POINTS) return;
+	const path: StrokePoint[] = [];
+	for (const pt of p.path) {
+		if (!pt || typeof pt !== 'object') return;
+		const x = (pt as StrokePoint).x;
+		const y = (pt as StrokePoint).y;
+		if (typeof x !== 'number' || !Number.isFinite(x) || typeof y !== 'number' || !Number.isFinite(y))
+			return;
+		path.push({ x, y });
+	}
+	let stamp: StrokeStampParams | undefined;
+	if (p.mode === 'stamp' && p.stamp && typeof p.stamp === 'object') {
+		const { spacing, jitter } = p.stamp as StrokeStampParams;
+		if (
+			typeof spacing === 'number' &&
+			Number.isFinite(spacing) &&
+			spacing > 0 &&
+			typeof jitter === 'number' &&
+			Number.isFinite(jitter) &&
+			jitter >= 0
+		) {
+			stamp = { spacing, jitter };
+		}
+	}
+	strokes.push({
+		path,
+		brushSize: p.brushSize,
+		softness: p.softness,
+		mode: p.mode,
+		textureKey: p.textureKey,
+		...(stamp ? { stamp } : {})
+	});
+}
+
 // Combined fold order: (t_position, created_at, id). Same rule on both fold
 // sites (read path + server snapshot) so last-write-wins is identical.
 function compareFoldOrder(a: ProjectionEvent, b: ProjectionEvent): number {
@@ -483,17 +585,19 @@ function compareFoldOrder(a: ProjectionEvent, b: ProjectionEvent): number {
  * forgotten in the other — the exact drift that buried strokes when the two
  * loops were hand-maintained copies.
  *
- * Mutates `regions` and `cells` in place. Sorts `events` by
- * (t_position, created_at, id) internally; callers pass their own
- * window-filtered slice (read path: the (anchorT, t] window; server: the
- * post-cutoff fold window). `move_entity` is intentionally NOT folded here —
- * movement uses a separate full-keyframe window and never enters anchor
- * state_jsonb (see `foldMovement` / D-PRF-1). New baked kinds extend the
- * switch below with exactly one `case`.
+ * Mutates `regions` and `cells` in place and APPENDS to `strokes` (painter's
+ * order — strokes are append-only marks, not last-write-wins like cells).
+ * Sorts `events` by (t_position, created_at, id) internally; callers pass their
+ * own window-filtered slice (read path: the (anchorT, t] window; server: the
+ * post-cutoff fold window) and their own seeded accumulators. `move_entity` is
+ * intentionally NOT folded here — movement uses a separate full-keyframe window
+ * and never enters anchor state_jsonb (see `foldMovement` / D-PRF-1). New baked
+ * kinds extend the switch below with exactly one `case`.
  */
 export function foldEventsIntoState(
 	regions: Map<string, AnchorRegion>,
 	cells: Map<string, AnchorCell>,
+	strokes: StoredStroke[],
 	events: readonly ProjectionEvent[]
 ): void {
 	const sorted = [...events].sort(compareFoldOrder);
@@ -502,6 +606,8 @@ export function foldEventsIntoState(
 			applyTransferRegion(regions, e.payloadJsonb);
 		} else if (e.kind === 'paint_cells') {
 			applyPaintCells(cells, e.payloadJsonb);
+		} else if (e.kind === 'paint_stroke') {
+			applyPaintStroke(strokes, e.payloadJsonb);
 		}
 		// Other kinds (move_entity → foldMovement; unknown future kinds) pass
 		// through. A new baked state kind adds one `case` HERE and nowhere else.
@@ -834,6 +940,9 @@ export function projectState(
 	const artifacts: AnchorArtifact[] = [];
 	// Slice 3: cells keyed by "x,y" for last-write-wins folding.
 	const cells = new Map<string, AnchorCell>();
+	// WM3 Slice A: freeform strokes, append-only in painter's order. Anchor-baked
+	// strokes seed the list (drawn first); post-anchor stroke events append on top.
+	const strokes: StoredStroke[] = [];
 
 	if (anchor) {
 		for (const r of anchor.stateJsonb.regions ?? []) {
@@ -855,6 +964,12 @@ export function projectState(
 				cells.set(`${cell.x},${cell.y}`, cell);
 			}
 		}
+		// Seed baked strokes through applyPaintStroke so the SAME validation
+		// gates anchor residue and live events (a forged/legacy stroke in the
+		// snapshot is dropped identically to a forged event).
+		for (const s of anchor.stateJsonb.strokes ?? []) {
+			applyPaintStroke(strokes, s);
+		}
 	}
 
 	// Events strictly after the anchor's t_position, up to and including t.
@@ -866,7 +981,7 @@ export function projectState(
 	// move_entity is NOT folded here — it uses a separate window (full keyframe
 	// history, not (anchorT, t]) because movement is never baked into anchors
 	// (D-PRF-1). See foldMovement below.
-	foldEventsIntoState(regions, cells, applicable);
+	foldEventsIntoState(regions, cells, strokes, applicable);
 
 	// Slice 4 PR-F (D5) — per-placement movement overrides. Uses the full event
 	// list (not `applicable`) on purpose: keyframes below the active anchor's T
@@ -898,6 +1013,9 @@ export function projectState(
 		regions: renderedRegions,
 		artifacts,
 		cells: renderedCells,
+		// Not anchor-gated (like cells, unlike regions/causalEdges): a strokes-only
+		// map with no anchor still paints at the -∞ baseline.
+		strokes,
 		artifactOverrides,
 		causalEdges
 	};
