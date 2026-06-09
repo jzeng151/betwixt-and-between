@@ -796,6 +796,25 @@
 		return r.polygon.map(([lat, lng]) => [lng, lat]);
 	}
 
+	// ADR 0007 Fix B — project the CURRENT map at an arbitrary playhead, for the
+	// controller's map-switch ripple baseline. Same inputs as the renderedState
+	// derive (minus the idle edge-suppression: the controller only calls this
+	// with a non-null prior T, where edges are legitimate). Consistency holds
+	// because commitCycle populates every store BEFORE flipping activeMapId, so
+	// on the first post-switch frame these stores already describe the map
+	// renderedState came from.
+	function projectAtForRippleBaseline(t: number): RenderedState | null {
+		if (!projectionCtx) return null;
+		return projectState(
+			t,
+			$mapAnchorsStore,
+			$mapEventsStore,
+			projectionCtx,
+			$placementsStore,
+			causalInput
+		);
+	}
+
 	// Frame-diff the projected state into punctuation beats; spawn FX and aim the
 	// camera at the changed regions. Runs whenever renderedState / playhead /
 	// activeMapId changes (the controller guards idle + map-switch + first-frame
@@ -805,7 +824,7 @@
 	$effect(() => {
 		// Re-run when the FX layer becomes ready so buffered init-window beats flush.
 		void captionReadyTick;
-		const fresh = playback.frame(renderedState, $playhead, activeMapId);
+		const fresh = playback.frame(renderedState, $playhead, activeMapId, projectAtForRippleBaseline);
 		if (!pixiReady) {
 			// Pixi import not finished — spawn*() would silently no-op and the beats
 			// would be lost (the diff baseline already advanced). Buffer and flush on
@@ -864,6 +883,9 @@
 			// target Location must not stick across a fresh Play (or the user may
 			// have manually navigated while paused).
 			cyclePrevTargetLoc = null;
+			// A stale settled-T from the previous run must not feed a fresh Play's
+			// first cycle commit (Fix B baseline).
+			cycleSettledT = null;
 			// Drop the prefetch cache so a fresh Play never commits a STALE region
 			// snapshot. A map's regions can be edited while paused (manual nav pins,
 			// so edits only happen off-playback); re-prefetching on the next Play
@@ -955,6 +977,14 @@
 	// velocity estimate (Codex PR #72 — cycle latency). null when not cycling so the
 	// estimate never spans a pause gap.
 	let lastCyclePlayheadT: number | null = null;
+	// ADR 0007 Fix B — the last playhead at which the view was SETTLED on the
+	// active map (resolved target == shown map). At commit time this is the true
+	// pre-boundary T: lastPlayhead inside the controller has already advanced past
+	// the act boundary (the FX frame runs before this driver in the same flush),
+	// and a prefetch-delayed commit lands whole ticks later. Announced to the
+	// controller via noteCycleCommit so the ripple baseline projects the new map
+	// at a T where boundary-lit edges were still unlit.
+	let cycleSettledT: number | null = null;
 	// Reactive nonce bumped when a prefetch lands. cycleCache is a plain Map (not
 	// reactive), so without this a prefetch that completes BETWEEN playhead ticks
 	// wouldn't wake the cycling effect — a Location active for only one scene could
@@ -1153,6 +1183,10 @@
 		placementsLoading = false;
 		cyclePreloadedMapId = mapId; // load effect skips the redundant reload once
 		cyclePrevTargetLoc = loc;
+		// ADR 0007 Fix B: hand the controller the pre-boundary playhead before the
+		// flip below triggers the switch frame, so the ripple baseline projects the
+		// new map at a T where boundary-lit edges were still unlit.
+		playback.noteCycleCommit(cycleSettledT);
 		activeMapId = mapId;
 	}
 
@@ -1214,7 +1248,12 @@
 			// cursor stays null and the first brief overlap with a more-specific
 			// Location would strobe to its map. A null/pending target is still never
 			// recorded — only a resolved target whose map is on screen (Codex PR #72).
-			if (target && target.mapId === activeMapId) cyclePrevTargetLoc = target.loc;
+			if (target && target.mapId === activeMapId) {
+				cyclePrevTargetLoc = target.loc;
+				// The view is settled here: the shown map is the resolved target. This
+				// is the last pre-boundary T the Fix B ripple baseline can project at.
+				cycleSettledT = t;
+			}
 		} else if (action === 'commit') {
 			commitCycle(target!.mapId, target!.loc, cycleDataCache.get(target!.mapId)!);
 		} else {
