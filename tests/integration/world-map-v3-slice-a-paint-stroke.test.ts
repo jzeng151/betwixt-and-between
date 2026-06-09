@@ -348,6 +348,11 @@ describe('Slice A — paint_stroke server validator', () => {
 		await rejects400(fillStroke({ path: [{ x: 0.1, y: Number.POSITIVE_INFINITY }] }));
 	});
 
+	it('rejects a path point outside the normalized [0,1] range', async () => {
+		await rejects400(fillStroke({ path: [{ x: 1.5, y: 0.5 }] }));
+		await rejects400(fillStroke({ path: [{ x: 0.5, y: -0.1 }] }));
+	});
+
 	it('rejects a path over the point cap', async () => {
 		const path = Array.from({ length: 5000 }, (_, i) => ({ x: i / 5000, y: 0.5 }));
 		await rejects400(fillStroke({ path }));

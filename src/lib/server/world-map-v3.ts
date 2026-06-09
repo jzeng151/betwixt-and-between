@@ -26,6 +26,7 @@ import {
 import { assertSourceEventIdIsEvent } from './intervals/polymorphic-fk.js';
 import type { Db } from './intervals.js';
 import {
+	ANCHOR_MAX_STROKES,
 	BIOMES,
 	EVENT_KINDS,
 	PAINT_CELLS_MAX_PER_EVENT,
@@ -434,6 +435,12 @@ function validateAnchorStateShape(state: unknown): asserts state is AnchorState 
 	// updateMapAnchor), the same lazy-GC gate the read path + auto-anchor use.
 	if ('strokes' in s && s.strokes !== undefined && !Array.isArray(s.strokes)) {
 		error(400, 'state_jsonb.strokes must be an array if present');
+	}
+	// Cap anchor stroke count — a direct anchor POST/PATCH is a client write
+	// boundary with no auto-anchor bake to bound it, and each stroke is up to
+	// STROKE_MAX_POINTS points, so an uncapped array is a fat-row/DoS vector.
+	if (Array.isArray(s.strokes) && s.strokes.length > ANCHOR_MAX_STROKES) {
+		error(400, `state_jsonb.strokes exceeds cap of ${ANCHOR_MAX_STROKES} strokes`);
 	}
 }
 
@@ -929,6 +936,16 @@ function validatePaintStrokePayload(payload: unknown): void {
 			!Number.isFinite((pt as { y: number }).y)
 		) {
 			error(400, 'paint_stroke payload.path points must be { x, y } finite numbers');
+		}
+		// Coords are normalized [0,1] of the map extent — same contract (and the
+		// same range) move_entity.position enforces against its xy_unit_range
+		// column CHECK. Strokes live in jsonb (no backing CHECK), so the validator
+		// is the only gate; reject out-of-range so a forged payload can't persist
+		// off-contract coords.
+		const px = (pt as { x: number }).x;
+		const py = (pt as { y: number }).y;
+		if (px < 0 || px > 1 || py < 0 || py > 1) {
+			error(400, 'paint_stroke payload.path points must be within [0, 1]');
 		}
 	}
 	// stamp params optional; when present (any mode), must be well-formed.
