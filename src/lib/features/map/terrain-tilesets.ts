@@ -26,10 +26,24 @@ export type WaterColor = {
 	url: string;
 };
 
+/** A placeable stamp sprite (static/Sprites/Objects/), scattered by stamp mode. */
+export type ObjectStamp = {
+	/** Stamp key stored in paint_stroke.textureKey, e.g. "tree_object_01". */
+	key: string;
+	/** Family group for the palette, e.g. "tree_object". */
+	group: string;
+	/** Human label, e.g. "Tree". */
+	label: string;
+	/** Sprite URL (through the /api/sprites route). */
+	url: string;
+};
+
 export type TerrainManifest = {
 	tileSize: number;
 	categories: Record<string, TerrainCategory>;
 	water?: { colors: WaterColor[] };
+	/** WM3 Slice A — stamp sprites for the freeform brush's stamp mode. */
+	objects?: ObjectStamp[];
 };
 
 /** Is a cell key a water type? (legacy 'water' or an asset water color.) */
@@ -230,4 +244,29 @@ export function pickBaseTile(
 	const cat = manifest?.categories?.[category];
 	if (!cat || cat.base.length === 0) return null;
 	return cat.base[hash2(x, y) % cat.base.length];
+}
+
+// -- WM3 Slice A: stamp sprites (freeform brush stamp mode) -------------------
+
+/** All stamp sprites (empty if the manifest has none). */
+export function objectStamps(manifest: TerrainManifest | null): ObjectStamp[] {
+	return manifest?.objects ?? [];
+}
+
+/** Stamp sprites grouped by family ("tree_object" → [...]), for the palette. */
+export function objectStampGroups(
+	manifest: TerrainManifest | null
+): Array<{ group: string; label: string; stamps: ObjectStamp[] }> {
+	const byGroup = new Map<string, { label: string; stamps: ObjectStamp[] }>();
+	for (const s of objectStamps(manifest)) {
+		const g = byGroup.get(s.group) ?? { label: s.label, stamps: [] };
+		g.stamps.push(s);
+		byGroup.set(s.group, g);
+	}
+	return [...byGroup.entries()].map(([group, v]) => ({ group, label: v.label, stamps: v.stamps }));
+}
+
+/** Resolve a stamp key (paint_stroke.textureKey, stamp mode) → sprite URL. */
+export function stampUrlForKey(manifest: TerrainManifest | null, key: string): string | null {
+	return objectStamps(manifest).find((s) => s.key === key)?.url ?? null;
 }

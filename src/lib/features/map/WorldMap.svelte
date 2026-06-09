@@ -34,6 +34,8 @@
 	import PixiGridLayer from '$lib/features/map/PixiGridLayer.svelte';
 	import PixiTerrainLayer from '$lib/features/map/PixiTerrainLayer.svelte';
 	import PixiTerrainTileLayer from '$lib/features/map/PixiTerrainTileLayer.svelte';
+	import PixiArtLayer from '$lib/features/map/PixiArtLayer.svelte';
+	import PixiFreeformBrushLayer from '$lib/features/map/PixiFreeformBrushLayer.svelte';
 	import PixiWaterLayer from '$lib/features/map/PixiWaterLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import PixiCausalEdgeLayer from '$lib/features/map/PixiCausalEdgeLayer.svelte';
@@ -75,6 +77,7 @@
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablePalette from '$lib/components/PlaceablePalette.svelte';
 	import BrushPalette from '$lib/components/BrushPalette.svelte';
+	import FreeformBrushPalette from '$lib/components/FreeformBrushPalette.svelte';
 	import { ASSET_DRAG_MIME } from '$lib/components/asset-drag.js';
 	import PixiBrushLayer from '$lib/features/map/PixiBrushLayer.svelte';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
@@ -102,6 +105,16 @@
 	// tile (BrushPalette resolves the live list from the manifest).
 	let brushBiome = $state<string>('Grass');
 	let brushSize = $state<1 | 3 | 5>(1);
+
+	// WM3 Slice A — freeform brush sub-mode of the Brush tool. 'grid' keeps the
+	// existing cell painting (PixiBrushLayer); 'freeform' emits paint_stroke
+	// (PixiFreeformBrushLayer). The grid stays first-class (amendment §3) — this
+	// is a toggle, not a replacement. Freeform params are normalized [0,1].
+	let brushMode = $state<'grid' | 'freeform'>('grid');
+	let strokeMode = $state<'fill' | 'stamp'>('fill');
+	let strokeTextureKey = $state<string>('Grass'); // fill→terrain key, stamp→Objects/ key
+	let strokeBrushSize = $state<number>(0.04);
+	let strokeSoftness = $state<number>(0.5);
 
 	// armed placeable id (chip selected in PlaceablePalette). When non-null,
 	// the next click on the Pixi canvas creates a placement at the clicked
@@ -2307,6 +2320,8 @@
 				<PixiTerrainLayer {activeMap} cells={boundedTerrainCells} />
 				<!-- Slice 6 D15: sprite-tile terrain on top of the flat layer. -->
 				<PixiTerrainTileLayer {activeMap} cells={boundedTerrainCells} />
+				<!-- WM3 Slice A: freeform brush art (paint_stroke) over the grid tiles. -->
+				<PixiArtLayer {activeMap} strokes={renderedState?.strokes ?? []} />
 				<!-- Slice 6: only water ripples (shimmer applied to water cells alone). -->
 				<PixiWaterLayer {activeMap} cells={boundedTerrainCells} />
 				<PixiRegionLayer
@@ -2427,10 +2442,21 @@
 				     pre-stroke rows. Same guard the snapshot/ownership writes
 				     use. -->
 				<PixiBrushLayer
-					active={canvasMode === 'brush' && !dataLoading}
+					active={canvasMode === 'brush' && brushMode === 'grid' && !dataLoading}
 					{activeMap}
 					biome={brushBiome}
 					size={brushSize}
+				/>
+				<!-- WM3 Slice A: freeform brush. Same gating as the grid brush, but
+				     active only in freeform sub-mode (the two never capture pointer
+				     events at once). Emits paint_stroke; PixiArtLayer renders it. -->
+				<PixiFreeformBrushLayer
+					active={canvasMode === 'brush' && brushMode === 'freeform' && !dataLoading}
+					{activeMap}
+					mode={strokeMode}
+					textureKey={strokeTextureKey}
+					brushSize={strokeBrushSize}
+					softness={strokeSoftness}
 				/>
 			{/snippet}
 		</PixiStage>
@@ -2496,15 +2522,48 @@
 			<PlaceablePalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 		{/if}
 		{#if activeTool === 'brush' && hasImage}
-			<!-- Slice 3 T5 brush palette. PR-F (DS4): shown only under the Brush
-			     tool — the unified tool bar owns on/off + undo/redo, so this panel
-			     carries just the biome picker + size selector. -->
-			<BrushPalette
-				biome={brushBiome}
-				size={brushSize}
-				onSetBiome={(b) => (brushBiome = b)}
-				onSetSize={(s) => (brushSize = s)}
-			/>
+			<!-- WM3 Slice A: Grid | Freeform sub-mode toggle. Grid = the existing
+			     cell painting (first-class, amendment §3); Freeform = paint_stroke. -->
+			<div class="brush-mode-toggle" role="group" aria-label="Brush type">
+				<button
+					type="button"
+					class:armed={brushMode === 'grid'}
+					aria-pressed={brushMode === 'grid'}
+					onclick={() => (brushMode = 'grid')}
+				>
+					Grid
+				</button>
+				<button
+					type="button"
+					class:armed={brushMode === 'freeform'}
+					aria-pressed={brushMode === 'freeform'}
+					onclick={() => (brushMode = 'freeform')}
+				>
+					Freeform
+				</button>
+			</div>
+			{#if brushMode === 'grid'}
+				<!-- Slice 3 T5 brush palette. PR-F (DS4): shown only under the Brush
+				     tool — the unified tool bar owns on/off + undo/redo, so this panel
+				     carries just the biome picker + size selector. -->
+				<BrushPalette
+					biome={brushBiome}
+					size={brushSize}
+					onSetBiome={(b) => (brushBiome = b)}
+					onSetSize={(s) => (brushSize = s)}
+				/>
+			{:else}
+				<FreeformBrushPalette
+					mode={strokeMode}
+					textureKey={strokeTextureKey}
+					brushSize={strokeBrushSize}
+					softness={strokeSoftness}
+					onSetMode={(m) => (strokeMode = m)}
+					onSetTexture={(k) => (strokeTextureKey = k)}
+					onSetBrushSize={(n) => (strokeBrushSize = n)}
+					onSetSoftness={(n) => (strokeSoftness = n)}
+				/>
+			{/if}
 		{/if}
 		{#if !hasImage}
 			<div class="upload-area">
@@ -2609,6 +2668,27 @@
 		height: 100%;
 		display: flex;
 		flex-direction: column;
+	}
+	/* WM3 Slice A — Grid|Freeform brush sub-mode toggle, above the active palette. */
+	.brush-mode-toggle {
+		display: flex;
+		gap: 2px;
+		padding: 6px 10px 0;
+		background: var(--color-panel, rgba(0, 0, 0, 0.6));
+	}
+	.brush-mode-toggle button {
+		padding: 3px 12px;
+		border-radius: 6px;
+		border: 1px solid var(--color-border, #333);
+		background: var(--color-bg, #1a1a1a);
+		color: var(--color-text, #ddd);
+		font-size: 11px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.brush-mode-toggle button.armed {
+		border-color: var(--color-accent, #c8942a);
+		background: color-mix(in srgb, var(--color-accent, #c8942a) 25%, transparent);
 	}
 
 	:global(.map-toolbar) {
