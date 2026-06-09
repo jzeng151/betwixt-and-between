@@ -183,6 +183,12 @@ export type PaintCellsPayload = {
 // `textureKey` resolves against TERRAIN_ASSET_KEYS (fill) or STAMP_ASSET_KEYS
 // (stamp). Baked into AnchorState.strokes so it survives anchor writes.
 export const STROKE_MAX_POINTS = 4096; // path[] cap — DoS/storage bound (parity w/ PAINT_CELLS_MAX_PER_EVENT)
+// Anchor-level cap: a single anchor POST/PATCH (createMapAnchor/updateMapAnchor)
+// can carry at most this many strokes. Per-event writes are bounded by the
+// auto-anchor bake (AUTO_ANCHOR_K), but a direct anchor write is a client
+// boundary with no such bound — cap it so one request can't persist an
+// arbitrarily fat state_jsonb (each stroke is up to STROKE_MAX_POINTS points).
+export const ANCHOR_MAX_STROKES = 4096;
 export type StrokePoint = { x: number; y: number };
 export type StrokeMode = 'fill' | 'stamp';
 export type StrokeStampParams = { spacing: number; jitter: number };
@@ -543,6 +549,10 @@ export function applyPaintStroke(strokes: StoredStroke[], payload: unknown): voi
 		const y = (pt as StrokePoint).y;
 		if (typeof x !== 'number' || !Number.isFinite(x) || typeof y !== 'number' || !Number.isFinite(y))
 			return;
+		// Coords are normalized [0,1] of the map extent (same contract as
+		// move_entity.position). A point outside drops the whole stroke — a
+		// forged/legacy path has no safe partial render.
+		if (x < 0 || x > 1 || y < 0 || y > 1) return;
 		path.push({ x, y });
 	}
 	let stamp: StrokeStampParams | undefined;

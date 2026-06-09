@@ -43,6 +43,12 @@
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
 
+	// Render guard: the server validator accepts any stamp spacing > 0, and
+	// spacingPx floors at 1px, so a long path with tiny spacing would scatter
+	// thousands of sprites — built synchronously and rebuilt on every change.
+	// Cap per stroke so a pathological stored payload can't lock up render.
+	const MAX_STAMPS_PER_STROKE = 2048;
+
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
 	let layer: PixiContainer | null = null;
@@ -142,7 +148,11 @@
 			const sizePx = Math.max(2, s.brushSize * extent);
 			const spacingPx = Math.max(1, (s.stamp?.spacing ?? s.brushSize) * extent);
 			const jitterPx = (s.stamp?.jitter ?? 0) * extent;
-			const placements = pointsAlongPath(path, spacingPx);
+			const allPlacements = pointsAlongPath(path, spacingPx);
+			const placements =
+				allPlacements.length > MAX_STAMPS_PER_STROKE
+					? allPlacements.slice(0, MAX_STAMPS_PER_STROKE)
+					: allPlacements;
 			placements.forEach((pt, i) => {
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
 				const sprite = new PIXI!.Sprite(tex as any);
