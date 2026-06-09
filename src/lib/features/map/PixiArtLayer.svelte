@@ -122,20 +122,21 @@
 
 		if (s.mode === 'fill') {
 			const widthPx = Math.max(1, s.brushSize * extent);
-			// TilingSprite over the map, masked by the round-capped stroke shape.
-			const tiling = new PIXI.TilingSprite({ texture: tex, width, height });
-			const mask = new PIXI.Graphics();
-			mask.moveTo(path[0].x, path[0].y);
-			if (path.length === 1) mask.lineTo(path[0].x + 0.01, path[0].y);
-			else for (let i = 1; i < path.length; i++) mask.lineTo(path[i].x, path[i].y);
-			mask.stroke({ width: widthPx, color: 0xffffff, cap: 'round', join: 'round' });
-			// Feathered edge: blur the mask so its alpha falls off softly.
+			// Stroke the path WITH the tile texture (Pixi v8 fill/stroke styles
+			// accept a texture). This renders the tile along the stroke shape
+			// directly — the matching codebase pattern is Graphics.stroke/fill,
+			// not masking (which is unused here and silently clipped to nothing
+			// in the first cut). softness feathers the edge via a BlurFilter on
+			// the whole graphics (a proven filter target, unlike a mask).
+			const g = new PIXI.Graphics();
+			g.moveTo(path[0].x, path[0].y);
+			if (path.length === 1) g.lineTo(path[0].x + 0.01, path[0].y);
+			else for (let i = 1; i < path.length; i++) g.lineTo(path[i].x, path[i].y);
+			g.stroke({ width: widthPx, texture: tex, cap: 'round', join: 'round' });
 			if (s.softness > 0) {
-				mask.filters = [new PIXI.BlurFilter({ strength: s.softness * widthPx * 0.5 })];
+				g.filters = [new PIXI.BlurFilter({ strength: s.softness * widthPx * 0.25 })];
 			}
-			group.addChild(tiling);
-			group.addChild(mask);
-			tiling.mask = mask;
+			group.addChild(g);
 		} else {
 			// Stamp: scatter the sprite along the path.
 			const sizePx = Math.max(2, s.brushSize * extent);
