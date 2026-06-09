@@ -120,12 +120,14 @@
 		// Cap to the server limit — drop excess rather than 400 (a long drag can
 		// exceed STROKE_MAX_POINTS; downsampling preserves the gesture shape).
 		const path = points.length > STROKE_MAX_POINTS ? downsample(points, STROKE_MAX_POINTS) : points;
+		// Erase strokes carry no material (Slice C): textureKey/stamp are
+		// rejected by the validator for mode='erase'.
 		const payload = {
 			path,
 			brushSize,
 			softness,
 			mode,
-			textureKey,
+			...(mode === 'erase' ? {} : { textureKey }),
 			...(mode === 'stamp' && stamp ? { stamp } : {}),
 			...(layerId ? { layerId } : {})
 		};

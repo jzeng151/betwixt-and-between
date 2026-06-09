@@ -442,3 +442,24 @@ export const STAMP_ASSET_KEYS = [
 	"trunk_object_11",
 	"trunk_object_12"
 ] as const;
+
+export const STAMP_GROUP_KEYS = [
+	"board_object",
+	"bones_object",
+	"bush_object",
+	"coin_object",
+	"flovers_blue_object",
+	"flovers_green_object",
+	"flovers_pink_object",
+	"flovers_yellow_object",
+	"pole_object",
+	"rope_object",
+	"shadow",
+	"snow_overlay",
+	"stone_object",
+	"stump_object",
+	"sword_object",
+	"tomb_object",
+	"tree_object",
+	"trunk_object"
+] as const;

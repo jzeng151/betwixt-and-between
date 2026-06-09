@@ -111,7 +111,7 @@
 	// (PixiFreeformBrushLayer). The grid stays first-class (amendment §3) — this
 	// is a toggle, not a replacement. Freeform params are normalized [0,1].
 	let brushMode = $state<'grid' | 'freeform'>('grid');
-	let strokeMode = $state<'fill' | 'stamp'>('fill');
+	let strokeMode = $state<'fill' | 'stamp' | 'erase'>('fill');
 	let strokeTextureKey = $state<string>('Grass'); // fill→terrain key, stamp→Objects/ key
 	let strokeBrushSize = $state<number>(0.04);
 	let strokeSoftness = $state<number>(0.5);

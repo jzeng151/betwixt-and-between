@@ -270,3 +270,17 @@ export function objectStampGroups(
 export function stampUrlForKey(manifest: TerrainManifest | null, key: string): string | null {
 	return objectStamps(manifest).find((s) => s.key === key)?.url ?? null;
 }
+
+/**
+ * WM3 Slice C — varied scatter. Resolve a stamp-mode textureKey to its
+ * member sprites: a FAMILY key ("tree_object") yields every member (the
+ * renderer picks one deterministically per placement); an individual key
+ * yields just that sprite. Empty when unknown (lazy GC).
+ */
+export function stampsForKey(manifest: TerrainManifest | null, key: string): ObjectStamp[] {
+	const all = objectStamps(manifest);
+	const members = all.filter((s) => s.group === key);
+	if (members.length > 0) return members;
+	const exact = all.find((s) => s.key === key);
+	return exact ? [exact] : [];
+}

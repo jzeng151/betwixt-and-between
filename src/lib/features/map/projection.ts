@@ -50,7 +50,7 @@
 // is a harmless, isomorphic no-op when this module loads server-side.
 
 import { isEdgeVisibleAtT, isMysteryEdgeAtT } from '$lib/features/timeline/playhead-store.js';
-import { STAMP_ASSET_KEYS, TERRAIN_ASSET_KEYS } from './terrain-keys.generated.js';
+import { STAMP_ASSET_KEYS, STAMP_GROUP_KEYS, TERRAIN_ASSET_KEYS } from './terrain-keys.generated.js';
 
 export const NEUTRAL_REGION_COLOR = '#9ca3af';
 
@@ -190,7 +190,11 @@ export const STROKE_MAX_POINTS = 4096; // path[] cap — DoS/storage bound (pari
 // arbitrarily fat state_jsonb (each stroke is up to STROKE_MAX_POINTS points).
 export const ANCHOR_MAX_STROKES = 4096;
 export type StrokePoint = { x: number; y: number };
-export type StrokeMode = 'fill' | 'stamp';
+// Slice C adds 'erase': an erase stroke removes painted art beneath it WITHIN
+// its target layer (the freeform layer-mask mechanism) — rendered as an
+// 'erase'-blend pass inside the layer's RenderTexture, so it can never eat the
+// background or other layers. Erase strokes carry no textureKey.
+export type StrokeMode = 'fill' | 'stamp' | 'erase';
 export type StrokeStampParams = { spacing: number; jitter: number };
 
 // WM3 Slice B — layered canvas. Art-layer definitions live on the world_maps
@@ -248,7 +252,9 @@ export type PaintStrokePayload = {
 	brushSize: number; // normalized (0,1] — fraction of map extent
 	softness: number; // [0,1] feathered-edge alpha falloff
 	mode: StrokeMode;
-	textureKey: string;
+	// Required for fill (terrain key) and stamp (Objects/ key or family key);
+	// absent for erase (Slice C) — an eraser has no material.
+	textureKey?: string;
 	stamp?: StrokeStampParams; // meaningful only when mode === 'stamp'
 	// Slice B: target art layer (world_maps.art_layers_jsonb id). Absent =
 	// the implicit base art layer (every Slice A stroke). A stroke whose
@@ -315,8 +321,14 @@ export function isKnownTerrainKey(s: unknown): s is string {
 // Stamp-mode (paint_stroke) textureKeys reference Objects/ sprites, a separate
 // generated set from terrain tiles. Same gate role as isKnownTerrainKey: the
 // server validator + the fold reject unknown stamp keys so a junk key can't be
-// stored as an unrenderable stroke.
-const KNOWN_STAMP_KEYS: ReadonlySet<string> = new Set(STAMP_ASSET_KEYS);
+// stored as an unrenderable stroke. Slice C: a FAMILY key ("tree_object",
+// STAMP_GROUP_KEYS) is also paintable — the renderer scatters varied members
+// deterministically (varied scatter beats one repeated sprite for painterly
+// reads, spike finding 2).
+const KNOWN_STAMP_KEYS: ReadonlySet<string> = new Set([
+	...STAMP_ASSET_KEYS,
+	...STAMP_GROUP_KEYS
+]);
 export function isKnownStampKey(s: unknown): s is string {
 	return typeof s === 'string' && KNOWN_STAMP_KEYS.has(s);
 }
@@ -584,10 +596,17 @@ function applyTransferRegion(
 export function applyPaintStroke(strokes: StoredStroke[], payload: unknown): void {
 	if (!payload || typeof payload !== 'object') return;
 	const p = payload as Partial<PaintStrokePayload>;
-	if (p.mode !== 'fill' && p.mode !== 'stamp') return;
-	if (typeof p.textureKey !== 'string') return;
-	const keyOk = p.mode === 'stamp' ? isKnownStampKey(p.textureKey) : isKnownTerrainKey(p.textureKey);
-	if (!keyOk) return;
+	if (p.mode !== 'fill' && p.mode !== 'stamp' && p.mode !== 'erase') return;
+	if (p.mode === 'erase') {
+		// An eraser has no material — a textureKey on an erase stroke is a
+		// forged/legacy row; drop it (the server validator rejects it at write).
+		if (p.textureKey !== undefined) return;
+	} else {
+		if (typeof p.textureKey !== 'string') return;
+		const keyOk =
+			p.mode === 'stamp' ? isKnownStampKey(p.textureKey) : isKnownTerrainKey(p.textureKey);
+		if (!keyOk) return;
+	}
 	if (typeof p.brushSize !== 'number' || !Number.isFinite(p.brushSize) || p.brushSize <= 0 || p.brushSize > 1)
 		return;
 	if (typeof p.softness !== 'number' || !Number.isFinite(p.softness) || p.softness < 0 || p.softness > 1)
@@ -632,7 +651,7 @@ export function applyPaintStroke(strokes: StoredStroke[], payload: unknown): voi
 		brushSize: p.brushSize,
 		softness: p.softness,
 		mode: p.mode,
-		textureKey: p.textureKey,
+		...(p.mode === 'erase' ? {} : { textureKey: p.textureKey }),
 		...(stamp ? { stamp } : {}),
 		...(layerId ? { layerId } : {})
 	});

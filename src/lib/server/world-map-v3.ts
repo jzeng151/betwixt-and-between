@@ -909,15 +909,28 @@ async function validatePaintStrokePayload(
 	payload: unknown
 ): Promise<void> {
 	const p = payload as Partial<PaintStrokePayload>;
-	if (p.mode !== 'fill' && p.mode !== 'stamp') {
-		error(400, "paint_stroke payload.mode must be 'fill' or 'stamp'");
+	if (p.mode !== 'fill' && p.mode !== 'stamp' && p.mode !== 'erase') {
+		error(400, "paint_stroke payload.mode must be 'fill', 'stamp', or 'erase'");
 	}
-	if (typeof p.textureKey !== 'string') {
-		error(400, 'paint_stroke payload.textureKey must be a string');
-	}
-	const keyOk = p.mode === 'stamp' ? isKnownStampKey(p.textureKey) : isKnownTerrainKey(p.textureKey);
-	if (!keyOk) {
-		error(400, `paint_stroke payload.textureKey is not a known ${p.mode} key`);
+	if (p.mode === 'erase') {
+		// Slice C — an eraser has no material: textureKey/stamp params on an
+		// erase stroke mean a non-stock client; reject rather than store-and-strip.
+		if (p.textureKey !== undefined) {
+			error(400, 'paint_stroke erase strokes must not carry a textureKey');
+		}
+		if (p.stamp !== undefined) {
+			error(400, 'paint_stroke erase strokes must not carry stamp params');
+		}
+	} else {
+		if (typeof p.textureKey !== 'string') {
+			error(400, 'paint_stroke payload.textureKey must be a string');
+		}
+		// Stamp keys include family keys (STAMP_GROUP_KEYS — Slice C varied scatter).
+		const keyOk =
+			p.mode === 'stamp' ? isKnownStampKey(p.textureKey) : isKnownTerrainKey(p.textureKey);
+		if (!keyOk) {
+			error(400, `paint_stroke payload.textureKey is not a known ${p.mode} key`);
+		}
 	}
 	if (typeof p.brushSize !== 'number' || !Number.isFinite(p.brushSize) || p.brushSize <= 0 || p.brushSize > 1) {
 		error(400, 'paint_stroke payload.brushSize must be a finite number in (0, 1]');
