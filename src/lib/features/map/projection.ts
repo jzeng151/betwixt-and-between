@@ -137,11 +137,12 @@ export type ProjectionAnchor = {
 // `EVENT_KINDS` and `EventKind` live here (not in src/lib/server/) so the
 // client store and the server validator share one source of truth without
 // the client crossing the server-only-import barrier (CLAUDE.md trust
-// boundary). Adding a new event kind means updating:
+// boundary). Adding a new BAKED state kind means updating:
 //   1. this array
 //   2. src/lib/server/world-map-v3.ts validateEventPayload's switch
-//   3. projection.ts's fold (applyTransferRegion / applyPaintCells / the
-//      Slice 4 movement fold)
+//   3. foldEventsIntoState's switch (ONE place — shared by the read path
+//      projectState and the server-side anchor snapshot in world-map-v3.ts)
+// (move_entity is not a baked kind — it folds via foldMovement, not here.)
 
 export const EVENT_KINDS = ['transfer_region', 'paint_cells', 'move_entity'] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -464,6 +465,47 @@ function applyTransferRegion(
 	// ownership intent; the lazy-GC pass downstream will drop it if the
 	// region_id isn't in the viewer's allowedRegions set.
 	regions.set(p.region_id, { region_id: p.region_id, faction_id: p.new_faction_id });
+}
+
+// Combined fold order: (t_position, created_at, id). Same rule on both fold
+// sites (read path + server snapshot) so last-write-wins is identical.
+function compareFoldOrder(a: ProjectionEvent, b: ProjectionEvent): number {
+	if (a.tPosition !== b.tPosition) return a.tPosition - b.tPosition;
+	return compareCreatedAt(a, b);
+}
+
+/**
+ * Shared baked-state fold — the SINGLE source of truth for how state event
+ * kinds (transfer_region, paint_cells, …) mutate {regions, cells}. Used by
+ * BOTH `projectState` (read path) and the server-side auto-anchor snapshot
+ * builder in `world-map-v3.ts` (`maybeWriteAutoAnchor`). One implementation
+ * means a new baked kind can never be folded in one path and silently
+ * forgotten in the other — the exact drift that buried strokes when the two
+ * loops were hand-maintained copies.
+ *
+ * Mutates `regions` and `cells` in place. Sorts `events` by
+ * (t_position, created_at, id) internally; callers pass their own
+ * window-filtered slice (read path: the (anchorT, t] window; server: the
+ * post-cutoff fold window). `move_entity` is intentionally NOT folded here —
+ * movement uses a separate full-keyframe window and never enters anchor
+ * state_jsonb (see `foldMovement` / D-PRF-1). New baked kinds extend the
+ * switch below with exactly one `case`.
+ */
+export function foldEventsIntoState(
+	regions: Map<string, AnchorRegion>,
+	cells: Map<string, AnchorCell>,
+	events: readonly ProjectionEvent[]
+): void {
+	const sorted = [...events].sort(compareFoldOrder);
+	for (const e of sorted) {
+		if (e.kind === 'transfer_region') {
+			applyTransferRegion(regions, e.payloadJsonb);
+		} else if (e.kind === 'paint_cells') {
+			applyPaintCells(cells, e.payloadJsonb);
+		}
+		// Other kinds (move_entity → foldMovement; unknown future kinds) pass
+		// through. A new baked state kind adds one `case` HERE and nowhere else.
+	}
 }
 
 function resolveRegionColor(
@@ -818,25 +860,13 @@ export function projectState(
 	// Events strictly after the anchor's t_position, up to and including t.
 	// Same-T rule (CMT-5): anchor.tPosition itself is excluded.
 	const anchorT = anchor?.tPosition ?? Number.NEGATIVE_INFINITY;
-	const applicable = events
-		.filter((e) => e.tPosition > anchorT && e.tPosition <= t)
-		.sort((a, b) => {
-			if (a.tPosition !== b.tPosition) return a.tPosition - b.tPosition;
-			return compareCreatedAt(a, b);
-		});
+	const applicable = events.filter((e) => e.tPosition > anchorT && e.tPosition <= t);
 
-	for (const e of applicable) {
-		if (e.kind === 'transfer_region') {
-			applyTransferRegion(regions, e.payloadJsonb);
-		} else if (e.kind === 'paint_cells') {
-			applyPaintCells(cells, e.payloadJsonb);
-		}
-		// move_entity is NOT folded here — it uses a separate window (full
-		// keyframe history, not (anchorT, t]) because movement is never baked
-		// into anchors (D-PRF-1). See foldMovement below. Other unknown kinds
-		// (link_chain, spawn_artifact, despawn_artifact — Slice 5) flow through
-		// unchanged; the fold stays forward-compatible.
-	}
+	// Shared fold (single source of truth across read + server-snapshot paths).
+	// move_entity is NOT folded here — it uses a separate window (full keyframe
+	// history, not (anchorT, t]) because movement is never baked into anchors
+	// (D-PRF-1). See foldMovement below.
+	foldEventsIntoState(regions, cells, applicable);
 
 	// Slice 4 PR-F (D5) — per-placement movement overrides. Uses the full event
 	// list (not `applicable`) on purpose: keyframes below the active anchor's T

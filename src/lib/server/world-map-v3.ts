@@ -29,13 +29,17 @@ import {
 	BIOMES,
 	EVENT_KINDS,
 	PAINT_CELLS_MAX_PER_EVENT,
+	foldEventsIntoState,
 	isKnownTerrainKey,
+	type AnchorCell,
+	type AnchorRegion,
 	type AnchorState,
 	type BiomeKind,
 	type EaseKind,
 	type EventKind,
 	type MoveEntityPayload,
 	type PaintCellsPayload,
+	type ProjectionEvent,
 	type TransferRegionPayload
 } from '$lib/features/map/projection.js';
 
@@ -1225,77 +1229,25 @@ async function maybeWriteAutoAnchor(
 		.from(mapEvents)
 		.where(and(...foldConds));
 
-	// Fold ALL recent events into the snapshot (codex P1). Order by
-	// (tPosition, created_at, id) — same rule as projection.ts. Both
-	// paint_cells (cells map, last-write-wins) and transfer_region
-	// (region faction_id mutation) are applied; unknown future kinds
-	// pass through silently. Keeps the snapshot semantically equivalent
-	// to "projectState(maxT) with the events folded in" so the post-
-	// anchor projection lookups read the correct rolling state.
-	const sortedEvents = [...foldEvents].sort(
-		(
-			a: { tPosition: number; createdAt: Date | string; id: string },
-			b: typeof a
-		) => {
-			if (a.tPosition !== b.tPosition) return a.tPosition - b.tPosition;
-			const am = a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(String(a.createdAt));
-			const bm = b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(String(b.createdAt));
-			if (am !== bm) return am - bm;
-			return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-		}
-	);
-	const cells = new Map<string, { x: number; y: number; biome: string }>();
+	// Fold ALL recent events into the snapshot (codex P1) via the SHARED
+	// fold (foldEventsIntoState) — the same code path projectState uses on the
+	// read side. Order is (tPosition, created_at, id), last-write-wins; both
+	// paint_cells and transfer_region are applied and unknown future kinds pass
+	// through. Sharing the fold keeps the snapshot semantically equal to
+	// "projectState(maxT) with the events folded in" BY CONSTRUCTION, and means
+	// a new baked kind can never be folded on the read path but forgotten here.
+	const cells = new Map<string, AnchorCell>();
 	for (const cell of baseState.cells ?? []) {
 		cells.set(`${cell.x},${cell.y}`, cell);
 	}
 	// Region snapshot starts from baseAnchor and gets mutated by
 	// transfer_region events. Keep object identity per region_id so
 	// later folds find existing entries.
-	const regionsById = new Map<string, AnchorState['regions'] extends (infer R)[] | undefined ? R : never>();
+	const regionsById = new Map<string, AnchorRegion>();
 	for (const r of baseState.regions ?? []) {
 		regionsById.set(r.region_id, r);
 	}
-	for (const e of sortedEvents) {
-		const p = e.payloadJsonb as Record<string, unknown> | null;
-		if (!p || typeof p !== 'object') continue;
-		if (e.kind === 'paint_cells') {
-			const cs = (p as Partial<PaintCellsPayload>).cells;
-			if (!Array.isArray(cs)) continue;
-			for (const c of cs) {
-				if (
-					c &&
-					Number.isInteger(c.x) &&
-					Number.isInteger(c.y) &&
-					// Asset-backed terrain vocabulary (Slice 6 D15 + /review #3) —
-					// must match the paint_cells validator + projection fold, NOT the
-					// legacy enum, or the snapshot silently drops asset-vocab terrain.
-					isKnownTerrainKey(c.biome)
-				) {
-					cells.set(`${c.x},${c.y}`, c);
-				}
-			}
-		} else if (e.kind === 'transfer_region') {
-			const regionId = (p as { region_id?: unknown }).region_id;
-			const newFactionId = (p as { new_faction_id?: unknown }).new_faction_id;
-			if (typeof regionId !== 'string' || typeof newFactionId !== 'string') {
-				continue;
-			}
-			const existing = regionsById.get(regionId);
-			if (existing) {
-				regionsById.set(regionId, { ...existing, faction_id: newFactionId });
-			} else {
-				// Region not in baseAnchor (lazy GC at render still drops
-				// unresolvable refs, but the event ownership claim is
-				// recorded here so post-anchor projection sees it).
-				regionsById.set(regionId, {
-					region_id: regionId,
-					faction_id: newFactionId
-				});
-			}
-		}
-		// Unknown kinds (Slice 2+ move_entity, Slice 5 link_chain) pass
-		// through unchanged. When added, fold them here too.
-	}
+	foldEventsIntoState(regionsById, cells, foldEvents as ProjectionEvent[]);
 
 	const snapshot: AnchorState = {
 		regions: Array.from(regionsById.values()),
