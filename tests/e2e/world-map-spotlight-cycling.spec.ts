@@ -249,14 +249,18 @@ test('Play on the seeded demo world cycles between maps, fires FX + captions, an
 		})
 		.toBeLessThan(0.25);
 	// The scrub-back itself can flip an owner and move a placement, producing a
-	// flash/march; reset both so we only count what fires during forward PLAYBACK.
+	// flash/march; reset the counters so we only count what fires during forward
+	// PLAYBACK (the ripple counter too, so the Fix B assertion below can't be
+	// satisfied by a pre-play artifact).
 	await page.evaluate(() => {
 		const w = window as unknown as {
 			__spotlightFlashCount?: number;
 			__spotlightMarchCount?: number;
+			__spotlightRippleCount?: number;
 		};
 		w.__spotlightFlashCount = 0;
 		w.__spotlightMarchCount = 0;
+		w.__spotlightRippleCount = 0;
 	});
 
 	// Two continuous watches running for the whole playback, set up BEFORE play:
@@ -335,6 +339,24 @@ test('Play on the seeded demo world cycles between maps, fires FX + captions, an
 	// Headline T6 behavior: the view cycled to a DIFFERENT map with no manual input as
 	// the playhead crossed into Greyhold's act (observed by the continuous watch above).
 	await expect.poll(() => everCycled, { timeout: 25000, intervals: [200] }).toBe(true);
+
+	// ADR 0007 Fix B: the causal ripple fires on the cycle TO Greyhold. The view
+	// cycles there BECAUSE the fall-caused_by-treaty edge resolves at the act
+	// boundary, so the edge is already lit on the first post-switch frame — the
+	// exact case the null-on-switch baseline used to swallow (ripple count stayed
+	// 0 through full auto-play, the T1 dogfood bug). The controller now diffs
+	// against the new map projected at the PRIOR playhead, where the edge was
+	// still unlit → it ripples. Red when Fix B is reverted.
+	await expect
+		.poll(
+			async () =>
+				page.evaluate(
+					() =>
+						(window as unknown as { __spotlightRippleCount?: number }).__spotlightRippleCount ?? 0
+				),
+			{ timeout: 10000, intervals: [200] }
+		)
+		.toBeGreaterThan(0);
 
 	clearInterval(overlayWatch);
 	clearInterval(switcherWatch);
