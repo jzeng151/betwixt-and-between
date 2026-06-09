@@ -51,8 +51,35 @@
 	type PixiContainer = import('pixi.js').Container;
 	type PixiTexture = import('pixi.js').Texture;
 	type PixiRenderTexture = import('pixi.js').RenderTexture;
+	type PixiSprite = import('pixi.js').Sprite;
 
-	let { activeMap, strokes }: { activeMap: WorldMap | null; strokes: StoredStroke[] } = $props();
+	let {
+		activeMap,
+		strokes,
+		playheadT = null,
+		reducedMotion = false
+	}: {
+		activeMap: WorldMap | null;
+		strokes: StoredStroke[];
+		// Slice D2 — the current playhead. A stroke-set change WITH a playhead
+		// move is a terrain BEAT (forest→ash crossing its T) and dissolves;
+		// a change at a constant playhead is authoring (paint/undo) and snaps.
+		playheadT?: number | null;
+		// prefers-reduced-motion → jump-cut (matches the FX layer convention).
+		reducedMotion?: boolean;
+	} = $props();
+
+	// Slice D2 diag counter (mirrors PixiPunctuationLayer's __spotlight*Count):
+	// bumps once per terrain-transition dissolve so the E2E can assert the FX
+	// fired without sampling mid-fade pixels.
+	const DIAG =
+		typeof window !== 'undefined' &&
+		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ === true;
+	function bumpTransitionDiag(): void {
+		if (!DIAG) return;
+		const w = window as unknown as { __artTransitionCount?: number };
+		w.__artTransitionCount = (w.__artTransitionCount ?? 0) + 1;
+	}
 
 	// Slice B — ordered art-layer defs ride the world_maps row. Array order is
 	// render order (index 0 bottom); strokes without a (known) layerId render in
@@ -81,8 +108,39 @@
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
 	let layer: PixiContainer | null = null;
-	// RTs owned by the current build; destroyed on each rebuild + unmount.
-	let ownedTextures: PixiRenderTexture[] = [];
+	// Sprites + RTs owned by the displayed build. A Slice D2 dissolve keeps the
+	// OLD build alive while the new one fades in, then disposes it — so
+	// ownership is per-build, not module-global.
+	type ArtBuild = { sprites: PixiSprite[]; textures: PixiRenderTexture[] };
+	let currentBuild: ArtBuild = { sprites: [], textures: [] };
+	// Finish-now hook for an in-flight dissolve (unregisters the ticker fn,
+	// snaps alphas to target, disposes the old build). Null when idle.
+	let finishFade: (() => void) | null = null;
+	// Rebuild-skip + transition-detection keys (set at build commit).
+	let lastMapId: string | null = null;
+	let lastStrokeKey: string | null = null;
+	let lastViewKey: string | null = null;
+	let lastPlayheadT: number | null = null;
+
+	function disposeBuild(b: ArtBuild): void {
+		for (const s of b.sprites) {
+			try {
+				layer?.removeChild(s);
+				s.destroy();
+			} catch (_) {
+				/* renderer torn down first */
+			}
+		}
+		for (const rt of b.textures) {
+			try {
+				rt.destroy(true);
+			} catch (_) {
+				/* renderer torn down first */
+			}
+		}
+		b.sprites = [];
+		b.textures = [];
+	}
 
 	onMount(() => {
 		let cancelled = false;
@@ -235,16 +293,10 @@
 		return group;
 	}
 
-	function destroyOwnedTextures(): void {
-		for (const rt of ownedTextures) {
-			try {
-				rt.destroy(true);
-			} catch (_) {
-				/* renderer torn down first */
-			}
-		}
-		ownedTextures = [];
-	}
+	// Slice D2 — dissolve duration (seconds). Short enough that the existing
+	// pixel-equality E2Es (which settle ≥600ms after a scrub) see the final
+	// frame; long enough to read as a transition, not a flicker.
+	const FADE_SECONDS = 0.45;
 
 	$effect(() => {
 		const viewport = stageCtx.viewport;
@@ -253,6 +305,8 @@
 		const ss = strokes;
 		const map = activeMap;
 		const defs = artLayers;
+		const atT = playheadT;
+		const noMotion = reducedMotion;
 		// Snapshot per-layer view state so the effect re-runs on prefs/def edits.
 		const layerView = defs.map((d) => ({
 			id: d.id,
@@ -265,20 +319,58 @@
 			$layerPrefs.status === 'loading' ? false : ($layerPrefs.prefs.get('art') ?? true);
 		if (!PIXI || !viewport || !app || !manifest || !map?.width || !map?.height) {
 			if (layer) {
-				layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-				destroyOwnedTextures();
+				// finishFade disposes a mid-dissolve old build; disposeBuild the
+				// displayed one. Every layer child is a build sprite, so this
+				// clears the stage without a blanket removeChildren.
+				finishFade?.();
+				disposeBuild(currentBuild);
+				lastMapId = null;
+				lastStrokeKey = null;
+				lastViewKey = null;
 			}
 			return;
 		}
+
+		const width = map.width;
+		const height = map.height;
+
+		// Rebuild-skip keys. projectState returns FRESH arrays every playhead
+		// tick, so the strokes prop changes identity at frame rate during
+		// playback — keying on content (not identity) is what keeps the RT
+		// pipeline from re-rendering 60×/s. strokeKey captures what's painted;
+		// viewKey captures how it's displayed.
+		const strokeKey =
+			map.id +
+			'#' +
+			ss
+				.map(
+					(s) =>
+						`${s.mode}:${s.textureKey ?? ''}:${s.layerId ?? ''}:${s.path.length}:${s.path[0]?.x},${s.path[0]?.y}:${s.brushSize}:${s.softness}`
+				)
+				.join('|');
+		const viewKey =
+			layerView.map((v) => `${v.id}:${v.blendMode}:${v.opacity}:${v.visible}`).join('|') +
+			`#base:${baseVisible}#${width}x${height}`;
+		const strokesChanged = strokeKey !== lastStrokeKey;
+		if (!strokesChanged && viewKey === lastViewKey) {
+			lastPlayheadT = atT;
+			return; // nothing visual changed — keep the displayed build
+		}
+		// A terrain BEAT: the stroke set changed because the playhead moved over
+		// it (same map). Authoring (paint/undo at a constant T), map switches,
+		// and pure view edits snap instead.
+		const isBeat =
+			strokesChanged &&
+			lastStrokeKey !== null &&
+			lastMapId === map.id &&
+			atT !== null &&
+			atT !== lastPlayheadT;
 
 		if (!layer) {
 			layer = new PIXI.Container();
 			layer.zIndex = MAP_LAYER_Z.art;
 			viewport.addChild(layer);
 		}
-
-		const width = map.width;
-		const height = map.height;
 
 		// Collect texture urls, load (idempotent + cached), then rebuild.
 		const urls = new Set<string>();
@@ -295,8 +387,10 @@
 				}
 			}
 			if (cancelled || !layer) return;
-			layer.removeChildren().forEach((c) => c.destroy({ children: true }));
-			destroyOwnedTextures();
+			// An in-flight dissolve finishes instantly before the next build.
+			finishFade?.();
+			const oldBuild = currentBuild;
+			const newBuild: ArtBuild = { sprites: [], textures: [] };
 
 			// Group strokes: base (layerId-less / orphaned) + one bucket per def.
 			const knownIds = new Set(layerView.map((v) => v.id));
@@ -319,7 +413,7 @@
 			// stays scoped to the layer.
 			const renderBucket = (
 				entries: Array<{ s: StoredStroke; i: number }>
-			): import('pixi.js').Sprite | null => {
+			): PixiSprite | null => {
 				if (entries.length === 0) return null;
 				const tmp = new PIXI!.Container();
 				tmp.scale.set(rtScale);
@@ -334,9 +428,10 @@
 				const rt = PIXI!.RenderTexture.create({ width: rtW, height: rtH });
 				app.renderer.render({ container: tmp, target: rt, clear: true });
 				tmp.destroy({ children: true });
-				ownedTextures.push(rt);
+				newBuild.textures.push(rt);
 				const sprite = new PIXI!.Sprite(rt);
 				sprite.scale.set(1 / rtScale);
+				newBuild.sprites.push(sprite);
 				return sprite;
 			};
 
@@ -355,6 +450,46 @@
 				sprite.visible = v.visible;
 				layer.addChild(sprite);
 			}
+
+			currentBuild = newBuild;
+			lastMapId = map.id;
+			lastStrokeKey = strokeKey;
+			lastViewKey = viewKey;
+			lastPlayheadT = atT;
+
+			// Slice D2 — terrain-transition dissolve. Old build stays on stage
+			// (beneath the new sprites) and crossfades out while the new fades
+			// in, driven by the shared anim ticker. Reduced motion → jump-cut.
+			const anim = stageCtx.anim;
+			const hasArtChange = oldBuild.sprites.length > 0 || newBuild.sprites.length > 0;
+			if (isBeat && hasArtChange && !noMotion && anim) {
+				bumpTransitionDiag();
+				const targets = newBuild.sprites.map((s) => s.alpha);
+				newBuild.sprites.forEach((s) => (s.alpha = 0));
+				const oldStarts = oldBuild.sprites.map((s) => s.alpha);
+				const startT = anim.clock.time;
+				let off: (() => void) | null = null;
+				const finish = () => {
+					off?.();
+					off = null;
+					finishFade = null;
+					newBuild.sprites.forEach((s, i) => (s.alpha = targets[i]));
+					disposeBuild(oldBuild);
+				};
+				finishFade = finish;
+				off = anim.register((t) => {
+					// Clock wrap (t < startT) → just complete the dissolve.
+					const k = t < startT ? 1 : (t - startT) / FADE_SECONDS;
+					if (k >= 1) {
+						finish();
+						return;
+					}
+					newBuild.sprites.forEach((s, i) => (s.alpha = targets[i] * k));
+					oldBuild.sprites.forEach((s, i) => (s.alpha = oldStarts[i] * (1 - k)));
+				});
+			} else {
+				disposeBuild(oldBuild);
+			}
 		})();
 		return () => {
 			cancelled = true;
@@ -362,6 +497,7 @@
 	});
 
 	onDestroy(() => {
+		finishFade?.();
 		if (layer) {
 			try {
 				layer.destroy({ children: true });
@@ -370,6 +506,6 @@
 			}
 			layer = null;
 		}
-		destroyOwnedTextures();
+		disposeBuild(currentBuild);
 	});
 </script>

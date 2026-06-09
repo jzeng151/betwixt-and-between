@@ -2389,7 +2389,15 @@
 				<!-- Slice 6 D15: sprite-tile terrain on top of the flat layer. -->
 				<PixiTerrainTileLayer {activeMap} cells={boundedTerrainCells} />
 				<!-- WM3 Slice A: freeform brush art (paint_stroke) over the grid tiles. -->
-				<PixiArtLayer {activeMap} strokes={renderedState?.strokes ?? []} />
+				<!-- Slice D2: playheadT + reducedMotion drive the terrain-transition
+				     dissolve (a stroke-set change caused by a playhead move
+				     crossfades; authoring / map switches snap). -->
+				<PixiArtLayer
+					{activeMap}
+					strokes={renderedState?.strokes ?? []}
+					playheadT={$playhead}
+					{reducedMotion}
+				/>
 				<!-- Slice 6: only water ripples (shimmer applied to water cells alone). -->
 				<PixiWaterLayer {activeMap} cells={boundedTerrainCells} />
 				<PixiRegionLayer
