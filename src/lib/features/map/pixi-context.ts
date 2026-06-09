@@ -31,6 +31,7 @@ export const MAP_LAYER_Z = {
 	grid: -90,
 	terrain: -80, // flat color terrain
 	terrainTiles: -70, // sprite tiles (over the flat fill)
+	art: -65, // WM3 Slice A — freeform brush strokes (over grid tiles, under water)
 	water: -60
 } as const;
 
