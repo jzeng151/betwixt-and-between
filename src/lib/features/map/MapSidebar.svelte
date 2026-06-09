@@ -15,15 +15,29 @@
 	import { factions as factionsStore, type Faction } from './factions-store.js';
 	import { MAP_PALETTE, DEFAULT_FACTION_COLOR } from './color-palette.js';
 	import { layerPrefs } from './layer-prefs-store.js';
-	import { LAYER_KEYS, LAYER_LABELS, type LayerKey } from './layers.js';
+	import { LAYER_KEYS, LAYER_LABELS, artLayerPrefKey, type LayerKey } from './layers.js';
+	import { worldMapStore } from './store.js';
+	import {
+		ART_BLEND_MODES,
+		MAX_ART_LAYERS,
+		type ArtBlendMode,
+		type MapArtLayer
+	} from './projection.js';
+	import type { WorldMap } from './types.js';
 
 	// Slice 3 E3 — Layers pane. Per-user-per-map visibility toggles for
 	// the WM3 layer stack (background/grid/terrain/regions/placements).
 	// Mounts above the factions section; the active map id flows in as
 	// a prop so toggling can PATCH the correct row.
-	let { activeMapId = null }: { activeMapId?: string | null } = $props();
+	// WM3 Slice B: the full active map row flows in too — the art-layer
+	// defs (artLayersJsonb) live on it and edits PATCH through
+	// worldMapStore.updateMap.
+	let {
+		activeMapId = null,
+		activeMap = null
+	}: { activeMapId?: string | null; activeMap?: WorldMap | null } = $props();
 
-	function isVisible(key: LayerKey): boolean {
+	function isVisible(key: LayerKey | string): boolean {
 		const v = $layerPrefs.prefs.get(key);
 		return v === undefined ? true : v;
 	}
@@ -31,7 +45,7 @@
 	let layersBusy = $state<Set<string>>(new Set());
 	let layersError = $state('');
 
-	async function toggleLayer(key: LayerKey): Promise<void> {
+	async function toggleLayer(key: LayerKey | string): Promise<void> {
 		if (!activeMapId) return;
 		if (layersBusy.has(key)) return;
 		// codex P2: ignore toggles while prefs are 'loading' OR 'error'. In both
@@ -52,6 +66,55 @@
 			next.delete(key);
 			layersBusy = next;
 		}
+	}
+
+	// ── WM3 Slice B — art layer defs (ordered; index 0 = bottom) ────────────
+	let artLayers = $derived<MapArtLayer[]>(activeMap?.artLayersJsonb ?? []);
+	let artBusy = $state(false);
+	let artError = $state('');
+
+	async function patchArtLayers(next: MapArtLayer[]): Promise<void> {
+		if (!activeMapId || artBusy) return;
+		artBusy = true;
+		artError = '';
+		try {
+			await worldMapStore.updateMap(activeMapId, { artLayersJsonb: next });
+		} catch (err) {
+			artError = err instanceof Error ? err.message : String(err);
+		} finally {
+			artBusy = false;
+		}
+	}
+
+	function addArtLayer(): void {
+		if (artLayers.length >= MAX_ART_LAYERS) {
+			artError = `At most ${MAX_ART_LAYERS} layers`;
+			return;
+		}
+		const n = artLayers.length + 1;
+		void patchArtLayers([
+			...artLayers,
+			{ id: crypto.randomUUID(), name: `Layer ${n}`, blendMode: 'normal', opacity: 1 }
+		]);
+	}
+
+	function updateArtLayer(id: string, patch: Partial<MapArtLayer>): void {
+		void patchArtLayers(artLayers.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+	}
+
+	function removeArtLayer(id: string): void {
+		// Strokes referencing the removed layer fall back to the base art layer
+		// at render (lazy GC) — nothing is lost, only the grouping.
+		void patchArtLayers(artLayers.filter((l) => l.id !== id));
+	}
+
+	function moveArtLayer(id: string, dir: -1 | 1): void {
+		const i = artLayers.findIndex((l) => l.id === id);
+		const j = i + dir;
+		if (i < 0 || j < 0 || j >= artLayers.length) return;
+		const next = [...artLayers];
+		[next[i], next[j]] = [next[j], next[i]];
+		void patchArtLayers(next);
 	}
 
 	let factionList = $state<Faction[]>([]);
@@ -212,6 +275,101 @@
 				{/each}
 			</ul>
 			{#if layersError}<p class="error-msg">{layersError}</p>{/if}
+
+			<!-- WM3 Slice B — art layers (ordered; listed top-most first, the way
+			     paint programs do; the array stores bottom-first). -->
+			<header class="sidebar-header art-layers-header">
+				<h4>Art layers</h4>
+				<button
+					class="btn-icon"
+					type="button"
+					aria-label="Add art layer"
+					disabled={artBusy || artLayers.length >= MAX_ART_LAYERS}
+					onclick={addArtLayer}>+</button
+				>
+			</header>
+			{#if artLayers.length > 0}
+				<ul class="layer-list art-layer-list" role="list">
+					{#each [...artLayers].reverse() as l (l.id)}
+						<li class="layer-row art-layer-row" data-testid="art-layer-row">
+							<div class="art-layer-main">
+								<input
+									type="checkbox"
+									aria-label="Show {l.name}"
+									checked={isVisible(artLayerPrefKey(l.id))}
+									disabled={layersBusy.has(artLayerPrefKey(l.id)) ||
+										$layerPrefs.status === 'loading' ||
+										$layerPrefs.status === 'error'}
+									onchange={() => void toggleLayer(artLayerPrefKey(l.id))}
+								/>
+								<input
+									class="art-layer-name"
+									type="text"
+									aria-label="Layer name"
+									value={l.name}
+									disabled={artBusy}
+									onchange={(e) => {
+										const name = (e.currentTarget as HTMLInputElement).value.trim();
+										if (name) updateArtLayer(l.id, { name });
+									}}
+								/>
+								<button
+									class="btn-icon"
+									type="button"
+									aria-label="Move {l.name} up"
+									disabled={artBusy}
+									onclick={() => moveArtLayer(l.id, 1)}>↑</button
+								>
+								<button
+									class="btn-icon"
+									type="button"
+									aria-label="Move {l.name} down"
+									disabled={artBusy}
+									onclick={() => moveArtLayer(l.id, -1)}>↓</button
+								>
+								<button
+									class="btn-icon"
+									type="button"
+									aria-label="Delete {l.name}"
+									disabled={artBusy}
+									onclick={() => removeArtLayer(l.id)}>×</button
+								>
+							</div>
+							<div class="art-layer-controls">
+								<select
+									aria-label="Blend mode for {l.name}"
+									value={l.blendMode}
+									disabled={artBusy}
+									onchange={(e) =>
+										updateArtLayer(l.id, {
+											blendMode: (e.currentTarget as HTMLSelectElement).value as ArtBlendMode
+										})}
+								>
+									{#each ART_BLEND_MODES as bm (bm)}
+										<option value={bm}>{bm}</option>
+									{/each}
+								</select>
+								<input
+									type="range"
+									aria-label="Opacity for {l.name}"
+									min="0"
+									max="1"
+									step="0.05"
+									value={l.opacity}
+									disabled={artBusy}
+									onchange={(e) =>
+										updateArtLayer(l.id, {
+											opacity: parseFloat((e.currentTarget as HTMLInputElement).value)
+										})}
+								/>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				<p class="art-layers-empty">Strokes paint to the base layer. Add a layer to blend.</p>
+			{/if}
+			{#if artError}<p class="error-msg">{artError}</p>{/if}
 		</section>
 	{/if}
 
@@ -421,6 +579,70 @@
 	}
 	.layer-row .layer-name {
 		font-size: 11px;
+	}
+
+	/* WM3 Slice B — art layers sub-pane. */
+	.art-layers-header {
+		margin-top: 4px;
+	}
+	.art-layers-header h4 {
+		margin: 0;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--color-text-muted, #aaa);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+	.art-layer-row {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 3px 0;
+		border-bottom: 1px dashed color-mix(in srgb, var(--color-border) 50%, transparent);
+	}
+	.art-layer-main {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.art-layer-name {
+		flex: 1;
+		min-width: 0;
+		background: transparent;
+		color: var(--color-text);
+		border: 1px solid transparent;
+		border-radius: 4px;
+		font-size: 11px;
+		padding: 1px 3px;
+	}
+	.art-layer-name:focus {
+		border-color: var(--color-border);
+		background: var(--color-bg, #1a1a1a);
+		outline: none;
+	}
+	.art-layer-controls {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding-left: 20px;
+	}
+	.art-layer-controls select {
+		background: var(--color-bg, #1a1a1a);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		font-size: 10px;
+		padding: 1px 2px;
+	}
+	.art-layer-controls input[type='range'] {
+		flex: 1;
+		min-width: 0;
+	}
+	.art-layers-empty {
+		margin: 0;
+		font-size: 10px;
+		font-style: italic;
+		color: var(--color-text-muted, #888);
 	}
 
 	.map-sidebar {

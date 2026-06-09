@@ -34,6 +34,7 @@
 		brushSize = 0.04,
 		softness = 0.5,
 		stamp = undefined,
+		layerId = null,
 		onStrokeComplete = undefined
 	}: {
 		active?: boolean;
@@ -43,6 +44,9 @@
 		brushSize?: number;
 		softness?: number;
 		stamp?: StrokeStampParams;
+		// Slice B — target art layer (world_maps.art_layers_jsonb id); null =
+		// the implicit base art layer.
+		layerId?: string | null;
 		onStrokeComplete?: () => void;
 	} = $props();
 
@@ -122,7 +126,8 @@
 			softness,
 			mode,
 			textureKey,
-			...(mode === 'stamp' && stamp ? { stamp } : {})
+			...(mode === 'stamp' && stamp ? { stamp } : {}),
+			...(layerId ? { layerId } : {})
 		};
 		resetGesture();
 

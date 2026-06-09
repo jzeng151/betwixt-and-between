@@ -115,6 +115,18 @@
 	let strokeTextureKey = $state<string>('Grass'); // fill→terrain key, stamp→Objects/ key
 	let strokeBrushSize = $state<number>(0.04);
 	let strokeSoftness = $state<number>(0.5);
+	// Slice B — paint-target art layer (world_maps.art_layers_jsonb id). null =
+	// the implicit base art layer. Reset on map switch (ids are per-map) and
+	// when the selected layer is deleted from the defs.
+	let strokeLayerId = $state<string | null>(null);
+	$effect(() => {
+		void activeMapId;
+		strokeLayerId = null;
+	});
+	$effect(() => {
+		const defs = activeMap?.artLayersJsonb ?? [];
+		if (strokeLayerId && !defs.some((l) => l.id === strokeLayerId)) strokeLayerId = null;
+	});
 
 	// armed placeable id (chip selected in PlaceablePalette). When non-null,
 	// the next click on the Pixi canvas creates a placement at the clicked
@@ -2496,6 +2508,7 @@
 					textureKey={strokeTextureKey}
 					brushSize={strokeBrushSize}
 					softness={strokeSoftness}
+					layerId={strokeLayerId}
 				/>
 			{/snippet}
 		</PixiStage>
@@ -2507,7 +2520,7 @@
 				DRAWING · ESC TO EXIT · DBL-CLICK OR SNAP TO CLOSE
 			</div>
 		{/if}
-		<MapSidebar {activeMapId} />
+		<MapSidebar {activeMapId} {activeMap} />
 		{#if hasImage}
 			<!-- Slice 4 PR-F (DS4) — unified tool bar. Single entry point for
 			     Select/Brush/Place/Move; the palettes below are detail panels
@@ -2597,10 +2610,13 @@
 					textureKey={strokeTextureKey}
 					brushSize={strokeBrushSize}
 					softness={strokeSoftness}
+					artLayers={activeMap?.artLayersJsonb ?? []}
+					layerId={strokeLayerId}
 					onSetMode={(m) => (strokeMode = m)}
 					onSetTexture={(k) => (strokeTextureKey = k)}
 					onSetBrushSize={(n) => (strokeBrushSize = n)}
 					onSetSoftness={(n) => (strokeSoftness = n)}
+					onSetLayer={(id) => (strokeLayerId = id)}
 				/>
 			{/if}
 		{/if}

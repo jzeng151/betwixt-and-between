@@ -25,6 +25,7 @@ function mkMap(overrides: Partial<WorldMap> & { id: string }): WorldMap {
 		gridScaleUnit: 'm',
 		gridScaleValue: 5.0,
 		gridVisible: true,
+		artLayersJsonb: [],
 		createdAt: overrides.createdAt ?? '2026-05-01T00:00:00.000Z',
 		updatedAt: overrides.updatedAt ?? '2026-05-01T00:00:00.000Z'
 	};
