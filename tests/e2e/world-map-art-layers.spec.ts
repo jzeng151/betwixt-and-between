@@ -174,7 +174,13 @@ test('deleting a layer keeps orphaned strokes visible (base fallback) without er
 
 	// Delete the layer — the stroke's layerId now dangles; render must fall
 	// back to the base group and keep the art visible (lazy GC), not blank it.
+	// F15 added a confirm modal to the ✕; acknowledge it (this spec predated
+	// the modal and was never updated — caught by the 2026-06 audit E2E run).
 	await win.locator('button[aria-label="Delete Doomed"]').click();
+	const confirmModal = page.locator('.modal-overlay', {
+		has: page.getByRole('heading', { name: /Delete layer/ })
+	});
+	await confirmModal.getByRole('button', { name: 'Delete', exact: true }).click();
 	await expect.poll(async () => (await getArtLayers(request, map.id)).length).toBe(0);
 	await page.waitForTimeout(600);
 	const withoutLayer = await canvas.screenshot();
