@@ -9,6 +9,13 @@ test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
 // runner that 4-way load can exceed a few seconds, so give these initial waits a
 // generous budget. Post-interaction assertions stay tight to catch real UI
 // regressions fast.
+//
+// The first window-OPEN after goto belongs to the same class: clicking a
+// taskbar button runs windowStore.open(), but the window's render competes for
+// the main thread with that on-mount load, so the open can occasionally exceed
+// the default 5s on a saturated runner (observed: the Wiki type-filter spec
+// flaked once on `expect(win).toBeVisible()`). These open waits therefore use
+// LIST_LOAD_TIMEOUT too.
 const LIST_LOAD_TIMEOUT = 10_000;
 
 async function clearEntities(request: APIRequestContext) {
@@ -30,7 +37,7 @@ test.describe('Wiki', () => {
 	test('empty state asks the user to create a Character or Location', async ({ page }) => {
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
-		await expect(win).toBeVisible();
+		await expect(win).toBeVisible({ timeout: LIST_LOAD_TIMEOUT });
 		await expect(win.locator('.empty-state')).toContainText(
 			'Your wiki is empty. Create a Character or Location to begin.'
 		);
@@ -44,7 +51,7 @@ test.describe('Wiki', () => {
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
-		await expect(win).toBeVisible();
+		await expect(win).toBeVisible({ timeout: LIST_LOAD_TIMEOUT });
 
 		await expect(win.locator('.type-divider-label', { hasText: 'Characters' })).toBeVisible();
 		await expect(win.locator('.type-divider-label', { hasText: 'Locations' })).toBeVisible();
@@ -63,7 +70,7 @@ test.describe('Wiki', () => {
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
-		await expect(win).toBeVisible();
+		await expect(win).toBeVisible({ timeout: LIST_LOAD_TIMEOUT });
 
 		await win.locator('.entry', { hasText: 'Aragorn' }).click();
 		await expect(
@@ -79,7 +86,7 @@ test.describe('Wiki', () => {
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
-		await expect(win).toBeVisible();
+		await expect(win).toBeVisible({ timeout: LIST_LOAD_TIMEOUT });
 		await expect(win.locator('.entry')).toHaveCount(2);
 
 		await win.locator('input[aria-label="Search wiki"]').fill('boro');
@@ -94,7 +101,7 @@ test.describe('Wiki', () => {
 
 		await page.click('button[title="Wiki"]');
 		const win = page.locator('.window[aria-label="Wiki"]');
-		await expect(win).toBeVisible();
+		await expect(win).toBeVisible({ timeout: LIST_LOAD_TIMEOUT });
 		await expect(win.locator('.entry')).toHaveCount(2);
 
 		// Toggle Characters off; only Edoras (Location) remains.
