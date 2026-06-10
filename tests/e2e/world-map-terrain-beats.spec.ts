@@ -156,10 +156,13 @@ test('painting at a later playhead authors a terrain beat: absent before, presen
 		)
 		.toBeCloseTo(paintT, 5);
 
-	// The art renders at the paint T…
-	await page.waitForTimeout(600);
-	const lateAfter = await canvas.screenshot();
-	expect(Buffer.compare(lateBefore, lateAfter)).not.toBe(0);
+	// The art renders at the paint T… Poll until the canvas changes rather than a
+	// fixed wait: the first fill kicks off an async texture load that, on a slow
+	// cold-start CI runner (software-GL firefox), can exceed a fixed 600ms and
+	// leave the canvas still-blank when sampled.
+	await expect
+		.poll(async () => Buffer.compare(lateBefore, await canvas.screenshot()), { timeout: 8000 })
+		.not.toBe(0);
 
 	// Slice D2: AUTHORING the stroke (constant playhead) snapped — no dissolve.
 	expect(await transitionCount()).toBe(0);

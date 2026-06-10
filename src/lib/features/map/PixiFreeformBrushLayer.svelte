@@ -62,6 +62,12 @@
 
 	let painting = false;
 	let strokeId: string | null = null;
+	// Pointer that owns the in-flight gesture (codex P2). On a multi-touch /
+	// multi-pen device a second pointerdown is ignored, but its move/up events
+	// reach the same stage handlers — without this guard they'd append the second
+	// pointer's coords to the first's path and commit the stroke prematurely when
+	// the second pointer lifts. null when idle.
+	let activePointerId: number | null = null;
 	// Recorded path in normalized [0,1] coords.
 	let points: Array<{ x: number; y: number }> = [];
 
@@ -113,6 +119,7 @@
 	function resetGesture(): void {
 		painting = false;
 		strokeId = null;
+		activePointerId = null;
 		points = [];
 		cancelScheduledPreview();
 		if (previewGraphics) previewGraphics.clear();
@@ -189,12 +196,14 @@
 			const n = localToNorm(local.x, local.y);
 			if (!n) return;
 			painting = true;
+			activePointerId = e.pointerId;
 			strokeId = crypto.randomUUID();
 			points = [n];
 			drawPreview();
 		};
 		stagePointerMove = (e: FederatedPointerEvent) => {
 			if (!painting) return;
+			if (e.pointerId !== activePointerId) return; // ignore other pointers' moves
 			const local = e.getLocalPosition(viewport);
 			const n = localToNorm(local.x, local.y);
 			if (!n) return; // off-map: don't record, don't commit (drag-back allowed)
@@ -208,8 +217,9 @@
 			points.push(n);
 			schedulePreview();
 		};
-		stagePointerUp = (_e: FederatedPointerEvent) => {
+		stagePointerUp = (e: FederatedPointerEvent) => {
 			if (!painting) return;
+			if (e.pointerId !== activePointerId) return; // only the owning pointer commits
 			commitStroke();
 		};
 
