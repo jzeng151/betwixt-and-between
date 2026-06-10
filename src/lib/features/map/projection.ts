@@ -1060,6 +1060,40 @@ function sanitizedAnchorStrokes(state: AnchorState): StoredStroke[] {
 	return out;
 }
 
+// Memoized baked fold (perf). During a playhead scrub the active anchor and
+// the applicable event window usually do NOT change between ticks — only t
+// does — yet the baked portion of the projection (anchor seed + state-event
+// fold + ctx color resolution) was re-run per pointermove: up to tens of
+// thousands of cell Map insertions and stroke pushes per tick. The baked
+// result is a pure function of (anchor, events, ctx, applicable-set), and for
+// a fixed events array + anchor the applicable set {e : anchorT < e.t <= t}
+// grows monotonically with t, so its SIZE uniquely identifies it. Reusing the
+// previous result also keeps the returned regions/cells/strokes arrays
+// referentially STABLE across ticks, which lets downstream consumers
+// (terrain / tile / water / art layers) skip full display-list rebuilds via
+// identity checks. Single-slot cache: sequential scrubbing on one map is the
+// hot path; any input identity change is a miss and a full refold. The cached
+// arrays are read-only by contract (same as sanitizedAnchorStrokes above).
+type BakedFold = {
+	regions: RenderedRegion[];
+	artifacts: AnchorArtifact[];
+	cells: RenderedCell[];
+	strokes: StoredStroke[];
+};
+let bakedFoldCache: {
+	anchor: ProjectionAnchor | null;
+	events: readonly ProjectionEvent[];
+	ctx: ProjectionContext;
+	applicableCount: number;
+	baked: BakedFold;
+} | null = null;
+
+// Stable empty results — returned instead of fresh allocations so consumers
+// keyed on identity (e.g. PixiPlacementLayer's rebuild effect) see "unchanged"
+// on maps with no movement keyframes / causal edges. Read-only by contract.
+const EMPTY_OVERRIDES: ReadonlyMap<string, ArtifactPosition> = new Map();
+const EMPTY_CAUSAL_EDGES: RenderedCausalEdge[] = [];
+
 export function projectState(
 	t: number,
 	anchors: ProjectionAnchor[],
@@ -1070,88 +1104,105 @@ export function projectState(
 ): RenderedState {
 	const anchor = pickActiveAnchor(t, anchors);
 
-	const regions = new Map<string, AnchorRegion>();
-	const artifacts: AnchorArtifact[] = [];
-	// Slice 3: cells keyed by "x,y" for last-write-wins folding.
-	const cells = new Map<string, AnchorCell>();
-	// WM3 Slice A: freeform strokes, append-only in painter's order. Anchor-baked
-	// strokes seed the list (drawn first); post-anchor stroke events append on top.
-	const strokes: StoredStroke[] = [];
-
-	if (anchor) {
-		for (const r of anchor.stateJsonb.regions ?? []) {
-			regions.set(r.region_id, r);
-		}
-		for (const a of anchor.stateJsonb.artifacts ?? []) {
-			artifacts.push(a);
-		}
-		// `anchor.stateJsonb.chains` is intentionally NOT folded — see the
-		// RenderedState type note (Slice 5 PR-A). The key is kept as inert input
-		// residue; EventChain derives from `caused_by`, not anchor chains.
-		for (const cell of anchor.stateJsonb.cells ?? []) {
-			if (
-				cell &&
-				Number.isInteger(cell.x) &&
-				Number.isInteger(cell.y) &&
-				isKnownTerrainKey(cell.biome)
-			) {
-				cells.set(`${cell.x},${cell.y}`, cell);
-			}
-		}
-		// Seed baked strokes through applyPaintStroke so the SAME validation
-		// gates anchor residue and live events (a forged/legacy stroke in the
-		// snapshot is dropped identically to a forged event). Memoized per
-		// immutable anchor identity (F11) — the sanitized list is read-only here;
-		// the fold below appends to `strokes`, never mutates these entries.
-		for (const s of sanitizedAnchorStrokes(anchor.stateJsonb)) {
-			strokes.push(s);
-		}
-	}
-
 	// Events strictly after the anchor's t_position, up to and including t.
 	// Same-T rule (CMT-5): anchor.tPosition itself is excluded.
 	const anchorT = anchor?.tPosition ?? Number.NEGATIVE_INFINITY;
 	const applicable = events.filter((e) => e.tPosition > anchorT && e.tPosition <= t);
 
-	// Shared fold (single source of truth across read + server-snapshot paths).
-	// move_entity is NOT folded here — it uses a separate window (full keyframe
-	// history, not (anchorT, t]) because movement is never baked into anchors
-	// (D-PRF-1). See foldMovement below.
-	foldEventsIntoState(regions, cells, strokes, applicable);
+	let baked: BakedFold;
+	if (
+		bakedFoldCache &&
+		bakedFoldCache.anchor === anchor &&
+		bakedFoldCache.events === events &&
+		bakedFoldCache.ctx === ctx &&
+		bakedFoldCache.applicableCount === applicable.length
+	) {
+		baked = bakedFoldCache.baked;
+	} else {
+		const regions = new Map<string, AnchorRegion>();
+		const artifacts: AnchorArtifact[] = [];
+		// Slice 3: cells keyed by "x,y" for last-write-wins folding.
+		const cells = new Map<string, AnchorCell>();
+		// WM3 Slice A: freeform strokes, append-only in painter's order. Anchor-baked
+		// strokes seed the list (drawn first); post-anchor stroke events append on top.
+		const strokes: StoredStroke[] = [];
+
+		if (anchor) {
+			for (const r of anchor.stateJsonb.regions ?? []) {
+				regions.set(r.region_id, r);
+			}
+			for (const a of anchor.stateJsonb.artifacts ?? []) {
+				artifacts.push(a);
+			}
+			// `anchor.stateJsonb.chains` is intentionally NOT folded — see the
+			// RenderedState type note (Slice 5 PR-A). The key is kept as inert input
+			// residue; EventChain derives from `caused_by`, not anchor chains.
+			for (const cell of anchor.stateJsonb.cells ?? []) {
+				if (
+					cell &&
+					Number.isInteger(cell.x) &&
+					Number.isInteger(cell.y) &&
+					isKnownTerrainKey(cell.biome)
+				) {
+					cells.set(`${cell.x},${cell.y}`, cell);
+				}
+			}
+			// Seed baked strokes through applyPaintStroke so the SAME validation
+			// gates anchor residue and live events (a forged/legacy stroke in the
+			// snapshot is dropped identically to a forged event). Memoized per
+			// immutable anchor identity (F11) — the sanitized list is read-only here;
+			// the fold below appends to `strokes`, never mutates these entries.
+			for (const s of sanitizedAnchorStrokes(anchor.stateJsonb)) {
+				strokes.push(s);
+			}
+		}
+
+		// Shared fold (single source of truth across read + server-snapshot paths).
+		// move_entity is NOT folded here — it uses a separate window (full keyframe
+		// history, not (anchorT, t]) because movement is never baked into anchors
+		// (D-PRF-1). See foldMovement below.
+		foldEventsIntoState(regions, cells, strokes, applicable);
+
+		const renderedRegions: RenderedRegion[] = [];
+		for (const r of regions.values()) {
+			const resolved = resolveRegionColor(r, ctx);
+			if (resolved) renderedRegions.push(resolved);
+		}
+
+		// Sparse output: 'unset' cells are stored but treated as transparent
+		// at render time. Whether to emit them is a renderer concern, not a
+		// projection one. projectState emits everything that was stored so the
+		// renderer can choose: skip 'unset' for sparser draw calls, or render
+		// it as a marker for "explicitly erased here." Same shape either way.
+		const renderedCells: RenderedCell[] = Array.from(cells.values());
+
+		baked = { regions: renderedRegions, artifacts, cells: renderedCells, strokes };
+		bakedFoldCache = { anchor, events, ctx, applicableCount: applicable.length, baked };
+	}
 
 	// Slice 4 PR-F (D5) — per-placement movement overrides. Uses the full event
 	// list (not `applicable`) on purpose: keyframes below the active anchor's T
-	// still matter since movement isn't in the anchor snapshot.
-	const artifactOverrides = foldMovement(t, events, placements);
-
-	const renderedRegions: RenderedRegion[] = [];
-	for (const r of regions.values()) {
-		const resolved = resolveRegionColor(r, ctx);
-		if (resolved) renderedRegions.push(resolved);
-	}
-
-	// Sparse output: 'unset' cells are stored but treated as transparent
-	// at render time. Whether to emit them is a renderer concern, not a
-	// projection one. projectState emits everything that was stored so the
-	// renderer can choose: skip 'unset' for sparser draw calls, or render
-	// it as a marker for "explicitly erased here." Same shape either way.
-	const renderedCells: RenderedCell[] = Array.from(cells.values());
+	// still matter since movement isn't in the anchor snapshot. Genuinely
+	// t-dependent (interpolation), so never cached across ticks.
+	const folded = foldMovement(t, events, placements);
+	const artifactOverrides = folded.size === 0 ? (EMPTY_OVERRIDES as Map<string, ArtifactPosition>) : folded;
 
 	// Slice 5 PR-C — derive on-map causal edges from caused_by. Geometry comes
 	// from causal.centroidByLocation (caller-supplied, from the live region
 	// store); the fold does the t-dependent visibility eval. Gated on an active
 	// anchor so the map draws nothing before the first anchor (idle convention),
 	// consistent with regions/placements.
-	const causalEdges = anchor ? foldCausalEdges(t, causal) : [];
+	const foldedEdges = anchor ? foldCausalEdges(t, causal) : EMPTY_CAUSAL_EDGES;
+	const causalEdges = foldedEdges.length === 0 ? EMPTY_CAUSAL_EDGES : foldedEdges;
 
 	return {
 		tPosition: t,
-		regions: renderedRegions,
-		artifacts,
-		cells: renderedCells,
+		regions: baked.regions,
+		artifacts: baked.artifacts,
+		cells: baked.cells,
 		// Not anchor-gated (like cells, unlike regions/causalEdges): a strokes-only
 		// map with no anchor still paints at the -∞ baseline.
-		strokes,
+		strokes: baked.strokes,
 		artifactOverrides,
 		causalEdges
 	};

@@ -35,10 +35,7 @@
 	import { layerVisibility } from './layer-prefs-store.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
 	import { pointInPolygon } from './point-in-polygon.js';
-	import type { MapRegion } from './types.js';
-	// Type-only import (declaration-only — erased at compile, no server-code leak;
-	// same pattern as RelationshipType from schema.ts). Slice 5 PR-E.
-	import type { ProvenanceResult } from '$lib/server/world-map-v3-provenance.js';
+	import type { MapRegion, ProvenanceResult } from './types.js';
 
 	// Slice 3 E4 — layer toggle.
 	const visible = layerVisibility('regions');

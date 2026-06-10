@@ -67,6 +67,7 @@
 		polygonCentroid,
 		type ProjectionContext,
 		type RenderedState,
+		type RenderedCell,
 		type ArtifactPosition
 	} from '$lib/features/map/projection.js';
 	import { computeCanvasMode, type MapTool } from '$lib/features/map/canvas-mode.js';
@@ -1396,11 +1397,30 @@
 	// valid square and would draw off-grid. The terrain layers consume this
 	// clamped list so out-of-range cells render nowhere (the data survives; it
 	// reappears if the grid grows back).
+	//
+	// Identity-stable: projectState memoizes cells, so during a scrub where the
+	// applicable event window is unchanged renderedState.cells keeps the same
+	// array identity tick-to-tick. Reuse the previous filtered array in that
+	// case so the terrain/tile/water layers (whose $effects key on this prop)
+	// skip their full sprite/Graphics rebuilds.
+	const NO_TERRAIN_CELLS: RenderedCell[] = [];
+	let lastBoundedInput: { cells: RenderedCell[]; gx: number; gy: number } | null = null;
+	let lastBoundedResult: RenderedCell[] = NO_TERRAIN_CELLS;
 	let boundedTerrainCells = $derived.by(() => {
-		const cells = renderedState?.cells ?? [];
+		const cells = renderedState?.cells ?? NO_TERRAIN_CELLS;
 		const gx = activeMap?.gridCellsX ?? Infinity;
 		const gy = activeMap?.gridCellsY ?? Infinity;
-		return cells.filter((c) => c.x >= 0 && c.x < gx && c.y >= 0 && c.y < gy);
+		if (
+			lastBoundedInput &&
+			lastBoundedInput.cells === cells &&
+			lastBoundedInput.gx === gx &&
+			lastBoundedInput.gy === gy
+		) {
+			return lastBoundedResult;
+		}
+		lastBoundedInput = { cells, gx, gy };
+		lastBoundedResult = cells.filter((c) => c.x >= 0 && c.x < gx && c.y >= 0 && c.y < gy);
+		return lastBoundedResult;
 	});
 
 	// Combined readiness signal piped through to PixiRegionLayer as
