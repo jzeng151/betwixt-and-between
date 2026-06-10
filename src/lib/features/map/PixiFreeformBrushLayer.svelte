@@ -12,9 +12,8 @@
 	// stream, the projection fold emits it in RenderedState.strokes, and
 	// PixiArtLayer rasterizes it on the next tick.
 
-	import { getContext, onDestroy } from 'svelte';
+	import { getContext, onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { onMount } from 'svelte';
 	import { PIXI_STAGE_CONTEXT, MAP_LAYER_Z, type PixiStageContext } from './pixi-context.js';
 	import { mapEventsStore } from './map-events-store.js';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
@@ -35,7 +34,8 @@
 		softness = 0.5,
 		stamp = undefined,
 		layerId = null,
-		onStrokeComplete = undefined
+		onStrokeComplete = undefined,
+		onError = undefined
 	}: {
 		active?: boolean;
 		activeMap?: WorldMap | null;
@@ -48,6 +48,9 @@
 		// the implicit base art layer.
 		layerId?: string | null;
 		onStrokeComplete?: () => void;
+		// F17 — the layer has no UI of its own; a rejected/dropped gesture would
+		// otherwise vanish with only a console.error. Surface it to the parent.
+		onError?: (message: string) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -60,6 +63,27 @@
 	let strokeId: string | null = null;
 	// Recorded path in normalized [0,1] coords.
 	let points: Array<{ x: number; y: number }> = [];
+
+	// F12: bound the cost of capture/preview on high-rate pointers (120-240Hz).
+	// MIN_SAMPLE_DIST_SQ drops samples closer than ~0.0015 of the map extent to
+	// the previous point — fewer points means the O(n) full-polyline redraw runs
+	// far less often (and the committed payload is smaller). The preview redraw
+	// is additionally coalesced to one per animation frame.
+	const MIN_SAMPLE_DIST_SQ = 0.0015 * 0.0015;
+	let previewRaf = 0;
+	function schedulePreview(): void {
+		if (previewRaf) return;
+		previewRaf = requestAnimationFrame(() => {
+			previewRaf = 0;
+			drawPreview();
+		});
+	}
+	function cancelScheduledPreview(): void {
+		if (previewRaf) {
+			cancelAnimationFrame(previewRaf);
+			previewRaf = 0;
+		}
+	}
 
 	let stagePointerDown: ((e: FederatedPointerEvent) => void) | null = null;
 	let stagePointerMove: ((e: FederatedPointerEvent) => void) | null = null;
@@ -89,6 +113,7 @@
 		painting = false;
 		strokeId = null;
 		points = [];
+		cancelScheduledPreview();
 		if (previewGraphics) previewGraphics.clear();
 	}
 
@@ -143,7 +168,10 @@
 				});
 				onStrokeComplete?.();
 			} catch (err) {
+				// F17: don't swallow — the preview is already cleared, so a silent
+				// drop looks like the brush did nothing. Surface to the parent.
 				console.error('paint_stroke commit failed; gesture dropped', err);
+				onError?.(err instanceof Error ? err.message : 'Stroke failed to save');
 			}
 		})();
 	}
@@ -181,8 +209,15 @@
 			const local = e.getLocalPosition(viewport);
 			const n = localToNorm(local.x, local.y);
 			if (!n) return; // off-map: don't record, don't commit (drag-back allowed)
+			// F12: skip samples too close to the last recorded point.
+			const last = points[points.length - 1];
+			if (last) {
+				const dx = n.x - last.x;
+				const dy = n.y - last.y;
+				if (dx * dx + dy * dy < MIN_SAMPLE_DIST_SQ) return;
+			}
 			points.push(n);
-			drawPreview();
+			schedulePreview();
 		};
 		stagePointerUp = (_e: FederatedPointerEvent) => {
 			if (!painting) return;
@@ -213,7 +248,13 @@
 
 		return () => {
 			dragPlugin.plugins?.resume('drag');
-			resetGesture();
+			// F17: deactivation mid-drag (tool switch, dataLoading toggling) used to
+			// discard a complete in-flight gesture silently. Commit a real drag
+			// (>1 point) so the user's work is preserved rather than lost without a
+			// trace; a single-point tap is noise and is dropped. (commitStroke
+			// resets gesture state internally.)
+			if (painting && strokeId && points.length > 1) commitStroke();
+			else resetGesture();
 			try {
 				if (stagePointerDown) viewport.off('pointerdown', stagePointerDown);
 				if (stagePointerMove) viewport.off('pointermove', stagePointerMove);
@@ -231,6 +272,7 @@
 	});
 
 	onDestroy(() => {
+		cancelScheduledPreview();
 		const viewport = stageCtx.viewport;
 		try {
 			if (viewport && stagePointerDown) viewport.off('pointerdown', stagePointerDown);

@@ -166,6 +166,8 @@
 		if ((activeTool === 'place' || activeTool === 'move') && !canPlaceOrMove) activeTool = 'select';
 	});
 	let placementError = $state('');
+	// F17 — freeform brush commit failures (the layer has no UI of its own).
+	let strokeError = $state('');
 	// In-flight flag for the per-map placements fetch (see the placements
 	// loader effect below). Read by the `mapLoading` overlay gate.
 	let placementsLoading = $state(false);
@@ -2534,6 +2536,7 @@
 					brushSize={strokeBrushSize}
 					softness={strokeSoftness}
 					layerId={strokeLayerId}
+					onError={(msg) => (strokeError = msg)}
 				/>
 			{/snippet}
 		</PixiStage>
@@ -2574,6 +2577,12 @@
 			<div class="placement-error" role="alert">
 				{placementError}
 				<button type="button" onclick={() => (placementError = '')}>✕</button>
+			</div>
+		{/if}
+		{#if strokeError}
+			<div class="placement-error" role="alert">
+				Stroke failed: {strokeError}
+				<button type="button" onclick={() => (strokeError = '')}>✕</button>
 			</div>
 		{/if}
 		{#if hasImage && moveActive}
