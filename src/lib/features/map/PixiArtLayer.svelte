@@ -221,15 +221,22 @@
 		widthPx: number,
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		strokeStyle: any,
-		softness: number
+		softness: number,
+		blendMode: 'normal' | 'erase' = 'normal'
 	): import('pixi.js').Graphics {
 		const g = new PIXI!.Graphics();
 		g.moveTo(path[0].x, path[0].y);
 		if (path.length === 1) g.lineTo(path[0].x + 0.01, path[0].y);
 		else for (let i = 1; i < path.length; i++) g.lineTo(path[i].x, path[i].y);
 		g.stroke({ width: widthPx, cap: 'round', join: 'round', ...strokeStyle });
+		// F9: a filtered object composites with the FILTER's blend mode, not the
+		// object's (Pixi v8). So a soft erase (softness > 0 → BlurFilter) silently
+		// ignored g.blendMode='erase' and composited 'normal' — a white smear
+		// instead of an erase. Set the blend on BOTH: g.blendMode covers the
+		// hard-edged (no-filter) case, the filter's blendMode covers the soft case.
+		g.blendMode = blendMode;
 		if (softness > 0) {
-			g.filters = [new PIXI!.BlurFilter({ strength: softness * widthPx * 0.25 })];
+			g.filters = [new PIXI!.BlurFilter({ strength: softness * widthPx * 0.25, blendMode })];
 		}
 		return g;
 	}
@@ -250,8 +257,7 @@
 			// Slice C — erase within the layer's RenderTexture. The blend applies
 			// during the RT pass, so it only removes THIS layer's art.
 			const widthPx = Math.max(1, s.brushSize * extent);
-			const g = pathGraphics(path, widthPx, { color: 0xffffff }, s.softness);
-			g.blendMode = 'erase';
+			const g = pathGraphics(path, widthPx, { color: 0xffffff }, s.softness, 'erase');
 			group.addChild(g);
 			return group;
 		}
@@ -355,10 +361,22 @@
 			map.id +
 			'#' +
 			ss
-				.map(
-					(s) =>
-						`${s.mode}:${s.textureKey ?? ''}:${s.layerId ?? ''}:${s.path.length}:${s.path[0]?.x},${s.path[0]?.y}:${s.brushSize}:${s.softness}`
-				)
+				.map((s) => {
+					// F8: the key must change whenever anything the renderer consumes
+					// changes, or a rebuild is skipped and stale art shows. The old
+					// key omitted stamp.spacing/jitter and every path point after the
+					// first, so two distinct strokes agreeing on mode/material/layer/
+					// length/first-point collided (e.g. undo+repaint a stamp with new
+					// spacing, or scrubbing across an anchor that swaps stroke sets).
+					// Add the stamp params, the last point, and a cheap whole-path
+					// coordinate digest — O(points) arithmetic, far cheaper than the
+					// GPU rebuild it gates.
+					const p0 = s.path[0];
+					const pN = s.path[s.path.length - 1];
+					let digest = 0;
+					for (const pt of s.path) digest += pt.x + pt.y;
+					return `${s.mode}:${s.textureKey ?? ''}:${s.layerId ?? ''}:${s.path.length}:${p0?.x},${p0?.y}:${pN?.x},${pN?.y}:${s.brushSize}:${s.softness}:${s.stamp?.spacing ?? ''}:${s.stamp?.jitter ?? ''}:${digest}`;
+				})
 				.join('|');
 		const viewKey =
 			layerView.map((v) => `${v.id}:${v.blendMode}:${v.opacity}:${v.visible}`).join('|') +
@@ -425,7 +443,16 @@
 			const knownIds = new Set(layerView.map((v) => v.id));
 			const buckets = new Map<string | null, Array<{ s: StoredStroke; i: number }>>();
 			ss.forEach((s, i) => {
-				const key = s.layerId && knownIds.has(s.layerId) ? s.layerId : null;
+				const orphaned = s.layerId != null && !knownIds.has(s.layerId);
+				// F5: a fill/stamp stroke whose layer was deleted falls back to the
+				// base group (art preserved, only the grouping is lost — the lazy-GC
+				// posture). But an ERASE stroke carries an 'erase' blend; re-homing
+				// it to base would erase BASE art it never targeted (deterministic
+				// corruption: paint erase on layer L, delete L). Drop orphaned erase
+				// strokes instead of re-homing them — an eraser with no surviving
+				// layer to mask is a no-op, not a base-layer eraser.
+				if (orphaned && s.mode === 'erase') return;
+				const key = orphaned ? null : (s.layerId ?? null);
 				const b = buckets.get(key) ?? [];
 				b.push({ s, i });
 				buckets.set(key, b);
