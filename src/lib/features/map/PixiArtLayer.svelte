@@ -398,8 +398,17 @@
 					// GPU rebuild it gates.
 					const p0 = s.path[0];
 					const pN = s.path[s.path.length - 1];
+					// codex P2: a bare Σ(x+y) is permutation- AND mirror-blind — paths
+					// [(.2,.2),(.8,.8)] and [(.2,.8),(.8,.2)] digest identically, so
+					// scrubbing between anchors/beats whose strokes differ only by point
+					// order hits the !strokesChanged early-return and leaves stale art.
+					// Weight each point by its index and keep the axes distinct so order
+					// and mirroring both move the digest. (% 1e9 keeps it bounded.)
 					let digest = 0;
-					for (const pt of s.path) digest += pt.x + pt.y;
+					for (let pi = 0; pi < s.path.length; pi++) {
+						const pt = s.path[pi];
+						digest = (digest + (pt.x * 2 + pt.y * 3) * (pi + 1)) % 1e9;
+					}
 					return `${s.mode}:${s.textureKey ?? ''}:${s.layerId ?? ''}:${s.path.length}:${p0?.x},${p0?.y}:${pN?.x},${pN?.y}:${s.brushSize}:${s.softness}:${s.stamp?.spacing ?? ''}:${s.stamp?.jitter ?? ''}:${digest}`;
 				})
 				.join('|');
@@ -418,6 +427,18 @@
 			lastMapId === map.id &&
 			atT !== null &&
 			atT !== lastPlayheadT;
+
+		// codex P2: on a genuine map SWITCH, wipe the previous map's art
+		// synchronously — before the async texture load below. Otherwise the old
+		// strokes stay attached to the shared viewport and remain visibly overlaid
+		// on the new background until every new texture resolves (indefinitely if a
+		// new asset 404s/stalls). A same-map rebuild keeps the old build for the
+		// Slice D2 crossfade; only a real map change clears immediately (isBeat is
+		// already false here since it requires lastMapId === map.id).
+		if (lastMapId !== null && lastMapId !== map.id) {
+			finishFade?.();
+			disposeBuild(currentBuild);
+		}
 
 		if (!layer) {
 			layer = new PIXI.Container();

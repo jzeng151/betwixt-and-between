@@ -41,14 +41,27 @@ type MapEvent = {
 async function waitForCanvasStable(
 	page: Page,
 	canvas: Locator,
-	{ interval = 120, timeout = 4000 }: { interval?: number; timeout?: number } = {}
+	{
+		interval = 120,
+		timeout = 8000,
+		changedFrom = null
+	}: { interval?: number; timeout?: number; changedFrom?: Buffer | null } = {}
 ): Promise<Buffer> {
 	let prev = await canvas.screenshot();
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
 		await page.waitForTimeout(interval);
 		const next = await canvas.screenshot();
-		if (Buffer.compare(prev, next) === 0) return next;
+		const settled = Buffer.compare(prev, next) === 0;
+		// When `changedFrom` is given, "stable" must ALSO mean "no longer equal to
+		// the pre-paint frame". A fill stroke kicks off an async Assets.load before
+		// the texture rasterizes; on a slow cold-start runner (CI software-GL
+		// firefox) the canvas is blank-and-settled for >interval BEFORE that load
+		// resolves, so a plain stability check returns the still-blank frame and the
+		// "paint changed pixels" assertion fails spuriously. Requiring change-from-
+		// baseline waits for the rasterize regardless of how slow the load is.
+		const changed = !changedFrom || Buffer.compare(changedFrom, next) !== 0;
+		if (settled && changed) return next;
 		prev = next;
 	}
 	return prev;
@@ -139,9 +152,11 @@ test('fill stroke: drag commits a paint_stroke (mode=fill) and renders without e
 	expect(typeof p.brushSize).toBe('number');
 	expect(events[0].commandId).not.toBeNull(); // one undo group
 
-	// Let the projection fold + PixiArtLayer rasterize (poll for stability), then
-	// assert no render errors.
-	await waitForCanvasStable(page, canvas);
+	// Let the projection fold + PixiArtLayer rasterize, then assert no render
+	// errors. `changedFrom: before` makes the wait robust to a slow cold-start
+	// texture load (CI firefox) that would otherwise leave the canvas blank-and-
+	// settled before the fill paints.
+	await waitForCanvasStable(page, canvas, { changedFrom: before });
 	const after = await canvas.screenshot({ path: '.gstack/qa-reports/screenshots/freeform-fill.png' });
 	expect(errors, errors.join('\n')).toEqual([]);
 	// The fill MUST change the canvas pixels — a blank fill (a texture-stroke
