@@ -86,14 +86,24 @@
 			artPending = make;
 			return;
 		}
+		// codex P2: pin the target map for the whole flush. activeMapId can change
+		// (map switch) while a PATCH is in flight; without this the queued edit —
+		// and even the in-flight loop's later iterations — would be sent to the
+		// newly-active map, e.g. adding the previous map's queued layer to it.
+		const mapId = activeMapId;
 		artBusy = true;
 		artError = '';
 		try {
-			await worldMapStore.updateMap(activeMapId, { artLayersJsonb: make() });
+			await worldMapStore.updateMap(mapId, { artLayersJsonb: make() });
 			while (artPending) {
+				if (activeMapId !== mapId) {
+					// Switched maps mid-flight — drop edits queued for the old map.
+					artPending = null;
+					break;
+				}
 				const queued = artPending;
 				artPending = null;
-				await worldMapStore.updateMap(activeMapId, { artLayersJsonb: queued() });
+				await worldMapStore.updateMap(mapId, { artLayersJsonb: queued() });
 			}
 		} catch (err) {
 			artPending = null;
