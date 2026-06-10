@@ -883,7 +883,7 @@ async function validateEventPayload(
 		}
 	}
 	if (kind === 'paint_stroke') {
-		await validatePaintStrokePayload(db, worldMapId, payload);
+		await validatePaintStrokePayload(db, userId, worldMapId, payload);
 	}
 	if (kind === 'move_entity') {
 		await validateMoveEntityPayload(db, userId, worldMapId, payload, tPosition);
@@ -905,6 +905,7 @@ async function validateEventPayload(
 // same posture as transfer_region.region_id).
 async function validatePaintStrokePayload(
 	db: Db,
+	userId: string,
 	worldMapId: string,
 	payload: unknown
 ): Promise<void> {
@@ -991,10 +992,16 @@ async function validatePaintStrokePayload(
 		if (typeof p.layerId !== 'string' || p.layerId.length === 0 || p.layerId.length > 64) {
 			error(400, 'paint_stroke payload.layerId must be a non-empty string ≤ 64 chars');
 		}
+		// F27: scope the read by userId, not id alone. assertMapOwnership upstream
+		// already 404s a foreign map before we get here, so this is defense-in-
+		// depth per the project's "a missing user_id scope is a cross-user leak"
+		// invariant — the validator must not carry the ownership assumption in a
+		// comment only. (F24: the !map branch is therefore upstream-shadowed today,
+		// but kept as a real scope guard rather than a dead 404.)
 		const [map] = await db
 			.select({ artLayersJsonb: worldMaps.artLayersJsonb })
 			.from(worldMaps)
-			.where(eq(worldMaps.id, worldMapId));
+			.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.userId, userId)));
 		if (!map) error(404, 'world_map not found');
 		const layers = Array.isArray(map.artLayersJsonb)
 			? (map.artLayersJsonb as Array<{ id?: unknown }>)

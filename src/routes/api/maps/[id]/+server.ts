@@ -8,7 +8,7 @@ import {
 	resolveWorldMapVariantBounds
 } from '$lib/server/world-maps.js';
 import { readBaselineRegions } from '$lib/server/world-map-v3.js';
-import { artLayersValidationError } from '$lib/features/map/projection.js';
+import { artLayersValidationError, normalizeArtLayers } from '$lib/features/map/projection.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -96,7 +96,11 @@ export const PATCH: RequestHandler = async (event) => {
 	if ('artLayersJsonb' in body) {
 		const layersError = artLayersValidationError(body.artLayersJsonb);
 		if (layersError) error(400, layersError);
-		updates.artLayersJsonb = body.artLayersJsonb;
+		// F10: persist ONLY the four known fields. The validator tolerates extra
+		// keys (forward-compat), but storing body.artLayersJsonb verbatim would
+		// let a scripted client persist arbitrary junk per layer, served back on
+		// every map GET. normalizeArtLayers strips to {id,name,blendMode,opacity}.
+		updates.artLayersJsonb = normalizeArtLayers(body.artLayersJsonb);
 	}
 
 	// locationId: explicit presence (including null) is meaningful — null means unlink.

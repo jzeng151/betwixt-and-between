@@ -244,6 +244,18 @@ export function artLayersValidationError(value: unknown): string | null {
 	return null;
 }
 
+/**
+ * Project an art_layers_jsonb value to ONLY the four known fields. F10: the
+ * validator tolerates extra keys (forward-compat), but the PATCH handler must
+ * not persist them verbatim — otherwise a scripted client can store up to
+ * MAX_ART_LAYERS objects of arbitrary junk that every map GET then serves back.
+ * Call AFTER artLayersValidationError has passed (this assumes well-formed
+ * input). Pure.
+ */
+export function normalizeArtLayers(value: MapArtLayer[]): MapArtLayer[] {
+	return value.map(({ id, name, blendMode, opacity }) => ({ id, name, blendMode, opacity }));
+}
+
 // The stored/painted shape (also the persisted AnchorState.strokes element).
 // The event payload IS this shape — strokes carry no merge key (append-only),
 // so there is no event-only field to strip (contrast paint_cells/command_complete).
