@@ -99,7 +99,9 @@ export const PATCH: RequestHandler = async (event) => {
 			if (isUniqueViolation(err)) {
 				error(409, 'The move collides with an existing row (duplicate temporal bounds)');
 			}
-			error(400, (err as Error).message);
+			// Re-throw unmatched errors (opaque 500) instead of echoing the raw
+			// driver/cascade message — parity with the reorder/delete catches below.
+			throw err;
 		});
 		return json(refreshed);
 	}
