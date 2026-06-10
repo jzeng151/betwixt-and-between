@@ -152,11 +152,28 @@ test('fill stroke: drag commits a paint_stroke (mode=fill) and renders without e
 	expect(typeof p.brushSize).toBe('number');
 	expect(events[0].commandId).not.toBeNull(); // one undo group
 
-	// Let the projection fold + PixiArtLayer rasterize, then assert no render
-	// errors. `changedFrom: before` makes the wait robust to a slow cold-start
-	// texture load (CI firefox) that would otherwise leave the canvas blank-and-
-	// settled before the fill paints.
-	await waitForCanvasStable(page, canvas, { changedFrom: before });
+	// DIAG (temporary): log build-count / sprite-count / pixel-diff over time so
+	// the CI firefox failure is observable. Tells us render-never-happened vs
+	// slow-load vs screenshot-buffer-stale.
+	const t0 = Date.now();
+	await expect
+		.poll(
+			async () => {
+				const diag = await page.evaluate(() => ({
+					builds: (window as unknown as { __artBuildCount?: number }).__artBuildCount ?? 0,
+					sprites: (window as unknown as { __artLastSprites?: number }).__artLastSprites ?? -1
+				}));
+				const diff = Buffer.compare(before, await canvas.screenshot());
+				// eslint-disable-next-line no-console
+				console.log(
+					`[diag] t=${Date.now() - t0}ms builds=${diag.builds} sprites=${diag.sprites} pixelDiff=${diff}`
+				);
+				return diff;
+			},
+			{ timeout: 25000, intervals: [500, 1000, 1000, 1000, 2000, 2000, 2000, 3000] }
+		)
+		.not.toBe(0);
+
 	const after = await canvas.screenshot({ path: '.gstack/qa-reports/screenshots/freeform-fill.png' });
 	expect(errors, errors.join('\n')).toEqual([]);
 	// The fill MUST change the canvas pixels — a blank fill (a texture-stroke

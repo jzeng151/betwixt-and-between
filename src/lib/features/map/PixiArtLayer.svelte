@@ -559,6 +559,18 @@
 			lastPlayheadT = atT;
 			lastStrokesRef = ss;
 
+			// Test diag (mirrors __artTransitionCount): a committed build means the
+			// fold ran, every needed texture resolved, and the RT sprites are on
+			// stage. E2E waits on this counter instead of pixel-polling a slow CI
+			// canvas — deterministic, and it disambiguates "render never happened"
+			// from "screenshot caught a transient frame". __artLastSprites is the
+			// displayed sprite count (0 = nothing painted / textures all skipped).
+			if (typeof window !== 'undefined') {
+				const w = window as unknown as { __artBuildCount?: number; __artLastSprites?: number };
+				w.__artBuildCount = (w.__artBuildCount ?? 0) + 1;
+				w.__artLastSprites = newBuild.sprites.length;
+			}
+
 			// Slice D2 — terrain-transition dissolve. Old build stays on stage
 			// (beneath the new sprites) and crossfades out while the new fades
 			// in, driven by the shared anim ticker. Reduced motion → jump-cut.
