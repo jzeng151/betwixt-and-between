@@ -14,8 +14,9 @@
  * a human judgment; this test guards the wiring + the no-throw contract.
  */
 
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page, type Locator } from '@playwright/test';
 import { E2E_USER_HEADERS } from './pglite-config.js';
+import { clearAll } from './helpers/db.js';
 import { STAMP_GROUP_KEYS } from '../../src/lib/features/map/terrain-keys.generated.js';
 
 test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
@@ -33,11 +34,24 @@ type MapEvent = {
 	};
 };
 
-async function clearAll(request: APIRequestContext) {
-	const ents: Array<{ id: string }> = await (await request.get('/api/entities')).json();
-	for (const e of ents) await request.delete(`/api/entities/${e.id}`);
-	const maps: Array<{ id: string }> = await (await request.get('/api/maps')).json();
-	for (const m of maps) await request.delete(`/api/maps/${m.id}`);
+// F38: poll until the canvas stops changing instead of a fixed sleep. The
+// dissolve FX + async Assets.load + RT rebuild settle at variable times, so a
+// fixed waitForTimeout is either flaky (too short) or needlessly slow. Returns
+// the last (stable) screenshot.
+async function waitForCanvasStable(
+	page: Page,
+	canvas: Locator,
+	{ interval = 120, timeout = 4000 }: { interval?: number; timeout?: number } = {}
+): Promise<Buffer> {
+	let prev = await canvas.screenshot();
+	const deadline = Date.now() + timeout;
+	while (Date.now() < deadline) {
+		await page.waitForTimeout(interval);
+		const next = await canvas.screenshot();
+		if (Buffer.compare(prev, next) === 0) return next;
+		prev = next;
+	}
+	return prev;
 }
 
 async function strokeEvents(request: APIRequestContext, mapId: string): Promise<MapEvent[]> {
@@ -125,8 +139,9 @@ test('fill stroke: drag commits a paint_stroke (mode=fill) and renders without e
 	expect(typeof p.brushSize).toBe('number');
 	expect(events[0].commandId).not.toBeNull(); // one undo group
 
-	// Let the projection fold + PixiArtLayer rasterize, then assert no render errors.
-	await page.waitForTimeout(500);
+	// Let the projection fold + PixiArtLayer rasterize (poll for stability), then
+	// assert no render errors.
+	await waitForCanvasStable(page, canvas);
 	const after = await canvas.screenshot({ path: '.gstack/qa-reports/screenshots/freeform-fill.png' });
 	expect(errors, errors.join('\n')).toEqual([]);
 	// The fill MUST change the canvas pixels — a blank fill (a texture-stroke
@@ -166,7 +181,7 @@ test('stamp stroke: switching to Stamp commits a paint_stroke (mode=stamp) and r
 	// Slice C: the palette arms a FAMILY key (varied scatter), not a member key.
 	expect(STAMP_GROUP_KEYS as readonly string[]).toContain(p.textureKey);
 
-	await page.waitForTimeout(500);
+	await waitForCanvasStable(page, canvas);
 	await canvas.screenshot({ path: '.gstack/qa-reports/screenshots/freeform-stamp.png' });
 	expect(errors, errors.join('\n')).toEqual([]);
 });
@@ -192,8 +207,7 @@ test('erase stroke: erasing across a fill removes art within the layer (Slice C 
 	await expect
 		.poll(async () => (await strokeEvents(request, map.id)).length, { timeout: 8000 })
 		.toBe(1);
-	await page.waitForTimeout(600);
-	const painted = await canvas.screenshot();
+	const painted = await waitForCanvasStable(page, canvas);
 
 	// Erase along the same path.
 	await win
@@ -212,7 +226,7 @@ test('erase stroke: erasing across a fill removes art within the layer (Slice C 
 	// The erase must actually remove painted pixels — the RenderTexture pass
 	// with 'erase' blend is the guard; a no-op erase (blend applied outside an
 	// isolated target) would leave painted === erased.
-	await page.waitForTimeout(600);
+	await waitForCanvasStable(page, canvas);
 	const erased = await canvas.screenshot({
 		path: '.gstack/qa-reports/screenshots/freeform-erase.png'
 	});

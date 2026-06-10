@@ -18,6 +18,7 @@
 	import { mapEventsStore } from './map-events-store.js';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
 	import { STROKE_MAX_POINTS, type StrokeMode, type StrokeStampParams } from './projection.js';
+	import { downsample } from './stroke-geometry.js';
 	import type { WorldMap } from './types.js';
 
 	type PixiModule = typeof import('pixi.js');
@@ -174,18 +175,6 @@
 				onError?.(err instanceof Error ? err.message : 'Stroke failed to save');
 			}
 		})();
-	}
-
-	// Even-stride downsample preserving first + last point.
-	function downsample(
-		pts: Array<{ x: number; y: number }>,
-		max: number
-	): Array<{ x: number; y: number }> {
-		if (pts.length <= max) return pts;
-		const out: Array<{ x: number; y: number }> = [];
-		const stride = (pts.length - 1) / (max - 1);
-		for (let i = 0; i < max; i++) out.push(pts[Math.round(i * stride)]);
-		return out;
 	}
 
 	$effect(() => {

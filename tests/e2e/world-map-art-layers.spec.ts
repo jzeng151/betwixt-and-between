@@ -10,17 +10,11 @@
 
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { E2E_USER_HEADERS } from './pglite-config.js';
+import { clearAll } from './helpers/db.js';
 
 test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
 
 type ArtLayer = { id: string; name: string; blendMode: string; opacity: number };
-
-async function clearAll(request: APIRequestContext) {
-	const ents: Array<{ id: string }> = await (await request.get('/api/entities')).json();
-	for (const e of ents) await request.delete(`/api/entities/${e.id}`);
-	const maps: Array<{ id: string }> = await (await request.get('/api/maps')).json();
-	for (const m of maps) await request.delete(`/api/maps/${m.id}`);
-}
 
 async function getArtLayers(request: APIRequestContext, mapId: string): Promise<ArtLayer[]> {
 	const map = (await (await request.get(`/api/maps/${mapId}`)).json()) as {
