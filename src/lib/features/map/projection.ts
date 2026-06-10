@@ -215,6 +215,12 @@ export const ART_BLEND_MODES = ['normal', 'multiply', 'screen', 'add'] as const;
 export type ArtBlendMode = (typeof ART_BLEND_MODES)[number];
 export const MAX_ART_LAYERS = 16;
 export const ART_LAYER_NAME_MAX = 64;
+// F21: the per-user visibility pref key is `art:${id}` (artLayerPrefKey), and the
+// pref-key column caps at 64 chars. An id of 61-64 chars therefore produces a
+// 65-68 char key that 400s on every visibility toggle. Cap the id at 60 so
+// `art:` + id always fits the 64-char pref-key budget. (F35: the bare 64 literal
+// lived in three places — this names it.)
+export const ART_LAYER_ID_MAX = 60;
 export type MapArtLayer = {
 	id: string; // uuid minted at create; paint_stroke.layerId references it
 	name: string;
@@ -234,8 +240,8 @@ export function artLayersValidationError(value: unknown): string | null {
 	for (const l of value) {
 		if (!l || typeof l !== 'object' || Array.isArray(l)) return 'art layer must be an object';
 		const { id, name, blendMode, opacity } = l as Partial<MapArtLayer>;
-		if (typeof id !== 'string' || id.length === 0 || id.length > 64)
-			return 'art layer id must be a non-empty string ≤ 64 chars';
+		if (typeof id !== 'string' || id.length === 0 || id.length > ART_LAYER_ID_MAX)
+			return `art layer id must be a non-empty string ≤ ${ART_LAYER_ID_MAX} chars`;
 		if (seen.has(id)) return 'art layer ids must be unique';
 		seen.add(id);
 		if (typeof name !== 'string' || name.length === 0 || name.length > ART_LAYER_NAME_MAX)
