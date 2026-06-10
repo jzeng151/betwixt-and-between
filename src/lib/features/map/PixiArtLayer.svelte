@@ -398,16 +398,19 @@
 					// GPU rebuild it gates.
 					const p0 = s.path[0];
 					const pN = s.path[s.path.length - 1];
-					// codex P2: a bare Σ(x+y) is permutation- AND mirror-blind — paths
-					// [(.2,.2),(.8,.8)] and [(.2,.8),(.8,.2)] digest identically, so
-					// scrubbing between anchors/beats whose strokes differ only by point
-					// order hits the !strokesChanged early-return and leaves stale art.
-					// Weight each point by its index and keep the axes distinct so order
-					// and mirroring both move the digest. (% 1e9 keeps it bounded.)
+					// codex P2: the rebuild cache key must change whenever the path
+					// changes. A linear reduction (Σ(x+y), or any weighted axis sum)
+					// collides — Σ(x+y) on [(.2,.2),(.8,.8)] vs [(.2,.8),(.8,.2)], and
+					// 2x+3y on [(.2,.2),(.8,.8)] vs [(.5,.5),(.6,.6)]. Use an order- and
+					// axis-sensitive polynomial rolling hash over every quantized
+					// coordinate (×4096 grid; multiplier 31, Math.imul 32-bit wrap)
+					// instead — distinct ordered paths digest distinctly, so scrubbing
+					// between stroke sets can't hit the early-return on stale art.
 					let digest = 0;
 					for (let pi = 0; pi < s.path.length; pi++) {
 						const pt = s.path[pi];
-						digest = (digest + (pt.x * 2 + pt.y * 3) * (pi + 1)) % 1e9;
+						digest = (Math.imul(digest, 31) + ((pt.x * 4096) | 0)) | 0;
+						digest = (Math.imul(digest, 31) + ((pt.y * 4096) | 0)) | 0;
 					}
 					return `${s.mode}:${s.textureKey ?? ''}:${s.layerId ?? ''}:${s.path.length}:${p0?.x},${p0?.y}:${pN?.x},${pN?.y}:${s.brushSize}:${s.softness}:${s.stamp?.spacing ?? ''}:${s.stamp?.jitter ?? ''}:${digest}`;
 				})
@@ -558,18 +561,6 @@
 			lastViewKey = viewKey;
 			lastPlayheadT = atT;
 			lastStrokesRef = ss;
-
-			// Test diag (mirrors __artTransitionCount): a committed build means the
-			// fold ran, every needed texture resolved, and the RT sprites are on
-			// stage. E2E waits on this counter instead of pixel-polling a slow CI
-			// canvas — deterministic, and it disambiguates "render never happened"
-			// from "screenshot caught a transient frame". __artLastSprites is the
-			// displayed sprite count (0 = nothing painted / textures all skipped).
-			if (typeof window !== 'undefined') {
-				const w = window as unknown as { __artBuildCount?: number; __artLastSprites?: number };
-				w.__artBuildCount = (w.__artBuildCount ?? 0) + 1;
-				w.__artLastSprites = newBuild.sprites.length;
-			}
 
 			// Slice D2 — terrain-transition dissolve. Old build stays on stage
 			// (beneath the new sprites) and crossfades out while the new fades

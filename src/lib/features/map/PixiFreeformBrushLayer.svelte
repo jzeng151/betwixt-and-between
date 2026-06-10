@@ -68,6 +68,11 @@
 	// pointer's coords to the first's path and commit the stroke prematurely when
 	// the second pointer lifts. null when idle.
 	let activePointerId: number | null = null;
+	// Map the gesture began on (codex P2). A map switch mid-drag (toolbar
+	// switcher, auto-cycle) changes the activeMap prop before the $effect cleanup
+	// commits the in-flight stroke; without this snapshot commitStroke would
+	// persist the old map's points onto the newly-active map. null when idle.
+	let gestureMapId: string | null = null;
 	// Recorded path in normalized [0,1] coords.
 	let points: Array<{ x: number; y: number }> = [];
 
@@ -95,6 +100,7 @@
 	let stagePointerDown: ((e: FederatedPointerEvent) => void) | null = null;
 	let stagePointerMove: ((e: FederatedPointerEvent) => void) | null = null;
 	let stagePointerUp: ((e: FederatedPointerEvent) => void) | null = null;
+	let stagePointerCancel: ((e: FederatedPointerEvent) => void) | null = null;
 
 	onMount(() => {
 		let cancelled = false;
@@ -120,6 +126,7 @@
 		painting = false;
 		strokeId = null;
 		activePointerId = null;
+		gestureMapId = null;
 		points = [];
 		cancelScheduledPreview();
 		if (previewGraphics) previewGraphics.clear();
@@ -144,6 +151,13 @@
 
 	function commitStroke(): void {
 		if (!activeMap || !strokeId || points.length === 0) {
+			resetGesture();
+			return;
+		}
+		// codex P2: if the active map changed since the gesture began (a switch
+		// mid-drag), discard rather than persist the old map's points onto the new
+		// map. A normal in-place drag has gestureMapId === activeMap.id.
+		if (gestureMapId !== null && gestureMapId !== activeMap.id) {
 			resetGesture();
 			return;
 		}
@@ -197,6 +211,7 @@
 			if (!n) return;
 			painting = true;
 			activePointerId = e.pointerId;
+			gestureMapId = activeMap?.id ?? null;
 			strokeId = crypto.randomUUID();
 			points = [n];
 			drawPreview();
@@ -222,6 +237,16 @@
 			if (e.pointerId !== activePointerId) return; // only the owning pointer commits
 			commitStroke();
 		};
+		stagePointerCancel = (e: FederatedPointerEvent) => {
+			// codex P2: touch/pen gestures can end with pointercancel (palm
+			// rejection, OS scroll takeover) instead of pointerup. Without this the
+			// gesture would stay `painting` forever — every later pointerdown
+			// ignored and pan-on-drag paused until the layer deactivates. Discard
+			// the owning pointer's aborted gesture (a cancel is not a commit).
+			if (!painting) return;
+			if (e.pointerId !== activePointerId) return;
+			resetGesture();
+		};
 
 		viewport.eventMode = 'static';
 		// Suspend pan-on-drag while painting (same reason as PixiBrushLayer).
@@ -244,6 +269,7 @@
 		viewport.on('pointermove', stagePointerMove);
 		viewport.on('pointerup', stagePointerUp);
 		viewport.on('pointerupoutside', stagePointerUp);
+		viewport.on('pointercancel', stagePointerCancel);
 
 		return () => {
 			dragPlugin.plugins?.resume('drag');
@@ -261,12 +287,14 @@
 					viewport.off('pointerup', stagePointerUp);
 					viewport.off('pointerupoutside', stagePointerUp);
 				}
+				if (stagePointerCancel) viewport.off('pointercancel', stagePointerCancel);
 			} catch (_) {
 				/* viewport torn down */
 			}
 			stagePointerDown = null;
 			stagePointerMove = null;
 			stagePointerUp = null;
+			stagePointerCancel = null;
 		};
 	});
 
@@ -280,6 +308,7 @@
 				viewport.off('pointerup', stagePointerUp);
 				viewport.off('pointerupoutside', stagePointerUp);
 			}
+			if (viewport && stagePointerCancel) viewport.off('pointercancel', stagePointerCancel);
 		} catch (_) {
 			/* viewport torn down */
 		}
