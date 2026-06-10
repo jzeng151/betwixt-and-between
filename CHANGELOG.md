@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.14.0] - 2026-06-10
+
+World Map v3 authoring fidelity: paint the map freehand, stack art on layers, scatter objects, and let terrain change as the story plays.
+
+### Added
+
+- **Freeform brush.** Paint terrain straight onto the map with a brush instead of filling grid cells one at a time — drag to lay down a continuous stroke, with adjustable brush size and edge softness.
+- **Stamp mode.** Scatter object sprites (trees, rocks, and the rest of the object set) along a stroke. Choosing a family scatters varied members with size and position jitter so a forest doesn't look cookie-cuttered; choosing a single object keeps a uniform look.
+- **Eraser.** Erase within an art layer without disturbing the art beneath it.
+- **Art layers.** Stack multiple ordered art layers, each with its own blend mode (normal / multiply / screen / add) and opacity, and toggle each layer's visibility. Add and delete layers from the sidebar; deleting a layer keeps its painted art — fill and stamp strokes fall back to the base layer rather than being destroyed.
+- **Paint at a moment in time.** Paint while the playhead sits at a later story-time and the map records a terrain "beat": the paint is absent before that moment and present after, so terrain can change as the story unfolds.
+- **Terrain-transition dissolve.** When terrain changes during playback, the old and new art crossfade instead of popping.
+
+### Fixed
+
+- **Painting at the exact moment of a saved snapshot no longer silently vanishes.** A brush stroke authored at the same story-time as an existing "Snapshot world state here" point used to be stored but never shown; it now returns a clear conflict so you can paint at a different moment or update the snapshot.
+- **"Snapshot world state here" works on maps with a deleted paint layer.** Snapshotting a map that still held strokes from a since-deleted layer used to fail outright; those strokes now fall back to the base layer (matching what the map already draws) instead of blocking the snapshot.
+- **Long soft-brush playback no longer leaks GPU memory.** Soft (feathered) strokes allocated a blur effect on every redraw that was never released, so scrubbing a soft-brush-heavy map across many terrain changes could climb toward a renderer crash; the effects are now freed each redraw.
+- **Delete-layer and delete-faction dialogs are keyboard-accessible.** Both confirmation dialogs can now be dismissed with Escape, take focus when they open, and announce their title to screen readers.
+
 ## [0.8.13.2] - 2026-06-08
 
 Test-infrastructure only; no user-facing changes. (Outcome of the World Map v3 harden-phase T1 dogfood: the one production fix it prompted — making causal ripples replay during auto-cycle — was reverted before merge because it re-introduced the PR #72/#505 "re-flash an already-active event on cycle" class; the correct fix is deferred to the re-derive session. See `docs/adr/0007`.)

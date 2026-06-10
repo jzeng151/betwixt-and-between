@@ -26,16 +26,28 @@ import {
 import { assertSourceEventIdIsEvent } from './intervals/polymorphic-fk.js';
 import type { Db } from './intervals.js';
 import {
+	ANCHOR_MAX_STROKES,
+	ANCHOR_MAX_TOTAL_POINTS,
+	ART_LAYER_ID_MAX,
 	BIOMES,
 	EVENT_KINDS,
 	PAINT_CELLS_MAX_PER_EVENT,
+	STROKE_MAX_POINTS,
+	applyPaintStroke,
+	foldEventsIntoState,
+	isKnownStampKey,
 	isKnownTerrainKey,
+	type AnchorCell,
+	type AnchorRegion,
 	type AnchorState,
 	type BiomeKind,
 	type EaseKind,
 	type EventKind,
 	type MoveEntityPayload,
 	type PaintCellsPayload,
+	type PaintStrokePayload,
+	type ProjectionEvent,
+	type StoredStroke,
 	type TransferRegionPayload
 } from '$lib/features/map/projection.js';
 
@@ -420,6 +432,30 @@ function validateAnchorStateShape(state: unknown): asserts state is AnchorState 
 	if ('cells' in s && s.cells !== undefined && !Array.isArray(s.cells)) {
 		error(400, 'state_jsonb.cells must be an array if present');
 	}
+	// WM3 Slice A — strokes must be an array if present. Per-stroke shape is
+	// sanitized through applyPaintStroke in the write paths (createMapAnchor /
+	// updateMapAnchor), the same lazy-GC gate the read path + auto-anchor use.
+	if ('strokes' in s && s.strokes !== undefined && !Array.isArray(s.strokes)) {
+		error(400, 'state_jsonb.strokes must be an array if present');
+	}
+	// Cap anchor stroke count — a direct anchor POST/PATCH is a client write
+	// boundary with no auto-anchor bake to bound it, and each stroke is up to
+	// STROKE_MAX_POINTS points, so an uncapped array is a fat-row/DoS vector.
+	if (Array.isArray(s.strokes) && s.strokes.length > ANCHOR_MAX_STROKES) {
+		error(400, `state_jsonb.strokes exceeds cap of ${ANCHOR_MAX_STROKES} strokes`);
+	}
+	// F14: per-dimension caps multiply to ~16M points; bound the AGGREGATE so one
+	// request can't persist hundreds of MB of jsonb regardless of distribution.
+	if (Array.isArray(s.strokes)) {
+		let totalPoints = 0;
+		for (const stroke of s.strokes) {
+			const path = (stroke as { path?: unknown })?.path;
+			if (Array.isArray(path)) totalPoints += path.length;
+		}
+		if (totalPoints > ANCHOR_MAX_TOTAL_POINTS) {
+			error(400, `state_jsonb.strokes exceeds cap of ${ANCHOR_MAX_TOTAL_POINTS} total points`);
+		}
+	}
 }
 
 async function validateAnchorStateOwnership(
@@ -540,10 +576,14 @@ export async function createMapAnchor(
 ): Promise<typeof mapAnchors.$inferSelect> {
 	await assertMapOwnership(db, userId, worldMapId);
 	assertObjectBody(input);
-	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition)) {
+	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition) || input.tPosition < 0) {
 		// Note: '-Infinity' sentinel is created by the 0012 backfill, not by
 		// authored writes. App code must never write Infinity/-Infinity here.
-		error(400, 'tPosition must be a finite number');
+		// t >= 0 is load-bearing: the act-reorder cascade parks anchors at
+		// ANCHOR_PARK_BASE - i (recompute.ts) on the assumption that no
+		// authored t_position is negative — an authored negative t could
+		// collide with a parked row and abort the whole cascade.
+		error(400, 'tPosition must be a finite number >= 0');
 	}
 	validateAnchorStateShape(input.stateJsonb);
 	await validateAnchorStateOwnership(db, userId, worldMapId, input.stateJsonb);
@@ -552,9 +592,18 @@ export async function createMapAnchor(
 	// Client-authored anchor snapshots (right-click "snapshot world state
 	// here") may omit cells — default to []. Keeps the PR A invariant test
 	// green for any authoring path.
+	// WM3 Slice A: sanitize client-authored strokes through the same gate the
+	// read path uses (drop malformed, default []), so a manual "snapshot world
+	// state here" persists clean strokes and the strokes key is always present.
+	const sanitizedStrokes: StoredStroke[] = [];
+	for (const stroke of input.stateJsonb.strokes ?? []) {
+		applyPaintStroke(sanitizedStrokes, stroke);
+	}
+	const normalizedStrokes = await normalizeStrokeLayerIds(db, userId, worldMapId, sanitizedStrokes);
 	const normalizedState: AnchorState = {
 		...input.stateJsonb,
-		cells: input.stateJsonb.cells ?? []
+		cells: input.stateJsonb.cells ?? [],
+		strokes: normalizedStrokes
 	};
 	// codex P2: anchor POST is a client-write boundary — validate cell
 	// shape/biome/bounds the same way paint_cells does, so a direct snapshot
@@ -651,8 +700,9 @@ export async function updateMapAnchor(
 
 	const updates: Record<string, unknown> = {};
 	if ('tPosition' in patch) {
-		if (typeof patch.tPosition !== 'number' || !isFinite(patch.tPosition)) {
-			error(400, 'tPosition must be a finite number');
+		// t >= 0: same parking-range invariant as createMapAnchor.
+		if (typeof patch.tPosition !== 'number' || !isFinite(patch.tPosition) || patch.tPosition < 0) {
+			error(400, 'tPosition must be a finite number >= 0');
 		}
 		updates.tPosition = patch.tPosition;
 	}
@@ -661,8 +711,15 @@ export async function updateMapAnchor(
 		await validateAnchorStateOwnership(db, userId, worldMapId, patch.stateJsonb as AnchorState);
 		// Slice 3 invariant: cells key must be present. PATCH callers can
 		// omit it; default to [] to match createMapAnchor's normalization.
+		// WM3 Slice A: strokes sanitized through applyPaintStroke (same gate as
+		// createMapAnchor / read path), defaulting to [].
 		const incoming = patch.stateJsonb as AnchorState;
-		updates.stateJsonb = { ...incoming, cells: incoming.cells ?? [] };
+		const sanitizedStrokes: StoredStroke[] = [];
+		for (const stroke of incoming.strokes ?? []) {
+			applyPaintStroke(sanitizedStrokes, stroke);
+		}
+		const patchedStrokes = await normalizeStrokeLayerIds(db, userId, worldMapId, sanitizedStrokes);
+		updates.stateJsonb = { ...incoming, cells: incoming.cells ?? [], strokes: patchedStrokes };
 		// codex P2: client-write boundary — validate cell shape/biome/bounds.
 		const grid = await loadGridDims(db, worldMapId);
 		assertCellsInBounds(
@@ -846,9 +903,189 @@ async function validateEventPayload(
 			error(400, 'paint_cells payload.command_complete must be a boolean if provided');
 		}
 	}
+	if (kind === 'paint_stroke') {
+		await validatePaintStrokePayload(db, userId, worldMapId, payload);
+	}
 	if (kind === 'move_entity') {
 		await validateMoveEntityPayload(db, userId, worldMapId, payload, tPosition);
 	}
+}
+
+// WM3 Slice A — paint_stroke payload validator. Parity with paint_cells'
+// bounds/shape guards: an unbounded freeform path[] is a storage/DoS vector
+// (eng-review test surface). textureKey is gated by mode against the GENERATED
+// key sets (eng-review §4 — no runtime manifest read on the Worker): fill keys
+// are terrain tiles, stamp keys are Objects/ sprites. No cross-user scoping on
+// the key — sprites are static app assets; the write site scopes through
+// world_maps.user_id like every map_events write (there is no per-stroke user
+// field to forge). Coords are normalized [0,1] (not grid cells), so the
+// grid-shrink bounds recheck that paint_cells does under-lock does not apply.
+// Slice B: optional layerId must reference an entry of THIS map's
+// art_layers_jsonb (the map is already ownership-checked upstream, so the
+// layer set is the caller's own — a foreign/unknown id is rejected at write,
+// same posture as transfer_region.region_id).
+async function validatePaintStrokePayload(
+	db: Db,
+	userId: string,
+	worldMapId: string,
+	payload: unknown
+): Promise<void> {
+	const p = payload as Partial<PaintStrokePayload>;
+	if (p.mode !== 'fill' && p.mode !== 'stamp' && p.mode !== 'erase') {
+		error(400, "paint_stroke payload.mode must be 'fill', 'stamp', or 'erase'");
+	}
+	if (p.mode === 'erase') {
+		// Slice C — an eraser has no material: textureKey/stamp params on an
+		// erase stroke mean a non-stock client; reject rather than store-and-strip.
+		if (p.textureKey !== undefined) {
+			error(400, 'paint_stroke erase strokes must not carry a textureKey');
+		}
+		if (p.stamp !== undefined) {
+			error(400, 'paint_stroke erase strokes must not carry stamp params');
+		}
+	} else {
+		if (typeof p.textureKey !== 'string') {
+			error(400, 'paint_stroke payload.textureKey must be a string');
+		}
+		// Stamp keys include family keys (STAMP_GROUP_KEYS — Slice C varied scatter).
+		const keyOk =
+			p.mode === 'stamp' ? isKnownStampKey(p.textureKey) : isKnownTerrainKey(p.textureKey);
+		if (!keyOk) {
+			error(400, `paint_stroke payload.textureKey is not a known ${p.mode} key`);
+		}
+	}
+	if (typeof p.brushSize !== 'number' || !Number.isFinite(p.brushSize) || p.brushSize <= 0 || p.brushSize > 1) {
+		error(400, 'paint_stroke payload.brushSize must be a finite number in (0, 1]');
+	}
+	if (typeof p.softness !== 'number' || !Number.isFinite(p.softness) || p.softness < 0 || p.softness > 1) {
+		error(400, 'paint_stroke payload.softness must be a finite number in [0, 1]');
+	}
+	if (!Array.isArray(p.path)) {
+		error(400, 'paint_stroke payload.path must be an array');
+	}
+	if (p.path.length === 0) {
+		error(400, 'paint_stroke payload.path must be non-empty');
+	}
+	if (p.path.length > STROKE_MAX_POINTS) {
+		error(400, `paint_stroke payload.path exceeds cap of ${STROKE_MAX_POINTS} points`);
+	}
+	for (const pt of p.path) {
+		if (
+			!pt ||
+			typeof pt !== 'object' ||
+			typeof (pt as { x?: unknown }).x !== 'number' ||
+			!Number.isFinite((pt as { x: number }).x) ||
+			typeof (pt as { y?: unknown }).y !== 'number' ||
+			!Number.isFinite((pt as { y: number }).y)
+		) {
+			error(400, 'paint_stroke payload.path points must be { x, y } finite numbers');
+		}
+		// Coords are normalized [0,1] of the map extent — same contract (and the
+		// same range) move_entity.position enforces against its xy_unit_range
+		// column CHECK. Strokes live in jsonb (no backing CHECK), so the validator
+		// is the only gate; reject out-of-range so a forged payload can't persist
+		// off-contract coords.
+		const px = (pt as { x: number }).x;
+		const py = (pt as { y: number }).y;
+		if (px < 0 || px > 1 || py < 0 || py > 1) {
+			error(400, 'paint_stroke payload.path points must be within [0, 1]');
+		}
+	}
+	// stamp params: only meaningful on stamp strokes. The fold
+	// (applyPaintStroke) only captures stamp when mode === 'stamp', so
+	// accepting them on fill would persist params the projected stroke
+	// silently drops — reject for validator/fold lockstep (erase already
+	// rejects above with its own message).
+	if (p.stamp !== undefined && p.mode !== 'stamp') {
+		error(400, "paint_stroke payload.stamp is only valid on mode 'stamp'");
+	}
+	if (p.stamp !== undefined) {
+		const s = p.stamp as { spacing?: unknown; jitter?: unknown } | null;
+		if (
+			!s ||
+			typeof s !== 'object' ||
+			typeof s.spacing !== 'number' ||
+			!Number.isFinite(s.spacing) ||
+			s.spacing <= 0 ||
+			typeof s.jitter !== 'number' ||
+			!Number.isFinite(s.jitter) ||
+			s.jitter < 0
+		) {
+			error(400, 'paint_stroke payload.stamp must be { spacing > 0, jitter >= 0 } finite numbers');
+		}
+	}
+	// Slice B: layerId optional; when present it must name an entry of this
+	// map's art_layers_jsonb. Absent = the implicit base art layer.
+	if (p.layerId !== undefined) {
+		// F21: cap matches ART_LAYER_ID_MAX so `art:${layerId}` fits the 64-char
+		// pref-key budget — an over-cap id could paint but never toggle visibility.
+		if (typeof p.layerId !== 'string' || p.layerId.length === 0 || p.layerId.length > ART_LAYER_ID_MAX) {
+			error(400, `paint_stroke payload.layerId must be a non-empty string ≤ ${ART_LAYER_ID_MAX} chars`);
+		}
+		const layerIds = await loadArtLayerIds(db, userId, worldMapId);
+		if (!layerIds.has(p.layerId)) {
+			error(400, 'paint_stroke payload.layerId not found on this map');
+		}
+	}
+}
+
+// F27: scope the read by userId, not id alone. assertMapOwnership upstream
+// already 404s a foreign map before we get here, so this is defense-in-
+// depth per the project's "a missing user_id scope is a cross-user leak"
+// invariant — the validator must not carry the ownership assumption in a
+// comment only. (F24: the !map branch is therefore upstream-shadowed today,
+// but kept as a real scope guard rather than a dead 404.)
+async function loadArtLayerIds(db: Db, userId: string, worldMapId: string): Promise<Set<string>> {
+	const [map] = await db
+		.select({ artLayersJsonb: worldMaps.artLayersJsonb })
+		.from(worldMaps)
+		.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.userId, userId)));
+	if (!map) error(404, 'world_map not found');
+	const layers = Array.isArray(map.artLayersJsonb)
+		? (map.artLayersJsonb as Array<{ id?: unknown }>)
+		: [];
+	const ids = new Set<string>();
+	for (const l of layers) {
+		if (l && typeof l === 'object' && typeof l.id === 'string') ids.add(l.id);
+	}
+	return ids;
+}
+
+// Anchor-write layerId normalization, in lockstep with the render-side F5
+// orphaned-layer policy (PixiArtLayer.renderBucket). A direct anchor POST/PATCH
+// (notably "Snapshot world state here", which captures exactly the RENDERED
+// strokes) can legitimately carry strokes whose art layer was deleted — the
+// render path deliberately KEEPS those: a fill/stamp stroke falls back to the
+// base layer, an erase stroke is dropped (re-homing it to base would erase base
+// art it never targeted). This previously REJECTED such strokes with a 400,
+// which broke snapshotting any map containing a since-deleted painted layer
+// (Codex review). Normalize instead: drop orphaned erase strokes, rebase
+// orphaned fill/stamp strokes, leave layered strokes untouched. Strokes with a
+// LIVE layerId keep it; cross-user/forged layer references can't occur because
+// loadArtLayerIds is scoped by world_maps.user_id (F27).
+async function normalizeStrokeLayerIds(
+	db: Db,
+	userId: string,
+	worldMapId: string,
+	strokes: StoredStroke[]
+): Promise<StoredStroke[]> {
+	const referenced = new Set<string>();
+	for (const s of strokes) {
+		if (s.layerId !== undefined) referenced.add(s.layerId);
+	}
+	if (referenced.size === 0) return strokes;
+	const layerIds = await loadArtLayerIds(db, userId, worldMapId);
+	const out: StoredStroke[] = [];
+	for (const s of strokes) {
+		if (s.layerId === undefined || layerIds.has(s.layerId)) {
+			out.push(s);
+			continue;
+		}
+		// Orphaned layerId — mirror the render-side base-fallback (F5).
+		if (s.mode === 'erase') continue; // drop: an eraser with no layer is a no-op
+		out.push({ ...s, layerId: undefined }); // rebase fill/stamp to the base layer
+	}
+	return out;
 }
 
 // Slice 4 PR-F (D5) — move_entity payload validator.
@@ -944,8 +1181,16 @@ export async function createMapEvent(
 ): Promise<typeof mapEvents.$inferSelect & { invalidatedAnchorIds: string[] }> {
 	await assertMapOwnership(db, userId, worldMapId);
 	assertObjectBody(input);
-	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition)) {
-		error(400, 'tPosition must be a finite number');
+	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition) || input.tPosition < 0) {
+		// t >= 0 parity with createMapAnchor's A1 guard (the A1 audit added the
+		// bound to anchor writes but missed events — Codex). Load-bearing: a
+		// paint event's t becomes a synthetic anchor's t_position via
+		// maybeWriteAutoAnchor, and the act-reorder cascade parks anchors at
+		// ANCHOR_PARK_BASE - i (= -1_000_000 - i, recompute.ts). A crafted
+		// negative event t like -1_000_000 would surface as a synthetic anchor
+		// that collides with a parked row on the (world_map_id, t_position)
+		// unique index and abort the whole reorder/delete transaction.
+		error(400, 'tPosition must be a finite number >= 0');
 	}
 	if (!EVENT_KINDS.includes(input.kind)) {
 		error(400, `Unknown event kind: ${input.kind}`);
@@ -1027,6 +1272,34 @@ export async function createMapEvent(
 			);
 		}
 
+		// #4 (Codex adversarial): a paint_stroke authored at EXACTLY an authored
+		// (non-synthetic) anchor's t_position is silently lost. projectState's
+		// same-T rule (CMT-5) excludes events at anchorT, and maybeWriteAutoAnchor
+		// won't overwrite an authored anchor, so the stroke row persists but never
+		// renders or bakes into any snapshot. Reject with a 409 so the user paints
+		// at a different position or updates the snapshot, instead of losing work.
+		// Scoped to paint_stroke (one event per stroke, no chunk amplification);
+		// synthetic anchors at this T are cache rows, invalidated just below.
+		if (input.kind === 'paint_stroke') {
+			const [authoredAtT] = await tx
+				.select({ id: mapAnchors.id })
+				.from(mapAnchors)
+				.where(
+					and(
+						eq(mapAnchors.worldMapId, worldMapId),
+						eq(mapAnchors.tPosition, input.tPosition),
+						eq(mapAnchors.isSynthetic, false)
+					)
+				)
+				.limit(1);
+			if (authoredAtT) {
+				error(
+					409,
+					'An authored snapshot exists at this story-time; paint at a different position or update the snapshot'
+				);
+			}
+		}
+
 		const [row] = await tx
 			.insert(mapEvents)
 			.values({
@@ -1062,7 +1335,10 @@ export async function createMapEvent(
 			input.tPosition
 		);
 
-		if (input.kind === 'paint_cells') {
+		// Auto-anchor on baked terrain writes. paint_stroke is counted too
+		// (eng-review §6): a strokes-only map would otherwise never anchor and
+		// replay the full stroke list every frame (OQ4 ceiling, unbounded).
+		if (input.kind === 'paint_cells' || input.kind === 'paint_stroke') {
 			await maybeWriteAutoAnchor(tx, worldMapId, input, commandId);
 		}
 
@@ -1099,9 +1375,15 @@ async function maybeWriteAutoAnchor(
 	input: EventInput,
 	commandId: string | null
 ): Promise<void> {
+	// A paint_stroke event is always one complete stroke (no chunking in Slice
+	// A), so it is always a stroke boundary. paint_cells chunks at 256 cells, so
+	// it fires only on the last chunk (commandId null = single-event stroke, or
+	// command_complete = true on the final chunk).
 	const payload = input.payloadJsonb as Partial<PaintCellsPayload> | null;
 	const strokeComplete =
-		commandId === null || (payload != null && payload.command_complete === true);
+		input.kind === 'paint_stroke' ||
+		commandId === null ||
+		(payload != null && payload.command_complete === true);
 	if (!strokeComplete) return;
 
 	// Find the latest existing anchor (user OR synthetic). Created_at is the
@@ -1125,12 +1407,14 @@ async function maybeWriteAutoAnchor(
 		? sql`(SELECT created_at FROM map_anchors WHERE id = ${latestAnchor.id})`
 		: sql`'-infinity'::timestamptz`;
 
-	// Count non-undone paint_cells events committed AFTER the cutoff.
+	// Count non-undone baked-terrain events (paint_cells + paint_stroke)
+	// committed AFTER the cutoff. Both kinds count toward the same K so total
+	// terrain churn — grid or freeform — triggers a bake (eng-review §6).
 	const countResult = await tx.execute(sql`
 		SELECT COUNT(*)::bigint AS cnt
 		FROM map_events
 		WHERE world_map_id = ${worldMapId}
-		  AND kind = 'paint_cells'
+		  AND kind IN ('paint_cells', 'paint_stroke')
 		  AND undone_at IS NULL
 		  AND created_at > ${cutoffSql}
 	`);
@@ -1225,83 +1509,59 @@ async function maybeWriteAutoAnchor(
 		.from(mapEvents)
 		.where(and(...foldConds));
 
-	// Fold ALL recent events into the snapshot (codex P1). Order by
-	// (tPosition, created_at, id) — same rule as projection.ts. Both
-	// paint_cells (cells map, last-write-wins) and transfer_region
-	// (region faction_id mutation) are applied; unknown future kinds
-	// pass through silently. Keeps the snapshot semantically equivalent
-	// to "projectState(maxT) with the events folded in" so the post-
-	// anchor projection lookups read the correct rolling state.
-	const sortedEvents = [...foldEvents].sort(
-		(
-			a: { tPosition: number; createdAt: Date | string; id: string },
-			b: typeof a
-		) => {
-			if (a.tPosition !== b.tPosition) return a.tPosition - b.tPosition;
-			const am = a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(String(a.createdAt));
-			const bm = b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(String(b.createdAt));
-			if (am !== bm) return am - bm;
-			return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-		}
-	);
-	const cells = new Map<string, { x: number; y: number; biome: string }>();
+	// Fold ALL recent events into the snapshot (codex P1) via the SHARED
+	// fold (foldEventsIntoState) — the same code path projectState uses on the
+	// read side. Order is (tPosition, created_at, id), last-write-wins; both
+	// paint_cells and transfer_region are applied and unknown future kinds pass
+	// through. Sharing the fold keeps the snapshot semantically equal to
+	// "projectState(maxT) with the events folded in" BY CONSTRUCTION, and means
+	// a new baked kind can never be folded on the read path but forgotten here.
+	const cells = new Map<string, AnchorCell>();
 	for (const cell of baseState.cells ?? []) {
 		cells.set(`${cell.x},${cell.y}`, cell);
 	}
 	// Region snapshot starts from baseAnchor and gets mutated by
 	// transfer_region events. Keep object identity per region_id so
 	// later folds find existing entries.
-	const regionsById = new Map<string, AnchorState['regions'] extends (infer R)[] | undefined ? R : never>();
+	const regionsById = new Map<string, AnchorRegion>();
 	for (const r of baseState.regions ?? []) {
 		regionsById.set(r.region_id, r);
 	}
-	for (const e of sortedEvents) {
-		const p = e.payloadJsonb as Record<string, unknown> | null;
-		if (!p || typeof p !== 'object') continue;
-		if (e.kind === 'paint_cells') {
-			const cs = (p as Partial<PaintCellsPayload>).cells;
-			if (!Array.isArray(cs)) continue;
-			for (const c of cs) {
-				if (
-					c &&
-					Number.isInteger(c.x) &&
-					Number.isInteger(c.y) &&
-					// Asset-backed terrain vocabulary (Slice 6 D15 + /review #3) —
-					// must match the paint_cells validator + projection fold, NOT the
-					// legacy enum, or the snapshot silently drops asset-vocab terrain.
-					isKnownTerrainKey(c.biome)
-				) {
-					cells.set(`${c.x},${c.y}`, c);
-				}
-			}
-		} else if (e.kind === 'transfer_region') {
-			const regionId = (p as { region_id?: unknown }).region_id;
-			const newFactionId = (p as { new_faction_id?: unknown }).new_faction_id;
-			if (typeof regionId !== 'string' || typeof newFactionId !== 'string') {
-				continue;
-			}
-			const existing = regionsById.get(regionId);
-			if (existing) {
-				regionsById.set(regionId, { ...existing, faction_id: newFactionId });
-			} else {
-				// Region not in baseAnchor (lazy GC at render still drops
-				// unresolvable refs, but the event ownership claim is
-				// recorded here so post-anchor projection sees it).
-				regionsById.set(regionId, {
-					region_id: regionId,
-					faction_id: newFactionId
-				});
-			}
-		}
-		// Unknown kinds (Slice 2+ move_entity, Slice 5 link_chain) pass
-		// through unchanged. When added, fold them here too.
+	// Seed baked strokes through applyPaintStroke (same gate the read path uses),
+	// then the shared fold appends post-cutoff stroke events in painter's order.
+	//
+	// TODO(F4 — deferred, product decision): this bake re-seeds the FULL
+	// accumulated stroke history and applies NO cap (ANCHOR_MAX_STROKES is
+	// enforced only on the client anchor POST/PATCH path, not here). Strokes are
+	// append-only — an erase ADDS a stroke; nothing prunes. Painting at the same
+	// playhead T keeps replacing one anchor (O(N)), but painting at M DISTINCT
+	// story-times (Slice D's terrain-beats workflow) accumulates one cumulative
+	// anchor per T → ~O(M²) stored, and the client downloads every anchor.
+	// Blast radius is self-inflicted (own map only, scoped by world_maps.user_id).
+	// NOTE: this is NOT parity with the pre-existing cells[] accumulation —
+	// cells[] is last-write-wins keyed on (x,y), so a synthetic anchor's cells[]
+	// is bounded by grid size (≤128×128 = 16384, enforced by gridCellsX/Y ∈
+	// [4,128]). strokes[] is append-only painter's-order with NO equivalent
+	// bound on this seed path, so the worst case is genuinely unbounded per
+	// anchor — strictly worse than cells[]. Still DEFERRED rather than fixed:
+	// every overflow policy is lossy or degrading (drop-oldest silently destroys
+	// the user's oldest art; refuse-bake forces a full-stroke replay every
+	// frame), and the retention semantic is a product call. A real fix should
+	// enforce a per-map stroke budget (ANCHOR_MAX_TOTAL_POINTS or similar) on
+	// THIS seed path too — not only the client anchor write boundary. See
+	// docs/findings/*review* (F4).
+	const strokes: StoredStroke[] = [];
+	for (const s of baseState.strokes ?? []) {
+		applyPaintStroke(strokes, s);
 	}
+	foldEventsIntoState(regionsById, cells, strokes, foldEvents as ProjectionEvent[]);
 
 	const snapshot: AnchorState = {
 		regions: Array.from(regionsById.values()),
 		artifacts: baseState.artifacts ?? [],
 		chains: baseState.chains ?? [],
-		cells: Array.from(cells.values())
+		cells: Array.from(cells.values()),
+		strokes
 	};
 
 	// Write the synthetic anchor. The unique constraint (world_map_id,

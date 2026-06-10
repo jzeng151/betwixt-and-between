@@ -35,10 +35,7 @@
 	import { layerVisibility } from './layer-prefs-store.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
 	import { pointInPolygon } from './point-in-polygon.js';
-	import type { MapRegion } from './types.js';
-	// Type-only import (declaration-only — erased at compile, no server-code leak;
-	// same pattern as RelationshipType from schema.ts). Slice 5 PR-E.
-	import type { ProvenanceResult } from '$lib/server/world-map-v3-provenance.js';
+	import type { MapRegion, ProvenanceResult } from './types.js';
 
 	// Slice 3 E4 — layer toggle.
 	const visible = layerVisibility('regions');
@@ -290,7 +287,13 @@
 				// (normalized server-side to []) would erase all terrain painted
 				// at/before this playhead from T forward. Capture the projected
 				// terrain as rendered right now.
-				cells: renderedState?.cells ?? []
+				cells: renderedState?.cells ?? [],
+				// WM3 Slice A: strokes obey the SAME shadowing rule as cells — an
+				// anchor at T excludes paint_stroke events with t_position <= T, so
+				// a snapshot that omits strokes (normalized server-side to []) would
+				// erase every freeform stroke painted at/before this playhead from T
+				// forward. Capture the projected strokes as rendered right now.
+				strokes: renderedState?.strokes ?? []
 			};
 			await mapAnchorsStore.create(mapId, { tPosition, stateJsonb });
 			// Snapshot doesn't visually change anything (it just records

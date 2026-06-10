@@ -161,7 +161,23 @@ export function diffPunctuation(
 	// ── Causal ripples (caused_by edge newly lit at T) ───────────────────────
 	const prevEdgeIds = new Set<string>();
 	for (const e of prev.causalEdges) prevEdgeIds.add(e.relationshipId);
+	const ripples = ripplesFrom(prevEdgeIds, cur, step);
 
+	return [...flips, ...marches, ...ripples];
+}
+
+/**
+ * Ripple beats for every cur.causalEdges edge whose id is NOT in prevEdgeIds —
+ * "newly lit" relative to that baseline. Factored out of diffPunctuation so the
+ * playback controller's map-switch ripple pass (ADR 0007 Fix B: baseline = the
+ * NEW map projected at the prior playhead) builds byte-identical beats from one
+ * place instead of re-deriving the ordering/stagger rules.
+ */
+export function ripplesFrom(
+	prevEdgeIds: ReadonlySet<string>,
+	cur: RenderedState,
+	step: number = DEFAULT_STAGGER_MS
+): CausalRipple[] {
 	const ripples: CausalRipple[] = [];
 	for (const e of cur.causalEdges) {
 		if (prevEdgeIds.has(e.relationshipId)) continue; // already lit → not a new beat
@@ -179,6 +195,5 @@ export function diffPunctuation(
 		a.relationshipId < b.relationshipId ? -1 : a.relationshipId > b.relationshipId ? 1 : 0
 	);
 	for (let i = 0; i < ripples.length; i++) ripples[i].staggerMs = i * step;
-
-	return [...flips, ...marches, ...ripples];
+	return ripples;
 }

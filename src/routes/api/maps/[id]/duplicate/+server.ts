@@ -9,11 +9,15 @@ import type { RequestHandler } from './$types';
  * Duplicate a world_map row + all its regions.
  *
  * Returns the new map (with its new id). The clone keeps name, baseImageUrl,
- * width, height, and copies the source's regions. Two fields are intentionally
+ * width, height, and copies the source's regions. These are intentionally
  * dropped:
  *
  *   - Variant bounds (start/end act+scene+position) — copying them as-is would
  *     guarantee an EXCLUDE-constraint conflict against the source variant.
+ *   - art_layers_jsonb (WM3 Slice B, F25) — the clone gets the column default
+ *     []. Consistent with terrain cells + paint_stroke events not being cloned:
+ *     copying layer DEFINITIONS without the strokes that reference them would
+ *     leave empty, orphaned layers. Each clone authors its own art.
  *   - locationId — copying it would either trip
  *     `world_maps_one_default_per_location` (if source is already that
  *     Location's default, which is the common case) or leave the clone as an
@@ -104,7 +108,10 @@ export const POST: RequestHandler = async (event) => {
 				// Slice 3: cells start empty on duplicate; the source map's
 				// cells are NOT cloned (each map authors its own terrain).
 				// Keeps the PR A cells-in-state_jsonb invariant green.
-				cells: []
+				cells: [],
+				// WM3 Slice A (F22): strokes start empty too — paint_stroke events
+				// aren't cloned, mirroring cells.
+				strokes: []
 			}
 		});
 

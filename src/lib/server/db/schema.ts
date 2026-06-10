@@ -439,6 +439,15 @@ export const worldMaps = pgTable('world_maps', {
 	gridScaleUnit: text('grid_scale_unit').notNull().default('m'),
 	gridScaleValue: doublePrecision('grid_scale_value').notNull().default(5.0),
 	gridVisible: boolean('grid_visible').notNull().default(true),
+	// WM3 Slice B — ordered freeform-art layer definitions
+	// (drizzle/0027_world_maps_art_layers.sql). Array of
+	// { id, name, blendMode, opacity }; array order is render order and the
+	// background bitmap is the implicit bottom layer. Shape validated by
+	// artLayersValidationError (projection.ts) at the PATCH gate — jsonb
+	// carries no CHECK. paint_stroke.layerId references entries by id;
+	// strokes referencing a deleted layer fall back to the base art layer
+	// at render (lazy GC, same posture as layer_key prefs).
+	artLayersJsonb: jsonb('art_layers_jsonb').notNull().default(sql`'[]'::jsonb`),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
@@ -623,12 +632,16 @@ export const mapEvents = pgTable('map_events', {
 		.on(table.worldMapId, table.commandId)
 		.where(sql`command_id IS NOT NULL`),
 	// Slice 3 /review perf — auto-anchor count hot path. Partial index
-	// for (kind='paint_cells' AND undone_at IS NULL); keys on
-	// (world_map_id, created_at) for the cutoff range. Declared here
-	// so npm run db:push picks it up alongside the migration.
+	// for (kind IN ('paint_cells','paint_stroke') AND undone_at IS NULL);
+	// keys on (world_map_id, created_at) for the cutoff range. Slice A
+	// widened the COUNT to both kinds, so this predicate MUST list both —
+	// an IN-list with paint_stroke does not imply kind='paint_cells', so a
+	// paint_cells-only index can't serve it (migration 0028). Keep in
+	// lockstep with maybeWriteAutoAnchor's COUNT. Declared here so
+	// npm run db:push picks it up alongside the migration.
 	index('map_events_auto_anchor_idx')
 		.on(table.worldMapId, table.createdAt)
-		.where(sql`kind = 'paint_cells' AND undone_at IS NULL`)
+		.where(sql`kind IN ('paint_cells', 'paint_stroke') AND undone_at IS NULL`)
 ]);
 
 export const factions = pgTable('factions', {

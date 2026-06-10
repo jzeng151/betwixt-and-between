@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { worldMaps, mapAnchors } from '$lib/server/db/schema.js';
 import { desc, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
 import {
 	assertLocationIdIsLocation,
 	assertWorldMapVariantBounds,
@@ -23,7 +24,8 @@ export const GET: RequestHandler = async (event) => {
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	const body = await event.request.json();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const body = (await readJson(event)) as any;
 	const {
 		name,
 		locationId,
@@ -111,7 +113,10 @@ export const POST: RequestHandler = async (event) => {
 				// every map_anchors.state_jsonb must include the cells key. Pre-
 				// Slice-3 anchors were backfilled by drizzle/0022; new writers
 				// must keep the contract green or the invariant scan fails.
-				stateJsonb: { regions: [], artifacts: [], chains: [], cells: [] }
+				// WM3 Slice A (F22): include strokes:[] too for shape consistency —
+				// the read path defaults a missing strokes key to [] anyway, but a
+				// fresh map has no strokes and the baseline should say so explicitly.
+				stateJsonb: { regions: [], artifacts: [], chains: [], cells: [], strokes: [] }
 			});
 			return row;
 		});

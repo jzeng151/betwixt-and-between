@@ -15,15 +15,29 @@
 	import { factions as factionsStore, type Faction } from './factions-store.js';
 	import { MAP_PALETTE, DEFAULT_FACTION_COLOR } from './color-palette.js';
 	import { layerPrefs } from './layer-prefs-store.js';
-	import { LAYER_KEYS, LAYER_LABELS, type LayerKey } from './layers.js';
+	import { LAYER_KEYS, LAYER_LABELS, artLayerPrefKey, type LayerKey } from './layers.js';
+	import { worldMapStore } from './store.js';
+	import {
+		ART_BLEND_MODES,
+		MAX_ART_LAYERS,
+		type ArtBlendMode,
+		type MapArtLayer
+	} from './projection.js';
+	import type { WorldMap } from './types.js';
 
 	// Slice 3 E3 — Layers pane. Per-user-per-map visibility toggles for
 	// the WM3 layer stack (background/grid/terrain/regions/placements).
 	// Mounts above the factions section; the active map id flows in as
 	// a prop so toggling can PATCH the correct row.
-	let { activeMapId = null }: { activeMapId?: string | null } = $props();
+	// WM3 Slice B: the full active map row flows in too — the art-layer
+	// defs (artLayersJsonb) live on it and edits PATCH through
+	// worldMapStore.updateMap.
+	let {
+		activeMapId = null,
+		activeMap = null
+	}: { activeMapId?: string | null; activeMap?: WorldMap | null } = $props();
 
-	function isVisible(key: LayerKey): boolean {
+	function isVisible(key: LayerKey | string): boolean {
 		const v = $layerPrefs.prefs.get(key);
 		return v === undefined ? true : v;
 	}
@@ -31,7 +45,7 @@
 	let layersBusy = $state<Set<string>>(new Set());
 	let layersError = $state('');
 
-	async function toggleLayer(key: LayerKey): Promise<void> {
+	async function toggleLayer(key: LayerKey | string): Promise<void> {
 		if (!activeMapId) return;
 		if (layersBusy.has(key)) return;
 		// codex P2: ignore toggles while prefs are 'loading' OR 'error'. In both
@@ -52,6 +66,110 @@
 			next.delete(key);
 			layersBusy = next;
 		}
+	}
+
+	// ── WM3 Slice B — art layer defs (ordered; index 0 = bottom) ────────────
+	let artLayers = $derived<MapArtLayer[]>(activeMap?.artLayersJsonb ?? []);
+	let artBusy = $state(false);
+	let artError = $state('');
+
+	// Edits arriving while a PATCH is in flight are queued (latest wins) and
+	// flushed when it settles, instead of being silently dropped. Callers pass
+	// a thunk, not an array: updateMap writes the PATCH response back into the
+	// store, so a queued thunk re-evaluates against the refreshed artLayers and
+	// stacks on top of the edit that just landed rather than clobbering it.
+	let artPending: (() => MapArtLayer[]) | null = null;
+
+	async function patchArtLayers(make: () => MapArtLayer[]): Promise<void> {
+		if (!activeMapId) return;
+		if (artBusy) {
+			artPending = make;
+			return;
+		}
+		// codex P2: pin the target map for the whole flush. activeMapId can change
+		// (map switch) while a PATCH is in flight; without this the queued edit —
+		// and even the in-flight loop's later iterations — would be sent to the
+		// newly-active map, e.g. adding the previous map's queued layer to it.
+		const mapId = activeMapId;
+		artBusy = true;
+		artError = '';
+		try {
+			await worldMapStore.updateMap(mapId, { artLayersJsonb: make() });
+			while (artPending) {
+				if (activeMapId !== mapId) {
+					// Switched maps mid-flight — drop edits queued for the old map.
+					artPending = null;
+					break;
+				}
+				const queued = artPending;
+				artPending = null;
+				await worldMapStore.updateMap(mapId, { artLayersJsonb: queued() });
+			}
+		} catch (err) {
+			artPending = null;
+			artError = err instanceof Error ? err.message : String(err);
+		} finally {
+			artBusy = false;
+		}
+	}
+
+	function addArtLayer(): void {
+		if (artLayers.length >= MAX_ART_LAYERS) {
+			artError = `At most ${MAX_ART_LAYERS} layers`;
+			return;
+		}
+		void patchArtLayers(() => [
+			...artLayers,
+			{ id: crypto.randomUUID(), name: `Layer ${artLayers.length + 1}`, blendMode: 'normal', opacity: 1 }
+		]);
+	}
+
+	function updateArtLayer(id: string, patch: Partial<MapArtLayer>): void {
+		void patchArtLayers(() => artLayers.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+	}
+
+	// F15 — confirm art-layer delete (mirrors the faction delete modal). The
+	// layer's identity (name/blend/opacity) is unrecoverable, and per F5 not all
+	// strokes survive the delete, so don't fire on a single ✕ click.
+	let artDeleteTarget = $state<MapArtLayer | null>(null);
+
+	function removeArtLayer(id: string): void {
+		const layer = artLayers.find((l) => l.id === id);
+		if (layer) artDeleteTarget = layer;
+	}
+
+	function confirmRemoveArtLayer(): void {
+		if (!artDeleteTarget) return;
+		const id = artDeleteTarget.id;
+		artDeleteTarget = null;
+		// F5/F37: fill/stamp strokes on the removed layer fall back to the base art
+		// layer at render (lazy GC); ERASE strokes are dropped (an eraser with no
+		// surviving layer to mask would otherwise eat base art). NOT "nothing is
+		// lost" — the old comment here was wrong for erase strokes.
+		// F29: the layer's `art:<id>` visibility prefs in world_map_layer_prefs are
+		// NOT deleted here, but the prefs reader lazy-GCs unknown keys, so a deleted
+		// layer's pref is inert. Re-add mints a fresh UUID, so a stale pref can't be
+		// resurrected by the UI (only an API client reusing the exact id could).
+		void patchArtLayers(() => artLayers.filter((l) => l.id !== id));
+	}
+
+	function moveArtLayer(id: string, dir: -1 | 1): void {
+		if (!canMoveArtLayer(id, dir)) return;
+		void patchArtLayers(() => {
+			// Re-check at flush time — a queued move may target indices that the
+			// just-landed edit changed; degrade to a no-op write rather than throw.
+			if (!canMoveArtLayer(id, dir)) return artLayers;
+			const i = artLayers.findIndex((l) => l.id === id);
+			const next = [...artLayers];
+			[next[i], next[i + dir]] = [next[i + dir], next[i]];
+			return next;
+		});
+	}
+
+	function canMoveArtLayer(id: string, dir: -1 | 1): boolean {
+		const i = artLayers.findIndex((l) => l.id === id);
+		const j = i + dir;
+		return i >= 0 && j >= 0 && j < artLayers.length;
 	}
 
 	let factionList = $state<Faction[]>([]);
@@ -137,6 +255,26 @@
 		}
 	}
 
+	// A11y: confirm dialogs are dismissible with Escape (DESIGN.md "Escape —
+	// Dismiss any open inline form or modal"). The faction-delete modal stays
+	// open while a delete is in flight so Escape can't strand a half-done op.
+	function onModalKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		if (artDeleteTarget) {
+			e.stopPropagation();
+			artDeleteTarget = null;
+		} else if (deleteTarget && !deleteBusy) {
+			e.stopPropagation();
+			cancelDelete();
+		}
+	}
+
+	// Move focus into a dialog when it opens (the dialog node is tabindex=-1) so
+	// keyboard + screen-reader users land inside the modal, not behind it.
+	function focusOnOpen(node: HTMLElement) {
+		node.focus();
+	}
+
 	// Faction rename + recolor. The ✎ button next to delete (or the name)
 	// opens an inline edit form: a name field + the color swatches (always
 	// visible) + Save/Cancel. Swatches just SELECT a color (preview); Save
@@ -212,6 +350,112 @@
 				{/each}
 			</ul>
 			{#if layersError}<p class="error-msg">{layersError}</p>{/if}
+
+			<!-- WM3 Slice B — art layers (ordered; listed top-most first, the way
+			     paint programs do; the array stores bottom-first). -->
+			<header class="sidebar-header art-layers-header">
+				<h4>Art layers</h4>
+				<button
+					class="btn-icon"
+					type="button"
+					aria-label="Add art layer"
+					disabled={artBusy || artLayers.length >= MAX_ART_LAYERS}
+					onclick={addArtLayer}>+</button
+				>
+			</header>
+			{#if artLayers.length > 0}
+				<ul class="layer-list art-layer-list" role="list">
+					{#each [...artLayers].reverse() as l (l.id)}
+						<li class="layer-row art-layer-row" data-testid="art-layer-row">
+							<div class="art-layer-main">
+								<input
+									type="checkbox"
+									aria-label="Show {l.name}"
+									checked={isVisible(artLayerPrefKey(l.id))}
+									disabled={layersBusy.has(artLayerPrefKey(l.id)) ||
+										$layerPrefs.status === 'loading' ||
+										$layerPrefs.status === 'error'}
+									onchange={() => void toggleLayer(artLayerPrefKey(l.id))}
+								/>
+								<input
+									class="art-layer-name"
+									type="text"
+									aria-label="Layer name"
+									value={l.name}
+									disabled={artBusy}
+									onchange={(e) => {
+										const input = e.currentTarget as HTMLInputElement;
+										const name = input.value.trim();
+										// F39: a blank rename used to no-op and leave the stale
+										// (empty) text in the field. Reset to the current name so
+										// the input always reflects the persisted value.
+										if (name) updateArtLayer(l.id, { name });
+										else input.value = l.name;
+									}}
+								/>
+								<button
+									class="btn-icon"
+									type="button"
+									aria-label="Move {l.name} up"
+									disabled={artBusy}
+									onclick={() => moveArtLayer(l.id, 1)}>↑</button
+								>
+								<button
+									class="btn-icon"
+									type="button"
+									aria-label="Move {l.name} down"
+									disabled={artBusy}
+									onclick={() => moveArtLayer(l.id, -1)}>↓</button
+								>
+								<button
+									class="btn-icon"
+									type="button"
+									aria-label="Delete {l.name}"
+									disabled={artBusy}
+									onclick={() => removeArtLayer(l.id)}>×</button
+								>
+							</div>
+							<div class="art-layer-controls">
+								<select
+									aria-label="Blend mode for {l.name}"
+									value={l.blendMode}
+									disabled={artBusy}
+									onchange={(e) =>
+										updateArtLayer(l.id, {
+											blendMode: (e.currentTarget as HTMLSelectElement).value as ArtBlendMode
+										})}
+								>
+									{#each ART_BLEND_MODES as bm (bm)}
+										<option value={bm}>{bm}</option>
+									{/each}
+								</select>
+								<input
+									type="range"
+									aria-label="Opacity for {l.name}"
+									aria-valuetext="{Math.round(l.opacity * 100)}%"
+									min="0"
+									max="1"
+									step="0.05"
+									value={l.opacity}
+									disabled={artBusy}
+									onchange={(e) =>
+										updateArtLayer(l.id, {
+											opacity: parseFloat((e.currentTarget as HTMLInputElement).value)
+										})}
+								/>
+								<!-- F39: visible numeric readout so the slider value is legible
+								     (not just an opaque track) for sighted + AT users. -->
+								<span class="art-layer-opacity-readout" aria-hidden="true"
+									>{Math.round(l.opacity * 100)}%</span
+								>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				<p class="art-layers-empty">Strokes paint to the base layer. Add a layer to blend.</p>
+			{/if}
+			{#if artError}<p class="error-msg">{artError}</p>{/if}
 		</section>
 	{/if}
 
@@ -358,11 +602,20 @@
 	</ul>
 </aside>
 
+<svelte:window onkeydown={onModalKeydown} />
+
 {#if deleteTarget}
 	{@const dc = deleteTarget}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
+	<div
+		class="modal-overlay"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="faction-del-title"
+		tabindex="-1"
+		use:focusOnOpen
+	>
 		<div class="modal-content">
-			<h3>Delete faction "{dc.faction.name}"?</h3>
+			<h3 id="faction-del-title">Delete faction "{dc.faction.name}"?</h3>
 			{#if dc.dependentCount > 0}
 				<p class="warn-text">
 					This faction is referenced by <strong>{dc.dependentCount}</strong>
@@ -384,6 +637,35 @@
 				</button>
 				<button type="button" class="btn-danger-solid" disabled={deleteBusy} onclick={confirmDelete}>
 					{deleteBusy ? 'Deleting…' : 'Delete'}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if artDeleteTarget}
+	{@const al = artDeleteTarget}
+	<div
+		class="modal-overlay"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="art-del-title"
+		tabindex="-1"
+		use:focusOnOpen
+	>
+		<div class="modal-content">
+			<h3 id="art-del-title">Delete layer "{al.name}"?</h3>
+			<p class="warn-text">
+				Fill and stamp strokes on this layer move to the base art layer; erase
+				strokes on it are removed. The layer's blend mode and opacity can't be
+				recovered.
+			</p>
+			<div class="modal-actions">
+				<button type="button" class="btn-secondary" onclick={() => (artDeleteTarget = null)}>
+					Cancel
+				</button>
+				<button type="button" class="btn-danger-solid" onclick={confirmRemoveArtLayer}>
+					Delete
 				</button>
 			</div>
 		</div>
@@ -421,6 +703,82 @@
 	}
 	.layer-row .layer-name {
 		font-size: 11px;
+	}
+
+	/* WM3 Slice B — art layers sub-pane. */
+	.art-layers-header {
+		margin-top: 4px;
+	}
+	.art-layers-header h4 {
+		margin: 0;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--color-text-muted, #aaa);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+	.art-layer-row {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 3px 0;
+		border-bottom: 1px dashed color-mix(in srgb, var(--color-border) 50%, transparent);
+	}
+	.art-layer-main {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.art-layer-name {
+		flex: 1;
+		min-width: 0;
+		background: transparent;
+		color: var(--color-text);
+		border: 1px solid transparent;
+		border-radius: 4px;
+		font-size: 11px;
+		padding: 1px 3px;
+	}
+	.art-layer-name:focus {
+		border-color: var(--color-border);
+		background: var(--color-bg, #1a1a1a);
+	}
+	/* F16: DESIGN.md forbids `outline: none` without a visible replacement. Keep a
+	   real focus ring for keyboard users (the border alone is ~1.3:1 — too faint). */
+	.art-layer-name:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 1px;
+	}
+	.art-layer-controls {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding-left: 20px;
+	}
+	.art-layer-controls select {
+		background: var(--color-bg, #1a1a1a);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		font-size: 11px;
+		padding: 1px 2px;
+	}
+	.art-layer-controls input[type='range'] {
+		flex: 1;
+		min-width: 0;
+	}
+	.art-layer-opacity-readout {
+		font-size: 11px;
+		color: var(--color-text-muted, #888);
+		min-width: 32px;
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+	}
+	.art-layers-empty {
+		margin: 0;
+		font-size: 11px;
+		font-style: italic;
+		color: var(--color-text-muted, #888);
 	}
 
 	.map-sidebar {

@@ -18,6 +18,7 @@ function state(regions: Array<Partial<RenderedRegion> & { regionId: string }>): 
 		})),
 		artifacts: [],
 		cells: [],
+		strokes: [],
 		artifactOverrides: new Map(),
 		causalEdges: []
 	};

@@ -24,34 +24,12 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { error } from '@sveltejs/kit';
 import { entities, mapEvents, relationships, worldMaps } from './db/schema.js';
 import type { Db } from './intervals.js';
+// CauseStep / ProvenanceResult live in the declaration-only map types module
+// so client components can type-import them without referencing this runtime
+// server module. Re-exported here for server-side callers.
+import type { CauseStep, ProvenanceResult } from '$lib/features/map/types.js';
 
-// One node in the traced lineage. `viaRelationshipId` / `startPosition` describe
-// the caused_by edge that led INTO this node from its child in the chain; both
-// are null for the source node (the change's recorded cause — nothing led to it
-// within the chain).
-export type CauseStep = {
-	eventId: string;
-	name: string;
-	viaRelationshipId: string | null;
-	startPosition: number | null;
-};
-
-export type ProvenanceResult =
-	// No transfer_region change for this region at/before T — nothing to trace.
-	| { status: 'no-change' }
-	// The change exists but carries no recorded cause (source_event_id null, or
-	// its Event was deleted — the FK is ON DELETE SET NULL).
-	| { status: 'no-cause' }
-	// A recorded cause was found. `chain` is ordered source → … → earliest;
-	// `earliest` is the root of the causal lineage; `jumpPosition` is the
-	// startPosition of the caused_by edge entering the earliest cause (null when
-	// the source itself is the root, or that edge is timeless — a no-op jump, D5).
-	| {
-			status: 'found';
-			chain: CauseStep[];
-			earliest: CauseStep;
-			jumpPosition: number | null;
-	  };
+export type { CauseStep, ProvenanceResult };
 
 type AncestryHop = {
 	fromId: string; // the child (effect) we came from

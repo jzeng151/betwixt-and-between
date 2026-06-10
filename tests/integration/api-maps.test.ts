@@ -1412,7 +1412,9 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 			chains: [],
 			// Slice 3 invariant: baseline anchors include cells: [] so
 			// projection.ts can read state_jsonb.cells unconditionally.
-			cells: []
+			cells: [],
+			// WM3 Slice A (F22): baseline anchors include strokes: [] too.
+			strokes: []
 		});
 	});
 
@@ -1541,7 +1543,9 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 			artifacts: [],
 			chains: [],
 			// Slice 3 invariant: duplicate writers include cells: [].
-			cells: []
+			cells: [],
+			// WM3 Slice A (F22): duplicate writers include strokes: [] too.
+			strokes: []
 		});
 	});
 

@@ -56,9 +56,41 @@ export const GET: RequestHandler = async (event) => {
 			}
 		});
 	} catch {
+		// E2E (BETWIXT_E2E_PGLITE=1): the licensed tile pack is gitignored, so it
+		// is absent from CI's checkout AND the preview build has no populated R2
+		// bucket — every /api/sprites/* image would 404, so the canvas render
+		// tests (which assert a fill/stamp paints visible pixels) could never pass
+		// in CI. Serve a generated solid-color placeholder so the render path is
+		// still exercised end-to-end with a stand-in texture; a genuinely broken
+		// render (no sprite, wrong blend) still produces no pixels and fails.
+		// The `__E2E_BYPASS__` define is build-time false outside test builds, so
+		// Rollup strips this block from the prod worker (parity with the auth
+		// bypass) — and the runtime process.env guard is defense-in-depth.
+		if (
+			__E2E_BYPASS__ &&
+			typeof process !== 'undefined' &&
+			process.env.BETWIXT_E2E_PGLITE === '1' &&
+			/\.(png|jpe?g|webp)$/i.test(path)
+		) {
+			return new Response(e2ePlaceholderPng(), {
+				headers: { 'content-type': 'image/png', 'cache-control': 'no-store' }
+			});
+		}
 		error(404, 'Not found');
 	}
 };
+
+// 8×8 opaque PNG (solid swatch) — see the E2E fallback above. Not licensed art:
+// a generated stand-in so CI can verify the texture→render wiring without the
+// pack. Decoded via atob (isomorphic: node preview + worker both have it).
+const E2E_PLACEHOLDER_B64 =
+	'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGOwmuv1Hx9mGBkKAOWTiAG5jDeMAAAAAElFTkSuQmCC';
+function e2ePlaceholderPng() {
+	const bin = atob(E2E_PLACEHOLDER_B64);
+	const bytes = new Uint8Array(new ArrayBuffer(bin.length));
+	for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+	return bytes;
+}
 
 function contentTypeFor(name: string): string {
 	const ext = name.split('.').pop()?.toLowerCase();

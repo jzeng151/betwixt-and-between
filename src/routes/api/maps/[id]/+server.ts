@@ -2,12 +2,14 @@ import { json, error } from '@sveltejs/kit';
 import { worldMaps } from '$lib/server/db/schema.js';
 import { and, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
 import {
 	assertLocationIdIsLocation,
 	assertWorldMapVariantBounds,
 	resolveWorldMapVariantBounds
 } from '$lib/server/world-maps.js';
 import { readBaselineRegions } from '$lib/server/world-map-v3.js';
+import { artLayersValidationError, normalizeArtLayers } from '$lib/features/map/projection.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -32,7 +34,8 @@ export const GET: RequestHandler = async (event) => {
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	const body = await event.request.json();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const body = (await readJson(event)) as any;
 
 	const [existing] = await db
 		.select()
@@ -87,6 +90,19 @@ export const PATCH: RequestHandler = async (event) => {
 			error(400, 'gridVisible must be a boolean');
 		}
 		updates.gridVisible = body.gridVisible;
+	}
+
+	// WM3 Slice B — art layer definitions (whole-array replace; single-user
+	// tool, last-write-wins is acceptable). Shape gate is the shared
+	// artLayersValidationError — jsonb has no CHECK constraint backing it.
+	if ('artLayersJsonb' in body) {
+		const layersError = artLayersValidationError(body.artLayersJsonb);
+		if (layersError) error(400, layersError);
+		// F10: persist ONLY the four known fields. The validator tolerates extra
+		// keys (forward-compat), but storing body.artLayersJsonb verbatim would
+		// let a scripted client persist arbitrary junk per layer, served back on
+		// every map GET. normalizeArtLayers strips to {id,name,blendMode,opacity}.
+		updates.artLayersJsonb = normalizeArtLayers(body.artLayersJsonb);
 	}
 
 	// locationId: explicit presence (including null) is meaningful — null means unlink.

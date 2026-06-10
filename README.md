@@ -13,7 +13,7 @@ Click a character in the Story Graph and their wiki page opens. Click a location
 | **Story Graph** | Visual relationship map — characters, locations, events as nodes with typed edges (`allied_with`, `rivals`, `appears_in`, `caused_by`, etc.). |
 | **Wiki** | Markdown notes for any entity. Full preview, inline search, linked entity chips. |
 | **Timeline** | Acts, scenes, and events on a scrollable timeline. Expand rows to see nested detail. |
-| **World Map** | Location cards with linked character and event chips. |
+| **World Map** | Paint terrain freehand, stack art on layers (blend mode + opacity), scatter object stamps, and let terrain change as the story plays. Polygon regions and placed characters/events sit on a zoomable canvas. |
 | **Window manager** | Every entity opens in its own floating window. Multiple windows of the same type stay open simultaneously. Taskbar groups them. |
 
 ## Running locally

@@ -26,10 +26,24 @@ export type WaterColor = {
 	url: string;
 };
 
+/** A placeable stamp sprite (static/Sprites/Objects/), scattered by stamp mode. */
+export type ObjectStamp = {
+	/** Stamp key stored in paint_stroke.textureKey, e.g. "tree_object_01". */
+	key: string;
+	/** Family group for the palette, e.g. "tree_object". */
+	group: string;
+	/** Human label, e.g. "Tree". */
+	label: string;
+	/** Sprite URL (through the /api/sprites route). */
+	url: string;
+};
+
 export type TerrainManifest = {
 	tileSize: number;
 	categories: Record<string, TerrainCategory>;
 	water?: { colors: WaterColor[] };
+	/** WM3 Slice A — stamp sprites for the freeform brush's stamp mode. */
+	objects?: ObjectStamp[];
 };
 
 /** Is a cell key a water type? (legacy 'water' or an asset water color.) */
@@ -230,4 +244,38 @@ export function pickBaseTile(
 	const cat = manifest?.categories?.[category];
 	if (!cat || cat.base.length === 0) return null;
 	return cat.base[hash2(x, y) % cat.base.length];
+}
+
+// -- WM3 Slice A: stamp sprites (freeform brush stamp mode) -------------------
+
+/** All stamp sprites (empty if the manifest has none). */
+export function objectStamps(manifest: TerrainManifest | null): ObjectStamp[] {
+	return manifest?.objects ?? [];
+}
+
+/** Stamp sprites grouped by family ("tree_object" → [...]), for the palette. */
+export function objectStampGroups(
+	manifest: TerrainManifest | null
+): Array<{ group: string; label: string; stamps: ObjectStamp[] }> {
+	const byGroup = new Map<string, { label: string; stamps: ObjectStamp[] }>();
+	for (const s of objectStamps(manifest)) {
+		const g = byGroup.get(s.group) ?? { label: s.label, stamps: [] };
+		g.stamps.push(s);
+		byGroup.set(s.group, g);
+	}
+	return [...byGroup.entries()].map(([group, v]) => ({ group, label: v.label, stamps: v.stamps }));
+}
+
+/**
+ * WM3 Slice C — varied scatter. Resolve a stamp-mode textureKey to its
+ * member sprites: a FAMILY key ("tree_object") yields every member (the
+ * renderer picks one deterministically per placement); an individual key
+ * yields just that sprite. Empty when unknown (lazy GC).
+ */
+export function stampsForKey(manifest: TerrainManifest | null, key: string): ObjectStamp[] {
+	const all = objectStamps(manifest);
+	const members = all.filter((s) => s.group === key);
+	if (members.length > 0) return members;
+	const exact = all.find((s) => s.key === key);
+	return exact ? [exact] : [];
 }

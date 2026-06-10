@@ -34,6 +34,8 @@
 	import PixiGridLayer from '$lib/features/map/PixiGridLayer.svelte';
 	import PixiTerrainLayer from '$lib/features/map/PixiTerrainLayer.svelte';
 	import PixiTerrainTileLayer from '$lib/features/map/PixiTerrainTileLayer.svelte';
+	import PixiArtLayer from '$lib/features/map/PixiArtLayer.svelte';
+	import PixiFreeformBrushLayer from '$lib/features/map/PixiFreeformBrushLayer.svelte';
 	import PixiWaterLayer from '$lib/features/map/PixiWaterLayer.svelte';
 	import PixiRegionLayer from '$lib/features/map/PixiRegionLayer.svelte';
 	import PixiCausalEdgeLayer from '$lib/features/map/PixiCausalEdgeLayer.svelte';
@@ -65,7 +67,9 @@
 		polygonCentroid,
 		type ProjectionContext,
 		type RenderedState,
-		type ArtifactPosition
+		type RenderedCell,
+		type ArtifactPosition,
+		type StrokeStampParams
 	} from '$lib/features/map/projection.js';
 	import { computeCanvasMode, type MapTool } from '$lib/features/map/canvas-mode.js';
 	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
@@ -75,6 +79,7 @@
 	import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
 	import PlaceablePalette from '$lib/components/PlaceablePalette.svelte';
 	import BrushPalette from '$lib/components/BrushPalette.svelte';
+	import FreeformBrushPalette from '$lib/components/FreeformBrushPalette.svelte';
 	import { ASSET_DRAG_MIME } from '$lib/components/asset-drag.js';
 	import PixiBrushLayer from '$lib/features/map/PixiBrushLayer.svelte';
 	import { mapPlacements as placementsStore } from '$lib/stores/map-placements.js';
@@ -103,6 +108,55 @@
 	let brushBiome = $state<string>('Grass');
 	let brushSize = $state<1 | 3 | 5>(1);
 
+	// WM3 Slice A — freeform brush sub-mode of the Brush tool. 'grid' keeps the
+	// existing cell painting (PixiBrushLayer); 'freeform' emits paint_stroke
+	// (PixiFreeformBrushLayer). The grid stays first-class (amendment §3) — this
+	// is a toggle, not a replacement. Freeform params are normalized [0,1].
+	let brushMode = $state<'grid' | 'freeform'>('grid');
+	let strokeMode = $state<'fill' | 'stamp' | 'erase'>('fill');
+	let strokeTextureKey = $state<string>('Grass'); // fill→terrain key, stamp→Objects/ key
+	let strokeBrushSize = $state<number>(0.04);
+	let strokeSoftness = $state<number>(0.5);
+	// codex P2: stamp mode needs scatter params or PixiArtLayer falls back to
+	// spacing = brushSize, jitter = 0 — so the advertised Slice C "varied scatter"
+	// never wobbles placement. The freeform palette doesn't expose these yet, so
+	// derive proportionate defaults from the brush size: stamps ~one brush-width
+	// apart, jittered by up to ±¼ brush-width. (Both normalized to the map extent,
+	// like brushSize.) Only sent for stamp strokes (commitStroke gates on mode).
+	let strokeStamp = $derived<StrokeStampParams>({
+		spacing: strokeBrushSize,
+		jitter: strokeBrushSize * 0.5
+	});
+	// Slice D — time-varying terrain authoring. Both brushes commit at the
+	// CURRENT playhead T (paint_cells PixiBrushLayer.svelte:156, paint_stroke
+	// PixiFreeformBrushLayer commitStroke), and the fold windows events by
+	// (anchorT, t] — so scrubbing the playhead and painting authors a terrain
+	// BEAT (forest→ash) that appears from that story-time onward. The data path
+	// shipped with Slices A–C; what makes it an authoring feature is telling
+	// the author WHEN they're painting — invisible-T painting reads as "my art
+	// vanished" the first time they scrub backward.
+	let paintAtLabel = $derived.by(() => {
+		const t = $playhead;
+		if (t === null || t <= 0) return 'from the story start';
+		const act = [...acts].reverse().find((a) => (a.position ?? 0) <= t);
+		return act
+			? `from “${act.name}” (t=${t.toFixed(2)}) onward`
+			: `from t=${t.toFixed(2)} onward`;
+	});
+
+	// Slice B — paint-target art layer (world_maps.art_layers_jsonb id). null =
+	// the implicit base art layer. Reset on map switch (ids are per-map) and
+	// when the selected layer is deleted from the defs.
+	let strokeLayerId = $state<string | null>(null);
+	$effect(() => {
+		void activeMapId;
+		strokeLayerId = null;
+	});
+	$effect(() => {
+		const defs = activeMap?.artLayersJsonb ?? [];
+		if (strokeLayerId && !defs.some((l) => l.id === strokeLayerId)) strokeLayerId = null;
+	});
+
 	// armed placeable id (chip selected in PlaceablePalette). When non-null,
 	// the next click on the Pixi canvas creates a placement at the clicked
 	// fractional coords for this entity.
@@ -124,6 +178,8 @@
 		if ((activeTool === 'place' || activeTool === 'move') && !canPlaceOrMove) activeTool = 'select';
 	});
 	let placementError = $state('');
+	// F17 — freeform brush commit failures (the layer has no UI of its own).
+	let strokeError = $state('');
 	// In-flight flag for the per-map placements fetch (see the placements
 	// loader effect below). Read by the `mapLoading` overlay gate.
 	let placementsLoading = $state(false);
@@ -783,6 +839,25 @@
 		return r.polygon.map(([lat, lng]) => [lng, lat]);
 	}
 
+	// ADR 0007 Fix B — project the CURRENT map at an arbitrary playhead, for the
+	// controller's map-switch ripple baseline. Same inputs as the renderedState
+	// derive (minus the idle edge-suppression: the controller only calls this
+	// with a non-null prior T, where edges are legitimate). Consistency holds
+	// because commitCycle populates every store BEFORE flipping activeMapId, so
+	// on the first post-switch frame these stores already describe the map
+	// renderedState came from.
+	function projectAtForRippleBaseline(t: number): RenderedState | null {
+		if (!projectionCtx) return null;
+		return projectState(
+			t,
+			$mapAnchorsStore,
+			$mapEventsStore,
+			projectionCtx,
+			$placementsStore,
+			causalInput
+		);
+	}
+
 	// Frame-diff the projected state into punctuation beats; spawn FX and aim the
 	// camera at the changed regions. Runs whenever renderedState / playhead /
 	// activeMapId changes (the controller guards idle + map-switch + first-frame
@@ -792,7 +867,7 @@
 	$effect(() => {
 		// Re-run when the FX layer becomes ready so buffered init-window beats flush.
 		void captionReadyTick;
-		const fresh = playback.frame(renderedState, $playhead, activeMapId);
+		const fresh = playback.frame(renderedState, $playhead, activeMapId, projectAtForRippleBaseline);
 		if (!pixiReady) {
 			// Pixi import not finished — spawn*() would silently no-op and the beats
 			// would be lost (the diff baseline already advanced). Buffer and flush on
@@ -851,6 +926,9 @@
 			// target Location must not stick across a fresh Play (or the user may
 			// have manually navigated while paused).
 			cyclePrevTargetLoc = null;
+			// A stale settled-T from the previous run must not feed a fresh Play's
+			// first cycle commit (Fix B baseline).
+			cycleSettledT = null;
 			// Drop the prefetch cache so a fresh Play never commits a STALE region
 			// snapshot. A map's regions can be edited while paused (manual nav pins,
 			// so edits only happen off-playback); re-prefetching on the next Play
@@ -942,6 +1020,14 @@
 	// velocity estimate (Codex PR #72 — cycle latency). null when not cycling so the
 	// estimate never spans a pause gap.
 	let lastCyclePlayheadT: number | null = null;
+	// ADR 0007 Fix B — the last playhead at which the view was SETTLED on the
+	// active map (resolved target == shown map). At commit time this is the true
+	// pre-boundary T: lastPlayhead inside the controller has already advanced past
+	// the act boundary (the FX frame runs before this driver in the same flush),
+	// and a prefetch-delayed commit lands whole ticks later. Announced to the
+	// controller via noteCycleCommit so the ripple baseline projects the new map
+	// at a T where boundary-lit edges were still unlit.
+	let cycleSettledT: number | null = null;
 	// Reactive nonce bumped when a prefetch lands. cycleCache is a plain Map (not
 	// reactive), so without this a prefetch that completes BETWEEN playhead ticks
 	// wouldn't wake the cycling effect — a Location active for only one scene could
@@ -1140,6 +1226,10 @@
 		placementsLoading = false;
 		cyclePreloadedMapId = mapId; // load effect skips the redundant reload once
 		cyclePrevTargetLoc = loc;
+		// ADR 0007 Fix B: hand the controller the pre-boundary playhead before the
+		// flip below triggers the switch frame, so the ripple baseline projects the
+		// new map at a T where boundary-lit edges were still unlit.
+		playback.noteCycleCommit(cycleSettledT);
 		activeMapId = mapId;
 	}
 
@@ -1201,7 +1291,12 @@
 			// cursor stays null and the first brief overlap with a more-specific
 			// Location would strobe to its map. A null/pending target is still never
 			// recorded — only a resolved target whose map is on screen (Codex PR #72).
-			if (target && target.mapId === activeMapId) cyclePrevTargetLoc = target.loc;
+			if (target && target.mapId === activeMapId) {
+				cyclePrevTargetLoc = target.loc;
+				// The view is settled here: the shown map is the resolved target. This
+				// is the last pre-boundary T the Fix B ripple baseline can project at.
+				cycleSettledT = t;
+			}
 		} else if (action === 'commit') {
 			commitCycle(target!.mapId, target!.loc, cycleDataCache.get(target!.mapId)!);
 		} else {
@@ -1313,11 +1408,30 @@
 	// valid square and would draw off-grid. The terrain layers consume this
 	// clamped list so out-of-range cells render nowhere (the data survives; it
 	// reappears if the grid grows back).
+	//
+	// Identity-stable: projectState memoizes cells, so during a scrub where the
+	// applicable event window is unchanged renderedState.cells keeps the same
+	// array identity tick-to-tick. Reuse the previous filtered array in that
+	// case so the terrain/tile/water layers (whose $effects key on this prop)
+	// skip their full sprite/Graphics rebuilds.
+	const NO_TERRAIN_CELLS: RenderedCell[] = [];
+	let lastBoundedInput: { cells: RenderedCell[]; gx: number; gy: number } | null = null;
+	let lastBoundedResult: RenderedCell[] = NO_TERRAIN_CELLS;
 	let boundedTerrainCells = $derived.by(() => {
-		const cells = renderedState?.cells ?? [];
+		const cells = renderedState?.cells ?? NO_TERRAIN_CELLS;
 		const gx = activeMap?.gridCellsX ?? Infinity;
 		const gy = activeMap?.gridCellsY ?? Infinity;
-		return cells.filter((c) => c.x >= 0 && c.x < gx && c.y >= 0 && c.y < gy);
+		if (
+			lastBoundedInput &&
+			lastBoundedInput.cells === cells &&
+			lastBoundedInput.gx === gx &&
+			lastBoundedInput.gy === gy
+		) {
+			return lastBoundedResult;
+		}
+		lastBoundedInput = { cells, gx, gy };
+		lastBoundedResult = cells.filter((c) => c.x >= 0 && c.x < gx && c.y >= 0 && c.y < gy);
+		return lastBoundedResult;
 	});
 
 	// Combined readiness signal piped through to PixiRegionLayer as
@@ -2307,6 +2421,16 @@
 				<PixiTerrainLayer {activeMap} cells={boundedTerrainCells} />
 				<!-- Slice 6 D15: sprite-tile terrain on top of the flat layer. -->
 				<PixiTerrainTileLayer {activeMap} cells={boundedTerrainCells} />
+				<!-- WM3 Slice A: freeform brush art (paint_stroke) over the grid tiles. -->
+				<!-- Slice D2: playheadT + reducedMotion drive the terrain-transition
+				     dissolve (a stroke-set change caused by a playhead move
+				     crossfades; authoring / map switches snap). -->
+				<PixiArtLayer
+					{activeMap}
+					strokes={renderedState?.strokes ?? []}
+					playheadT={$playhead}
+					{reducedMotion}
+				/>
 				<!-- Slice 6: only water ripples (shimmer applied to water cells alone). -->
 				<PixiWaterLayer {activeMap} cells={boundedTerrainCells} />
 				<PixiRegionLayer
@@ -2427,10 +2551,24 @@
 				     pre-stroke rows. Same guard the snapshot/ownership writes
 				     use. -->
 				<PixiBrushLayer
-					active={canvasMode === 'brush' && !dataLoading}
+					active={canvasMode === 'brush' && brushMode === 'grid' && !dataLoading}
 					{activeMap}
 					biome={brushBiome}
 					size={brushSize}
+				/>
+				<!-- WM3 Slice A: freeform brush. Same gating as the grid brush, but
+				     active only in freeform sub-mode (the two never capture pointer
+				     events at once). Emits paint_stroke; PixiArtLayer renders it. -->
+				<PixiFreeformBrushLayer
+					active={canvasMode === 'brush' && brushMode === 'freeform' && !dataLoading}
+					{activeMap}
+					mode={strokeMode}
+					textureKey={strokeTextureKey}
+					brushSize={strokeBrushSize}
+					softness={strokeSoftness}
+					stamp={strokeStamp}
+					layerId={strokeLayerId}
+					onError={(msg) => (strokeError = msg)}
 				/>
 			{/snippet}
 		</PixiStage>
@@ -2442,7 +2580,7 @@
 				DRAWING · ESC TO EXIT · DBL-CLICK OR SNAP TO CLOSE
 			</div>
 		{/if}
-		<MapSidebar {activeMapId} />
+		<MapSidebar {activeMapId} {activeMap} />
 		{#if hasImage}
 			<!-- Slice 4 PR-F (DS4) — unified tool bar. Single entry point for
 			     Select/Brush/Place/Move; the palettes below are detail panels
@@ -2473,6 +2611,12 @@
 				<button type="button" onclick={() => (placementError = '')}>✕</button>
 			</div>
 		{/if}
+		{#if strokeError}
+			<div class="placement-error" role="alert">
+				Stroke failed: {strokeError}
+				<button type="button" onclick={() => (strokeError = '')}>✕</button>
+			</div>
+		{/if}
 		{#if hasImage && moveActive}
 			<!-- DS4 keyboard a11y — status hint for the Move tool. The nudge keys
 			     (arrows / Shift+arrows / Enter / Escape) are handled window-scoped
@@ -2496,15 +2640,61 @@
 			<PlaceablePalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 		{/if}
 		{#if activeTool === 'brush' && hasImage}
-			<!-- Slice 3 T5 brush palette. PR-F (DS4): shown only under the Brush
-			     tool — the unified tool bar owns on/off + undo/redo, so this panel
-			     carries just the biome picker + size selector. -->
-			<BrushPalette
-				biome={brushBiome}
-				size={brushSize}
-				onSetBiome={(b) => (brushBiome = b)}
-				onSetSize={(s) => (brushSize = s)}
-			/>
+			<!-- WM3 Slice A: Grid | Freeform sub-mode toggle. Grid = the existing
+			     cell painting (first-class, amendment §3); Freeform = paint_stroke. -->
+			<div class="brush-mode-toggle" role="group" aria-label="Brush type">
+				<button
+					type="button"
+					class:armed={brushMode === 'grid'}
+					aria-pressed={brushMode === 'grid'}
+					onclick={() => (brushMode = 'grid')}
+				>
+					Grid
+				</button>
+				<button
+					type="button"
+					class:armed={brushMode === 'freeform'}
+					aria-pressed={brushMode === 'freeform'}
+					onclick={() => (brushMode = 'freeform')}
+				>
+					Freeform
+				</button>
+				<!-- Slice D — the terrain-beat affordance: painting is anchored at the
+				     CURRENT playhead, so scrubbing then painting authors terrain change
+				     over story-time. Surfacing the T is what turns the (existing) data
+				     behavior into an intentional authoring tool. -->
+				<!-- F39: NOT role="status" — paintAtLabel tracks the playhead, so a live
+				     region would re-announce on every frame during playback. It's a
+				     visual authoring affordance; the text stays visible. -->
+				<span class="paint-at-indicator" data-testid="paint-at-indicator">
+					Painting {paintAtLabel}
+				</span>
+			</div>
+			{#if brushMode === 'grid'}
+				<!-- Slice 3 T5 brush palette. PR-F (DS4): shown only under the Brush
+				     tool — the unified tool bar owns on/off + undo/redo, so this panel
+				     carries just the biome picker + size selector. -->
+				<BrushPalette
+					biome={brushBiome}
+					size={brushSize}
+					onSetBiome={(b) => (brushBiome = b)}
+					onSetSize={(s) => (brushSize = s)}
+				/>
+			{:else}
+				<FreeformBrushPalette
+					mode={strokeMode}
+					textureKey={strokeTextureKey}
+					brushSize={strokeBrushSize}
+					softness={strokeSoftness}
+					artLayers={activeMap?.artLayersJsonb ?? []}
+					layerId={strokeLayerId}
+					onSetMode={(m) => (strokeMode = m)}
+					onSetTexture={(k) => (strokeTextureKey = k)}
+					onSetBrushSize={(n) => (strokeBrushSize = n)}
+					onSetSoftness={(n) => (strokeSoftness = n)}
+					onSetLayer={(id) => (strokeLayerId = id)}
+				/>
+			{/if}
 		{/if}
 		{#if !hasImage}
 			<div class="upload-area">
@@ -2609,6 +2799,36 @@
 		height: 100%;
 		display: flex;
 		flex-direction: column;
+	}
+	/* WM3 Slice A — Grid|Freeform brush sub-mode toggle, above the active palette. */
+	.brush-mode-toggle {
+		display: flex;
+		gap: 2px;
+		padding: 6px 10px 0;
+		background: var(--color-panel, rgba(0, 0, 0, 0.6));
+	}
+	.brush-mode-toggle button {
+		padding: 3px 12px;
+		border-radius: 6px;
+		border: 1px solid var(--color-border, #333);
+		background: var(--color-bg, #1a1a1a);
+		color: var(--color-text, #ddd);
+		font-size: 11px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.brush-mode-toggle button.armed {
+		border-color: var(--color-accent, #c8942a);
+		background: color-mix(in srgb, var(--color-accent, #c8942a) 25%, transparent);
+	}
+	/* Slice D — paint-time indicator (terrain beats). */
+	.paint-at-indicator {
+		align-self: center;
+		margin-left: 8px;
+		/* F39: 11px floor (DESIGN.md) — this label explains where paint lands. */
+		font-size: 11px;
+		font-style: italic;
+		color: var(--color-text-muted, #999);
 	}
 
 	:global(.map-toolbar) {

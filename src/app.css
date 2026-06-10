@@ -4,6 +4,12 @@
   --color-surface:    #161920;
   --color-surface-2:  #1c1f28;
   --color-border:     #2a2d35;
+  /* F39/F20: the WM3 map components (FreeformBrushPalette, MapSidebar art
+     layers) reference --color-bg / --color-panel, which previously did not
+     exist in the theme and so always resolved to hardcoded per-call fallbacks
+     (off-theme). Define them as theme-derived aliases. */
+  --color-bg:         var(--color-surface-2);
+  --color-panel:      color-mix(in srgb, var(--color-surface) 80%, transparent);
 
   /* Text */
   --color-text:       #e8e0d0;

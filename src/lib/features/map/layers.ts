@@ -13,6 +13,7 @@ export const LAYER_KEYS = [
 	'background',
 	'grid',
 	'terrain',
+	'art',
 	'regions',
 	'placements'
 ] as const;
@@ -25,6 +26,15 @@ export const LAYER_LABELS: Record<LayerKey, string> = {
 	background: 'Background image',
 	grid: 'Grid',
 	terrain: 'Terrain',
+	art: 'Freeform art (base)',
 	regions: 'Regions',
 	placements: 'Placements'
 };
+
+// WM3 Slice B — per-art-layer visibility rides world_map_layer_prefs with a
+// namespaced free-text key (the reader lazy-GCs unknown keys by design, so no
+// schema change). Strokes on a deleted layer fall back to the BASE art layer,
+// whose own toggle is the static 'art' key above.
+export function artLayerPrefKey(layerId: string): string {
+	return `art:${layerId}`;
+}
