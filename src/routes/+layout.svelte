@@ -57,7 +57,11 @@
 			// current account (codex P1, SSR half). $preferencesUserId re-fires this
 			// effect when it resolves post-hydrate, replacing any pre-hydrate value.
 			const value = encodeURIComponent(serializePaletteCookie(appearance, ownerId));
-			document.cookie = `${PALETTE_COOKIE}=${value}; path=/; max-age=31536000; samesite=lax; secure`;
+			// `secure` only in prod: browsers drop Secure cookies on http origins, so
+			// appending it unconditionally silently breaks the SSR anti-FOUC palette
+			// in `vite dev` (http://localhost). Gate on !DEV, same as the auth fix.
+			const secure = import.meta.env.DEV ? '' : '; secure';
+			document.cookie = `${PALETTE_COOKIE}=${value}; path=/; max-age=31536000; samesite=lax${secure}`;
 		}
 	});
 </script>
