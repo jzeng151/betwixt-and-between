@@ -192,9 +192,17 @@ export async function computeIntervalPositions(
 		const i = await lookupAct(input.startActId);
 		const range = actRange(i);
 		if (input.startPosition !== undefined) {
-			if (input.startPosition < range.start - POSITION_EPSILON || input.startPosition > range.end + POSITION_EPSILON) {
+			// Half-open (2026-06 audit fix): a start exactly AT range.end belongs
+			// to the NEXT act's FK — accepting it here stored a row violating
+			// floor(start) == idx(startAct), which the next act-level recompute
+			// reinterpreted (fraction 0 → start-of-THIS-act, silently growing the
+			// interval by a full act).
+			if (
+				input.startPosition < range.start - POSITION_EPSILON ||
+				input.startPosition > range.end - POSITION_EPSILON
+			) {
 				throw new Error(
-					`start_position ${input.startPosition} outside act range [${range.start}, ${range.end}] for start_act_id ${input.startActId}`
+					`start_position ${input.startPosition} outside act range [${range.start}, ${range.end}) for start_act_id ${input.startActId}`
 				);
 			}
 			startPosition = input.startPosition;
@@ -216,9 +224,16 @@ export async function computeIntervalPositions(
 		const i = await lookupAct(input.endActId);
 		const range = actRange(i);
 		if (input.endPosition !== undefined) {
-			if (input.endPosition < range.start - POSITION_EPSILON || input.endPosition > range.end + POSITION_EPSILON) {
+			// Mirror of the start side: an end exactly AT range.start belongs to
+			// the PREVIOUS act's FK (exclusive end). Accepting it stored a row
+			// the next recompute mapped to end-of-THIS-act (fraction 0 → idx+1),
+			// shifting the boundary forward a full act.
+			if (
+				input.endPosition < range.start + POSITION_EPSILON ||
+				input.endPosition > range.end + POSITION_EPSILON
+			) {
 				throw new Error(
-					`end_position ${input.endPosition} outside act range [${range.start}, ${range.end}] for end_act_id ${input.endActId}`
+					`end_position ${input.endPosition} outside act range (${range.start}, ${range.end}] for end_act_id ${input.endActId}`
 				);
 			}
 			endPosition = input.endPosition;
@@ -238,6 +253,106 @@ export async function computeIntervalPositions(
 // =============================================================================
 // Recompute cascades — run after Scene/Act mutations
 // =============================================================================
+
+/**
+ * Derive one side's recomputed position from the cache (2026-06 audit fix).
+ *
+ *   scene-anchored side    → sceneRange boundary (start → .start, end → .end)
+ *   fraction-positioned    → act index from cache + the stored fractional
+ *                            offset (frozen-fraction semantics). For an end
+ *                            side, fraction 0 means "exclusive end of act"
+ *                            and maps to actIndex + 1.
+ *
+ * When act indices are unchanged (scene reorders) the fraction branch is the
+ * identity, so the same helpers serve both cascade loops.
+ */
+function deriveStartSide(
+	cache: RecomputeCache,
+	actId: string,
+	sceneId: string | null,
+	storedPosition: number
+): number {
+	if (sceneId) {
+		const { sceneIndex, sceneCount, parentActId } = sceneInfoFromCache(cache, sceneId);
+		if (parentActId !== actId) {
+			throw new Error(`start_scene_id ${sceneId} parent ${parentActId} does not match start_act_id ${actId}`);
+		}
+		return sceneRange(sceneIndex, sceneCount, actIndexFromCache(cache, parentActId)).start;
+	}
+	const fraction = storedPosition - Math.floor(storedPosition);
+	return actIndexFromCache(cache, actId) + fraction;
+}
+
+function deriveEndSide(
+	cache: RecomputeCache,
+	actId: string,
+	sceneId: string | null,
+	storedPosition: number
+): number {
+	if (sceneId) {
+		const { sceneIndex, sceneCount, parentActId } = sceneInfoFromCache(cache, sceneId);
+		if (parentActId !== actId) {
+			throw new Error(`end_scene_id ${sceneId} parent ${parentActId} does not match end_act_id ${actId}`);
+		}
+		return sceneRange(sceneIndex, sceneCount, actIndexFromCache(cache, parentActId)).end;
+	}
+	const fraction = storedPosition - Math.floor(storedPosition);
+	const i = actIndexFromCache(cache, actId);
+	// end at a whole-number boundary is the act's exclusive end (start-of-next).
+	return fraction === 0 ? i + 1 : i + fraction;
+}
+
+type SwappedFks = {
+	startActId: string;
+	startSceneId: string | null;
+	endActId: string;
+	endSceneId: string | null;
+};
+
+/**
+ * Recompute one interval row's positions, normalizing inversions.
+ *
+ * An Act reorder can move the end-anchor act at-or-before the start-anchor
+ * act, and a Scene reorder can move a start-anchor scene past the end side;
+ * pre-audit both cases aborted the whole cascade transaction (a thrown
+ * derive error or the intervals_position_order CHECK) and surfaced as a 500
+ * blocking the reorder/delete. Normalization: swap the side anchors so the
+ * interval covers [earlier side, later side] in the new ordering — both
+ * anchors survive, no data is lost. If even the swapped orientation is
+ * degenerate (zero extent), the row is left untouched (`null` return): its
+ * stored values are still DB-valid and the next mutation re-normalizes.
+ */
+function computeRowRecompute(
+	cache: RecomputeCache,
+	row: {
+		startActId: string;
+		startSceneId: string | null;
+		endActId: string;
+		endSceneId: string | null;
+		startPosition: number;
+		endPosition: number;
+	}
+): { newStart: number; newEnd: number; swapped: SwappedFks | null } | null {
+	const newStart = deriveStartSide(cache, row.startActId, row.startSceneId, row.startPosition);
+	const newEnd = deriveEndSide(cache, row.endActId, row.endSceneId, row.endPosition);
+	if (newStart < newEnd) return { newStart, newEnd, swapped: null };
+
+	const swappedStart = deriveStartSide(cache, row.endActId, row.endSceneId, row.endPosition);
+	const swappedEnd = deriveEndSide(cache, row.startActId, row.startSceneId, row.startPosition);
+	if (swappedStart < swappedEnd) {
+		return {
+			newStart: swappedStart,
+			newEnd: swappedEnd,
+			swapped: {
+				startActId: row.endActId,
+				startSceneId: row.endSceneId,
+				endActId: row.startActId,
+				endSceneId: row.startSceneId
+			}
+		};
+	}
+	return null;
+}
 
 /**
  * Recompute positions for every interval anchored to a Scene within `actId`.
@@ -266,29 +381,25 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 
 	let updated = 0;
 	for (const row of affected) {
-		let newStart = row.startPosition;
-		let newEnd = row.endPosition;
-
-		if (row.startSceneId) {
-			const { sceneIndex, sceneCount, parentActId } = sceneInfoFromCache(cache, row.startSceneId);
-			const i = actIndexFromCache(cache, parentActId);
-			newStart = sceneRange(sceneIndex, sceneCount, i).start;
-		}
-		if (row.endSceneId) {
-			const { sceneIndex, sceneCount, parentActId } = sceneInfoFromCache(cache, row.endSceneId);
-			const i = actIndexFromCache(cache, parentActId);
-			newEnd = sceneRange(sceneIndex, sceneCount, i).end;
-		}
+		// Scene-anchored sides re-derive from the scene's new index; fraction-
+		// positioned sides are the identity here (act indices unchanged by a
+		// scene mutation). Inverted rows (a start scene reordered past the end
+		// side) are swap-normalized instead of tripping the DB CHECK (2026-06
+		// audit fix — see computeRowRecompute).
+		const result = computeRowRecompute(cache, row);
+		if (!result) continue;
+		const { newStart, newEnd, swapped } = result;
 
 		const startDrift = Math.abs(newStart - row.startPosition) > POSITION_EPSILON;
 		const endDrift = Math.abs(newEnd - row.endPosition) > POSITION_EPSILON;
-		if (!startDrift && !endDrift) continue;
+		if (!startDrift && !endDrift && !swapped) continue;
 
 		await db
 			.update(intervals)
 			.set({
 				startPosition: newStart,
 				endPosition: newEnd,
+				...(swapped ?? {})
 			})
 			.where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
 		updated++;
@@ -297,9 +408,11 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 	// Scene-anchored map_placements also need their derived positions refreshed
 	// after a scene-within-act mutation (Step 4, Codex #2). Coarse: walk the
 	// user's placement rows. Placements are expected to be few per user; the
-	// per-row recompute short-circuits when nothing drifts.
+	// per-row recompute short-circuits when nothing drifts. The cache built
+	// above is threaded through so each row resolves FKs in O(1) instead of
+	// re-querying acts/scenes per row (2026-06 perf audit).
 	const { recomputePlacementBoundsAll } = await import('../map-placements.js');
-	await recomputePlacementBoundsAll(db, userId);
+	await recomputePlacementBoundsAll(db, userId, cache);
 
 	// Scene-anchored relationships (caused_by scope) carry the same derived
 	// start/end positions and must refresh on a scene-within-act mutation too.
@@ -307,7 +420,7 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 	// jump-to-cause click, so a stale value now scrubs the playhead to the
 	// wrong story-time. Coarse walk, same short-circuit-on-no-drift contract
 	// as the placement recompute above.
-	await recomputeRelationshipBoundsAll(db, userId);
+	await recomputeRelationshipBoundsAll(db, userId, cache);
 
 	return updated;
 }
@@ -356,55 +469,28 @@ export async function recomputeAllIntervals(
 
 	for (const row of all) {
 		try {
-			const derived = await computeIntervalPositions(
-				db,
-				{
-					startActId: row.startActId,
-					startSceneId: row.startSceneId,
-					endActId: row.endActId,
-					endSceneId: row.endSceneId
-				},
-				userId,
-				cache
-			);
-
 			/* Per the locked semantic, fraction-positioned rows (no scene FK on a side)
 			   keep their position frozen across Scene reorders. For ACT reorders, every
 			   row's act_index can shift, so even fraction-positioned rows need their
-			   integer part updated.
-			   Strategy: if a side has no scene FK, preserve the fractional offset within
-			   the act but update the integer part. */
-			let newStart = derived.startPosition;
-			let newEnd = derived.endPosition;
-
-			if (!row.startSceneId) {
-				const oldFraction = row.startPosition - Math.floor(row.startPosition);
-				const newActIndex = actIndexFromCache(cache, row.startActId);
-				newStart = newActIndex + oldFraction;
-			}
-			if (!row.endSceneId) {
-				const oldFraction = row.endPosition - Math.floor(row.endPosition);
-				const newActIndex = actIndexFromCache(cache, row.endActId);
-				// end can be exactly at a whole-number act boundary (exclusive end);
-				// detect that and place it as start-of-next-act.
-				newEnd = oldFraction === 0 ? newActIndex + 1 : newActIndex + oldFraction;
-			}
+			   integer part updated — deriveStartSide / deriveEndSide preserve the
+			   fractional offset within the act while updating the integer part.
+			   A reorder that inverts an interval's anchor order is swap-normalized
+			   instead of aborting the whole cascade (2026-06 audit fix — see
+			   computeRowRecompute). */
+			const result = computeRowRecompute(cache, row);
+			if (!result) continue;
+			const { newStart, newEnd, swapped } = result;
 
 			const startDrift = Math.abs(newStart - row.startPosition) > POSITION_EPSILON;
 			const endDrift = Math.abs(newEnd - row.endPosition) > POSITION_EPSILON;
-			if (!startDrift && !endDrift) continue;
-
-			if (newStart >= newEnd) {
-				throw new Error(
-					`Recompute would produce start_position ${newStart} >= end_position ${newEnd} on interval ${row.id}`
-				);
-			}
+			if (!startDrift && !endDrift && !swapped) continue;
 
 			await db
 				.update(intervals)
 				.set({
 					startPosition: newStart,
 					endPosition: newEnd,
+					...(swapped ?? {})
 				})
 				.where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
 			updated++;
@@ -416,18 +502,20 @@ export async function recomputeAllIntervals(
 	}
 
 	// Also recompute temporal relationship bounds in the same transaction so
-	// act-reorder cascades are atomic (Phase 1B Lane A, 2026-05-02).
-	await recomputeRelationshipBoundsAll(db, userId);
+	// act-reorder cascades are atomic (Phase 1B Lane A, 2026-05-02). The cache
+	// built above is threaded through every walk below (2026-06 perf audit) so
+	// no walk re-queries acts/scenes per row or rebuilds the cache.
+	await recomputeRelationshipBoundsAll(db, userId, cache);
 
 	// World-map variant bounds piggyback on the same cascade (M11 design lock).
 	// Imported lazily to break the world-maps.ts → intervals.ts dependency cycle.
 	const { recomputeWorldMapVariantsAll } = await import('../world-maps.js');
-	await recomputeWorldMapVariantsAll(db, userId);
+	await recomputeWorldMapVariantsAll(db, userId, cache);
 
 	// Map-placement bounds piggyback on the same cascade (M11 — Step 4).
 	// Same lazy-import dance to break the map-placements.ts → intervals.ts cycle.
 	const { recomputePlacementBoundsAll } = await import('../map-placements.js');
-	await recomputePlacementBoundsAll(db, userId);
+	await recomputePlacementBoundsAll(db, userId, cache);
 
 	// World Map v3 — anchor + event t_position recompute. Only fires when the
 	// caller supplied a pre-cascade Act-ordering snapshot (i.e., Act reorders
@@ -493,7 +581,11 @@ export async function resolveRelationshipBounds(
  * Runs inside the caller's transaction context (pass db or tx). Module-
  * internal — only `recomputeAllIntervals` above triggers it today.
  */
-async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<number> {
+async function recomputeRelationshipBoundsAll(
+	db: Db,
+	userId: string,
+	providedCache?: RecomputeCache
+): Promise<number> {
 	// Two row classes need a visit:
 	//   (a) act-anchored rows — re-derive their position from the live anchor.
 	//   (b) orphaned rows — act FKs both null (the anchoring Act was deleted, so
@@ -515,7 +607,7 @@ async function recomputeRelationshipBoundsAll(db: Db, userId: string): Promise<n
 
 	if (rows.length === 0) return 0;
 
-	const cache = await buildRecomputeCache(db, userId);
+	const cache = providedCache ?? (await buildRecomputeCache(db, userId));
 
 	// Compute first, write after, so the position writes can be staged
 	// swap-safely (see below). Two outcome buckets:
@@ -779,19 +871,36 @@ async function recomputeMapAnchors(
 	// as a P1 on PR #52 commit 23077b60; the deleted-Act collision as a
 	// follow-on P1 on commit a9c550f; the IEEE-754 collapse of the original
 	// constant-offset parking (1e15) as a third P1 on commit adb43e0.
-	for (let i = 0; i < updates.length; i++) {
-		const u = updates[i];
-		await db
-			.update(mapAnchors)
-			.set({ tPosition: ANCHOR_PARK_BASE - i })
-			.where(and(eq(mapAnchors.id, u.id), inArray(mapAnchors.worldMapId, userMapIds)));
-	}
-	for (const u of updates) {
-		await db
-			.update(mapAnchors)
-			.set({ tPosition: u.newT })
-			.where(and(eq(mapAnchors.id, u.id), inArray(mapAnchors.worldMapId, userMapIds)));
-	}
+	//
+	// 2026-06 perf audit: each phase is ONE VALUES-join UPDATE instead of one
+	// statement per row — an Act reorder over a map with N anchors previously
+	// issued 2N sequential round trips inside the cascade transaction. The
+	// user scope joins world_maps.user_id directly (same self-enforcing
+	// posture as loadUserMapIds, without an array parameter).
+	const parkValues = sql.join(
+		updates.map((u, i) => sql`(${u.id}::uuid, ${ANCHOR_PARK_BASE - i}::double precision)`),
+		sql`, `
+	);
+	await db.execute(sql`
+		UPDATE ${mapAnchors}
+		SET t_position = v.t_position
+		FROM (VALUES ${parkValues}) AS v(id, t_position), ${worldMaps}
+		WHERE ${mapAnchors.id} = v.id
+			AND ${mapAnchors.worldMapId} = ${worldMaps.id}
+			AND ${worldMaps.userId} = ${userId}
+	`);
+	const finalValues = sql.join(
+		updates.map((u) => sql`(${u.id}::uuid, ${u.newT}::double precision)`),
+		sql`, `
+	);
+	await db.execute(sql`
+		UPDATE ${mapAnchors}
+		SET t_position = v.t_position
+		FROM (VALUES ${finalValues}) AS v(id, t_position), ${worldMaps}
+		WHERE ${mapAnchors.id} = v.id
+			AND ${mapAnchors.worldMapId} = ${worldMaps.id}
+			AND ${worldMaps.userId} = ${userId}
+	`);
 	return updates.length;
 }
 
@@ -831,12 +940,23 @@ async function recomputeMapEvents(
 			.where(and(inArray(mapEvents.id, deletes), inArray(mapEvents.worldMapId, userMapIds)));
 	}
 
-	// map_events has no unique index; per-row UPDATE is safe.
-	for (const u of updates) {
-		await db
-			.update(mapEvents)
-			.set({ tPosition: u.newT })
-			.where(and(eq(mapEvents.id, u.id), inArray(mapEvents.worldMapId, userMapIds)));
+	// map_events has no unique index; a single VALUES-join UPDATE is safe and
+	// avoids one round trip per row (2026-06 perf audit — every paint stroke
+	// is a map_events row, so this loop dominated Act-reorder latency on
+	// painted maps).
+	if (updates.length > 0) {
+		const eventValues = sql.join(
+			updates.map((u) => sql`(${u.id}::uuid, ${u.newT}::double precision)`),
+			sql`, `
+		);
+		await db.execute(sql`
+			UPDATE ${mapEvents}
+			SET t_position = v.t_position
+			FROM (VALUES ${eventValues}) AS v(id, t_position), ${worldMaps}
+			WHERE ${mapEvents.id} = v.id
+				AND ${mapEvents.worldMapId} = ${worldMaps.id}
+				AND ${worldMaps.userId} = ${userId}
+		`);
 	}
 	return updates.length;
 }

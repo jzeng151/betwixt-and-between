@@ -22,11 +22,18 @@ import type { Db } from './types.js';
  * `excludeId` lets `updateInterval` skip the row being patched (otherwise it
  * would always overlap with itself).
  *
- * **Read-modify-write window:** like `validateFKTypes` and
- * `computeIntervalPositions`, this read+check happens outside a DB
- * transaction. Safe under better-sqlite3's connection-level write
- * serialization. Under future Turso replica lag, wrap the whole
- * write/update body in `db.transaction()` — see `writeInterval` docstring.
+ * **Read-modify-write window (2026-06 audit):** like `validateFKTypes` and
+ * `computeIntervalPositions`, this read+check is not atomic with the
+ * subsequent write unless the caller wraps both in `db.transaction()`. On
+ * the current runtime (Neon Postgres, one pool per request, default READ
+ * COMMITTED) two concurrent writes for the same entity can BOTH pass this
+ * check and insert overlapping intervals — there is no DB constraint
+ * backing the invariant (unlike world_maps' EXCLUDE or relationships'
+ * partial uniques). Accepted exposure for a single-user-per-session app;
+ * the durable fix is an EXCLUDE USING gist constraint on
+ * (entity_id, numrange(start_position, end_position)) — see the 2026-06
+ * audit report before adding it (existing rows may already overlap via
+ * historical recompute paths and would fail the migration).
  */
 export async function assertNoOverlap(
 	db: Db,

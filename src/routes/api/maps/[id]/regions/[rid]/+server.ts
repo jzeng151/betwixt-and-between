@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { worldMaps, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf, removeImpliedPartOf } from '$lib/server/location-hierarchy.js';
 import {
@@ -35,7 +36,8 @@ export const PATCH: RequestHandler = async (event) => {
 	const region = await assertOwnedRegion(db, event.params.id, event.params.rid, userId);
 	if (!region) error(404, 'Region not found');
 
-	const body = await event.request.json();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const body = (await readJson(event)) as any;
 	const patch: { polygon?: number[][]; locationId?: string | null } = {};
 	let locationIdInPatch = false;
 

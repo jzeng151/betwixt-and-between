@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
 import { getUserId, assertParentsOwned } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
 import { recomputeIntervalsForAct } from '$lib/server/intervals.js';
 import { validateStyleInData } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
@@ -20,7 +21,8 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	const body = await event.request.json();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const body = (await readJson(event)) as any;
 	const items = body?.entities;
 	if (!Array.isArray(items)) {
 		error(400, 'Body must contain an `entities` array');

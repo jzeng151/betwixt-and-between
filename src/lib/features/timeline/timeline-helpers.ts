@@ -288,6 +288,16 @@ export function positionToStartFKs(
 		// Snap canonical position to the integer boundary.
 		return { startActId: acts[actIdx].id, startSceneId: null, startPosition: actIdx };
 	}
+	if (frac > 1 - 1e-9) {
+		// Symmetric high-side snap (2026-06 audit fix — parity with
+		// positionToEndFKs). Without it, a position like k - 5e-10 resolved to
+		// a free-fraction start in act k-1 while the SAME position as an end
+		// snapped to exactly k — splitInterval then persisted two same-entity
+		// intervals overlapping by the epsilon sliver. A start at the very top
+		// of the last act has nowhere to go (zero extent) → out of range.
+		const next = acts[actIdx + 1];
+		return next ? { startActId: next.id, startSceneId: null, startPosition: actIdx + 1 } : null;
+	}
 	const scenes = scenesByActId.get(acts[actIdx].id) ?? [];
 	const m = scenes.length;
 	if (m > 0) {

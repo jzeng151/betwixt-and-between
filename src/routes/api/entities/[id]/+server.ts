@@ -7,7 +7,9 @@ import {
 	snapshotActOrdering
 } from '$lib/server/intervals.js';
 import { intervals as intervalsTable, relationships as relationshipsTable } from '$lib/server/db/schema.js';
-import { and, eq, gt, gte, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { and, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { readJson } from '$lib/server/read-json.js';
+import { isUniqueViolation } from '$lib/server/pg-errors.js';
 import { validateStyleInData } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
@@ -32,13 +34,23 @@ export const GET: RequestHandler = async (event) => {
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	const body = await event.request.json();
+	const body = await readJson(event);
 	const { name, data, parentId, position } = body as {
 		name?: string;
 		data?: unknown;
 		parentId?: string | null;
 		position?: number;
 	};
+
+	// Validate scalar inputs before touching anything: a non-string name used
+	// to reach name.trim() (TypeError → 500), and a float/NaN position reaches
+	// an integer column + the sibling-bump math.
+	if (name !== undefined && (typeof name !== 'string' || name.trim() === '')) {
+		error(400, 'name must be a non-empty string');
+	}
+	if (position !== undefined && position !== null && !Number.isInteger(position)) {
+		error(400, 'position must be an integer');
+	}
 
 	const [entity] = await db
 		.select()
@@ -83,6 +95,10 @@ export const PATCH: RequestHandler = async (event) => {
 				.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)));
 			return row;
 		}).catch((err) => {
+			if ((err as { status?: number }).status) throw err;
+			if (isUniqueViolation(err)) {
+				error(409, 'The move collides with an existing row (duplicate temporal bounds)');
+			}
 			error(400, (err as Error).message);
 		});
 		return json(refreshed);
@@ -103,6 +119,9 @@ export const PATCH: RequestHandler = async (event) => {
 		position !== entity.position &&
 		(entity.type === 'Act' || entity.type === 'Scene');
 
+	// 23505 → 409 (2026-06 audit): the recompute cascade inside this tx can
+	// collide with relationships_temporal_dedup (a derived position landing on
+	// an unchanged row's tuple). Parity with the relationships/maps routes.
 	const updated = await db.transaction(async (tx) => {
 		let preSnapshot: Awaited<ReturnType<typeof snapshotActOrdering>> | undefined;
 
@@ -164,6 +183,12 @@ export const PATCH: RequestHandler = async (event) => {
 		}
 
 		return row;
+	}).catch((err) => {
+		if ((err as { status?: number }).status) throw err;
+		if (isUniqueViolation(err)) {
+			error(409, 'The reorder collides with an existing row (duplicate temporal bounds)');
+		}
+		throw err;
 	});
 
 	return json(updated);
@@ -217,6 +242,12 @@ export const DELETE: RequestHandler = async (event) => {
 		const preSnapshot =
 			entity.type === 'Act' ? await snapshotActOrdering(tx, userId) : undefined;
 
+		// Ids of scenes reparented to moveScenesTo (consumed by the rescope
+		// block below — an interval side anchored to one of these scenes now
+		// lives in the TARGET act, so the other side should follow it there
+		// rather than rescope to prev/next).
+		const movedSceneIds = new Set<string>();
+
 		if (moveScenesTo && entity.type === 'Act') {
 			// Count target's existing scenes to compute append offset.
 			const sourceScenes = await tx
@@ -230,36 +261,40 @@ export const DELETE: RequestHandler = async (event) => {
 				.where(and(eq(entities.userId, userId), eq(entities.type, 'Scene'), eq(entities.parentId, moveScenesTo)));
 			const offset = targetScenes.length;
 
-			// Reparent each scene + update interval FKs (P2-3).
+			// Reparent each scene (per-row: each gets a distinct position).
 			for (let i = 0; i < sourceScenes.length; i++) {
 				const scene = sourceScenes[i];
+				movedSceneIds.add(scene.id);
 				await tx
 					.update(entities)
 					.set({ parentId: moveScenesTo, position: offset + i })
 					.where(and(eq(entities.id, scene.id), eq(entities.userId, userId)));
+			}
+
+			// Re-anchor interval + relationship act FKs for the moved scenes
+			// (P2-3; relationships per Slice 5 PR-D / Codex P2 — without this
+			// the act FK would hit ON DELETE SET NULL below, dropping the row
+			// out of recomputeRelationshipBoundsAll and freezing a stale scoped
+			// position). Batched per table (2026-06 perf audit): one UPDATE per
+			// FK column instead of four sequential statements per scene.
+			if (movedSceneIds.size > 0) {
+				const sceneIds = [...movedSceneIds];
 				await tx
 					.update(intervalsTable)
 					.set({ startActId: moveScenesTo })
-					.where(and(eq(intervalsTable.startSceneId, scene.id), eq(intervalsTable.userId, userId)));
+					.where(and(inArray(intervalsTable.startSceneId, sceneIds), eq(intervalsTable.userId, userId)));
 				await tx
 					.update(intervalsTable)
 					.set({ endActId: moveScenesTo })
-					.where(and(eq(intervalsTable.endSceneId, scene.id), eq(intervalsTable.userId, userId)));
-				// Re-anchor scene-scoped relationships (caused_by) the same way.
-				// Without this the act FK on a relationship pointing at the deleted
-				// act would hit ON DELETE SET NULL below, dropping the row out of
-				// recomputeRelationshipBoundsAll (it filters on a non-null act FK),
-				// so its scoped start/end position would stay frozen at the old
-				// scene fraction and click-to-jump would land at the wrong moment
-				// (Slice 5 PR-D / Codex P2).
+					.where(and(inArray(intervalsTable.endSceneId, sceneIds), eq(intervalsTable.userId, userId)));
 				await tx
 					.update(relationshipsTable)
 					.set({ startActId: moveScenesTo })
-					.where(and(eq(relationshipsTable.startSceneId, scene.id), eq(relationshipsTable.userId, userId)));
+					.where(and(inArray(relationshipsTable.startSceneId, sceneIds), eq(relationshipsTable.userId, userId)));
 				await tx
 					.update(relationshipsTable)
 					.set({ endActId: moveScenesTo })
-					.where(and(eq(relationshipsTable.endSceneId, scene.id), eq(relationshipsTable.userId, userId)));
+					.where(and(inArray(relationshipsTable.endSceneId, sceneIds), eq(relationshipsTable.userId, userId)));
 			}
 		}
 
@@ -293,6 +328,14 @@ export const DELETE: RequestHandler = async (event) => {
 						)
 					);
 
+				// Post-delete ordered index of the moveScenesTo target (when in
+				// play): pre-delete indices above the deleted slot shift down 1.
+				const targetPreIdx = moveScenesTo
+					? allActs.findIndex((a) => a.id === moveScenesTo)
+					: -1;
+				const targetPostIdx =
+					targetPreIdx >= 0 ? (targetPreIdx > deletedIdx ? targetPreIdx - 1 : targetPreIdx) : -1;
+
 				for (const iv of touched) {
 					const startInDeleted = iv.startActId === event.params.id;
 					const endInDeleted = iv.endActId === event.params.id;
@@ -306,45 +349,75 @@ export const DELETE: RequestHandler = async (event) => {
 					}
 
 					if (endInDeleted) {
-						if (!prevAct) {
+						// 2026-06 audit fix: when the interval's START side is anchored
+						// to a scene that just moved to moveScenesTo, "end of the
+						// deleted act" must follow the scenes to "end of the target
+						// act". Rescoping to prevAct would invert the interval (the
+						// scene side now derives inside the target act, at-or-after
+						// the prevAct boundary) and 500 the whole DELETE.
+						if (iv.startSceneId && movedSceneIds.has(iv.startSceneId) && targetPostIdx >= 0) {
+							// movedSceneIds is only populated when moveScenesTo is set.
+							await tx
+								.update(intervalsTable)
+								.set({
+									endActId: moveScenesTo!,
+									endSceneId: null,
+									endPosition: targetPostIdx + 1
+								})
+								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
+						} else if (!prevAct) {
 							await tx
 								.delete(intervalsTable)
 								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
 							continue;
+						} else {
+							/* See full comment in pre-tx version: ordered-list index, not stored
+							   position; prevAct's pre-delete index = deletedIdx-1 = post-delete
+							   index; end-of-prevAct = idx + 1. */
+							const newEndPos = deletedIdx;
+							await tx
+								.update(intervalsTable)
+								.set({
+									endActId: prevAct.id,
+									endSceneId: null,
+									endPosition: newEndPos
+								})
+								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
 						}
-						/* See full comment in pre-tx version: ordered-list index, not stored
-						   position; prevAct's pre-delete index = deletedIdx-1 = post-delete
-						   index; end-of-prevAct = idx + 1. */
-						const newEndPos = deletedIdx;
-						await tx
-							.update(intervalsTable)
-							.set({
-								endActId: prevAct.id,
-								endSceneId: null,
-								endPosition: newEndPos
-							})
-							.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
 					}
 
 					if (startInDeleted) {
-						if (!nextAct) {
+						// Mirror of the endInDeleted case: an END side anchored to a
+						// moved scene pulls the start boundary to the target act.
+						if (iv.endSceneId && movedSceneIds.has(iv.endSceneId) && targetPostIdx >= 0) {
+							// movedSceneIds is only populated when moveScenesTo is set.
+							await tx
+								.update(intervalsTable)
+								.set({
+									startActId: moveScenesTo!,
+									startSceneId: null,
+									startPosition: targetPostIdx
+								})
+								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
+						} else if (!nextAct) {
 							await tx
 								.delete(intervalsTable)
 								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
 							continue;
+						} else {
+							/* nextAct's pre-delete index = deletedIdx+1; post-delete it shifts down
+							   to deletedIdx. Using the post-delete index means recomputeAllIntervals
+							   finds no drift to correct. */
+							const newStartPos = deletedIdx;
+							await tx
+								.update(intervalsTable)
+								.set({
+									startActId: nextAct.id,
+									startSceneId: null,
+									startPosition: newStartPos
+								})
+								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
 						}
-						/* nextAct's pre-delete index = deletedIdx+1; post-delete it shifts down
-						   to deletedIdx. Using the post-delete index means recomputeAllIntervals
-						   finds no drift to correct. */
-						const newStartPos = deletedIdx;
-						await tx
-							.update(intervalsTable)
-							.set({
-								startActId: nextAct.id,
-								startSceneId: null,
-								startPosition: newStartPos
-							})
-							.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
 					}
 				}
 			}
@@ -404,6 +477,12 @@ export const DELETE: RequestHandler = async (event) => {
 		} else if (entity.type === 'Scene' && entity.parentId) {
 			await recomputeIntervalsForAct(tx, entity.parentId, userId);
 		}
+	}).catch((err) => {
+		if ((err as { status?: number }).status) throw err;
+		if (isUniqueViolation(err)) {
+			error(409, 'The delete collides with an existing row (duplicate temporal bounds)');
+		}
+		throw err;
 	});
 
 	return new Response(null, { status: 204 });

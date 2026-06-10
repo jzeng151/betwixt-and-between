@@ -1,12 +1,13 @@
 import { json, error } from '@sveltejs/kit';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
 import { splitInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	const body = await event.request.json();
+	const body = await readJson(event);
 	const atPosition = body.atPosition ?? body.at_position;
 	if (typeof atPosition !== 'number' || !Number.isFinite(atPosition)) {
 		error(400, 'atPosition must be a finite number');

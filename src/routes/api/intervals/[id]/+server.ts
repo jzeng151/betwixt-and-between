@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { and, eq } from 'drizzle-orm';
 import { intervals } from '$lib/server/db/schema.js';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
 import { updateInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
@@ -25,7 +26,8 @@ export const PATCH: RequestHandler = async (event) => {
 		.where(and(eq(intervals.id, event.params.id), eq(intervals.userId, userId)));
 	if (!existing) error(404, 'Interval not found');
 
-	const body = await event.request.json();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const body = (await readJson(event)) as any;
 	const {
 		entity_id,
 		entityId,
@@ -44,19 +46,27 @@ export const PATCH: RequestHandler = async (event) => {
 	} = body;
 
 	try {
-		const { updated, absorbed } = await updateInterval(
-			db,
-			event.params.id,
-			{
-				entityId: entityId ?? entity_id,
-				startActId: startActId ?? start_act_id,
-				startSceneId: startSceneId !== undefined ? startSceneId : start_scene_id,
-				endActId: endActId ?? end_act_id,
-				endSceneId: endSceneId !== undefined ? endSceneId : end_scene_id,
-				startPosition: startPosition ?? start_position,
-				endPosition: endPosition ?? end_position
-			},
-			userId
+		// Transaction (2026-06 audit fix): updateInterval's overlap-merge path
+		// DELETEs absorbed siblings before UPDATING the survivor. On the raw
+		// pool each statement autocommits, so a failure after the deletes
+		// permanently dropped the absorbed intervals while the target kept its
+		// old range — silent data loss. The split endpoint already wraps for
+		// exactly this reason.
+		const { updated, absorbed } = await db.transaction(async (tx) =>
+			updateInterval(
+				tx,
+				event.params.id,
+				{
+					entityId: entityId ?? entity_id,
+					startActId: startActId ?? start_act_id,
+					startSceneId: startSceneId !== undefined ? startSceneId : start_scene_id,
+					endActId: endActId ?? end_act_id,
+					endSceneId: endSceneId !== undefined ? endSceneId : end_scene_id,
+					startPosition: startPosition ?? start_position,
+					endPosition: endPosition ?? end_position
+				},
+				userId
+			)
 		);
 		// Embed absorbed IDs in the response so the client can prune any
 		// merged-away rows from its store. `absorbed` is empty in the

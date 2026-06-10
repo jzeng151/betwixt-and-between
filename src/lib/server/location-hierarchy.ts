@@ -15,7 +15,7 @@
  * (a pre-existing cycle in the DB would otherwise loop forever).
  */
 import { error } from '@sveltejs/kit';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { entities, relationships } from './db/schema.js';
 import { isUuid } from './validation.js';
 
@@ -58,12 +58,15 @@ export async function assertPartOfInvariants(
 		error(400, 'part_of cannot reference the same Location on both ends');
 	}
 
+	// Only the two endpoint rows are needed for the type check (2026-06 perf
+	// audit — this previously loaded the user's ENTIRE entities table per
+	// part_of write).
 	const typed = (db as DB)
 		.select({ id: entities.id, type: entities.type })
 		.from(entities)
-		.where(and(eq(entities.userId, userId)));
-	const all = (await typed) as Array<{ id: string; type: string }>;
-	const byId = new Map(all.map((row) => [row.id, row.type]));
+		.where(and(eq(entities.userId, userId), inArray(entities.id, [fromId, toId])));
+	const endpoints = (await typed) as Array<{ id: string; type: string }>;
+	const byId = new Map(endpoints.map((row) => [row.id, row.type]));
 
 	const fromType = byId.get(fromId);
 	const toType = byId.get(toId);
