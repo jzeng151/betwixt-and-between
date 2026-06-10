@@ -189,6 +189,12 @@ export const STROKE_MAX_POINTS = 4096; // path[] cap — DoS/storage bound (pari
 // boundary with no such bound — cap it so one request can't persist an
 // arbitrarily fat state_jsonb (each stroke is up to STROKE_MAX_POINTS points).
 export const ANCHOR_MAX_STROKES = 4096;
+// F14: per-dimension caps (ANCHOR_MAX_STROKES strokes × STROKE_MAX_POINTS points)
+// multiply to ~16M points — one anchor POST could persist hundreds of MB of jsonb
+// that every projection read then loads. Cap the AGGREGATE point count across all
+// strokes in a single anchor write so the per-request budget is bounded regardless
+// of how the points are distributed across strokes.
+export const ANCHOR_MAX_TOTAL_POINTS = 65536;
 export type StrokePoint = { x: number; y: number };
 // Slice C adds 'erase': an erase stroke removes painted art beneath it WITHIN
 // its target layer (the freeform layer-mask mechanism) — rendered as an

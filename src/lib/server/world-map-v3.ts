@@ -27,6 +27,7 @@ import { assertSourceEventIdIsEvent } from './intervals/polymorphic-fk.js';
 import type { Db } from './intervals.js';
 import {
 	ANCHOR_MAX_STROKES,
+	ANCHOR_MAX_TOTAL_POINTS,
 	BIOMES,
 	EVENT_KINDS,
 	PAINT_CELLS_MAX_PER_EVENT,
@@ -441,6 +442,18 @@ function validateAnchorStateShape(state: unknown): asserts state is AnchorState 
 	// STROKE_MAX_POINTS points, so an uncapped array is a fat-row/DoS vector.
 	if (Array.isArray(s.strokes) && s.strokes.length > ANCHOR_MAX_STROKES) {
 		error(400, `state_jsonb.strokes exceeds cap of ${ANCHOR_MAX_STROKES} strokes`);
+	}
+	// F14: per-dimension caps multiply to ~16M points; bound the AGGREGATE so one
+	// request can't persist hundreds of MB of jsonb regardless of distribution.
+	if (Array.isArray(s.strokes)) {
+		let totalPoints = 0;
+		for (const stroke of s.strokes) {
+			const path = (stroke as { path?: unknown })?.path;
+			if (Array.isArray(path)) totalPoints += path.length;
+		}
+		if (totalPoints > ANCHOR_MAX_TOTAL_POINTS) {
+			error(400, `state_jsonb.strokes exceeds cap of ${ANCHOR_MAX_TOTAL_POINTS} total points`);
+		}
 	}
 }
 
