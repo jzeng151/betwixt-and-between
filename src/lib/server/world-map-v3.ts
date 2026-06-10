@@ -1487,13 +1487,19 @@ async function maybeWriteAutoAnchor(
 	// playhead T keeps replacing one anchor (O(N)), but painting at M DISTINCT
 	// story-times (Slice D's terrain-beats workflow) accumulates one cumulative
 	// anchor per T → ~O(M²) stored, and the client downloads every anchor.
-	// Blast radius is self-inflicted (own map only, scoped by world_maps.user_id)
-	// and is parity with the pre-existing cells[] accumulation, so this is
-	// DEFERRED rather than fixed: every overflow policy is lossy or degrading
-	// (drop-oldest silently destroys the user's oldest art; refuse-bake forces a
-	// full-stroke replay every frame), and the retention semantic is a product
-	// call. A real fix should cover both cells[] and strokes[] in one pass and
-	// decide a per-map stroke budget. See docs/findings/*review* (F4).
+	// Blast radius is self-inflicted (own map only, scoped by world_maps.user_id).
+	// NOTE: this is NOT parity with the pre-existing cells[] accumulation —
+	// cells[] is last-write-wins keyed on (x,y), so a synthetic anchor's cells[]
+	// is bounded by grid size (≤128×128 = 16384, enforced by gridCellsX/Y ∈
+	// [4,128]). strokes[] is append-only painter's-order with NO equivalent
+	// bound on this seed path, so the worst case is genuinely unbounded per
+	// anchor — strictly worse than cells[]. Still DEFERRED rather than fixed:
+	// every overflow policy is lossy or degrading (drop-oldest silently destroys
+	// the user's oldest art; refuse-bake forces a full-stroke replay every
+	// frame), and the retention semantic is a product call. A real fix should
+	// enforce a per-map stroke budget (ANCHOR_MAX_TOTAL_POINTS or similar) on
+	// THIS seed path too — not only the client anchor write boundary. See
+	// docs/findings/*review* (F4).
 	const strokes: StoredStroke[] = [];
 	for (const s of baseState.strokes ?? []) {
 		applyPaintStroke(strokes, s);
