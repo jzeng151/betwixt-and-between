@@ -68,7 +68,8 @@
 		type ProjectionContext,
 		type RenderedState,
 		type RenderedCell,
-		type ArtifactPosition
+		type ArtifactPosition,
+		type StrokeStampParams
 	} from '$lib/features/map/projection.js';
 	import { computeCanvasMode, type MapTool } from '$lib/features/map/canvas-mode.js';
 	import { factions as factionsStore } from '$lib/features/map/factions-store.js';
@@ -116,6 +117,16 @@
 	let strokeTextureKey = $state<string>('Grass'); // fill→terrain key, stamp→Objects/ key
 	let strokeBrushSize = $state<number>(0.04);
 	let strokeSoftness = $state<number>(0.5);
+	// codex P2: stamp mode needs scatter params or PixiArtLayer falls back to
+	// spacing = brushSize, jitter = 0 — so the advertised Slice C "varied scatter"
+	// never wobbles placement. The freeform palette doesn't expose these yet, so
+	// derive proportionate defaults from the brush size: stamps ~one brush-width
+	// apart, jittered by up to ±¼ brush-width. (Both normalized to the map extent,
+	// like brushSize.) Only sent for stamp strokes (commitStroke gates on mode).
+	let strokeStamp = $derived<StrokeStampParams>({
+		spacing: strokeBrushSize,
+		jitter: strokeBrushSize * 0.5
+	});
 	// Slice D — time-varying terrain authoring. Both brushes commit at the
 	// CURRENT playhead T (paint_cells PixiBrushLayer.svelte:156, paint_stroke
 	// PixiFreeformBrushLayer commitStroke), and the fold windows events by
@@ -2555,6 +2566,7 @@
 					textureKey={strokeTextureKey}
 					brushSize={strokeBrushSize}
 					softness={strokeSoftness}
+					stamp={strokeStamp}
 					layerId={strokeLayerId}
 					onError={(msg) => (strokeError = msg)}
 				/>

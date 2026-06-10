@@ -131,7 +131,24 @@ function createWorldMapStore() {
 		});
 		if (!res.ok) throw new Error(await errorMessage(res));
 		const updated: WorldMap = await res.json();
-		maps.update((all) => all.map((m) => (m.id === id ? updated : m)));
+		// codex P2: write back ONLY the fields THIS PATCH changed, taken from the
+		// authoritative response; keep every other field from the current store
+		// row. A concurrent PATCH (e.g. a toolbar rename) returns a full row whose
+		// untouched fields (artLayersJsonb) may be a snapshot from before a just-
+		// saved art-layer edit; a wholesale row replace would revert that edit in
+		// the client until reload even though the DB is correct. (Within-field art
+		// PATCHes are already serialized by MapSidebar's artBusy/artPending queue.)
+		const changed = Object.keys(fields) as (keyof typeof fields)[];
+		maps.update((all) =>
+			all.map((m) => {
+				if (m.id !== id) return m;
+				const merged = { ...m };
+				for (const k of changed) {
+					(merged as Record<string, unknown>)[k] = (updated as Record<string, unknown>)[k];
+				}
+				return merged;
+			})
+		);
 		return updated;
 	}
 
