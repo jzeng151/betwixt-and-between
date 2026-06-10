@@ -595,11 +595,11 @@ export async function createMapAnchor(
 	// WM3 Slice A: sanitize client-authored strokes through the same gate the
 	// read path uses (drop malformed, default []), so a manual "snapshot world
 	// state here" persists clean strokes and the strokes key is always present.
-	const normalizedStrokes: StoredStroke[] = [];
+	const sanitizedStrokes: StoredStroke[] = [];
 	for (const stroke of input.stateJsonb.strokes ?? []) {
-		applyPaintStroke(normalizedStrokes, stroke);
+		applyPaintStroke(sanitizedStrokes, stroke);
 	}
-	await assertStrokeLayerIdsExist(db, userId, worldMapId, normalizedStrokes);
+	const normalizedStrokes = await normalizeStrokeLayerIds(db, userId, worldMapId, sanitizedStrokes);
 	const normalizedState: AnchorState = {
 		...input.stateJsonb,
 		cells: input.stateJsonb.cells ?? [],
@@ -714,11 +714,11 @@ export async function updateMapAnchor(
 		// WM3 Slice A: strokes sanitized through applyPaintStroke (same gate as
 		// createMapAnchor / read path), defaulting to [].
 		const incoming = patch.stateJsonb as AnchorState;
-		const patchedStrokes: StoredStroke[] = [];
+		const sanitizedStrokes: StoredStroke[] = [];
 		for (const stroke of incoming.strokes ?? []) {
-			applyPaintStroke(patchedStrokes, stroke);
+			applyPaintStroke(sanitizedStrokes, stroke);
 		}
-		await assertStrokeLayerIdsExist(db, userId, worldMapId, patchedStrokes);
+		const patchedStrokes = await normalizeStrokeLayerIds(db, userId, worldMapId, sanitizedStrokes);
 		updates.stateJsonb = { ...incoming, cells: incoming.cells ?? [], strokes: patchedStrokes };
 		// codex P2: client-write boundary — validate cell shape/biome/bounds.
 		const grid = await loadGridDims(db, worldMapId);
@@ -1051,27 +1051,41 @@ async function loadArtLayerIds(db: Db, userId: string, worldMapId: string): Prom
 	return ids;
 }
 
-// Anchor-write parity with validatePaintStrokePayload's layerId existence
-// check: a direct anchor POST/PATCH must not persist strokes referencing an
-// art layer this map doesn't have (the event write path already rejects
-// these; without this the two write paths disagree).
-async function assertStrokeLayerIdsExist(
+// Anchor-write layerId normalization, in lockstep with the render-side F5
+// orphaned-layer policy (PixiArtLayer.renderBucket). A direct anchor POST/PATCH
+// (notably "Snapshot world state here", which captures exactly the RENDERED
+// strokes) can legitimately carry strokes whose art layer was deleted — the
+// render path deliberately KEEPS those: a fill/stamp stroke falls back to the
+// base layer, an erase stroke is dropped (re-homing it to base would erase base
+// art it never targeted). This previously REJECTED such strokes with a 400,
+// which broke snapshotting any map containing a since-deleted painted layer
+// (Codex review). Normalize instead: drop orphaned erase strokes, rebase
+// orphaned fill/stamp strokes, leave layered strokes untouched. Strokes with a
+// LIVE layerId keep it; cross-user/forged layer references can't occur because
+// loadArtLayerIds is scoped by world_maps.user_id (F27).
+async function normalizeStrokeLayerIds(
 	db: Db,
 	userId: string,
 	worldMapId: string,
 	strokes: StoredStroke[]
-): Promise<void> {
+): Promise<StoredStroke[]> {
 	const referenced = new Set<string>();
 	for (const s of strokes) {
 		if (s.layerId !== undefined) referenced.add(s.layerId);
 	}
-	if (referenced.size === 0) return;
+	if (referenced.size === 0) return strokes;
 	const layerIds = await loadArtLayerIds(db, userId, worldMapId);
-	for (const id of referenced) {
-		if (!layerIds.has(id)) {
-			error(400, 'anchor state_jsonb strokes[].layerId not found on this map');
+	const out: StoredStroke[] = [];
+	for (const s of strokes) {
+		if (s.layerId === undefined || layerIds.has(s.layerId)) {
+			out.push(s);
+			continue;
 		}
+		// Orphaned layerId — mirror the render-side base-fallback (F5).
+		if (s.mode === 'erase') continue; // drop: an eraser with no layer is a no-op
+		out.push({ ...s, layerId: undefined }); // rebase fill/stamp to the base layer
 	}
+	return out;
 }
 
 // Slice 4 PR-F (D5) — move_entity payload validator.
@@ -1167,8 +1181,16 @@ export async function createMapEvent(
 ): Promise<typeof mapEvents.$inferSelect & { invalidatedAnchorIds: string[] }> {
 	await assertMapOwnership(db, userId, worldMapId);
 	assertObjectBody(input);
-	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition)) {
-		error(400, 'tPosition must be a finite number');
+	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition) || input.tPosition < 0) {
+		// t >= 0 parity with createMapAnchor's A1 guard (the A1 audit added the
+		// bound to anchor writes but missed events — Codex). Load-bearing: a
+		// paint event's t becomes a synthetic anchor's t_position via
+		// maybeWriteAutoAnchor, and the act-reorder cascade parks anchors at
+		// ANCHOR_PARK_BASE - i (= -1_000_000 - i, recompute.ts). A crafted
+		// negative event t like -1_000_000 would surface as a synthetic anchor
+		// that collides with a parked row on the (world_map_id, t_position)
+		// unique index and abort the whole reorder/delete transaction.
+		error(400, 'tPosition must be a finite number >= 0');
 	}
 	if (!EVENT_KINDS.includes(input.kind)) {
 		error(400, `Unknown event kind: ${input.kind}`);
@@ -1248,6 +1270,34 @@ export async function createMapEvent(
 				lockedGrid.y,
 				'paint_cells'
 			);
+		}
+
+		// #4 (Codex adversarial): a paint_stroke authored at EXACTLY an authored
+		// (non-synthetic) anchor's t_position is silently lost. projectState's
+		// same-T rule (CMT-5) excludes events at anchorT, and maybeWriteAutoAnchor
+		// won't overwrite an authored anchor, so the stroke row persists but never
+		// renders or bakes into any snapshot. Reject with a 409 so the user paints
+		// at a different position or updates the snapshot, instead of losing work.
+		// Scoped to paint_stroke (one event per stroke, no chunk amplification);
+		// synthetic anchors at this T are cache rows, invalidated just below.
+		if (input.kind === 'paint_stroke') {
+			const [authoredAtT] = await tx
+				.select({ id: mapAnchors.id })
+				.from(mapAnchors)
+				.where(
+					and(
+						eq(mapAnchors.worldMapId, worldMapId),
+						eq(mapAnchors.tPosition, input.tPosition),
+						eq(mapAnchors.isSynthetic, false)
+					)
+				)
+				.limit(1);
+			if (authoredAtT) {
+				error(
+					409,
+					'An authored snapshot exists at this story-time; paint at a different position or update the snapshot'
+				);
+			}
 		}
 
 		const [row] = await tx
