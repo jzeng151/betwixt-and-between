@@ -102,9 +102,24 @@
 		void patchArtLayers(artLayers.map((l) => (l.id === id ? { ...l, ...patch } : l)));
 	}
 
+	// F15 — confirm art-layer delete (mirrors the faction delete modal). The
+	// layer's identity (name/blend/opacity) is unrecoverable, and per F5 not all
+	// strokes survive the delete, so don't fire on a single ✕ click.
+	let artDeleteTarget = $state<MapArtLayer | null>(null);
+
 	function removeArtLayer(id: string): void {
-		// Strokes referencing the removed layer fall back to the base art layer
-		// at render (lazy GC) — nothing is lost, only the grouping.
+		const layer = artLayers.find((l) => l.id === id);
+		if (layer) artDeleteTarget = layer;
+	}
+
+	function confirmRemoveArtLayer(): void {
+		if (!artDeleteTarget) return;
+		const id = artDeleteTarget.id;
+		artDeleteTarget = null;
+		// F5/F37: fill/stamp strokes on the removed layer fall back to the base art
+		// layer at render (lazy GC); ERASE strokes are dropped (an eraser with no
+		// surviving layer to mask would otherwise eat base art). NOT "nothing is
+		// lost" — the old comment here was wrong for erase strokes.
 		void patchArtLayers(artLayers.filter((l) => l.id !== id));
 	}
 
@@ -309,8 +324,13 @@
 									value={l.name}
 									disabled={artBusy}
 									onchange={(e) => {
-										const name = (e.currentTarget as HTMLInputElement).value.trim();
+										const input = e.currentTarget as HTMLInputElement;
+										const name = input.value.trim();
+										// F39: a blank rename used to no-op and leave the stale
+										// (empty) text in the field. Reset to the current name so
+										// the input always reflects the persisted value.
 										if (name) updateArtLayer(l.id, { name });
+										else input.value = l.name;
 									}}
 								/>
 								<button
@@ -352,6 +372,7 @@
 								<input
 									type="range"
 									aria-label="Opacity for {l.name}"
+									aria-valuetext="{Math.round(l.opacity * 100)}%"
 									min="0"
 									max="1"
 									step="0.05"
@@ -362,6 +383,11 @@
 											opacity: parseFloat((e.currentTarget as HTMLInputElement).value)
 										})}
 								/>
+								<!-- F39: visible numeric readout so the slider value is legible
+								     (not just an opaque track) for sighted + AT users. -->
+								<span class="art-layer-opacity-readout" aria-hidden="true"
+									>{Math.round(l.opacity * 100)}%</span
+								>
 							</div>
 						</li>
 					{/each}
@@ -548,6 +574,28 @@
 	</div>
 {/if}
 
+{#if artDeleteTarget}
+	{@const al = artDeleteTarget}
+	<div class="modal-overlay" role="dialog" aria-modal="true">
+		<div class="modal-content">
+			<h3>Delete layer "{al.name}"?</h3>
+			<p class="warn-text">
+				Fill and stamp strokes on this layer move to the base art layer; erase
+				strokes on it are removed. The layer's blend mode and opacity can't be
+				recovered.
+			</p>
+			<div class="modal-actions">
+				<button type="button" class="btn-secondary" onclick={() => (artDeleteTarget = null)}>
+					Cancel
+				</button>
+				<button type="button" class="btn-danger-solid" onclick={confirmRemoveArtLayer}>
+					Delete
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	/* Slice 3 E3 — Layers pane. Sits above factions in the sidebar. */
 	.layers-pane {
@@ -618,7 +666,12 @@
 	.art-layer-name:focus {
 		border-color: var(--color-border);
 		background: var(--color-bg, #1a1a1a);
-		outline: none;
+	}
+	/* F16: DESIGN.md forbids `outline: none` without a visible replacement. Keep a
+	   real focus ring for keyboard users (the border alone is ~1.3:1 — too faint). */
+	.art-layer-name:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 1px;
 	}
 	.art-layer-controls {
 		display: flex;
@@ -631,16 +684,23 @@
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 		border-radius: 4px;
-		font-size: 10px;
+		font-size: 11px;
 		padding: 1px 2px;
 	}
 	.art-layer-controls input[type='range'] {
 		flex: 1;
 		min-width: 0;
 	}
+	.art-layer-opacity-readout {
+		font-size: 11px;
+		color: var(--color-text-muted, #888);
+		min-width: 32px;
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+	}
 	.art-layers-empty {
 		margin: 0;
-		font-size: 10px;
+		font-size: 11px;
 		font-style: italic;
 		color: var(--color-text-muted, #888);
 	}

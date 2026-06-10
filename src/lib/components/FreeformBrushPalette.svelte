@@ -103,7 +103,7 @@
 		</div>
 
 		{#if mode !== 'erase'}
-			<div class="chips" aria-label={mode === 'fill' ? 'Fill terrain' : 'Stamp object'}>
+			<div class="chips" role="group" aria-label={mode === 'fill' ? 'Fill terrain' : 'Stamp object'}>
 				{#if mode === 'fill'}
 					{#each fillTypes as type (type)}
 						<button
@@ -161,8 +161,11 @@
 				max="0.2"
 				step="0.005"
 				value={brushSize}
+				aria-valuetext="{Math.round(brushSize * 100)}%"
 				oninput={(e) => onSetBrushSize(parseFloat((e.currentTarget as HTMLInputElement).value))}
 			/>
+			<!-- F39: numeric readout — a raw normalized value like 0.045 is unreadable. -->
+			<span class="slider-readout" aria-hidden="true">{Math.round(brushSize * 100)}%</span>
 		</label>
 		{#if mode === 'fill' || mode === 'erase'}
 			<label class="slider">
@@ -173,8 +176,10 @@
 					max="1"
 					step="0.05"
 					value={softness}
+					aria-valuetext="{Math.round(softness * 100)}%"
 					oninput={(e) => onSetSoftness(parseFloat((e.currentTarget as HTMLInputElement).value))}
 				/>
+				<span class="slider-readout" aria-hidden="true">{Math.round(softness * 100)}%</span>
 			</label>
 		{/if}
 	</div>
@@ -282,6 +287,12 @@
 	}
 	.slider input {
 		width: 70px;
+	}
+	.slider-readout {
+		min-width: 30px;
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-text-muted, #aaa);
 	}
 	.layer-select {
 		display: inline-flex;
