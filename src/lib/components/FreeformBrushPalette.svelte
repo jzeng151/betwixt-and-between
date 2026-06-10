@@ -87,7 +87,14 @@
 			<button type="button" class:armed={mode === 'fill'} aria-pressed={mode === 'fill'} onclick={() => selectMode('fill')}>
 				Fill
 			</button>
-			<button type="button" class:armed={mode === 'stamp'} aria-pressed={mode === 'stamp'} onclick={() => selectMode('stamp')}>
+			<button
+				type="button"
+				class:armed={mode === 'stamp'}
+				aria-pressed={mode === 'stamp'}
+				disabled={stampGroups.length === 0}
+				title={stampGroups.length === 0 ? 'Loading stamps…' : undefined}
+				onclick={() => selectMode('stamp')}
+			>
 				Stamp
 			</button>
 			<button type="button" class:armed={mode === 'erase'} aria-pressed={mode === 'erase'} onclick={() => selectMode('erase')}>
@@ -223,6 +230,10 @@
 	.mode-toggle button.armed {
 		border-color: var(--color-accent, #c8942a);
 		background: color-mix(in srgb, var(--color-accent, #c8942a) 25%, transparent);
+	}
+	.mode-toggle button:disabled {
+		opacity: 0.5;
+		cursor: progress;
 	}
 	.chips {
 		display: flex;
