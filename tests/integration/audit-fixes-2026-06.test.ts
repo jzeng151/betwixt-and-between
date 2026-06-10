@@ -98,6 +98,41 @@ describe('B1 — act reorder inversion is swap-normalized', () => {
 	});
 });
 
+describe('B1b — swap-normalization that would overlap a sibling rolls back', () => {
+	it('a reorder whose swap widens an interval across a same-entity sibling aborts instead of writing an overlap', async () => {
+		const acts = await seedActs(db, userId);
+		const ellie = await seedCharacter('Ellie');
+		// A spans [act0, act1) = [0, 2); B sits in act2 = [2, 3). Adjacent, no overlap.
+		const a = await writeInterval(
+			db,
+			{ entityId: ellie, startActId: acts.act0, endActId: acts.act1 },
+			userId
+		);
+		const b = await writeInterval(
+			db,
+			{ entityId: ellie, startActId: acts.act2, endActId: acts.act2 },
+			userId
+		);
+		// Move act0 after act2 (position 2). Order becomes act1, act2, act0; A
+		// swap-normalizes to [0, 3) which would intersect B's recomputed [1, 2).
+		// The guard aborts with an actionable 409 (entity name + both spans + how
+		// to resolve), not an opaque 500.
+		await expect(
+			PATCH_ENTITY(mkEvent({ params: { id: acts.act0 }, body: { position: 2 } }))
+		).rejects.toMatchObject({
+			status: 409,
+			body: { message: expect.stringMatching(/"Ellie".+overlapping time spans/i) }
+		});
+		// Transaction rolled back: both intervals AND the act reorder are untouched.
+		const [rowA] = await db.select().from(intervals).where(eq(intervals.id, a.id));
+		const [rowB] = await db.select().from(intervals).where(eq(intervals.id, b.id));
+		expect([rowA.startPosition, rowA.endPosition]).toEqual([0, 2]);
+		expect([rowB.startPosition, rowB.endPosition]).toEqual([2, 3]);
+		const [act0row] = await db.select().from(entities).where(eq(entities.id, acts.act0));
+		expect(act0row.position).toBe(0);
+	});
+});
+
 describe('B2 — DELETE act with moveScenesTo follows the scenes', () => {
 	it('an interval [scene-in-deleted → end-of-deleted] lands in the target act', async () => {
 		const acts = await seedActs(db, userId);
@@ -235,6 +270,16 @@ describe('PLC — placement data jsonb size cap', () => {
 			)
 		).rejects.toMatchObject({ status: 400 });
 	});
+
+	it('measures true UTF-8 bytes: a multibyte blob under the char-count but over the byte cap is rejected', async () => {
+		// 6000 emoji = 6000 UTF-16 length but 24000 UTF-8 bytes (> 16384 cap).
+		// The old String.length check would have accepted this.
+		await expect(
+			POST_PLACEMENT(
+				mkEvent({ body: { x: 0.5, y: 0.5, data: { pad: '😀'.repeat(6000) } } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
 });
 
 describe('ENT — entities PATCH scalar validation', () => {
@@ -275,5 +320,17 @@ describe('CNV — canvas batch upsert handles duplicate entityIds', () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0].x).toBe(9);
 		expect(rows[0].y).toBe(9);
+	});
+
+	it('rejects an oversized batch with 400 (bounds the bind-parameter count)', async () => {
+		const windowId = crypto.randomUUID();
+		const big = Array.from({ length: 2001 }, () => ({
+			entityId: crypto.randomUUID(),
+			x: 0,
+			y: 0
+		}));
+		await expect(
+			POST_CANVAS_BATCH(mkEvent({ params: { windowId }, body: big }))
+		).rejects.toMatchObject({ status: 400 });
 	});
 });
