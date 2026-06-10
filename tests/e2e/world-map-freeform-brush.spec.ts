@@ -5,8 +5,10 @@
  * canvas. Asserts the gesture commits a paint_stroke event with the right
  * payload (fill and stamp modes), and — critically for a canvas feature —
  * captures console/page errors during render so a PixiArtLayer rendering bug
- * (BlurFilter mask, TilingSprite, sprite scatter) fails the test instead of
- * silently producing a blank or broken layer.
+ * (BlurFilter feather, per-layer RenderTexture render, sprite scatter, erase
+ * blend) fails the test instead of silently producing a blank or broken layer.
+ * (F37: earlier drafts used a TilingSprite+mask approach that was abandoned for
+ * the RenderTexture render; comments updated to match the shipped mechanism.)
  *
  * Render fidelity (does the fill blend / does the stamp scatter look right) is
  * a human judgment; this test guards the wiring + the no-throw contract.
@@ -93,7 +95,7 @@ test('fill stroke: drag commits a paint_stroke (mode=fill) and renders without e
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 
 	// Fail the test on any uncaught render error (catches PixiArtLayer bugs:
-	// BlurFilter on the mask, TilingSprite masking, etc.).
+	// BlurFilter feather, per-layer RenderTexture render, erase blend, etc.).
 	const errors: string[] = [];
 	page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
 	page.on('console', (m) => {
@@ -127,8 +129,8 @@ test('fill stroke: drag commits a paint_stroke (mode=fill) and renders without e
 	await page.waitForTimeout(500);
 	const after = await canvas.screenshot({ path: '.gstack/qa-reports/screenshots/freeform-fill.png' });
 	expect(errors, errors.join('\n')).toEqual([]);
-	// The fill MUST change the canvas pixels — a blank fill (TilingSprite+mask
-	// clipped to nothing) would leave before === after and slip past the
+	// The fill MUST change the canvas pixels — a blank fill (a texture-stroke
+	// that renders nothing) would leave before === after and slip past the
 	// event-commit + no-throw checks. This is the guard the QA screenshot caught.
 	expect(Buffer.compare(before, after)).not.toBe(0);
 });

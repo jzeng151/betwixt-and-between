@@ -122,7 +122,9 @@ export type AnchorState = {
 	cells?: AnchorCell[];
 	// WM3 Slice A: freeform brush strokes baked into the anchor. Append-only
 	// (painter's order). Optional so historical anchors (pre-Slice-A) read as
-	// "no strokes"; new anchors include it (invariant test enforces). Strokes
+	// "no strokes"; the read path + every write path default a missing key to []
+	// (F22 — there is no DB invariant scan for the strokes key as there is for
+	// cells; the baseline/duplicate/snapshot writers now all emit it). Strokes
 	// MUST live here — projectState excludes events with t_position <= anchorT,
 	// so a stroke painted below an anchor's T is lost unless the anchor carries
 	// it (the "scrub playhead, base art persists" criterion; eng-review §1).
@@ -611,10 +613,13 @@ function applyTransferRegion(
 // WM3 Slice A — append one freeform stroke from a paint_stroke payload.
 // Defensive lazy-GC (same posture as applyPaintCells): a malformed stroke is
 // dropped rather than throwing — the server validator is the real write gate;
-// this guards the fold against legacy/forged rows. Shares the isKnown*Key
-// predicates + STROKE_MAX_POINTS with the server validator so the two cannot
-// disagree on what is storable. A bad point drops the WHOLE stroke (a corrupt
-// path has no safe partial render), unlike a single bad cell. Exported so the
+// this guards the fold against legacy/forged rows. F36: it SHARES the
+// isKnown*Key predicates + STROKE_MAX_POINTS with the server validator, but the
+// brushSize/softness/[0,1]-coord/stamp numeric rules are HAND-DUPLICATED here,
+// not shared — keep them in lockstep with validatePaintStrokePayload or the fold
+// will silently drop a stroke the server accepted (or vice versa). A bad point
+// drops the WHOLE stroke (a corrupt path has no safe partial render), unlike a
+// single bad cell. Exported so the
 // server-side anchor-snapshot builder seeds baked strokes through the SAME gate
 // the read path uses (snapshot stays byte-equal to projectState).
 export function applyPaintStroke(strokes: StoredStroke[], payload: unknown): void {

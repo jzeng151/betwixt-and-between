@@ -111,7 +111,10 @@ export const POST: RequestHandler = async (event) => {
 				// every map_anchors.state_jsonb must include the cells key. Pre-
 				// Slice-3 anchors were backfilled by drizzle/0022; new writers
 				// must keep the contract green or the invariant scan fails.
-				stateJsonb: { regions: [], artifacts: [], chains: [], cells: [] }
+				// WM3 Slice A (F22): include strokes:[] too for shape consistency —
+				// the read path defaults a missing strokes key to [] anyway, but a
+				// fresh map has no strokes and the baseline should say so explicitly.
+				stateJsonb: { regions: [], artifacts: [], chains: [], cells: [], strokes: [] }
 			});
 			return row;
 		});
