@@ -1410,6 +1410,21 @@ async function maybeWriteAutoAnchor(
 	}
 	// Seed baked strokes through applyPaintStroke (same gate the read path uses),
 	// then the shared fold appends post-cutoff stroke events in painter's order.
+	//
+	// TODO(F4 — deferred, product decision): this bake re-seeds the FULL
+	// accumulated stroke history and applies NO cap (ANCHOR_MAX_STROKES is
+	// enforced only on the client anchor POST/PATCH path, not here). Strokes are
+	// append-only — an erase ADDS a stroke; nothing prunes. Painting at the same
+	// playhead T keeps replacing one anchor (O(N)), but painting at M DISTINCT
+	// story-times (Slice D's terrain-beats workflow) accumulates one cumulative
+	// anchor per T → ~O(M²) stored, and the client downloads every anchor.
+	// Blast radius is self-inflicted (own map only, scoped by world_maps.user_id)
+	// and is parity with the pre-existing cells[] accumulation, so this is
+	// DEFERRED rather than fixed: every overflow policy is lossy or degrading
+	// (drop-oldest silently destroys the user's oldest art; refuse-bake forces a
+	// full-stroke replay every frame), and the retention semantic is a product
+	// call. A real fix should cover both cells[] and strokes[] in one pass and
+	// decide a per-map stroke budget. See docs/findings/*review* (F4).
 	const strokes: StoredStroke[] = [];
 	for (const s of baseState.strokes ?? []) {
 		applyPaintStroke(strokes, s);
