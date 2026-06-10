@@ -58,6 +58,11 @@ describe('downsample', () => {
 		expect(downsample(pts, 5)).toBe(pts);
 	});
 
+	it('guards max <= 1 (no NaN-index undefined)', () => {
+		const pts = [{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 2 }];
+		expect(downsample(pts, 1)).toEqual([{ x: 0, y: 0 }]);
+	});
+
 	it('caps to max and preserves the first + last point', () => {
 		const pts = Array.from({ length: 100 }, (_, i) => ({ x: i, y: 0 }));
 		const out = downsample(pts, 10);

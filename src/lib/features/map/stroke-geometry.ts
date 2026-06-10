@@ -43,6 +43,7 @@ export function pointsAlongPath(
  */
 export function downsample<T extends StrokeGeometryPoint>(pts: T[], max: number): T[] {
 	if (pts.length <= max) return pts;
+	if (max <= 1) return pts.slice(0, 1); // guard: max=1 → stride Infinity
 	const out: T[] = [];
 	const stride = (pts.length - 1) / (max - 1);
 	for (let i = 0; i < max; i++) out.push(pts[Math.round(i * stride)]);

@@ -672,7 +672,7 @@ export function applyPaintStroke(strokes: StoredStroke[], payload: unknown): voi
 	// value strips to base rather than dropping the stroke (the art is intact —
 	// only its layer routing is unusable, and base render keeps it visible).
 	const layerId =
-		typeof p.layerId === 'string' && p.layerId.length > 0 && p.layerId.length <= 64
+		typeof p.layerId === 'string' && p.layerId.length > 0 && p.layerId.length <= ART_LAYER_ID_MAX
 			? p.layerId
 			: undefined;
 	strokes.push({
