@@ -245,6 +245,26 @@
 		}
 	}
 
+	// A11y: confirm dialogs are dismissible with Escape (DESIGN.md "Escape —
+	// Dismiss any open inline form or modal"). The faction-delete modal stays
+	// open while a delete is in flight so Escape can't strand a half-done op.
+	function onModalKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		if (artDeleteTarget) {
+			e.stopPropagation();
+			artDeleteTarget = null;
+		} else if (deleteTarget && !deleteBusy) {
+			e.stopPropagation();
+			cancelDelete();
+		}
+	}
+
+	// Move focus into a dialog when it opens (the dialog node is tabindex=-1) so
+	// keyboard + screen-reader users land inside the modal, not behind it.
+	function focusOnOpen(node: HTMLElement) {
+		node.focus();
+	}
+
 	// Faction rename + recolor. The ✎ button next to delete (or the name)
 	// opens an inline edit form: a name field + the color swatches (always
 	// visible) + Save/Cancel. Swatches just SELECT a color (preview); Save
@@ -572,11 +592,20 @@
 	</ul>
 </aside>
 
+<svelte:window onkeydown={onModalKeydown} />
+
 {#if deleteTarget}
 	{@const dc = deleteTarget}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
+	<div
+		class="modal-overlay"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="faction-del-title"
+		tabindex="-1"
+		use:focusOnOpen
+	>
 		<div class="modal-content">
-			<h3>Delete faction "{dc.faction.name}"?</h3>
+			<h3 id="faction-del-title">Delete faction "{dc.faction.name}"?</h3>
 			{#if dc.dependentCount > 0}
 				<p class="warn-text">
 					This faction is referenced by <strong>{dc.dependentCount}</strong>
@@ -606,9 +635,16 @@
 
 {#if artDeleteTarget}
 	{@const al = artDeleteTarget}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
+	<div
+		class="modal-overlay"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="art-del-title"
+		tabindex="-1"
+		use:focusOnOpen
+	>
 		<div class="modal-content">
-			<h3>Delete layer "{al.name}"?</h3>
+			<h3 id="art-del-title">Delete layer "{al.name}"?</h3>
 			<p class="warn-text">
 				Fill and stamp strokes on this layer move to the base art layer; erase
 				strokes on it are removed. The layer's blend mode and opacity can't be

@@ -128,6 +128,11 @@
 	let lastStrokeKey: string | null = null;
 	let lastViewKey: string | null = null;
 	let lastPlayheadT: number | null = null;
+	// Identity of the strokes array at the last build. The baked-fold memo (F11)
+	// returns a referentially STABLE strokes array across a constant-window
+	// playhead scrub, so an identity match lets us skip the O(points) strokeKey
+	// digest entirely on the hot per-tick path.
+	let lastStrokesRef: ReadonlyArray<StoredStroke> | null = null;
 
 	function disposeBuild(b: ArtBuild): void {
 		for (const s of b.sprites) {
@@ -147,6 +152,39 @@
 		}
 		b.sprites = [];
 		b.textures = [];
+	}
+
+	// Pixi v8 Container.destroy({children:true}) destroys child display objects
+	// but NOT filters attached via `.filters`. pathGraphics() assigns a fresh
+	// BlurFilter per soft (softness>0) stroke; that filter holds GPU uniform bind
+	// groups and composes two BlurFilterPass sub-filters its own destroy() does
+	// not cascade to. The transient render container is discarded on every
+	// rebuild (renderBucket), which fires at terrain-beat rate during playback,
+	// so without explicit teardown soft-brush rebuilds orphan filter GPU
+	// resources. destroy() with no args never touches the shared shader program
+	// (Pixi Shader.destroy defaults destroyPrograms=false) — it frees only this
+	// instance's bind groups. (F13's deferred BlurFilter pooling supersedes this.)
+	function destroyStrokeFilters(node: PixiContainer): void {
+		const f = node.filters;
+		if (f) {
+			const arr = Array.isArray(f) ? f : [f];
+			for (const filter of arr) {
+				const blur = filter as {
+					blurXFilter?: { destroy(): void };
+					blurYFilter?: { destroy(): void };
+					destroy?: () => void;
+				};
+				try {
+					blur.blurXFilter?.destroy();
+					blur.blurYFilter?.destroy();
+					blur.destroy?.();
+				} catch (_) {
+					/* already torn down */
+				}
+			}
+			node.filters = null;
+		}
+		for (const child of node.children) destroyStrokeFilters(child as PixiContainer);
 	}
 
 	onMount(() => {
@@ -317,6 +355,7 @@
 				lastMapId = null;
 				lastStrokeKey = null;
 				lastViewKey = null;
+				lastStrokesRef = null;
 			}
 			return;
 		}
@@ -324,11 +363,25 @@
 		const width = map.width;
 		const height = map.height;
 
-		// Rebuild-skip keys. projectState returns FRESH arrays every playhead
-		// tick, so the strokes prop changes identity at frame rate during
-		// playback — keying on content (not identity) is what keeps the RT
-		// pipeline from re-rendering 60×/s. strokeKey captures what's painted;
-		// viewKey captures how it's displayed.
+		// Rebuild-skip keys. viewKey captures how the art is displayed; strokeKey
+		// captures what's painted. viewKey is cheap (a handful of layer fields),
+		// so compute it first and use it in the identity fast-path below.
+		const viewKey =
+			layerView.map((v) => `${v.id}:${v.blendMode}:${v.opacity}:${v.visible}`).join('|') +
+			`#base:${baseVisible}#${width}x${height}`;
+
+		// Identity fast-path (perf). The baked-fold memo (F11) returns a
+		// referentially STABLE strokes array across a constant-window playhead
+		// scrub — only t changes, the applicable-event set doesn't — so the same
+		// array reuse here means nothing painted changed. Skip the O(points)
+		// strokeKey digest entirely on this hot per-tick path. The content-keyed
+		// check below still runs when identity differs (e.g. a genuinely fresh
+		// array with identical content), preserving F8 collision-safety.
+		if (ss === lastStrokesRef && viewKey === lastViewKey) {
+			lastPlayheadT = atT;
+			return; // nothing visual changed — keep the displayed build
+		}
+
 		const strokeKey =
 			map.id +
 			'#' +
@@ -350,12 +403,10 @@
 					return `${s.mode}:${s.textureKey ?? ''}:${s.layerId ?? ''}:${s.path.length}:${p0?.x},${p0?.y}:${pN?.x},${pN?.y}:${s.brushSize}:${s.softness}:${s.stamp?.spacing ?? ''}:${s.stamp?.jitter ?? ''}:${digest}`;
 				})
 				.join('|');
-		const viewKey =
-			layerView.map((v) => `${v.id}:${v.blendMode}:${v.opacity}:${v.visible}`).join('|') +
-			`#base:${baseVisible}#${width}x${height}`;
 		const strokesChanged = strokeKey !== lastStrokeKey;
 		if (!strokesChanged && viewKey === lastViewKey) {
 			lastPlayheadT = atT;
+			lastStrokesRef = ss; // refresh identity so the next tick takes the fast-path
 			return; // nothing visual changed — keep the displayed build
 		}
 		// A terrain BEAT: the stroke set changed because the playhead moved over
@@ -455,6 +506,7 @@
 				}
 				const rt = PIXI!.RenderTexture.create({ width: rtW, height: rtH });
 				app.renderer.render({ container: tmp, target: rt, clear: true });
+				destroyStrokeFilters(tmp); // release BlurFilter GPU resources first
 				tmp.destroy({ children: true });
 				newBuild.textures.push(rt);
 				const sprite = new PIXI!.Sprite(rt);
@@ -484,6 +536,7 @@
 			lastStrokeKey = strokeKey;
 			lastViewKey = viewKey;
 			lastPlayheadT = atT;
+			lastStrokesRef = ss;
 
 			// Slice D2 — terrain-transition dissolve. Old build stays on stage
 			// (beneath the new sprites) and crossfades out while the new fades
