@@ -11,6 +11,7 @@ import { json, error } from '@sveltejs/kit';
 import { mapPlacements } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
 import {
 	assertPlaceableId,
 	assertPlacementLocationId,
@@ -18,7 +19,7 @@ import {
 	assertPlacementVariantBounds,
 	resolvePlacementBounds
 } from '$lib/server/map-placements.js';
-import { validateStyleInData } from '$lib/server/style-validation.js';
+import { validateStyleInData, validatePlacementDataSize } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -35,7 +36,8 @@ export const GET: RequestHandler = async (event) => {
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	const body = await event.request.json();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const body = (await readJson(event)) as any;
 
 	try {
 		return await db.transaction(async (tx) => {
@@ -74,6 +76,7 @@ export const PATCH: RequestHandler = async (event) => {
 			if ('data' in body) {
 				// Slice 3 T24 — style whitelist applies on PATCH too.
 				validateStyleInData(body.data, 'placement.data');
+				validatePlacementDataSize(body.data, 'placement.data');
 				updates.data = body.data && typeof body.data === 'object' ? body.data : {};
 			}
 

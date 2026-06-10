@@ -28,6 +28,14 @@ import { HEX_COLOR_RE, STYLE_BOUNDS } from '$lib/style-bounds.js';
 const ALLOWED_KEYS = new Set<string>(STYLE_BOUNDS.keys);
 const MAX_STYLE_BYTES = STYLE_BOUNDS.maxBytes;
 
+// '/x' is a same-origin path; '//x' is protocol-relative (foreign origin) and
+// is NOT allowed. Allowlist, not blocklist: anything unrecognized is rejected.
+function isAllowedIconUrl(v: string): boolean {
+	if (v.startsWith('data:image/')) return true;
+	if (v.startsWith('/') && !v.startsWith('//')) return true;
+	return /^https?:\/\//i.test(v);
+}
+
 /**
  * Validate a single style override object. Throws 400 on any
  * violation; returns void on success.
@@ -69,6 +77,17 @@ export function validateStyleOverride(raw: unknown, path: string): void {
 		if (v !== null && typeof v !== 'string') {
 			error(400, `${path}.icon must be a string URL or null`);
 		}
+		// Scheme allowlist (2026-06 audit): the value lands in <img src> /
+		// PIXI.Assets.load. javascript: in img src is inert in modern browsers,
+		// but an arbitrary external URL still makes the viewer's browser fetch
+		// attacker-chosen endpoints. Allow only the shapes the app produces:
+		// data:image/* (canvas avatar pipeline), same-origin paths, http(s).
+		if (typeof v === 'string' && !isAllowedIconUrl(v)) {
+			error(
+				400,
+				`${path}.icon must be a data:image/* URL, a same-origin path starting with '/', or an http(s) URL`
+			);
+		}
 	}
 
 	if ('scale' in obj && obj.scale !== undefined) {
@@ -85,6 +104,18 @@ export function validateStyleOverride(raw: unknown, path: string): void {
 		if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) {
 			error(400, `${path}.opacity must be a number in [${min}, ${max}]`);
 		}
+	}
+}
+
+// 2026-06 audit: placement `data` is persisted verbatim apart from the style
+// sub-key, so without a total cap a client could store multi-megabyte blobs
+// per row. 16KB is roomy for placement metadata while blocking the abuse case.
+export const MAX_PLACEMENT_DATA_BYTES = 16384;
+
+export function validatePlacementDataSize(data: unknown, path: string): void {
+	if (!data || typeof data !== 'object') return;
+	if (JSON.stringify(data).length > MAX_PLACEMENT_DATA_BYTES) {
+		error(400, `${path} exceeds ${MAX_PLACEMENT_DATA_BYTES} bytes`);
 	}
 }
 

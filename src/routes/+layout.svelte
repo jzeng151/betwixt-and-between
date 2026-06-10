@@ -57,7 +57,7 @@
 			// current account (codex P1, SSR half). $preferencesUserId re-fires this
 			// effect when it resolves post-hydrate, replacing any pre-hydrate value.
 			const value = encodeURIComponent(serializePaletteCookie(appearance, ownerId));
-			document.cookie = `${PALETTE_COOKIE}=${value}; path=/; max-age=31536000; samesite=lax`;
+			document.cookie = `${PALETTE_COOKIE}=${value}; path=/; max-age=31536000; samesite=lax; secure`;
 		}
 	});
 </script>

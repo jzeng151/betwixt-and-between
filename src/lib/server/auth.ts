@@ -68,10 +68,18 @@ export function buildAuth(db: RuntimeDb, env: AuthEnv) {
 				sendMagicLink: async ({ email, url }) => {
 					if (isTest) return;
 					if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
-						// S9'b wires Resend; until then, log and let the operator copy from
-						// `wrangler tail`. Plan gates public launch behind S9'b verifying.
-						console.log(`[auth] magic-link for ${email}: ${url}`);
-						return;
+						// The magic-link URL is a bearer credential. In dev (`vite dev`,
+						// Vitest) logging it is the local sign-in mechanism; in a built
+						// worker it would leak a sign-in credential to whoever can read
+						// logs (`wrangler tail`, Logpush — observability is enabled in
+						// wrangler.jsonc). Fail closed in non-dev instead of logging.
+						if (import.meta.env.DEV) {
+							console.log(`[auth] magic-link for ${email}: ${url}`);
+							return;
+						}
+						throw new Error(
+							'RESEND_API_KEY / RESEND_FROM_EMAIL are not configured; refusing to deliver a magic link outside dev'
+						);
 					}
 					const res = await fetch('https://api.resend.com/emails', {
 						method: 'POST',
