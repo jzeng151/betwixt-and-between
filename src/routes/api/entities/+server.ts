@@ -2,6 +2,8 @@ import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
 import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
+import { isUniqueViolation } from '$lib/server/pg-errors.js';
 import { validateStyleInData } from '$lib/server/style-validation.js';
 import {
 	recomputeAllIntervals,
@@ -33,7 +35,8 @@ export const GET: RequestHandler = async (event) => {
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	const body = await event.request.json();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const body = (await readJson(event)) as any;
 	const { type, name, data, parentId, position } = body;
 
 	// Slice 3 T24 — validate data.style on create.
@@ -44,6 +47,11 @@ export const POST: RequestHandler = async (event) => {
 	}
 	if (!name || typeof name !== 'string' || name.trim() === '') {
 		error(400, 'Name is required');
+	}
+	// position lands in an integer column and drives the sibling-bump math —
+	// a float or NaN here previously surfaced as a PG cast error / 500.
+	if (position !== undefined && position !== null && !Number.isInteger(position)) {
+		error(400, 'position must be an integer');
 	}
 
 	if (typeof parentId === 'string') {
@@ -63,6 +71,29 @@ export const POST: RequestHandler = async (event) => {
 		created = await db.transaction(async (tx) => {
 			let didActInsertBetween = false;
 			let preSnapshot: Awaited<ReturnType<typeof snapshotActOrdering>> | undefined;
+
+			// Insert-between bump for Scenes (2026-06 audit fix). The cascade
+			// previously ran for Acts only, so a Scene created at an occupied
+			// position left two siblings with equal positions — the createdAt
+			// tie-break then placed the new scene AFTER the existing one ("insert
+			// at k" landed at k+1) and later reorders shifted the wrong window.
+			// No act-ordering snapshot needed: scene positions don't shift any
+			// act index.
+			if (type === 'Scene' && typeof parentId === 'string' && typeof position === 'number') {
+				await tx
+					.update(entities)
+					.set({
+						position: sql`${entities.position} + 1` as unknown as number
+					})
+					.where(
+						and(
+							eq(entities.userId, userId),
+							eq(entities.type, 'Scene'),
+							eq(entities.parentId, parentId),
+							sql`${entities.position} >= ${position}`
+						)
+					);
+			}
 
 			if (type === 'Act' && parentId == null && typeof position === 'number') {
 				const existingAtOrAfter = await tx
@@ -117,6 +148,14 @@ export const POST: RequestHandler = async (event) => {
 			return row;
 		});
 	} catch (err) {
+		// HttpErrors thrown inside the tx (style validation etc.) keep their
+		// status; unique violations from the recompute cascade are conflicts,
+		// not bad requests (2026-06 audit — parity with the relationships and
+		// maps routes' 23505 → 409 translation).
+		if ((err as { status?: number }).status) throw err;
+		if (isUniqueViolation(err)) {
+			error(409, 'The change collides with an existing row (duplicate temporal bounds)');
+		}
 		error(400, (err as Error).message);
 	}
 

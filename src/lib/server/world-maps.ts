@@ -139,7 +139,10 @@ export async function resolveWorldMapVariantBounds(
  */
 export async function recomputeWorldMapVariantsAll(
 	db: Parameters<typeof resolveRelationshipBounds>[0],
-	userId: string
+	userId: string,
+	// Optional act/scene index cache from the calling cascade (2026-06 perf
+	// audit) — without it every scene-anchored row costs several extra queries.
+	cache?: Parameters<typeof resolveRelationshipBounds>[3]
 ): Promise<number> {
 	// Include rows whose act FKs are fully null but still carry stale positions
 	// (e.g. ON DELETE SET NULL nulled both act FKs but start_position/end_position
@@ -191,7 +194,8 @@ export async function recomputeWorldMapVariantsAll(
 						endActId: row.endActId,
 						endSceneId: row.endSceneId
 					},
-					userId
+					userId,
+					cache
 				);
 				startPosition = resolved.startPosition;
 				endPosition = resolved.endPosition;

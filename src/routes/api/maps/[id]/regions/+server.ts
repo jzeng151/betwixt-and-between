@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { worldMaps, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf } from '$lib/server/location-hierarchy.js';
 import { fanOutRegionAdd } from '$lib/server/anchor-region-write-through.js';
@@ -19,7 +20,8 @@ export const POST: RequestHandler = async (event) => {
 		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
 	if (!map) error(404, 'Map not found');
 
-	const body = await event.request.json();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const body = (await readJson(event)) as any;
 	// Slice 2 D1: color is no longer accepted — visual color resolves
 	// through faction_id (defaults to Neutral). The body shape narrows
 	// to { locationId?, polygon }.

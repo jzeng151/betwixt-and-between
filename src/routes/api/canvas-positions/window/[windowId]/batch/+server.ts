@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { entities, windowCanvasState } from '$lib/server/db/schema.js';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { isUuid, coercePinned } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
@@ -49,21 +49,28 @@ export const POST: RequestHandler = async (event) => {
 		error(400, 'one or more entityIds not found');
 	}
 
-	const upserted = await db.transaction(async (tx) => {
-		const out = [];
-		for (const row of rows) {
-			const [r] = await tx
-				.insert(windowCanvasState)
-				.values(row)
-				.onConflictDoUpdate({
-					target: [windowCanvasState.windowId, windowCanvasState.entityId],
-					set: { x: row.x, y: row.y, width: row.width, height: row.height, pinned: row.pinned }
-				})
-				.returning();
-			out.push(r);
-		}
-		return out;
-	});
+	// Single multi-row INSERT … ON CONFLICT (2026-06 perf audit): the previous
+	// per-row loop issued one round trip per node — a dagre auto-layout of a
+	// few hundred entities paid hundreds of sequential statements. One
+	// statement is also inherently atomic, so the explicit transaction goes.
+	// Postgres forbids the same conflict target twice in one statement, so
+	// duplicate entityIds within the batch are deduped last-wins (matching the
+	// old loop's effective behavior).
+	const byEntity = new Map(rows.map((r) => [r.entityId, r]));
+	const upserted = await db
+		.insert(windowCanvasState)
+		.values([...byEntity.values()])
+		.onConflictDoUpdate({
+			target: [windowCanvasState.windowId, windowCanvasState.entityId],
+			set: {
+				x: sql`excluded.x`,
+				y: sql`excluded.y`,
+				width: sql`excluded.width`,
+				height: sql`excluded.height`,
+				pinned: sql`excluded.pinned`
+			}
+		})
+		.returning();
 
 	return json(upserted);
 };

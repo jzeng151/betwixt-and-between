@@ -396,8 +396,10 @@ export async function splitInterval(
  * scene's parent_id changes).
  *
  * Behavior:
- *   1. Validate target is an Act (and not the source scene's current parent
- *      with the same position — no-op).
+ *   1. Validate target is an Act. (NOTE: there is no same-parent/same-position
+ *      no-op guard — a same-act call still bumps siblings at position >=
+ *      newPosition. The route only calls this when parentId actually changes,
+ *      so the case is unreachable from the API; other callers beware.)
  *   2. Bump siblings in the target act at position >= newPosition by +1
  *      (cascade — see CONSIDERATIONS D18 generalized cascade primitive).
  *   3. Update scene's parent_id and position.

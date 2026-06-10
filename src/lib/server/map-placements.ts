@@ -174,7 +174,10 @@ export async function resolvePlacementBounds(
  */
 export async function recomputePlacementBoundsAll(
 	db: Parameters<typeof resolveRelationshipBounds>[0],
-	userId: string
+	userId: string,
+	// Optional act/scene index cache from the calling cascade (2026-06 perf
+	// audit) — without it every scene-anchored row costs several extra queries.
+	cache?: Parameters<typeof resolveRelationshipBounds>[3]
 ): Promise<number> {
 	const rows = (await (db as unknown as SelectableDB)
 		.select()
@@ -221,7 +224,8 @@ export async function recomputePlacementBoundsAll(
 						endActId: row.endActId,
 						endSceneId: row.endSceneId
 					},
-					userId
+					userId,
+					cache
 				);
 				startPosition = resolved.startPosition;
 				endPosition = resolved.endPosition;
