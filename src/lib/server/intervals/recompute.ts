@@ -23,6 +23,7 @@
  *   Half-open convention: end is exclusive. CHECK (start_position < end_position).
  */
 
+import { error } from '@sveltejs/kit';
 import { sql, eq, and, isNull, inArray } from 'drizzle-orm';
 import { entities, intervals, relationships, mapAnchors, mapEvents, worldMaps } from '../db/schema.js';
 // Pure math (actRange, sceneRange, smartSnap) lives in
@@ -354,6 +355,62 @@ function computeRowRecompute(
 	return null;
 }
 
+type SwapCheck = { id: string; entityId: string; start: number; end: number };
+
+// Trim float noise (e.g. 1.9999999998) for the user-facing span numbers.
+const fmtPos = (n: number): string => String(Number(n.toFixed(3)));
+
+/**
+ * Re-assert the same-entity no-overlap invariant for rows whose anchors were
+ * SWAPPED by computeRowRecompute (2026-06 audit follow-up, codex). The swap
+ * keeps both anchors when a reorder inverts an interval, but it can widen the
+ * row across acts so it now intersects a sibling interval of the same entity —
+ * a state the per-row recompute would otherwise write silently (there is no DB
+ * overlap constraint backing the invariant). Run AFTER all rows are written so
+ * each check sees final positions; a real overlap throws (rolling back the whole
+ * cascade transaction) instead of persisting an overlap. Only swapped rows can
+ * introduce a NEW overlap, so only they are checked — a plain reprojection keeps
+ * each interval within its own acts.
+ *
+ * On a clash we throw a 409 with an ACTIONABLE message (entity name, the two
+ * overlapping spans, and how to resolve it by hand) rather than a bare 500: the
+ * route catch's `if (status) throw err` re-throws it verbatim to the client, so
+ * the author sees what collided and what to do (move/shorten one span, or place
+ * the Act elsewhere) instead of an opaque failure. 409 matches the 23505 → 409
+ * conflict translation the routes already use for the duplicate-bounds case.
+ */
+async function assertSwapsNoOverlap(db: Db, userId: string, swaps: SwapCheck[]): Promise<void> {
+	for (const s of swaps) {
+		// Half-open overlap: [a1, a2) ∩ [b1, b2) ≠ ∅ iff a1 < b2 AND b1 < a2.
+		const siblings = await db
+			.select({
+				id: intervals.id,
+				startPosition: intervals.startPosition,
+				endPosition: intervals.endPosition
+			})
+			.from(intervals)
+			.where(and(eq(intervals.entityId, s.entityId), eq(intervals.userId, userId)));
+		const clash = siblings.find(
+			(row) => row.id !== s.id && s.start < row.endPosition && row.startPosition < s.end
+		);
+		if (!clash) continue;
+
+		const [ent] = await db
+			.select({ name: entities.name })
+			.from(entities)
+			.where(and(eq(entities.id, s.entityId), eq(entities.userId, userId)));
+		const who = ent?.name ? `"${ent.name}"` : 'this entity';
+		error(
+			409,
+			`This change would place ${who} in two overlapping time spans ` +
+				`(${fmtPos(s.start)}–${fmtPos(s.end)} and ${fmtPos(clash.startPosition)}–${fmtPos(clash.endPosition)} ` +
+				`on the story-time axis) — an entity can't occupy two intervals at once, so nothing was saved. ` +
+				`To resolve: open ${who} and move or shorten one of those two spans so they no longer overlap, ` +
+				`then retry — or place the Act at a different position.`
+		);
+	}
+}
+
 /**
  * Recompute positions for every interval anchored to a Scene within `actId`.
  *
@@ -380,6 +437,7 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 	const cache = await buildRecomputeCache(db, userId);
 
 	let updated = 0;
+	const swaps: SwapCheck[] = [];
 	for (const row of affected) {
 		// Scene-anchored sides re-derive from the scene's new index; fraction-
 		// positioned sides are the identity here (act indices unchanged by a
@@ -402,8 +460,10 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 				...(swapped ?? {})
 			})
 			.where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
+		if (swapped) swaps.push({ id: row.id, entityId: row.entityId, start: newStart, end: newEnd });
 		updated++;
 	}
+	await assertSwapsNoOverlap(db, userId, swaps);
 
 	// Scene-anchored map_placements also need their derived positions refreshed
 	// after a scene-within-act mutation (Step 4, Codex #2). Coarse: walk the
@@ -466,6 +526,7 @@ export async function recomputeAllIntervals(
 	// Build one-shot FK cache (D20/16A).
 	const cache = await buildRecomputeCache(db, userId);
 	let updated = 0;
+	const swaps: SwapCheck[] = [];
 
 	for (const row of all) {
 		try {
@@ -493,6 +554,8 @@ export async function recomputeAllIntervals(
 					...(swapped ?? {})
 				})
 				.where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
+			if (swapped)
+				swaps.push({ id: row.id, entityId: row.entityId, start: newStart, end: newEnd });
 			updated++;
 		} catch (err) {
 			throw new Error(
@@ -500,6 +563,9 @@ export async function recomputeAllIntervals(
 			);
 		}
 	}
+	// Roll back the whole cascade if any swap-normalized row now overlaps a
+	// sibling of the same entity (2026-06 audit follow-up — see assertSwapsNoOverlap).
+	await assertSwapsNoOverlap(db, userId, swaps);
 
 	// Also recompute temporal relationship bounds in the same transaction so
 	// act-reorder cascades are atomic (Phase 1B Lane A, 2026-05-02). The cache
@@ -810,6 +876,20 @@ async function loadUserMapIds(db: Db, userId: string): Promise<string[]> {
 // exact for i well into the trillions.
 const ANCHOR_PARK_BASE = -1_000_000;
 
+// Postgres caps a statement at 65535 bind parameters; each VALUES row in the
+// bulk recompute UPDATEs below uses 2 (id, t_position). A heavily-painted map
+// (every paint stroke is a map_events row) can accumulate enough changed rows
+// that one VALUES clause exceeds that limit and fails the entire Act reorder/
+// delete cascade. Chunk the bulk writes so the statement stays bounded
+// (1000 rows ≈ 2001 params). (2026-06 audit follow-up — the single-VALUES
+// rewrite replaced per-row loops that never hit the param ceiling.)
+const BULK_UPDATE_CHUNK = 1000;
+function chunked<T>(arr: T[], size: number): T[][] {
+	const out: T[][] = [];
+	for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+	return out;
+}
+
 async function recomputeMapAnchors(
 	db: Db,
 	userId: string,
@@ -877,30 +957,42 @@ async function recomputeMapAnchors(
 	// issued 2N sequential round trips inside the cascade transaction. The
 	// user scope joins world_maps.user_id directly (same self-enforcing
 	// posture as loadUserMapIds, without an array parameter).
-	const parkValues = sql.join(
-		updates.map((u, i) => sql`(${u.id}::uuid, ${ANCHOR_PARK_BASE - i}::double precision)`),
-		sql`, `
-	);
-	await db.execute(sql`
-		UPDATE ${mapAnchors}
-		SET t_position = v.t_position
-		FROM (VALUES ${parkValues}) AS v(id, t_position), ${worldMaps}
-		WHERE ${mapAnchors.id} = v.id
-			AND ${mapAnchors.worldMapId} = ${worldMaps.id}
-			AND ${worldMaps.userId} = ${userId}
-	`);
-	const finalValues = sql.join(
-		updates.map((u) => sql`(${u.id}::uuid, ${u.newT}::double precision)`),
-		sql`, `
-	);
-	await db.execute(sql`
-		UPDATE ${mapAnchors}
-		SET t_position = v.t_position
-		FROM (VALUES ${finalValues}) AS v(id, t_position), ${worldMaps}
-		WHERE ${mapAnchors.id} = v.id
-			AND ${mapAnchors.worldMapId} = ${worldMaps.id}
-			AND ${worldMaps.userId} = ${userId}
-	`);
+	// Phase 1: park (chunked). The park magnitude uses the GLOBAL index
+	// (start + local) so parked values stay unique across chunk boundaries.
+	for (let start = 0; start < updates.length; start += BULK_UPDATE_CHUNK) {
+		const slice = updates.slice(start, start + BULK_UPDATE_CHUNK);
+		const parkValues = sql.join(
+			slice.map(
+				(u, j) => sql`(${u.id}::uuid, ${ANCHOR_PARK_BASE - (start + j)}::double precision)`
+			),
+			sql`, `
+		);
+		await db.execute(sql`
+			UPDATE ${mapAnchors}
+			SET t_position = v.t_position
+			FROM (VALUES ${parkValues}) AS v(id, t_position), ${worldMaps}
+			WHERE ${mapAnchors.id} = v.id
+				AND ${mapAnchors.worldMapId} = ${worldMaps.id}
+				AND ${worldMaps.userId} = ${userId}
+		`);
+	}
+	// Phase 2: write final values (chunked). All to-be-updated rows are parked at
+	// negatives, so the positive range is empty and no chunk boundary creates an
+	// intermediate UNIQUE-index collision.
+	for (const slice of chunked(updates, BULK_UPDATE_CHUNK)) {
+		const finalValues = sql.join(
+			slice.map((u) => sql`(${u.id}::uuid, ${u.newT}::double precision)`),
+			sql`, `
+		);
+		await db.execute(sql`
+			UPDATE ${mapAnchors}
+			SET t_position = v.t_position
+			FROM (VALUES ${finalValues}) AS v(id, t_position), ${worldMaps}
+			WHERE ${mapAnchors.id} = v.id
+				AND ${mapAnchors.worldMapId} = ${worldMaps.id}
+				AND ${worldMaps.userId} = ${userId}
+		`);
+	}
 	return updates.length;
 }
 
@@ -944,9 +1036,11 @@ async function recomputeMapEvents(
 	// avoids one round trip per row (2026-06 perf audit — every paint stroke
 	// is a map_events row, so this loop dominated Act-reorder latency on
 	// painted maps).
-	if (updates.length > 0) {
+	// Chunked single-phase UPDATE (map_events has no unique index, so no parking
+	// is needed; chunking only bounds the bind-parameter count per statement).
+	for (const slice of chunked(updates, BULK_UPDATE_CHUNK)) {
 		const eventValues = sql.join(
-			updates.map((u) => sql`(${u.id}::uuid, ${u.newT}::double precision)`),
+			slice.map((u) => sql`(${u.id}::uuid, ${u.newT}::double precision)`),
 			sql`, `
 		);
 		await db.execute(sql`
