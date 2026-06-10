@@ -1026,6 +1026,23 @@ function foldCausalEdges(t: number, causal: CausalProjectionInput): RenderedCaus
  * PR-C) feeds the caused_by causal-edge fold; callers with no caused_by edges
  * (every server-side caller) omit it and get an empty `causalEdges`.
  */
+// F11: sanitizing an anchor's baked strokes (per-point validation + realloc via
+// applyPaintStroke) is paid on EVERY projectState call, and renderedState derives
+// at frame rate during playback — so the cost grew with everything ever painted,
+// paid even on frames where nothing changed. Anchor rows are immutable (a rebake
+// is delete-then-insert → a new stateJsonb object), so memoizing the sanitized
+// list per stateJsonb identity is safe: a changed anchor is a new key → cache
+// miss → re-sanitize. WeakMap so dropped anchors are GC'd.
+const sanitizedAnchorStrokeCache = new WeakMap<AnchorState, StoredStroke[]>();
+function sanitizedAnchorStrokes(state: AnchorState): StoredStroke[] {
+	const cached = sanitizedAnchorStrokeCache.get(state);
+	if (cached) return cached;
+	const out: StoredStroke[] = [];
+	for (const s of state.strokes ?? []) applyPaintStroke(out, s);
+	sanitizedAnchorStrokeCache.set(state, out);
+	return out;
+}
+
 export function projectState(
 	t: number,
 	anchors: ProjectionAnchor[],
@@ -1066,9 +1083,11 @@ export function projectState(
 		}
 		// Seed baked strokes through applyPaintStroke so the SAME validation
 		// gates anchor residue and live events (a forged/legacy stroke in the
-		// snapshot is dropped identically to a forged event).
-		for (const s of anchor.stateJsonb.strokes ?? []) {
-			applyPaintStroke(strokes, s);
+		// snapshot is dropped identically to a forged event). Memoized per
+		// immutable anchor identity (F11) — the sanitized list is read-only here;
+		// the fold below appends to `strokes`, never mutates these entries.
+		for (const s of sanitizedAnchorStrokes(anchor.stateJsonb)) {
+			strokes.push(s);
 		}
 	}
 
