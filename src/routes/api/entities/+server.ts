@@ -156,7 +156,10 @@ export const POST: RequestHandler = async (event) => {
 		if (isUniqueViolation(err)) {
 			error(409, 'The change collides with an existing row (duplicate temporal bounds)');
 		}
-		error(400, (err as Error).message);
+		// Re-throw unmatched errors as an opaque 500 rather than echoing the raw
+		// driver/cascade message back to the client (parity with the [id] reorder/
+		// delete catches; closes a Postgres-message leak in the 400 fallback).
+		throw err;
 	}
 
 	return json(created, { status: 201 });

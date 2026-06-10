@@ -44,6 +44,12 @@ function isAllowedIconUrl(v: string): boolean {
  * (e.g. "entity.data.style" or "placement.data.style"). Helps the
  * client identify which payload field went bad.
  */
+// True UTF-8 byte length (2026-06 audit follow-up): the size caps are named/
+// reported in BYTES and Postgres stores UTF-8, but String.length counts UTF-16
+// code units — a CJK/astral payload undercounts by up to ~3-4×, so the real cap
+// drifted above the stated limit. Measure the encoded bytes the DB will store.
+const utf8Bytes = (s: string): number => new TextEncoder().encode(s).length;
+
 export function validateStyleOverride(raw: unknown, path: string): void {
 	if (raw === undefined || raw === null) return; // absent = nothing to check
 	if (typeof raw !== 'object' || Array.isArray(raw)) {
@@ -52,7 +58,7 @@ export function validateStyleOverride(raw: unknown, path: string): void {
 
 	// Size cap. Serialize once and measure; same JSON the DB will store.
 	const serialized = JSON.stringify(raw);
-	if (serialized.length > MAX_STYLE_BYTES) {
+	if (utf8Bytes(serialized) > MAX_STYLE_BYTES) {
 		error(400, `${path} exceeds ${MAX_STYLE_BYTES} bytes`);
 	}
 
@@ -114,7 +120,7 @@ export const MAX_PLACEMENT_DATA_BYTES = 16384;
 
 export function validatePlacementDataSize(data: unknown, path: string): void {
 	if (!data || typeof data !== 'object') return;
-	if (JSON.stringify(data).length > MAX_PLACEMENT_DATA_BYTES) {
+	if (utf8Bytes(JSON.stringify(data)) > MAX_PLACEMENT_DATA_BYTES) {
 		error(400, `${path} exceeds ${MAX_PLACEMENT_DATA_BYTES} bytes`);
 	}
 }
