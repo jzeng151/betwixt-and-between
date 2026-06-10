@@ -28,6 +28,7 @@ import type { Db } from './intervals.js';
 import {
 	ANCHOR_MAX_STROKES,
 	ANCHOR_MAX_TOTAL_POINTS,
+	ART_LAYER_ID_MAX,
 	BIOMES,
 	EVENT_KINDS,
 	PAINT_CELLS_MAX_PER_EVENT,
@@ -1002,8 +1003,10 @@ async function validatePaintStrokePayload(
 	// Slice B: layerId optional; when present it must name an entry of this
 	// map's art_layers_jsonb. Absent = the implicit base art layer.
 	if (p.layerId !== undefined) {
-		if (typeof p.layerId !== 'string' || p.layerId.length === 0 || p.layerId.length > 64) {
-			error(400, 'paint_stroke payload.layerId must be a non-empty string ≤ 64 chars');
+		// F21: cap matches ART_LAYER_ID_MAX so `art:${layerId}` fits the 64-char
+		// pref-key budget — an over-cap id could paint but never toggle visibility.
+		if (typeof p.layerId !== 'string' || p.layerId.length === 0 || p.layerId.length > ART_LAYER_ID_MAX) {
+			error(400, `paint_stroke payload.layerId must be a non-empty string ≤ ${ART_LAYER_ID_MAX} chars`);
 		}
 		// F27: scope the read by userId, not id alone. assertMapOwnership upstream
 		// already 404s a foreign map before we get here, so this is defense-in-

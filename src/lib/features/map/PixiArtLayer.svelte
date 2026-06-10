@@ -293,6 +293,10 @@
 		// before the bound applies.
 		const placements = pointsAlongPath(path, spacingPx, MAX_STAMPS_PER_STROKE);
 		placements.forEach((pt, i) => {
+			// F35: 4096 must stay > MAX_STAMPS_PER_STROKE so per-stroke seed ranges
+			// (strokeIndex*4096 .. +i) never overlap between strokes — otherwise two
+			// strokes would share jitter/member-pick seeds. Don't lower it below the
+			// cap; changing it reshuffles the deterministic scatter of existing art.
 			const seed = strokeIndex * 4096 + i;
 			const tex = varied
 				? textures[Math.floor((jitter01(seed + 2) + 0.5) * textures.length) % textures.length]

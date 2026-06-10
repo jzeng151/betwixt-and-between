@@ -186,6 +186,9 @@
 		flex-direction: column;
 		gap: 6px;
 		padding: 8px 10px;
+		/* F35: clears the MapSidebar (~200px) so palette chips don't slide under
+		   it. This duplicates the sidebar width, which is owned by MapSidebar —
+		   if that width changes, update this offset (no shared CSS var today). */
 		padding-right: 216px;
 		background: var(--color-panel, rgba(0, 0, 0, 0.6));
 		border-top: 1px solid var(--color-border, #333);
