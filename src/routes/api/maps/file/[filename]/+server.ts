@@ -30,6 +30,9 @@ export const GET: RequestHandler = async (event) => {
 			headers: {
 				'content-type': obj.httpMetadata?.contentType ?? contentTypeFor(filename),
 				'cache-control': 'public, max-age=31536000, immutable',
+				// User-uploaded bytes served same-origin: forbid content sniffing
+				// so a polyglot image can't be reinterpreted as active content.
+				'x-content-type-options': 'nosniff',
 			},
 		});
 	}
@@ -40,6 +43,7 @@ export const GET: RequestHandler = async (event) => {
 			headers: {
 				'content-type': contentTypeFor(filename),
 				'cache-control': 'public, max-age=31536000, immutable',
+				'x-content-type-options': 'nosniff',
 			},
 		});
 	} catch {

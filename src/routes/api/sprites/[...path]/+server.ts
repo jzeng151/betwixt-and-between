@@ -37,7 +37,8 @@ export const GET: RequestHandler = async (event) => {
 			return new Response(obj.body, {
 				headers: {
 					'content-type': obj.httpMetadata?.contentType ?? contentTypeFor(path),
-					'cache-control': 'public, max-age=31536000, immutable'
+					'cache-control': 'public, max-age=31536000, immutable',
+					'x-content-type-options': 'nosniff'
 				}
 			});
 		}
@@ -50,7 +51,8 @@ export const GET: RequestHandler = async (event) => {
 		return new Response(new Uint8Array(buf), {
 			headers: {
 				'content-type': contentTypeFor(path),
-				'cache-control': 'public, max-age=31536000, immutable'
+				'cache-control': 'public, max-age=31536000, immutable',
+				'x-content-type-options': 'nosniff'
 			}
 		});
 	} catch {

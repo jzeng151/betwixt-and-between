@@ -52,16 +52,26 @@ export const POST: RequestHandler = async (event) => {
 		await assertPartOfInvariants(db, userId, fromId, toId);
 	}
 
+	// Scenes are children of acts — a scene FK without its parent act FK is
+	// auto-cleared, mirroring the PATCH merge rule and the maps POST. Without
+	// this, resolveRelationshipBounds short-circuits on null act FKs and the
+	// INSERT below would persist a scene FK that was never ownership/type
+	// validated (a cross-tenant UUID could be written verbatim).
+	const normalizedStartActId = startActId ?? null;
+	const normalizedEndActId = endActId ?? null;
+	const normalizedStartSceneId = normalizedStartActId === null ? null : (startSceneId ?? null);
+	const normalizedEndSceneId = normalizedEndActId === null ? null : (endSceneId ?? null);
+
 	let startPosition: number | null = null;
 	let endPosition: number | null = null;
 	try {
 		const bounds = await resolveRelationshipBounds(
 			db,
 			{
-				startActId: startActId ?? null,
-				startSceneId: startSceneId ?? null,
-				endActId: endActId ?? null,
-				endSceneId: endSceneId ?? null
+				startActId: normalizedStartActId,
+				startSceneId: normalizedStartSceneId,
+				endActId: normalizedEndActId,
+				endSceneId: normalizedEndSceneId
 			},
 			userId
 		);
@@ -81,10 +91,10 @@ export const POST: RequestHandler = async (event) => {
 				toId,
 				type,
 				label: label ?? null,
-				startActId: startActId ?? null,
-				startSceneId: startSceneId ?? null,
-				endActId: endActId ?? null,
-				endSceneId: endSceneId ?? null,
+				startActId: normalizedStartActId,
+				startSceneId: normalizedStartSceneId,
+				endActId: normalizedEndActId,
+				endSceneId: normalizedEndSceneId,
 				startPosition,
 				endPosition,
 				revealedAtPosition: revealedAtPosition ?? null
