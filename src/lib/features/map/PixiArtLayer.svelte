@@ -211,6 +211,25 @@
 		return u ? [u] : [];
 	}
 
+	// codex P2: a stable per-stroke scatter seed derived from the stroke's
+	// CONTENT (texture key + path), not its position in the projected array.
+	// Seeding off the array index made inserting/removing an earlier stroke (a
+	// retroactive terrain beat) reshuffle the member/size/jitter of every later
+	// stamp stroke. Content hashing keeps each stroke's scatter fixed regardless
+	// of what else was authored before it. Masked to 19 bits so seed*4096 + i (i
+	// < MAX_STAMPS_PER_STROKE) stays < 2^32 — jitter01 coerces to uint32, so
+	// per-placement seed blocks must not wrap into another stroke's block.
+	function strokeScatterSeed(s: StoredStroke): number {
+		let h = 0;
+		const key = s.textureKey ?? '';
+		for (let i = 0; i < key.length; i++) h = (Math.imul(h, 31) + key.charCodeAt(i)) | 0;
+		for (const pt of s.path) {
+			h = (Math.imul(h, 31) + ((pt.x * 4096) | 0)) | 0;
+			h = (Math.imul(h, 31) + ((pt.y * 4096) | 0)) | 0;
+		}
+		return (h >>> 0) & 0x7ffff;
+	}
+
 	// Deterministic per-index jitter in [-0.5, 0.5] (mulberry-ish hash) so a
 	// re-render places stamps identically — random would make them dance.
 	function jitter01(seed: number): number {
@@ -251,8 +270,7 @@
 		s: StoredStroke,
 		texMap: Record<string, unknown>,
 		width: number,
-		height: number,
-		strokeIndex: number
+		height: number
 	): PixiContainer | null {
 		if (!PIXI) return null;
 		const extent = Math.min(width, height);
@@ -298,12 +316,13 @@
 		// so a tiny-spacing payload can't materialize millions of placements
 		// before the bound applies.
 		const placements = pointsAlongPath(path, spacingPx, MAX_STAMPS_PER_STROKE);
+		const strokeSeedBase = strokeScatterSeed(s);
 		placements.forEach((pt, i) => {
 			// F35: 4096 must stay > MAX_STAMPS_PER_STROKE so per-stroke seed ranges
-			// (strokeIndex*4096 .. +i) never overlap between strokes — otherwise two
-			// strokes would share jitter/member-pick seeds. Don't lower it below the
-			// cap; changing it reshuffles the deterministic scatter of existing art.
-			const seed = strokeIndex * 4096 + i;
+			// (strokeSeedBase*4096 .. +i) never overlap between distinct strokes —
+			// otherwise two strokes would share jitter/member-pick seeds. Don't lower
+			// it below the cap; changing it reshuffles the deterministic scatter.
+			const seed = strokeSeedBase * 4096 + i;
 			const tex = varied
 				? textures[Math.floor((jitter01(seed + 2) + 0.5) * textures.length) % textures.length]
 				: textures[0];
@@ -488,8 +507,8 @@
 			// real refactor of this path, not a local tweak. The transient-RT
 			// budget guard below caps the worst-case memory in the meantime.
 			const knownIds = new Set(layerView.map((v) => v.id));
-			const buckets = new Map<string | null, Array<{ s: StoredStroke; i: number }>>();
-			ss.forEach((s, i) => {
+			const buckets = new Map<string | null, StoredStroke[]>();
+			ss.forEach((s) => {
 				const orphaned = s.layerId != null && !knownIds.has(s.layerId);
 				// F5: a fill/stamp stroke whose layer was deleted falls back to the
 				// base group (art preserved, only the grouping is lost — the lazy-GC
@@ -501,7 +520,7 @@
 				if (orphaned && s.mode === 'erase') return;
 				const key = orphaned ? null : (s.layerId ?? null);
 				const b = buckets.get(key) ?? [];
-				b.push({ s, i });
+				b.push(s);
 				buckets.set(key, b);
 			});
 
@@ -514,14 +533,12 @@
 			// Render one bucket into a RenderTexture, displayed as a Sprite. The
 			// 'erase' blend on erase strokes applies inside this pass — masking
 			// stays scoped to the layer.
-			const renderBucket = (
-				entries: Array<{ s: StoredStroke; i: number }>
-			): PixiSprite | null => {
+			const renderBucket = (entries: StoredStroke[]): PixiSprite | null => {
 				if (entries.length === 0) return null;
 				const tmp = new PIXI!.Container();
 				tmp.scale.set(rtScale);
-				for (const { s, i } of entries) {
-					const g = buildStroke(s, texMap, width, height, i);
+				for (const s of entries) {
+					const g = buildStroke(s, texMap, width, height);
 					if (g) tmp.addChild(g);
 				}
 				if (tmp.children.length === 0) {
