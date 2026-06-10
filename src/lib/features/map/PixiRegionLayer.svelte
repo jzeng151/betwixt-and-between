@@ -290,7 +290,13 @@
 				// (normalized server-side to []) would erase all terrain painted
 				// at/before this playhead from T forward. Capture the projected
 				// terrain as rendered right now.
-				cells: renderedState?.cells ?? []
+				cells: renderedState?.cells ?? [],
+				// WM3 Slice A: strokes obey the SAME shadowing rule as cells — an
+				// anchor at T excludes paint_stroke events with t_position <= T, so
+				// a snapshot that omits strokes (normalized server-side to []) would
+				// erase every freeform stroke painted at/before this playhead from T
+				// forward. Capture the projected strokes as rendered right now.
+				strokes: renderedState?.strokes ?? []
 			};
 			await mapAnchorsStore.create(mapId, { tPosition, stateJsonb });
 			// Snapshot doesn't visually change anything (it just records
