@@ -266,11 +266,6 @@ export function objectStampGroups(
 	return [...byGroup.entries()].map(([group, v]) => ({ group, label: v.label, stamps: v.stamps }));
 }
 
-/** Resolve a stamp key (paint_stroke.textureKey, stamp mode) → sprite URL. */
-export function stampUrlForKey(manifest: TerrainManifest | null, key: string): string | null {
-	return objectStamps(manifest).find((s) => s.key === key)?.url ?? null;
-}
-
 /**
  * WM3 Slice C — varied scatter. Resolve a stamp-mode textureKey to its
  * member sprites: a FAMILY key ("tree_object") yields every member (the

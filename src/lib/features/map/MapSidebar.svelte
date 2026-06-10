@@ -120,6 +120,10 @@
 		// layer at render (lazy GC); ERASE strokes are dropped (an eraser with no
 		// surviving layer to mask would otherwise eat base art). NOT "nothing is
 		// lost" — the old comment here was wrong for erase strokes.
+		// F29: the layer's `art:<id>` visibility prefs in world_map_layer_prefs are
+		// NOT deleted here, but the prefs reader lazy-GCs unknown keys, so a deleted
+		// layer's pref is inert. Re-add mints a fresh UUID, so a stale pref can't be
+		// resurrected by the UI (only an API client reusing the exact id could).
 		void patchArtLayers(artLayers.filter((l) => l.id !== id));
 	}
 
