@@ -632,12 +632,16 @@ export const mapEvents = pgTable('map_events', {
 		.on(table.worldMapId, table.commandId)
 		.where(sql`command_id IS NOT NULL`),
 	// Slice 3 /review perf — auto-anchor count hot path. Partial index
-	// for (kind='paint_cells' AND undone_at IS NULL); keys on
-	// (world_map_id, created_at) for the cutoff range. Declared here
-	// so npm run db:push picks it up alongside the migration.
+	// for (kind IN ('paint_cells','paint_stroke') AND undone_at IS NULL);
+	// keys on (world_map_id, created_at) for the cutoff range. Slice A
+	// widened the COUNT to both kinds, so this predicate MUST list both —
+	// an IN-list with paint_stroke does not imply kind='paint_cells', so a
+	// paint_cells-only index can't serve it (migration 0028). Keep in
+	// lockstep with maybeWriteAutoAnchor's COUNT. Declared here so
+	// npm run db:push picks it up alongside the migration.
 	index('map_events_auto_anchor_idx')
 		.on(table.worldMapId, table.createdAt)
-		.where(sql`kind = 'paint_cells' AND undone_at IS NULL`)
+		.where(sql`kind IN ('paint_cells', 'paint_stroke') AND undone_at IS NULL`)
 ]);
 
 export const factions = pgTable('factions', {
