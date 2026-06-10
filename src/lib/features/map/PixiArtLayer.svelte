@@ -104,6 +104,12 @@
 	// vectors; the RT scale-down on a >2048px base image is visually negligible
 	// at map zoom and bounds GPU memory per layer.
 	const RT_MAX = 2048;
+	// Slice D2 dissolve keeps the OLD build's RTs alive while the new one fades
+	// in, so a fully-layered map (base + up to MAX_ART_LAYERS) momentarily holds
+	// ~2× the RTs (~16 MiB each at RT_MAX²×4). Above this combined count, SNAP
+	// the transition instead of crossfading — a jump-cut is far better than a
+	// WebGL context loss / OOM crash on a memory-constrained device.
+	const RT_DISSOLVE_BUDGET = 12;
 
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
@@ -175,16 +181,23 @@
 		return (((t ^ (t >>> 14)) >>> 0) % 1000) / 1000 - 0.5;
 	}
 
-	// Walk a polyline, returning a point every `step` px (plus the first point).
+	// Walk a polyline, returning a point every `step` px (plus the first point),
+	// capped at `maxPoints`. The cap is enforced INSIDE the walk (not by slicing
+	// the finished array): the server validator accepts any stamp spacing > 0 and
+	// spacingPx floors at 1px, so a long path with tiny spacing would otherwise
+	// synthesize millions of placements synchronously before any slice runs —
+	// freezing the tab on a forged/degenerate stored payload. Stop emitting the
+	// instant the cap is hit so the materialized array is bounded by maxPoints.
 	function pointsAlongPath(
 		pts: Array<{ x: number; y: number }>,
-		stepPx: number
+		stepPx: number,
+		maxPoints = Infinity
 	): Array<{ x: number; y: number }> {
 		if (pts.length === 0) return [];
 		if (pts.length === 1 || stepPx <= 0) return [pts[0]];
 		const out = [pts[0]];
 		let carry = 0;
-		for (let i = 1; i < pts.length; i++) {
+		for (let i = 1; i < pts.length && out.length < maxPoints; i++) {
 			const a = pts[i - 1];
 			const b = pts[i];
 			const dx = b.x - a.x;
@@ -192,7 +205,7 @@
 			const segLen = Math.hypot(dx, dy);
 			if (segLen === 0) continue;
 			let dist = stepPx - carry;
-			while (dist <= segLen) {
+			while (dist <= segLen && out.length < maxPoints) {
 				out.push({ x: a.x + (dx * dist) / segLen, y: a.y + (dy * dist) / segLen });
 				dist += stepPx;
 			}
@@ -269,11 +282,10 @@
 		const sizePx = Math.max(2, s.brushSize * extent);
 		const spacingPx = Math.max(1, (s.stamp?.spacing ?? s.brushSize) * extent);
 		const jitterPx = (s.stamp?.jitter ?? 0) * extent;
-		const allPlacements = pointsAlongPath(path, spacingPx);
-		const placements =
-			allPlacements.length > MAX_STAMPS_PER_STROKE
-				? allPlacements.slice(0, MAX_STAMPS_PER_STROKE)
-				: allPlacements;
+		// Cap is enforced INSIDE pointsAlongPath (it stops emitting at the cap)
+		// so a tiny-spacing payload can't materialize millions of placements
+		// before the bound applies.
+		const placements = pointsAlongPath(path, spacingPx, MAX_STAMPS_PER_STROKE);
 		placements.forEach((pt, i) => {
 			const seed = strokeIndex * 4096 + i;
 			const tex = varied
@@ -378,13 +390,21 @@
 
 		let cancelled = false;
 		(async () => {
-			let texMap: Record<string, unknown> = {};
+			// Load per-URL (allSettled), NOT Assets.load([...urls]) as one batch:
+			// the batch promise is all-or-nothing, so a single 404'd sprite would
+			// reject the whole load and blank EVERY stroke this frame. Per-URL,
+			// only the missing texture's strokes skip (buildStroke returns null on
+			// a missing tex) — the rest render. Pixi's Assets cache dedups + caches
+			// failures, so a permanent 404 doesn't re-hit the network on rebuild.
+			const texMap: Record<string, unknown> = {};
 			if (urls.size > 0) {
-				try {
-					texMap = await PIXI!.Assets.load([...urls]);
-				} catch (_) {
-					texMap = {};
-				}
+				const urlList = [...urls];
+				const results = await Promise.allSettled(
+					urlList.map((u) => PIXI!.Assets.load(u))
+				);
+				results.forEach((r, i) => {
+					if (r.status === 'fulfilled') texMap[urlList[i]] = r.value;
+				});
 			}
 			if (cancelled || !layer) return;
 			// An in-flight dissolve finishes instantly before the next build.
@@ -393,6 +413,15 @@
 			const newBuild: ArtBuild = { sprites: [], textures: [] };
 
 			// Group strokes: base (layerId-less / orphaned) + one bucket per def.
+			// TODO(F13 perf): this rebuilds EVERY bucket's RenderTexture on any
+			// stroke/view change — a new stroke re-renders the whole painting.
+			// The high-value optimizations (rebuild only the bucket whose strokes
+			// changed; append a single new stroke with render({clear:false});
+			// pool BlurFilters by quantized strength) are deferred — they have to
+			// coexist with the Slice D2 dissolve (which crossfades whole builds)
+			// and with F5 re-bucketing when a layer is deleted, so they are a
+			// real refactor of this path, not a local tweak. The transient-RT
+			// budget guard below caps the worst-case memory in the meantime.
 			const knownIds = new Set(layerView.map((v) => v.id));
 			const buckets = new Map<string | null, Array<{ s: StoredStroke; i: number }>>();
 			ss.forEach((s, i) => {
@@ -462,7 +491,11 @@
 			// in, driven by the shared anim ticker. Reduced motion → jump-cut.
 			const anim = stageCtx.anim;
 			const hasArtChange = oldBuild.sprites.length > 0 || newBuild.sprites.length > 0;
-			if (isBeat && hasArtChange && !noMotion && anim) {
+			// Bound transient GPU memory: a crossfade holds both builds' RTs at
+			// once. Above the budget, snap (dispose old now) rather than risk OOM.
+			const withinRtBudget =
+				oldBuild.textures.length + newBuild.textures.length <= RT_DISSOLVE_BUDGET;
+			if (isBeat && hasArtChange && !noMotion && anim && withinRtBudget) {
 				bumpTransitionDiag();
 				const targets = newBuild.sprites.map((s) => s.alpha);
 				newBuild.sprites.forEach((s) => (s.alpha = 0));
