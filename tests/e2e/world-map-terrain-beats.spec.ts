@@ -18,6 +18,7 @@
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import { E2E_USER_HEADERS } from './pglite-config.js';
+import { clearAll } from './helpers/db.js';
 
 // Tall viewport: the World Map keeps its default geometry (1024×668 at 80,0)
 // and the Timeline is dragged BELOW it, so the two windows never overlap —
@@ -27,13 +28,6 @@ import { E2E_USER_HEADERS } from './pglite-config.js';
 test.use({ extraHTTPHeaders: E2E_USER_HEADERS, viewport: { width: 1600, height: 1240 } });
 
 type Ent = { id: string; name: string };
-
-async function clearAll(request: APIRequestContext) {
-	const ents: Ent[] = await (await request.get('/api/entities')).json();
-	for (const e of ents) await request.delete(`/api/entities/${e.id}`);
-	const maps: Array<{ id: string }> = await (await request.get('/api/maps')).json();
-	for (const m of maps) await request.delete(`/api/maps/${m.id}`);
-}
 
 const post = async <T>(r: APIRequestContext, url: string, data: unknown): Promise<T> =>
 	(await r.post(url, { data })).json();

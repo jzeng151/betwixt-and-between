@@ -31,4 +31,10 @@ export async function clearAll(request: APIRequestContext): Promise<void> {
 	}
 	const ents: Array<{ id: string }> = await (await request.get('/api/entities')).json();
 	for (const e of ents) await request.delete(`/api/entities/${e.id}`);
+	// F32: also wipe world maps. The WM3 specs need a clean maps table and were
+	// each carrying their own inline clearAll (bypassing the sentinel above) just
+	// to get this. Additive for map-less specs — GET /api/maps returns [] and the
+	// loop is a no-op — so this stays a superset of the entities-only wipe.
+	const maps: Array<{ id: string }> = await (await request.get('/api/maps')).json();
+	for (const m of maps) await request.delete(`/api/maps/${m.id}`);
 }

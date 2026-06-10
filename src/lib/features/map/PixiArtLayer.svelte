@@ -44,6 +44,7 @@
 	} from './terrain-tilesets.js';
 	import { layerPrefs } from './layer-prefs-store.js';
 	import { artLayerPrefKey } from './layers.js';
+	import { pointsAlongPath } from './stroke-geometry.js';
 	import type { MapArtLayer, StoredStroke } from './projection.js';
 	import type { WorldMap } from './types.js';
 
@@ -179,39 +180,6 @@
 		t = Math.imul(t ^ (t >>> 15), t | 1);
 		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
 		return (((t ^ (t >>> 14)) >>> 0) % 1000) / 1000 - 0.5;
-	}
-
-	// Walk a polyline, returning a point every `step` px (plus the first point),
-	// capped at `maxPoints`. The cap is enforced INSIDE the walk (not by slicing
-	// the finished array): the server validator accepts any stamp spacing > 0 and
-	// spacingPx floors at 1px, so a long path with tiny spacing would otherwise
-	// synthesize millions of placements synchronously before any slice runs —
-	// freezing the tab on a forged/degenerate stored payload. Stop emitting the
-	// instant the cap is hit so the materialized array is bounded by maxPoints.
-	function pointsAlongPath(
-		pts: Array<{ x: number; y: number }>,
-		stepPx: number,
-		maxPoints = Infinity
-	): Array<{ x: number; y: number }> {
-		if (pts.length === 0) return [];
-		if (pts.length === 1 || stepPx <= 0) return [pts[0]];
-		const out = [pts[0]];
-		let carry = 0;
-		for (let i = 1; i < pts.length && out.length < maxPoints; i++) {
-			const a = pts[i - 1];
-			const b = pts[i];
-			const dx = b.x - a.x;
-			const dy = b.y - a.y;
-			const segLen = Math.hypot(dx, dy);
-			if (segLen === 0) continue;
-			let dist = stepPx - carry;
-			while (dist <= segLen && out.length < maxPoints) {
-				out.push({ x: a.x + (dx * dist) / segLen, y: a.y + (dy * dist) / segLen });
-				dist += stepPx;
-			}
-			carry = segLen - (dist - stepPx);
-		}
-		return out;
 	}
 
 	// Round-capped path Graphics shared by fill (texture stroke) and erase
