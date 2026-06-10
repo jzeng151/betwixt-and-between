@@ -576,10 +576,14 @@ export async function createMapAnchor(
 ): Promise<typeof mapAnchors.$inferSelect> {
 	await assertMapOwnership(db, userId, worldMapId);
 	assertObjectBody(input);
-	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition)) {
+	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition) || input.tPosition < 0) {
 		// Note: '-Infinity' sentinel is created by the 0012 backfill, not by
 		// authored writes. App code must never write Infinity/-Infinity here.
-		error(400, 'tPosition must be a finite number');
+		// t >= 0 is load-bearing: the act-reorder cascade parks anchors at
+		// ANCHOR_PARK_BASE - i (recompute.ts) on the assumption that no
+		// authored t_position is negative — an authored negative t could
+		// collide with a parked row and abort the whole cascade.
+		error(400, 'tPosition must be a finite number >= 0');
 	}
 	validateAnchorStateShape(input.stateJsonb);
 	await validateAnchorStateOwnership(db, userId, worldMapId, input.stateJsonb);
@@ -595,6 +599,7 @@ export async function createMapAnchor(
 	for (const stroke of input.stateJsonb.strokes ?? []) {
 		applyPaintStroke(normalizedStrokes, stroke);
 	}
+	await assertStrokeLayerIdsExist(db, userId, worldMapId, normalizedStrokes);
 	const normalizedState: AnchorState = {
 		...input.stateJsonb,
 		cells: input.stateJsonb.cells ?? [],
@@ -695,8 +700,9 @@ export async function updateMapAnchor(
 
 	const updates: Record<string, unknown> = {};
 	if ('tPosition' in patch) {
-		if (typeof patch.tPosition !== 'number' || !isFinite(patch.tPosition)) {
-			error(400, 'tPosition must be a finite number');
+		// t >= 0: same parking-range invariant as createMapAnchor.
+		if (typeof patch.tPosition !== 'number' || !isFinite(patch.tPosition) || patch.tPosition < 0) {
+			error(400, 'tPosition must be a finite number >= 0');
 		}
 		updates.tPosition = patch.tPosition;
 	}
@@ -712,6 +718,7 @@ export async function updateMapAnchor(
 		for (const stroke of incoming.strokes ?? []) {
 			applyPaintStroke(patchedStrokes, stroke);
 		}
+		await assertStrokeLayerIdsExist(db, userId, worldMapId, patchedStrokes);
 		updates.stateJsonb = { ...incoming, cells: incoming.cells ?? [], strokes: patchedStrokes };
 		// codex P2: client-write boundary — validate cell shape/biome/bounds.
 		const grid = await loadGridDims(db, worldMapId);
@@ -984,7 +991,14 @@ async function validatePaintStrokePayload(
 			error(400, 'paint_stroke payload.path points must be within [0, 1]');
 		}
 	}
-	// stamp params optional; when present (any mode), must be well-formed.
+	// stamp params: only meaningful on stamp strokes. The fold
+	// (applyPaintStroke) only captures stamp when mode === 'stamp', so
+	// accepting them on fill would persist params the projected stroke
+	// silently drops — reject for validator/fold lockstep (erase already
+	// rejects above with its own message).
+	if (p.stamp !== undefined && p.mode !== 'stamp') {
+		error(400, "paint_stroke payload.stamp is only valid on mode 'stamp'");
+	}
 	if (p.stamp !== undefined) {
 		const s = p.stamp as { spacing?: unknown; jitter?: unknown } | null;
 		if (
@@ -1008,22 +1022,54 @@ async function validatePaintStrokePayload(
 		if (typeof p.layerId !== 'string' || p.layerId.length === 0 || p.layerId.length > ART_LAYER_ID_MAX) {
 			error(400, `paint_stroke payload.layerId must be a non-empty string ≤ ${ART_LAYER_ID_MAX} chars`);
 		}
-		// F27: scope the read by userId, not id alone. assertMapOwnership upstream
-		// already 404s a foreign map before we get here, so this is defense-in-
-		// depth per the project's "a missing user_id scope is a cross-user leak"
-		// invariant — the validator must not carry the ownership assumption in a
-		// comment only. (F24: the !map branch is therefore upstream-shadowed today,
-		// but kept as a real scope guard rather than a dead 404.)
-		const [map] = await db
-			.select({ artLayersJsonb: worldMaps.artLayersJsonb })
-			.from(worldMaps)
-			.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.userId, userId)));
-		if (!map) error(404, 'world_map not found');
-		const layers = Array.isArray(map.artLayersJsonb)
-			? (map.artLayersJsonb as Array<{ id?: unknown }>)
-			: [];
-		if (!layers.some((l) => l && typeof l === 'object' && l.id === p.layerId)) {
+		const layerIds = await loadArtLayerIds(db, userId, worldMapId);
+		if (!layerIds.has(p.layerId)) {
 			error(400, 'paint_stroke payload.layerId not found on this map');
+		}
+	}
+}
+
+// F27: scope the read by userId, not id alone. assertMapOwnership upstream
+// already 404s a foreign map before we get here, so this is defense-in-
+// depth per the project's "a missing user_id scope is a cross-user leak"
+// invariant — the validator must not carry the ownership assumption in a
+// comment only. (F24: the !map branch is therefore upstream-shadowed today,
+// but kept as a real scope guard rather than a dead 404.)
+async function loadArtLayerIds(db: Db, userId: string, worldMapId: string): Promise<Set<string>> {
+	const [map] = await db
+		.select({ artLayersJsonb: worldMaps.artLayersJsonb })
+		.from(worldMaps)
+		.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.userId, userId)));
+	if (!map) error(404, 'world_map not found');
+	const layers = Array.isArray(map.artLayersJsonb)
+		? (map.artLayersJsonb as Array<{ id?: unknown }>)
+		: [];
+	const ids = new Set<string>();
+	for (const l of layers) {
+		if (l && typeof l === 'object' && typeof l.id === 'string') ids.add(l.id);
+	}
+	return ids;
+}
+
+// Anchor-write parity with validatePaintStrokePayload's layerId existence
+// check: a direct anchor POST/PATCH must not persist strokes referencing an
+// art layer this map doesn't have (the event write path already rejects
+// these; without this the two write paths disagree).
+async function assertStrokeLayerIdsExist(
+	db: Db,
+	userId: string,
+	worldMapId: string,
+	strokes: StoredStroke[]
+): Promise<void> {
+	const referenced = new Set<string>();
+	for (const s of strokes) {
+		if (s.layerId !== undefined) referenced.add(s.layerId);
+	}
+	if (referenced.size === 0) return;
+	const layerIds = await loadArtLayerIds(db, userId, worldMapId);
+	for (const id of referenced) {
+		if (!layerIds.has(id)) {
+			error(400, 'anchor state_jsonb strokes[].layerId not found on this map');
 		}
 	}
 }

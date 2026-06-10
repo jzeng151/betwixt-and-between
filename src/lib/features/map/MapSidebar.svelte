@@ -73,13 +73,30 @@
 	let artBusy = $state(false);
 	let artError = $state('');
 
-	async function patchArtLayers(next: MapArtLayer[]): Promise<void> {
-		if (!activeMapId || artBusy) return;
+	// Edits arriving while a PATCH is in flight are queued (latest wins) and
+	// flushed when it settles, instead of being silently dropped. Callers pass
+	// a thunk, not an array: updateMap writes the PATCH response back into the
+	// store, so a queued thunk re-evaluates against the refreshed artLayers and
+	// stacks on top of the edit that just landed rather than clobbering it.
+	let artPending: (() => MapArtLayer[]) | null = null;
+
+	async function patchArtLayers(make: () => MapArtLayer[]): Promise<void> {
+		if (!activeMapId) return;
+		if (artBusy) {
+			artPending = make;
+			return;
+		}
 		artBusy = true;
 		artError = '';
 		try {
-			await worldMapStore.updateMap(activeMapId, { artLayersJsonb: next });
+			await worldMapStore.updateMap(activeMapId, { artLayersJsonb: make() });
+			while (artPending) {
+				const queued = artPending;
+				artPending = null;
+				await worldMapStore.updateMap(activeMapId, { artLayersJsonb: queued() });
+			}
 		} catch (err) {
+			artPending = null;
 			artError = err instanceof Error ? err.message : String(err);
 		} finally {
 			artBusy = false;
@@ -91,15 +108,14 @@
 			artError = `At most ${MAX_ART_LAYERS} layers`;
 			return;
 		}
-		const n = artLayers.length + 1;
-		void patchArtLayers([
+		void patchArtLayers(() => [
 			...artLayers,
-			{ id: crypto.randomUUID(), name: `Layer ${n}`, blendMode: 'normal', opacity: 1 }
+			{ id: crypto.randomUUID(), name: `Layer ${artLayers.length + 1}`, blendMode: 'normal', opacity: 1 }
 		]);
 	}
 
 	function updateArtLayer(id: string, patch: Partial<MapArtLayer>): void {
-		void patchArtLayers(artLayers.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+		void patchArtLayers(() => artLayers.map((l) => (l.id === id ? { ...l, ...patch } : l)));
 	}
 
 	// F15 — confirm art-layer delete (mirrors the faction delete modal). The
@@ -124,16 +140,26 @@
 		// NOT deleted here, but the prefs reader lazy-GCs unknown keys, so a deleted
 		// layer's pref is inert. Re-add mints a fresh UUID, so a stale pref can't be
 		// resurrected by the UI (only an API client reusing the exact id could).
-		void patchArtLayers(artLayers.filter((l) => l.id !== id));
+		void patchArtLayers(() => artLayers.filter((l) => l.id !== id));
 	}
 
 	function moveArtLayer(id: string, dir: -1 | 1): void {
+		if (!canMoveArtLayer(id, dir)) return;
+		void patchArtLayers(() => {
+			// Re-check at flush time — a queued move may target indices that the
+			// just-landed edit changed; degrade to a no-op write rather than throw.
+			if (!canMoveArtLayer(id, dir)) return artLayers;
+			const i = artLayers.findIndex((l) => l.id === id);
+			const next = [...artLayers];
+			[next[i], next[i + dir]] = [next[i + dir], next[i]];
+			return next;
+		});
+	}
+
+	function canMoveArtLayer(id: string, dir: -1 | 1): boolean {
 		const i = artLayers.findIndex((l) => l.id === id);
 		const j = i + dir;
-		if (i < 0 || j < 0 || j >= artLayers.length) return;
-		const next = [...artLayers];
-		[next[i], next[j]] = [next[j], next[i]];
-		void patchArtLayers(next);
+		return i >= 0 && j >= 0 && j < artLayers.length;
 	}
 
 	let factionList = $state<Faction[]>([]);

@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { worldMaps, mapAnchors } from '$lib/server/db/schema.js';
 import { desc, eq, sql } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
 import {
 	assertLocationIdIsLocation,
 	assertWorldMapVariantBounds,
@@ -23,7 +24,8 @@ export const GET: RequestHandler = async (event) => {
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	const body = await event.request.json();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const body = (await readJson(event)) as any;
 	const {
 		name,
 		locationId,
