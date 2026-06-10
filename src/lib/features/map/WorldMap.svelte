@@ -2631,7 +2631,10 @@
 				     CURRENT playhead, so scrubbing then painting authors terrain change
 				     over story-time. Surfacing the T is what turns the (existing) data
 				     behavior into an intentional authoring tool. -->
-				<span class="paint-at-indicator" role="status" data-testid="paint-at-indicator">
+				<!-- F39: NOT role="status" — paintAtLabel tracks the playhead, so a live
+				     region would re-announce on every frame during playback. It's a
+				     visual authoring affordance; the text stays visible. -->
+				<span class="paint-at-indicator" data-testid="paint-at-indicator">
 					Painting {paintAtLabel}
 				</span>
 			</div>
@@ -2790,7 +2793,8 @@
 	.paint-at-indicator {
 		align-self: center;
 		margin-left: 8px;
-		font-size: 10px;
+		/* F39: 11px floor (DESIGN.md) — this label explains where paint lands. */
+		font-size: 11px;
 		font-style: italic;
 		color: var(--color-text-muted, #999);
 	}
