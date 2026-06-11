@@ -74,6 +74,8 @@ export {
 	resolveRelationshipBounds,
 	resolveRelationshipBoundsSwapNormalized,
 	snapshotActOrdering,
+	chunked,
+	BULK_UPDATE_CHUNK,
 	type ActOrderingSnapshot,
 	type SwappedFks
 } from './intervals/recompute.js';

@@ -659,3 +659,64 @@ describe('INV — scene reorder swap-normalizes inverted bounds across all sibli
 		expect(row.startPosition!).toBeLessThan(row.endPosition!);
 	});
 });
+
+describe('EXCL-409 — a recompute that overlaps two same-Location variants returns 409, not 500', () => {
+	it('translates the world_maps EXCLUDE (23P01, deferred to commit) to an actionable 409 and rolls back', async () => {
+		const acts = await seedActs(db, userId);
+		// Four scenes in act0 → quarter-act ranges [0,¼)[¼,½)[½,¾)[¾,1).
+		const s0 = await seedScene(acts.act0, 'S0', 0);
+		const s1 = await seedScene(acts.act0, 'S1', 1);
+		const s2 = await seedScene(acts.act0, 'S2', 2);
+		const s3 = await seedScene(acts.act0, 'S3', 3);
+		const [location] = await db
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Gondor' })
+			.returning();
+
+		// Two adjacent, non-overlapping variants for the SAME location: V1 [s0..s1]
+		// = [0, 0.5), V2 [s2..s3] = [0.5, 1.0). Both insert cleanly.
+		const [v1] = await db
+			.insert(worldMaps)
+			.values({
+				userId,
+				name: 'V1',
+				locationId: location.id,
+				startActId: acts.act0,
+				startSceneId: s0,
+				endActId: acts.act0,
+				endSceneId: s1,
+				startPosition: 0,
+				endPosition: 0.5
+			})
+			.returning();
+		const [v2] = await db
+			.insert(worldMaps)
+			.values({
+				userId,
+				name: 'V2',
+				locationId: location.id,
+				startActId: acts.act0,
+				startSceneId: s2,
+				endActId: acts.act0,
+				endSceneId: s3,
+				startPosition: 0.5,
+				endPosition: 1
+			})
+			.returning();
+
+		// Move s1 after s2 → order [s0, s2, s1, s3]. Recompute widens V1 to [0, 0.75)
+		// and V2 to [0.25, 1.0): they now overlap, tripping world_maps_variant_no_overlap
+		// (23P01) at commit. Pre-fix the catch only knew 23505 → opaque 500.
+		await expect(
+			PATCH_ENTITY(mkEvent({ params: { id: s1 }, body: { position: 2 } }))
+		).rejects.toMatchObject({ status: 409 });
+
+		// Deferred constraint failed the whole tx → variants and scene order untouched.
+		const [r1] = await db.select().from(worldMaps).where(eq(worldMaps.id, v1.id));
+		expect([r1.startPosition, r1.endPosition]).toEqual([0, 0.5]);
+		const [r2] = await db.select().from(worldMaps).where(eq(worldMaps.id, v2.id));
+		expect([r2.startPosition, r2.endPosition]).toEqual([0.5, 1]);
+		const [scn1] = await db.select().from(entities).where(eq(entities.id, s1));
+		expect(scn1.position).toBe(1);
+	});
+});

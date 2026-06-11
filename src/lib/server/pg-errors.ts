@@ -11,6 +11,20 @@ export function isUniqueViolation(err: unknown): boolean {
 }
 
 /**
+ * True for an EXCLUDE-constraint violation (SQLSTATE 23P01). The only such
+ * constraint in the schema is `world_maps_variant_no_overlap` (DEFERRABLE, so it
+ * fires at COMMIT), which a recompute cascade can trip when two scoped variants
+ * for one Location end up overlapping. Route catches translate it to 409 —
+ * parity with the maps routes — instead of leaking a raw 500 (2026-06 review).
+ */
+export function isExclusionViolation(err: unknown): boolean {
+	if (!err || typeof err !== 'object') return false;
+	if ((err as { code?: string }).code === '23P01') return true;
+	const cause = (err as { cause?: unknown }).cause;
+	return !!cause && typeof cause === 'object' && (cause as { code?: string }).code === '23P01';
+}
+
+/**
  * True if the error carries a Postgres SQLSTATE (on the error itself or on
  * `.cause`) — i.e. it came from the driver, not from app-level validation
  * (which throws plain `Error`s whose messages are safe, user-facing strings).
