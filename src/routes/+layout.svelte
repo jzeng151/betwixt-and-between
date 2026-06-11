@@ -57,10 +57,12 @@
 			// current account (codex P1, SSR half). $preferencesUserId re-fires this
 			// effect when it resolves post-hydrate, replacing any pre-hydrate value.
 			const value = encodeURIComponent(serializePaletteCookie(appearance, ownerId));
-			// `secure` only in prod: browsers drop Secure cookies on http origins, so
-			// appending it unconditionally silently breaks the SSR anti-FOUC palette
-			// in `vite dev` (http://localhost). Gate on !DEV, same as the auth fix.
-			const secure = import.meta.env.DEV ? '' : '; secure';
+			// `secure` only on an https origin: browsers drop Secure cookies on http,
+			// which silently breaks the SSR anti-FOUC palette. Gate on the page's
+			// actual protocol rather than the DEV build flag — a production build
+			// served over http (`npm run preview`, http staging/LAN) is !DEV but still
+			// needs the cookie to persist for the next SSR.
+			const secure = location.protocol === 'https:' ? '; secure' : '';
 			document.cookie = `${PALETTE_COOKIE}=${value}; path=/; max-age=31536000; samesite=lax${secure}`;
 		}
 	});

@@ -29,7 +29,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { and, asc, eq } from 'drizzle-orm';
 import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
-import { entities, intervals, relationships, windowCanvasState, worldMaps } from '../../src/lib/server/db/schema.js';
+import { entities, intervals, mapPlacements, relationships, windowCanvasState, worldMaps } from '../../src/lib/server/db/schema.js';
 import { writeInterval, moveSceneToAct, updateInterval } from '../../src/lib/server/intervals.js';
 import { recomputeWorldMapVariantsAll } from '../../src/lib/server/world-maps.js';
 
@@ -59,6 +59,7 @@ const { POST: POST_CANVAS_BATCH } = await import(
 	'../../src/routes/api/canvas-positions/window/[windowId]/batch/+server.js'
 );
 const { POST: POST_NOTE } = await import('../../src/routes/api/notes/entries/+server.js');
+const { POST: POST_BATCH } = await import('../../src/routes/api/entities/batch/+server.js');
 
 async function seedCharacter(name: string): Promise<string> {
 	const [row] = await db
@@ -489,5 +490,172 @@ describe('MRG — updateInterval overlap-merge is transactional', () => {
 		expect([rowB.startPosition, rowB.endPosition]).toEqual([2, 3]);
 		const [rowA] = await db.select().from(intervals).where(eq(intervals.id, a.id));
 		expect([rowA.startPosition, rowA.endPosition]).toEqual([0, 1]);
+	});
+});
+
+describe('MOVE-400 — scene move to a non-Act target returns 400, not opaque 500', () => {
+	it('PATCH parentId pointing at a non-Act surfaces moveSceneToAct validation as 400 (codex P2)', async () => {
+		const acts = await seedActs(db, userId);
+		const scene = await seedScene(acts.act0, 'S', 0);
+		const ellie = await seedCharacter('Ellie'); // a Character, not an Act
+		// moveSceneToAct throws a plain Error('Target ... type=Character ...'); the
+		// post-audit catch must classify it as app-validation (not a PG driver
+		// error) and surface 400 instead of re-throwing it as an opaque 500.
+		await expect(
+			PATCH_ENTITY(mkEvent({ params: { id: scene }, body: { parentId: ellie } }))
+		).rejects.toMatchObject({ status: 400 });
+	});
+});
+
+describe('NTE-PARITY — generic entity routes apply the roomy note cap to Notes', () => {
+	// ~32k chars: rejected by the 16KB generic entity cap, accepted by the 256KB
+	// note cap. A Note that succeeds through /api/notes/entries must also succeed
+	// through the generic entity create / batch / PATCH (codex P2).
+	const bigNoteData = { body: 'x'.repeat(32000) };
+
+	it('POST /api/entities type=Note accepts a 32KB body (would 400 under the entity cap)', async () => {
+		const res = await POST_ENTITY(
+			mkEvent({ body: { type: 'Note', name: 'Backstory', data: bigNoteData } })
+		);
+		expect(res.status).toBe(201);
+	});
+
+	it('POST /api/entities type=Note still rejects a body over the 256KB note cap', async () => {
+		await expect(
+			POST_ENTITY(
+				mkEvent({ body: { type: 'Note', name: 'Backstory', data: { body: 'x'.repeat(262145) } } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('POST /api/entities/batch applies the note cap per Note item', async () => {
+		const res = await POST_BATCH(
+			mkEvent({ body: { entities: [{ type: 'Note', name: 'Backstory', data: bigNoteData }] } })
+		);
+		expect(res.status).toBe(201);
+	});
+
+	it('PATCH /api/entities/[id] applies the note cap when the existing row is a Note', async () => {
+		const [note] = await db
+			.insert(entities)
+			.values({ userId, type: 'Note', name: 'Backstory', data: { body: '' } })
+			.returning();
+		const res = await PATCH_ENTITY(
+			mkEvent({ params: { id: note.id }, body: { data: bigNoteData } })
+		);
+		expect(res.status).toBe(200);
+	});
+
+	it('a non-Note entity still gets the 16KB cap through the generic PATCH', async () => {
+		const ellie = await seedCharacter('Ellie');
+		await expect(
+			PATCH_ENTITY(mkEvent({ params: { id: ellie }, body: { data: { pad: 'x'.repeat(17000) } } }))
+		).rejects.toMatchObject({ status: 400 });
+	});
+});
+
+describe('INV — scene reorder swap-normalizes inverted bounds across all sibling derived-position tables', () => {
+	// A variant/edge/placement anchored start→sceneA, end→sceneB in one act, with
+	// sceneA reordered past sceneB, derives an inverted (or zero-extent) range. Each
+	// table carries a `start_position < end_position` CHECK, so pre-fix the scene
+	// reorder 500ed and rolled back. The shared resolveRelationshipBoundsSwapNormalized
+	// swaps the side anchors so the row stays valid and the reorder succeeds.
+
+	async function seedTwoSceneAct() {
+		const acts = await seedActs(db, userId);
+		const s0 = await seedScene(acts.act0, 'S0', 0);
+		const s1 = await seedScene(acts.act0, 'S1', 1);
+		return { acts, s0, s1 };
+	}
+
+	// Reorder s0 after s1 → order becomes [s1@0, s0@1]; the start-anchor scene now
+	// sits after the end-anchor scene in the same act.
+	async function reorderS0AfterS1(s0: string) {
+		const res = await PATCH_ENTITY(mkEvent({ params: { id: s0 }, body: { position: 1 } }));
+		expect(res.status).toBe(200);
+	}
+
+	it('world_maps variant: inverted anchors swap, reorder succeeds, start < end', async () => {
+		const { acts, s0, s1 } = await seedTwoSceneAct();
+		const [location] = await db
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Gondor' })
+			.returning();
+		const [variant] = await db
+			.insert(worldMaps)
+			.values({
+				userId,
+				name: 'Gondor — S0..S1',
+				locationId: location.id,
+				startActId: acts.act0,
+				startSceneId: s0,
+				endActId: acts.act0,
+				endSceneId: s1,
+				startPosition: 0,
+				endPosition: 1
+			})
+			.returning();
+
+		await reorderS0AfterS1(s0);
+
+		const [row] = await db.select().from(worldMaps).where(eq(worldMaps.id, variant.id));
+		expect(row.startSceneId).toBe(s1);
+		expect(row.endSceneId).toBe(s0);
+		expect(row.startPosition!).toBeLessThan(row.endPosition!);
+	});
+
+	it('relationships caused edge: inverted anchors swap, reorder succeeds, start < end', async () => {
+		const { acts, s0, s1 } = await seedTwoSceneAct();
+		const ellie = await seedCharacter('Ellie');
+		const damien = await seedCharacter('Damien');
+		const [edge] = await db
+			.insert(relationships)
+			.values({
+				userId,
+				fromId: ellie,
+				toId: damien,
+				type: 'other',
+				startActId: acts.act0,
+				startSceneId: s0,
+				endActId: acts.act0,
+				endSceneId: s1,
+				startPosition: 0,
+				endPosition: 1
+			})
+			.returning();
+
+		await reorderS0AfterS1(s0);
+
+		const [row] = await db.select().from(relationships).where(eq(relationships.id, edge.id));
+		expect(row.startSceneId).toBe(s1);
+		expect(row.endSceneId).toBe(s0);
+		expect(row.startPosition!).toBeLessThan(row.endPosition!);
+	});
+
+	it('map_placements: inverted anchors swap, reorder succeeds, start < end', async () => {
+		const { acts, s0, s1 } = await seedTwoSceneAct();
+		const ellie = await seedCharacter('Ellie');
+		const [placement] = await db
+			.insert(mapPlacements)
+			.values({
+				userId,
+				placeableId: ellie,
+				x: 0.5,
+				y: 0.5,
+				startActId: acts.act0,
+				startSceneId: s0,
+				endActId: acts.act0,
+				endSceneId: s1,
+				startPosition: 0,
+				endPosition: 1
+			})
+			.returning();
+
+		await reorderS0AfterS1(s0);
+
+		const [row] = await db.select().from(mapPlacements).where(eq(mapPlacements.id, placement.id));
+		expect(row.startSceneId).toBe(s1);
+		expect(row.endSceneId).toBe(s0);
+		expect(row.startPosition!).toBeLessThan(row.endPosition!);
 	});
 });

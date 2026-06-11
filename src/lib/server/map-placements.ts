@@ -19,7 +19,11 @@ import { error } from '@sveltejs/kit';
 import { and, eq, sql } from 'drizzle-orm';
 import { entities, mapPlacements, worldMaps, PlaceableEntityType } from './db/schema.js';
 import { isUuid } from './validation.js';
-import { resolveRelationshipBounds } from './intervals.js';
+import {
+	resolveRelationshipBounds,
+	resolveRelationshipBoundsSwapNormalized,
+	type SwappedFks
+} from './intervals.js';
 
 type SelectableDB = {
 	select: (...args: unknown[]) => {
@@ -212,11 +216,16 @@ export async function recomputePlacementBoundsAll(
 
 			let startPosition: number | null;
 			let endPosition: number | null;
+			let swappedFks: SwappedFks | null = null;
 			if (normalizeToDefault) {
 				startPosition = null;
 				endPosition = null;
 			} else {
-				const resolved = await resolveRelationshipBounds(
+				// Swap-normalize an inversion (a scene reorder moving a start-anchor
+				// scene past the end-anchor scene in the same act) instead of writing
+				// an inverted range that trips map_placements_position_order → opaque
+				// 500 (2026-06 review; parity with the intervals path).
+				const resolved = await resolveRelationshipBoundsSwapNormalized(
 					db,
 					{
 						startActId: row.startActId,
@@ -229,6 +238,7 @@ export async function recomputePlacementBoundsAll(
 				);
 				startPosition = resolved.startPosition;
 				endPosition = resolved.endPosition;
+				swappedFks = resolved.swappedFks;
 			}
 
 			const startDrift =
@@ -256,6 +266,16 @@ export async function recomputePlacementBoundsAll(
 				if (row.endActId !== null) updates.endActId = null;
 				if (row.startSceneId !== null) updates.startSceneId = null;
 				if (row.endSceneId !== null) updates.endSceneId = null;
+			}
+
+			// Persist swapped side anchors after an inversion was normalized so the
+			// row stays self-consistent (start FK ↔ start_position); also keeps a
+			// pure swap (positions unchanged) from being skipped below.
+			if (swappedFks) {
+				updates.startActId = swappedFks.startActId;
+				updates.startSceneId = swappedFks.startSceneId;
+				updates.endActId = swappedFks.endActId;
+				updates.endSceneId = swappedFks.endSceneId;
 			}
 
 			if (Object.keys(updates).length === 0) continue;
