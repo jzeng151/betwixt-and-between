@@ -113,16 +113,39 @@ export function validateStyleOverride(raw: unknown, path: string): void {
 	}
 }
 
-// 2026-06 audit: placement `data` is persisted verbatim apart from the style
+// 2026-06 audit: `data` jsonb is persisted verbatim apart from the style
 // sub-key, so without a total cap a client could store multi-megabyte blobs
-// per row. 16KB is roomy for placement metadata while blocking the abuse case.
+// per row. 16KB is roomy for the small metadata these objects actually hold
+// (style, role, color, timelineWeight) while blocking the abuse case.
 export const MAX_PLACEMENT_DATA_BYTES = 16384;
+export const MAX_ENTITY_DATA_BYTES = 16384;
+// Note entries store long-form `body` text in entities.data, so they get a far
+// roomier cap than generic entity metadata (~50k words) — enough for research
+// notes / backstories / outline chapters while still blocking multi-MB abuse.
+export const MAX_NOTE_DATA_BYTES = 262144;
+
+function validateDataSize(data: unknown, path: string, maxBytes: number): void {
+	// Measure ANY non-null payload, not just objects. The entity routes persist
+	// `data` verbatim (`data ?? {}`), so a non-object `data` (a bare JSON string
+	// or number) would otherwise skip the cap and store a multi-megabyte row —
+	// the exact storage-abuse this guard exists to block. (Placement routes
+	// coerce non-objects to `{}`, but the cap must not rely on that.)
+	if (data === null || data === undefined) return;
+	if (utf8Bytes(JSON.stringify(data)) > maxBytes) {
+		error(400, `${path} exceeds ${maxBytes} bytes`);
+	}
+}
 
 export function validatePlacementDataSize(data: unknown, path: string): void {
-	if (!data || typeof data !== 'object') return;
-	if (utf8Bytes(JSON.stringify(data)) > MAX_PLACEMENT_DATA_BYTES) {
-		error(400, `${path} exceeds ${MAX_PLACEMENT_DATA_BYTES} bytes`);
-	}
+	validateDataSize(data, path, MAX_PLACEMENT_DATA_BYTES);
+}
+
+export function validateEntityDataSize(data: unknown, path: string): void {
+	validateDataSize(data, path, MAX_ENTITY_DATA_BYTES);
+}
+
+export function validateNoteDataSize(data: unknown, path: string): void {
+	validateDataSize(data, path, MAX_NOTE_DATA_BYTES);
 }
 
 /**

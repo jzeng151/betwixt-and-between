@@ -368,9 +368,18 @@ const fmtPos = (n: number): string => String(Number(n.toFixed(3)));
  * a state the per-row recompute would otherwise write silently (there is no DB
  * overlap constraint backing the invariant). Run AFTER all rows are written so
  * each check sees final positions; a real overlap throws (rolling back the whole
- * cascade transaction) instead of persisting an overlap. Only swapped rows can
- * introduce a NEW overlap, so only they are checked — a plain reprojection keeps
- * each interval within its own acts.
+ * cascade transaction) instead of persisting an overlap.
+ *
+ * SCOPE (2026-06 review follow-up — narrowed from an earlier over-broad claim):
+ * this checks ONLY swap-normalized rows, i.e. the new overlap class that swap
+ * normalization itself can introduce. It does NOT catch a *pure reprojection*
+ * that widens a multi-act interval across a same-entity sibling without inverting
+ * it (e.g. reorder [act0,act1,act2] → [act0,act2,act1] turns an act0→act1 span
+ * [0,2) into [0,3) over a sibling now at [1,2); neither row is swapped). That
+ * overlap class is PRE-EXISTING and is the "accepted exposure" documented in
+ * invariants.ts → assertNoOverlap; the durable fix is the EXCLUDE USING gist
+ * constraint named there, not a wider post-write scan here (which would also
+ * 409 on historical overlaps and block otherwise-legitimate reorders).
  *
  * On a clash we throw a 409 with an ACTIONABLE message (entity name, the two
  * overlapping spans, and how to resolve it by hand) rather than a bare 500: the
@@ -481,6 +490,16 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 	// wrong story-time. Coarse walk, same short-circuit-on-no-drift contract
 	// as the placement recompute above.
 	await recomputeRelationshipBoundsAll(db, userId, cache);
+
+	// Scene-anchored world_map variants depend on the scene's index/count within
+	// its act, so they drift on a scene-within-act mutation exactly like the
+	// placements/relationships above — yet this cascade historically skipped them
+	// (only the Act-reorder path recomputed variants). A scene move would then
+	// leave a scene-anchored variant's derived position stale until the next Act
+	// reorder (2026-06 review). Same coarse walk; runs in the caller's tx so the
+	// world_maps DEFERRABLE EXCLUDE tolerates transient overlaps until commit.
+	const { recomputeWorldMapVariantsAll } = await import('../world-maps.js');
+	await recomputeWorldMapVariantsAll(db, userId, cache);
 
 	return updated;
 }
@@ -922,9 +941,14 @@ async function recomputeMapAnchors(
 	// an Act delete with same-fraction anchors across acts aborts the
 	// cascade transaction (Codex P1 on PR #52 commit a9c550f, line 637).
 	if (deletes.length > 0) {
-		await db
-			.delete(mapAnchors)
-			.where(and(inArray(mapAnchors.id, deletes), inArray(mapAnchors.worldMapId, userMapIds)));
+		// Chunked (2026-06 follow-up): a heavily-painted map being collapsed by an
+		// Act delete can have more rows to drop than the 65535 bind-param ceiling
+		// allows in one inArray — same reason the bulk UPDATEs below are chunked.
+		for (const slice of chunked(deletes, BULK_UPDATE_CHUNK)) {
+			await db
+				.delete(mapAnchors)
+				.where(and(inArray(mapAnchors.id, slice), inArray(mapAnchors.worldMapId, userMapIds)));
+		}
 	}
 
 	if (updates.length === 0) return 0;
@@ -1027,9 +1051,14 @@ async function recomputeMapEvents(
 	// semantic fix: an event referencing a no-longer-existing Act slot is
 	// orphaned history. Matches the policy applied to anchors above.
 	if (deletes.length > 0) {
-		await db
-			.delete(mapEvents)
-			.where(and(inArray(mapEvents.id, deletes), inArray(mapEvents.worldMapId, userMapIds)));
+		// Chunked (2026-06 follow-up): every paint stroke is a map_events row, so a
+		// painted map can exceed the 65535 bind-param ceiling on a single inArray —
+		// same reason the bulk UPDATE below is chunked.
+		for (const slice of chunked(deletes, BULK_UPDATE_CHUNK)) {
+			await db
+				.delete(mapEvents)
+				.where(and(inArray(mapEvents.id, slice), inArray(mapEvents.worldMapId, userMapIds)));
+		}
 	}
 
 	// map_events has no unique index; a single VALUES-join UPDATE is safe and

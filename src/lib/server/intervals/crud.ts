@@ -499,6 +499,23 @@ export async function moveSceneToAct(
 		.set({ endActId: newActId })
 		.where(and(eq(relationshipsTbl.endSceneId, sceneId), eq(relationshipsTbl.userId, userId)));
 
+	// Mirror the act-FK rewrite onto world_maps variants scoped to this scene
+	// (2026-06 review — the prior placements/relationships fix missed world_maps).
+	// A variant whose start/end_scene_id is this scene would otherwise keep its
+	// old parent Act; recomputeWorldMapVariantsAll → computeIntervalPositions then
+	// hits the scene-parent/act mismatch guard and aborts (a 500 on the NEXT Act
+	// reorder, bricking reordering for that user). The world_maps DEFERRABLE
+	// EXCLUDE tolerates the FK rewrite; the recompute below refreshes positions.
+	const { worldMaps: worldMapsTbl } = await import('../db/schema.js');
+	await db
+		.update(worldMapsTbl)
+		.set({ startActId: newActId })
+		.where(and(eq(worldMapsTbl.startSceneId, sceneId), eq(worldMapsTbl.userId, userId)));
+	await db
+		.update(worldMapsTbl)
+		.set({ endActId: newActId })
+		.where(and(eq(worldMapsTbl.endSceneId, sceneId), eq(worldMapsTbl.userId, userId)));
+
 	if (oldActId !== newActId) {
 		await recomputeIntervalsForAct(db, oldActId, userId);
 	}

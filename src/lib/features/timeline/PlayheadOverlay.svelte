@@ -73,9 +73,14 @@
 			flushScrub();
 			window.removeEventListener('pointermove', onMove);
 			window.removeEventListener('pointerup', onUp);
+			window.removeEventListener('pointercancel', onUp);
 		}
+		// pointercancel (touch interrupted, browser-stolen gesture) must tear down
+		// too — otherwise the window pointermove listener + the rAF leak and every
+		// later cancelled drag stacks another scrub computation (2026-06 review).
 		window.addEventListener('pointermove', onMove);
 		window.addEventListener('pointerup', onUp);
+		window.addEventListener('pointercancel', onUp);
 	}
 </script>
 
