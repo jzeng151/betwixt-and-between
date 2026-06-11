@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.15.0] - 2026-06-10
+
+Security and reliability hardening from the 2026-06 audit. No new features — your stories behave the same, but editing is harder to break and the app is tighter about what it stores and what it tells the outside world.
+
+### Fixed
+
+- **Reordering acts no longer errors out when it flips an interval end-for-end.** Dragging an act past another so a character's interval would run backwards now quietly swaps the interval's two ends instead of failing the whole reorder. If the swap would land that character in two overlapping time spans at once, you get a clear message naming the character and both spans (and nothing is saved) instead of an opaque error.
+- **Merging two intervals can no longer lose one of them.** When dragging one interval over another for the same character merged them, a failure mid-merge could permanently drop the absorbed interval while leaving the other unchanged. The merge is now all-or-nothing.
+- **Deleting an act and moving its scenes elsewhere keeps their intervals intact.** An interval that started on a scene inside the deleted act now follows that scene to its new act instead of failing on an inverted range.
+- **Clearer 400s instead of 500s.** Sending a bad name, position, or other malformed field to the entity API now returns a precise "bad request" rather than a server error.
+
+### Changed
+
+- **The app no longer echoes raw database error text back to the client.** Unexpected database errors now surface as a generic server error; genuine validation problems still return their specific, actionable message. Duplicate-row conflicts report as a conflict (409) with a plain explanation.
+- **Size limits on stored data.** Map-placement data, entity data, and note bodies are now size-capped (notes get a roomy 256KB for long-form writing; placement and entity metadata get 16KB) so a single record can't balloon to megabytes. Limits are measured in real bytes, so multi-byte text (emoji, accented characters) counts correctly.
+- **Custom icon URLs are restricted to safe schemes** (`https:`, same-origin, and `data:image/...`), blocking `javascript:` and HTML data URLs.
+- **Files and sprites are served with `X-Content-Type-Options: nosniff`** so the browser won't reinterpret an uploaded image as something executable.
+
+### Security
+
+- **Magic-link sign-in can no longer leak a sign-in link through server logs in production.** If email delivery isn't configured, the app now refuses to hand out a magic link outside local development instead of logging the link where it could be read.
+- **The appearance-palette cookie is marked `Secure` in production** so it's only sent over HTTPS.
+- **Dependency advisories from the 2026-06 `npm audit` resolved** (Svelte and dev-toolchain updates).
+
+### Performance
+
+- **Faster timeline recomputes on large maps.** Reprojecting map anchors and events after an act reorder now runs as a single bounded bulk update instead of one query per row, and timeline scrubbing coalesces redraws to a single frame.
+
 ## [0.8.14.0] - 2026-06-10
 
 World Map v3 authoring fidelity: paint the map freehand, stack art on layers, scatter objects, and let terrain change as the story plays.
