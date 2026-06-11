@@ -16,6 +16,7 @@ import { mapPlacements } from '$lib/server/db/schema.js';
 import { and, desc, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
+import { isPgError } from '$lib/server/pg-errors.js';
 import {
 	assertPlaceableId,
 	assertPlacementLocationId,
@@ -135,8 +136,11 @@ export const POST: RequestHandler = async (event) => {
 				} catch (e) {
 					// resolvePlacementBounds / computeIntervalPositions throw plain
 					// Errors on invalid temporal input (start > end, scene parented
-					// to a different act, etc.). Surface as 400 client error.
+					// to a different act, etc.). Surface as 400 client error. A driver
+					// error (malformed-UUID cast etc.) is opaqued as a 500 instead of
+					// echoing its raw message (2026-06 review).
 					if ((e as { status?: number }).status) throw e;
+					if (isPgError(e)) throw e;
 					error(400, `Invalid placement bounds: ${(e as Error).message}`);
 				}
 				startPosition = bounds.startPosition;

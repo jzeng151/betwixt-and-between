@@ -66,8 +66,10 @@ export const POST: RequestHandler = async (event) => {
 	// few hundred entities paid hundreds of sequential statements. One
 	// statement is also inherently atomic, so the explicit transaction goes.
 	// Postgres forbids the same conflict target twice in one statement, so
-	// duplicate entityIds within the batch are deduped last-wins (matching the
-	// old loop's effective behavior).
+	// duplicate entityIds within the batch are deduped last-wins. The persisted
+	// state matches the old per-row loop (last write wins); the returned array
+	// has one row per *unique* entityId rather than one per input element, so a
+	// client must key the response by entityId, not by request index.
 	const byEntity = new Map(rows.map((r) => [r.entityId, r]));
 	const upserted = await db
 		.insert(windowCanvasState)

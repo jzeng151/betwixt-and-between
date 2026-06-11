@@ -1,10 +1,12 @@
 import { json, error } from '@sveltejs/kit';
+import { and, eq, sql } from 'drizzle-orm';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
 import { getUserId, assertParentsOwned } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
+import { isUniqueViolation } from '$lib/server/pg-errors.js';
 import { recomputeIntervalsForAct } from '$lib/server/intervals.js';
-import { validateStyleInData } from '$lib/server/style-validation.js';
+import { validateStyleInData, validateEntityDataSize } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -40,10 +42,17 @@ export const POST: RequestHandler = async (event) => {
 		if (!item.name || typeof item.name !== 'string' || item.name.trim() === '') {
 			error(400, `entities[${i}].name is required`);
 		}
+		// position lands in an integer column + the sibling-bump math (parity with
+		// POST/PATCH /api/entities); a float/NaN here would otherwise surface as a
+		// PG cast error → opaque 500 after the catch hardening below.
+		if (item.position !== undefined && item.position !== null && !Number.isInteger(item.position)) {
+			error(400, `entities[${i}].position must be an integer`);
+		}
 		// codex P2: batch is also an entity-create path — apply the same style
 		// whitelist as POST /api/entities so a batch payload can't persist an
 		// invalid/oversized data.style that the placement cascade later consumes.
 		validateStyleInData(item.data, `entities[${i}].data`);
+		validateEntityDataSize(item.data, `entities[${i}].data`);
 	}
 
 	if (items.length === 0) return json([], { status: 201 });
@@ -68,6 +77,28 @@ export const POST: RequestHandler = async (event) => {
 			const rows: (typeof entities.$inferSelect)[] = [];
 			const affectedParentActs = new Set<string>();
 			for (const item of items) {
+				// Scene insert-between bump (parity with POST /api/entities, 2026-06
+				// review): a Scene created at an occupied sibling position shifts the
+				// occupants up so the createdAt tie-break can't mis-order it. Per item
+				// so two batch scenes targeting the same slot resolve sequentially
+				// (last inserted wins the slot). No-op when positions don't collide.
+				if (
+					item.type === 'Scene' &&
+					typeof item.parentId === 'string' &&
+					typeof item.position === 'number'
+				) {
+					await tx
+						.update(entities)
+						.set({ position: sql`${entities.position} + 1` as unknown as number })
+						.where(
+							and(
+								eq(entities.userId, userId),
+								eq(entities.type, 'Scene'),
+								eq(entities.parentId, item.parentId),
+								sql`${entities.position} >= ${item.position}`
+							)
+						);
+				}
 				const [row] = await tx
 					.insert(entities)
 					.values({
@@ -90,7 +121,15 @@ export const POST: RequestHandler = async (event) => {
 			return rows;
 		});
 	} catch (err) {
-		error(400, (err as Error).message);
+		// Parity with POST/PATCH /api/entities (2026-06 audit): preserve an
+		// HttpError's status (e.g. the recompute cascade's actionable 409), map a
+		// 23505 from the cascade to 409, and re-throw everything else as an opaque
+		// 500 instead of echoing the raw Postgres/driver message back to the client.
+		if ((err as { status?: number }).status) throw err;
+		if (isUniqueViolation(err)) {
+			error(409, 'The change collides with an existing row (duplicate temporal bounds)');
+		}
+		throw err;
 	}
 
 	return json(created, { status: 201 });

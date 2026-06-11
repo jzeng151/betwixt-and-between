@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { intervals } from '$lib/server/db/schema.js';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
+import { isPgError } from '$lib/server/pg-errors.js';
 import { writeInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
@@ -78,7 +79,12 @@ export const POST: RequestHandler = async (event) => {
 	} catch (err) {
 		// writeInterval validates FKs against entities scoped by userId — cross-
 		// user FKs surface as "entity_id not found" (400). Position drift,
-		// scene-parent mismatch, polymorphic FK violations also raise here.
+		// scene-parent mismatch, polymorphic FK violations also raise here, all as
+		// plain Errors with safe, user-facing messages → keep them 400. A driver
+		// error (malformed-UUID cast 22P02, CHECK, FK) is opaqued as a 500 so its
+		// raw message can't leak (2026-06 review — parity with the entities routes).
+		if ((err as { status?: number }).status) throw err;
+		if (isPgError(err)) throw err;
 		error(400, (err as Error).message);
 	}
 };

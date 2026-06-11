@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { intervals } from '$lib/server/db/schema.js';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
+import { isPgError } from '$lib/server/pg-errors.js';
 import { updateInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
@@ -73,6 +74,11 @@ export const PATCH: RequestHandler = async (event) => {
 		// non-merge happy path.
 		return json({ ...updated, absorbed });
 	} catch (err) {
+		// updateInterval throws plain Errors with safe messages (FK not found,
+		// position drift, scene-parent mismatch) → 400. A driver error is opaqued
+		// as a 500 so its raw message can't leak (2026-06 review).
+		if ((err as { status?: number }).status) throw err;
+		if (isPgError(err)) throw err;
 		error(400, (err as Error).message);
 	}
 };

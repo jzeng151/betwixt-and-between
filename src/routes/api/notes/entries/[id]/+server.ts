@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, or, sql } from 'drizzle-orm';
 import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
+import { validateNoteDataSize } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 const isEntryFilter = (id: string, userId: string) =>
@@ -40,7 +41,9 @@ export const PATCH: RequestHandler = async (event) => {
 	if (name !== undefined) updates.name = name.trim();
 	if (noteBody !== undefined) {
 		const data = (existing.data as Record<string, unknown>) ?? {};
-		updates.data = { ...data, body: noteBody };
+		const merged = { ...data, body: noteBody };
+		validateNoteDataSize(merged, 'note.body');
+		updates.data = merged;
 	}
 	if (folderId !== undefined) {
 		await assertParentOwned(db, userId, folderId);
