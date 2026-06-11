@@ -984,8 +984,8 @@ const ANCHOR_PARK_BASE = -1_000_000;
 // delete cascade. Chunk the bulk writes so the statement stays bounded
 // (1000 rows ≈ 2001 params). (2026-06 audit follow-up — the single-VALUES
 // rewrite replaced per-row loops that never hit the param ceiling.)
-const BULK_UPDATE_CHUNK = 1000;
-function chunked<T>(arr: T[], size: number): T[][] {
+export const BULK_UPDATE_CHUNK = 1000;
+export function chunked<T>(arr: T[], size: number): T[][] {
 	const out: T[][] = [];
 	for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
 	return out;

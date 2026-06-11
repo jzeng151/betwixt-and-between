@@ -4,12 +4,14 @@ import { getUserId } from '$lib/server/auth-gate.js';
 import {
 	recomputeAllIntervals,
 	recomputeIntervalsForAct,
-	snapshotActOrdering
+	snapshotActOrdering,
+	chunked,
+	BULK_UPDATE_CHUNK
 } from '$lib/server/intervals.js';
 import { intervals as intervalsTable, relationships as relationshipsTable } from '$lib/server/db/schema.js';
 import { and, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { readJson } from '$lib/server/read-json.js';
-import { isPgError, isUniqueViolation } from '$lib/server/pg-errors.js';
+import { isExclusionViolation, isPgError, isUniqueViolation } from '$lib/server/pg-errors.js';
 import {
 	validateStyleInData,
 	validateEntityDataSize,
@@ -111,6 +113,9 @@ export const PATCH: RequestHandler = async (event) => {
 			if (isUniqueViolation(err)) {
 				error(409, 'The move collides with an existing row (duplicate temporal bounds)');
 			}
+			if (isExclusionViolation(err)) {
+				error(409, 'The move would make two world-map variants for a Location overlap in story-time');
+			}
 			// moveSceneToAct throws plain validation Errors for bad client input
 			// (target isn't an Act, parentId resolves to a non-Scene, etc.) whose
 			// messages are safe, actionable strings — surface them as 400 (restoring
@@ -210,6 +215,9 @@ export const PATCH: RequestHandler = async (event) => {
 		if (isUniqueViolation(err)) {
 			error(409, 'The reorder collides with an existing row (duplicate temporal bounds)');
 		}
+		if (isExclusionViolation(err)) {
+			error(409, 'The reorder would make two world-map variants for a Location overlap in story-time');
+		}
 		throw err;
 	});
 
@@ -298,25 +306,29 @@ export const DELETE: RequestHandler = async (event) => {
 			// the act FK would hit ON DELETE SET NULL below, dropping the row
 			// out of recomputeRelationshipBoundsAll and freezing a stale scoped
 			// position). Batched per table (2026-06 perf audit): one UPDATE per
-			// FK column instead of four sequential statements per scene.
+			// FK column instead of four sequential statements per scene. Chunked
+			// because an `inArray` over all moved scene IDs would otherwise blow
+			// Postgres' 65535 bind-parameter limit on a huge Act (2026-06 review —
+			// same cap the bulk recompute UPDATEs chunk against).
 			if (movedSceneIds.size > 0) {
-				const sceneIds = [...movedSceneIds];
-				await tx
-					.update(intervalsTable)
-					.set({ startActId: moveScenesTo })
-					.where(and(inArray(intervalsTable.startSceneId, sceneIds), eq(intervalsTable.userId, userId)));
-				await tx
-					.update(intervalsTable)
-					.set({ endActId: moveScenesTo })
-					.where(and(inArray(intervalsTable.endSceneId, sceneIds), eq(intervalsTable.userId, userId)));
-				await tx
-					.update(relationshipsTable)
-					.set({ startActId: moveScenesTo })
-					.where(and(inArray(relationshipsTable.startSceneId, sceneIds), eq(relationshipsTable.userId, userId)));
-				await tx
-					.update(relationshipsTable)
-					.set({ endActId: moveScenesTo })
-					.where(and(inArray(relationshipsTable.endSceneId, sceneIds), eq(relationshipsTable.userId, userId)));
+				for (const sceneIds of chunked([...movedSceneIds], BULK_UPDATE_CHUNK)) {
+					await tx
+						.update(intervalsTable)
+						.set({ startActId: moveScenesTo })
+						.where(and(inArray(intervalsTable.startSceneId, sceneIds), eq(intervalsTable.userId, userId)));
+					await tx
+						.update(intervalsTable)
+						.set({ endActId: moveScenesTo })
+						.where(and(inArray(intervalsTable.endSceneId, sceneIds), eq(intervalsTable.userId, userId)));
+					await tx
+						.update(relationshipsTable)
+						.set({ startActId: moveScenesTo })
+						.where(and(inArray(relationshipsTable.startSceneId, sceneIds), eq(relationshipsTable.userId, userId)));
+					await tx
+						.update(relationshipsTable)
+						.set({ endActId: moveScenesTo })
+						.where(and(inArray(relationshipsTable.endSceneId, sceneIds), eq(relationshipsTable.userId, userId)));
+				}
 				// NOTE (2026-06 review): map_placements + world_maps variants scene-
 				// anchored to a moved scene are deliberately NOT reanchored here. Their
 				// act FK hits ON DELETE SET NULL when this Act is deleted, so the
@@ -511,6 +523,9 @@ export const DELETE: RequestHandler = async (event) => {
 		if ((err as { status?: number }).status) throw err;
 		if (isUniqueViolation(err)) {
 			error(409, 'The delete collides with an existing row (duplicate temporal bounds)');
+		}
+		if (isExclusionViolation(err)) {
+			error(409, 'The delete would make two world-map variants for a Location overlap in story-time');
 		}
 		throw err;
 	});

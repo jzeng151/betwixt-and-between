@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isUniqueViolation, isPgError } from '../../src/lib/server/pg-errors.js';
+import { isUniqueViolation, isPgError, isExclusionViolation } from '../../src/lib/server/pg-errors.js';
 
 describe('isUniqueViolation', () => {
 	it('matches a top-level 23505 code', () => {
@@ -59,5 +59,28 @@ describe('isPgError', () => {
 		expect(isPgError({ code: '' })).toBe(false);
 		expect(isPgError({ code: 23514 })).toBe(false); // numeric code is not a SQLSTATE string
 		expect(isPgError({ cause: null })).toBe(false);
+	});
+});
+
+describe('isExclusionViolation', () => {
+	it('matches a top-level 23P01 code', () => {
+		expect(isExclusionViolation({ code: '23P01' })).toBe(true);
+	});
+
+	it('matches a driver-wrapped 23P01 on .cause', () => {
+		expect(isExclusionViolation({ cause: { code: '23P01' } })).toBe(true);
+	});
+
+	it('rejects other SQLSTATEs (it is narrower than isPgError)', () => {
+		expect(isExclusionViolation({ code: '23505' })).toBe(false); // unique
+		expect(isExclusionViolation({ code: '23514' })).toBe(false); // CHECK
+		expect(isExclusionViolation({ cause: { code: '23503' } })).toBe(false); // FK
+	});
+
+	it('rejects null, non-objects, and shapes without a code', () => {
+		expect(isExclusionViolation(null)).toBe(false);
+		expect(isExclusionViolation('23P01')).toBe(false);
+		expect(isExclusionViolation({})).toBe(false);
+		expect(isExclusionViolation(new Error('boom'))).toBe(false);
 	});
 });

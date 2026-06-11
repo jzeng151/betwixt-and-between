@@ -4,7 +4,7 @@ import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
 import { getUserId, assertParentsOwned } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
-import { isUniqueViolation } from '$lib/server/pg-errors.js';
+import { isExclusionViolation, isUniqueViolation } from '$lib/server/pg-errors.js';
 import { recomputeIntervalsForAct } from '$lib/server/intervals.js';
 import {
 	validateStyleInData,
@@ -138,6 +138,9 @@ export const POST: RequestHandler = async (event) => {
 		if ((err as { status?: number }).status) throw err;
 		if (isUniqueViolation(err)) {
 			error(409, 'The change collides with an existing row (duplicate temporal bounds)');
+		}
+		if (isExclusionViolation(err)) {
+			error(409, 'The change would make two world-map variants for a Location overlap in story-time');
 		}
 		throw err;
 	}
