@@ -16,6 +16,54 @@ export interface AuthEnv {
 }
 
 /**
+ * Deliver a magic-link sign-in URL. Extracted from the `magicLink()` plugin
+ * closure (2026-06 audit) so the fail-closed branch is unit-testable without
+ * reaching into Better-Auth plugin internals.
+ *
+ * The URL is a bearer credential. When email delivery is unconfigured the
+ * choice is dev-only: in `vite dev` / Vitest logging it is the local sign-in
+ * mechanism; in a built worker it would leak a sign-in credential to whoever
+ * can read logs (`wrangler tail`, Logpush). `isDev` (the call site passes
+ * `import.meta.env.DEV`, statically folded by Vite per build) gates that:
+ * log in dev, fail closed otherwise.
+ */
+export async function deliverMagicLink(args: {
+	env: Pick<AuthEnv, 'RESEND_API_KEY' | 'RESEND_FROM_EMAIL'>;
+	isTest: boolean;
+	isDev: boolean;
+	email: string;
+	url: string;
+}): Promise<void> {
+	const { env, isTest, isDev, email, url } = args;
+	if (isTest) return;
+	if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
+		if (isDev) {
+			console.log(`[auth] magic-link for ${email}: ${url}`);
+			return;
+		}
+		throw new Error(
+			'RESEND_API_KEY / RESEND_FROM_EMAIL are not configured; refusing to deliver a magic link outside dev'
+		);
+	}
+	const res = await fetch('https://api.resend.com/emails', {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${env.RESEND_API_KEY}`,
+			'Content-Type': 'application/json',
+		},
+		body: JSON.stringify({
+			from: env.RESEND_FROM_EMAIL,
+			to: email,
+			subject: 'Sign in to betwixt-and-between',
+			html: `<p>Click to sign in:</p><p><a href="${url}">${url}</a></p>`,
+		}),
+	});
+	if (!res.ok) {
+		throw new Error(`Resend send failed: ${res.status} ${await res.text()}`);
+	}
+}
+
+/**
  * Build a Better-Auth instance bound to a request-scoped db handle.
  *
  * On Cloudflare Workers, db is per-request (Neon Pool created in hooks.server.ts
@@ -65,39 +113,8 @@ export function buildAuth(db: RuntimeDb, env: AuthEnv) {
 			: undefined,
 		plugins: [
 			magicLink({
-				sendMagicLink: async ({ email, url }) => {
-					if (isTest) return;
-					if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
-						// The magic-link URL is a bearer credential. In dev (`vite dev`,
-						// Vitest) logging it is the local sign-in mechanism; in a built
-						// worker it would leak a sign-in credential to whoever can read
-						// logs (`wrangler tail`, Logpush — observability is enabled in
-						// wrangler.jsonc). Fail closed in non-dev instead of logging.
-						if (import.meta.env.DEV) {
-							console.log(`[auth] magic-link for ${email}: ${url}`);
-							return;
-						}
-						throw new Error(
-							'RESEND_API_KEY / RESEND_FROM_EMAIL are not configured; refusing to deliver a magic link outside dev'
-						);
-					}
-					const res = await fetch('https://api.resend.com/emails', {
-						method: 'POST',
-						headers: {
-							Authorization: `Bearer ${env.RESEND_API_KEY}`,
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify({
-							from: env.RESEND_FROM_EMAIL,
-							to: email,
-							subject: 'Sign in to betwixt-and-between',
-							html: `<p>Click to sign in:</p><p><a href="${url}">${url}</a></p>`,
-						}),
-					});
-					if (!res.ok) {
-						throw new Error(`Resend send failed: ${res.status} ${await res.text()}`);
-					}
-				},
+				sendMagicLink: async ({ email, url }) =>
+					deliverMagicLink({ env, isTest, isDev: import.meta.env.DEV, email, url }),
 			}),
 		],
 		basePath: '/api/auth',
