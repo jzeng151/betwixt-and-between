@@ -140,13 +140,56 @@ describe('POST /api/entities/batch — atomic multi-entity creation (D21)', () =
 						}
 					})
 				)
-			).rejects.toMatchObject({ status: 400 });
+			// 2026-06 audit parity: a non-HttpError post-insert failure now re-throws
+			// verbatim (→ opaque 500 at the HTTP layer) instead of being relabeled as a
+			// 400 that echoes the raw driver message. The rollback assertion below is
+			// the load-bearing check; here we just confirm the error propagates.
+			).rejects.toThrow('boom: simulated post-insert failure');
 		} finally {
 			spy.mockRestore();
 		}
 
 		const afterCount = (await currentDb.select().from(entities)).length;
 		expect(afterCount).toBe(beforeCount);
+	});
+
+	it('rejects a non-integer position with 400 (parity with POST/PATCH /api/entities)', async () => {
+		await expect(
+			batchRoute.POST(
+				mkEvent({
+					body: { entities: [{ type: 'Scene', name: 'S0', parentId: acts.act1, position: 1.5 }] }
+				})
+			)
+		).rejects.toMatchObject({ status: 400 });
+		// Validation runs before the tx opens → nothing inserted.
+		const scenes = await currentDb
+			.select()
+			.from(entities)
+			.where(and(eq(entities.parentId, acts.act1), eq(entities.type, 'Scene')));
+		expect(scenes).toHaveLength(0);
+	});
+
+	it('scene insert-between: a batch scene at an occupied position shifts the occupant up', async () => {
+		const [pre] = await currentDb
+			.insert(entities)
+			.values({ userId, type: 'Scene', name: 'Occupant', parentId: acts.act1, position: 0 })
+			.returning();
+
+		const res = await batchRoute.POST(
+			mkEvent({
+				body: { entities: [{ type: 'Scene', name: 'Inserted', parentId: acts.act1, position: 0 }] }
+			})
+		);
+		expect(res.status).toBe(201);
+
+		const scenes = await currentDb
+			.select({ id: entities.id, position: entities.position })
+			.from(entities)
+			.where(and(eq(entities.parentId, acts.act1), eq(entities.type, 'Scene')))
+			.orderBy(entities.position);
+		// Occupant bumped 0 → 1; the new scene took the freed slot 0.
+		expect(scenes.map((s) => s.position)).toEqual([0, 1]);
+		expect(scenes[1].id).toBe(pre.id);
 	});
 
 	it('calls recomputeIntervalsForAct once per affected parent (deduped)', async () => {

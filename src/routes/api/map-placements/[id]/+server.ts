@@ -12,6 +12,7 @@ import { mapPlacements } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
+import { isPgError } from '$lib/server/pg-errors.js';
 import {
 	assertPlaceableId,
 	assertPlacementLocationId,
@@ -133,7 +134,11 @@ export const PATCH: RequestHandler = async (event) => {
 							userId
 						);
 					} catch (e) {
+						// Plain validation Errors → 400; a driver error (malformed-UUID
+						// cast etc.) is opaqued as a 500 so its raw message can't leak
+						// (2026-06 review — parity with the POST route).
 						if ((e as { status?: number }).status) throw e;
+						if (isPgError(e)) throw e;
 						error(400, `Invalid placement bounds: ${(e as Error).message}`);
 					}
 					startPosition = bounds.startPosition;

@@ -13,16 +13,25 @@
  *   REL — POST /api/relationships clears scene FKs when their act FK is
  *        absent (previously persisted unvalidated scene UUIDs verbatim).
  *   PLC — placement `data` jsonb is size-capped.
+ *   ENT-SIZE — entity `data` jsonb is size-capped (parity with placements),
+ *        including non-object payloads (a bare JSON string can't skip the cap).
+ *   NTE-SIZE — note entry `body` is size-capped at a roomier 256KB (long-form
+ *        text gets headroom the 16KB entity cap would deny).
  *   ENT — entities PATCH validates name/position scalars (400, not 500).
  *   CNV — canvas batch upsert dedupes same-entity rows (single-statement
  *        upsert can't touch one conflict target twice).
+ *   MRG — updateInterval's overlap-merge runs inside a transaction: a failure
+ *        after the absorbed-sibling DELETEs rolls them back instead of
+ *        silently dropping them (the raw-pool autocommit data-loss the
+ *        intervals/[id] PATCH tx wrap prevents).
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { and, asc, eq } from 'drizzle-orm';
 import { createTestDb, seedActs, seedTestUser } from '../helpers/test-db.js';
-import { entities, intervals, relationships, windowCanvasState } from '../../src/lib/server/db/schema.js';
-import { writeInterval } from '../../src/lib/server/intervals.js';
+import { entities, intervals, relationships, windowCanvasState, worldMaps } from '../../src/lib/server/db/schema.js';
+import { writeInterval, moveSceneToAct, updateInterval } from '../../src/lib/server/intervals.js';
+import { recomputeWorldMapVariantsAll } from '../../src/lib/server/world-maps.js';
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let userId: string;
@@ -49,6 +58,7 @@ const { POST: POST_PLACEMENT } = await import('../../src/routes/api/map-placemen
 const { POST: POST_CANVAS_BATCH } = await import(
 	'../../src/routes/api/canvas-positions/window/[windowId]/batch/+server.js'
 );
+const { POST: POST_NOTE } = await import('../../src/routes/api/notes/entries/+server.js');
 
 async function seedCharacter(name: string): Promise<string> {
 	const [row] = await db
@@ -282,6 +292,60 @@ describe('PLC — placement data jsonb size cap', () => {
 	});
 });
 
+describe('ENT-SIZE — entity data jsonb size cap (parity with placements)', () => {
+	it('rejects an entity data blob over the cap with 400', async () => {
+		await expect(
+			POST_ENTITY(
+				mkEvent({ body: { type: 'Character', name: 'Ellie', data: { pad: 'x'.repeat(17000) } } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('measures true UTF-8 bytes: a multibyte entity blob under the char-count but over the byte cap is rejected', async () => {
+		// 6000 emoji = 6000 UTF-16 length but 24000 UTF-8 bytes (> 16384 cap).
+		await expect(
+			POST_ENTITY(
+				mkEvent({ body: { type: 'Character', name: 'Ellie', data: { pad: '😀'.repeat(6000) } } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('rejects an oversized NON-object data payload (bare string bypasses a typeof-object-only cap)', async () => {
+		// Entity routes persist `data` verbatim (`data ?? {}`), so a giant bare
+		// string would dodge a cap that only measured objects and store a
+		// multi-megabyte row. The cap must measure any non-null payload.
+		await expect(
+			POST_ENTITY(
+				mkEvent({ body: { type: 'Character', name: 'Ellie', data: 'x'.repeat(17000) } })
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('accepts a normal-size entity data blob', async () => {
+		const res = await POST_ENTITY(
+			mkEvent({ body: { type: 'Character', name: 'Ellie', data: { role: 'protagonist' } } })
+		);
+		expect(res.status).toBe(201);
+	});
+});
+
+describe('NTE-SIZE — note entry body is size-capped (generous 256KB)', () => {
+	it('rejects a note body over the 256KB cap with 400', async () => {
+		await expect(
+			POST_NOTE(mkEvent({ body: { name: 'Backstory', body: 'x'.repeat(262145) } }))
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('accepts a long-form note body well under the cap (parity: not the 16KB entity cap)', async () => {
+		// ~32k chars is rejected by the 16KB entity cap but must pass the note cap —
+		// long-form notes are the whole point of the roomier limit.
+		const res = await POST_NOTE(
+			mkEvent({ body: { name: 'Backstory', body: 'x'.repeat(32000) } })
+		);
+		expect(res.status).toBe(201);
+	});
+});
+
 describe('ENT — entities PATCH scalar validation', () => {
 	it('rejects a non-string name with 400 (was a TypeError 500)', async () => {
 		const ellie = await seedCharacter('Ellie');
@@ -332,5 +396,98 @@ describe('CNV — canvas batch upsert handles duplicate entityIds', () => {
 		await expect(
 			POST_CANVAS_BATCH(mkEvent({ params: { windowId }, body: big }))
 		).rejects.toMatchObject({ status: 400 });
+	});
+});
+
+describe('WM — moveSceneToAct reanchors scene-anchored world_map variants (codex P1 follow-up)', () => {
+	it('a variant anchored to a moved scene follows it to the new act, recomputes, and survives a later variant recompute (no scene/act-mismatch 500)', async () => {
+		const acts = await seedActs(db, userId);
+		const scene = await seedScene(acts.act0, 'S', 0);
+		const [location] = await db
+			.insert(entities)
+			.values({ userId, type: 'Location', name: 'Gondor' })
+			.returning();
+
+		// Variant scene-anchored to S, the single scene of act0 → spans [0, 1).
+		const [variant] = await db
+			.insert(worldMaps)
+			.values({
+				userId,
+				name: 'Gondor — during S',
+				locationId: location.id,
+				startActId: acts.act0,
+				startSceneId: scene,
+				endActId: acts.act0,
+				endSceneId: scene,
+				startPosition: 0,
+				endPosition: 1
+			})
+			.returning();
+
+		// Move S from act0 → act1. Pre-fix the variant kept startActId=act0 while
+		// its scene moved to act1; computeIntervalPositions' scene/act-mismatch
+		// guard then 500ed the next Act-level recompute, bricking act reordering.
+		await db.transaction(async (tx) => {
+			await moveSceneToAct(tx, scene, acts.act1, 0, userId);
+		});
+
+		const [row] = await db.select().from(worldMaps).where(eq(worldMaps.id, variant.id));
+		expect(row.startActId).toBe(acts.act1);
+		expect(row.endActId).toBe(acts.act1);
+		expect(row.startSceneId).toBe(scene);
+		expect(row.endSceneId).toBe(scene);
+		// act1 (index 1), S now its only scene → [1, 2).
+		expect(row.startPosition).toBeCloseTo(1, 9);
+		expect(row.endPosition).toBeCloseTo(2, 9);
+
+		// A later variant recompute (what an Act reorder triggers) must NOT throw
+		// on a scene/act mismatch — the reanchor closed it.
+		await expect(
+			db.transaction(async (tx) => recomputeWorldMapVariantsAll(tx, userId))
+		).resolves.toBeGreaterThanOrEqual(0);
+	});
+});
+
+describe('MRG — updateInterval overlap-merge is transactional', () => {
+	it('a failure after the absorbed-sibling DELETE rolls it back instead of silently dropping it', async () => {
+		const acts = await seedActs(db, userId);
+		const ellie = await seedCharacter('Ellie');
+		// A sits in act0 = [0, 1); B sits in act2 = [2, 3). Same entity, no overlap.
+		const a = await writeInterval(
+			db,
+			{ entityId: ellie, startActId: acts.act0, endActId: acts.act0 },
+			userId
+		);
+		const b = await writeInterval(
+			db,
+			{ entityId: ellie, startActId: acts.act2, endActId: acts.act2 },
+			userId
+		);
+
+		// Extend A across act2 → derived [0, 3) overlaps B [2, 3): updateInterval
+		// DELETEs B (absorbed) then UPDATEs A to the union. Inject a failure right
+		// after the merge completes inside the tx; the route wraps updateInterval
+		// in db.transaction for exactly this reason. Pre-fix (raw-pool autocommit)
+		// B's delete would have committed → silent data loss.
+		let absorbedGoneMidTx = false;
+		await expect(
+			db.transaction(async (tx) => {
+				await updateInterval(tx, a.id, { startActId: acts.act0, endActId: acts.act2 }, userId);
+				// The tx sees its own write: B is already deleted, A is the union.
+				const midB = await tx.select().from(intervals).where(eq(intervals.id, b.id));
+				absorbedGoneMidTx = midB.length === 0;
+				throw new Error('injected post-merge failure');
+			})
+		).rejects.toThrow('injected post-merge failure');
+
+		// The merge really did delete B inside the tx (otherwise rollback is vacuous).
+		expect(absorbedGoneMidTx).toBe(true);
+
+		// After rollback: B is back at its original range and A keeps [0, 1).
+		const [rowB] = await db.select().from(intervals).where(eq(intervals.id, b.id));
+		expect(rowB).toBeDefined();
+		expect([rowB.startPosition, rowB.endPosition]).toEqual([2, 3]);
+		const [rowA] = await db.select().from(intervals).where(eq(intervals.id, a.id));
+		expect([rowA.startPosition, rowA.endPosition]).toEqual([0, 1]);
 	});
 });

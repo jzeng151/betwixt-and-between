@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, sql, or } from 'drizzle-orm';
 import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
+import { validateNoteDataSize } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -46,6 +47,9 @@ export const POST: RequestHandler = async (event) => {
 		error(400, 'Name is required');
 	}
 
+	const noteData = { body: noteBody ?? '' };
+	validateNoteDataSize(noteData, 'note.body');
+
 	await assertParentOwned(db, userId, parentId ?? null);
 
 	const [created] = await db
@@ -54,7 +58,7 @@ export const POST: RequestHandler = async (event) => {
 			userId,
 			type: 'Note',
 			name: name.trim(),
-			data: { body: noteBody ?? '' },
+			data: noteData,
 			parentId: parentId ?? null,
 			position: position ?? null
 		})

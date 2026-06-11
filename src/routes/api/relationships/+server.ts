@@ -3,6 +3,8 @@ import { relationships, entities } from '$lib/server/db/schema.js';
 import { RelationshipType } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { getUserId } from '$lib/server/auth-gate.js';
+import { readJson } from '$lib/server/read-json.js';
+import { isPgError } from '$lib/server/pg-errors.js';
 import { resolveRelationshipBounds } from '$lib/server/intervals.js';
 import { assertPartOfInvariants } from '$lib/server/location-hierarchy.js';
 import type { RequestHandler } from './$types';
@@ -25,7 +27,10 @@ export const GET: RequestHandler = async (event) => {
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
 	const userId = getUserId(event);
-	const body = await event.request.json();
+	// readJson → a non-object body is a clean 400, not a destructure 500 (2026-06
+	// review — parity with the entity/interval/region routes' body parsing).
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const body = (await readJson(event)) as any;
 	const { fromId, toId, type, label, startActId, startSceneId, endActId, endSceneId, revealedAtPosition } = body;
 
 	if (!RelationshipType.includes(type)) {
@@ -78,6 +83,11 @@ export const POST: RequestHandler = async (event) => {
 		startPosition = bounds.startPosition;
 		endPosition = bounds.endPosition;
 	} catch (err) {
+		// resolveRelationshipBounds throws plain Errors with safe messages (Scene
+		// not found, scene-parent/act mismatch) → 400. A driver error (malformed-
+		// UUID cast etc.) is opaqued as a 500 so its raw message can't leak.
+		if ((err as { status?: number }).status) throw err;
+		if (isPgError(err)) throw err;
 		error(400, (err as Error).message);
 	}
 

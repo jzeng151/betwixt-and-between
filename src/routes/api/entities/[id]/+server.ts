@@ -10,7 +10,7 @@ import { intervals as intervalsTable, relationships as relationshipsTable } from
 import { and, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { readJson } from '$lib/server/read-json.js';
 import { isUniqueViolation } from '$lib/server/pg-errors.js';
-import { validateStyleInData } from '$lib/server/style-validation.js';
+import { validateStyleInData, validateEntityDataSize } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -67,6 +67,7 @@ export const PATCH: RequestHandler = async (event) => {
 		// data itself stays free-form (per-entity-type field schema varies);
 		// the style sub-key is the closed-enum part the renderer trusts.
 		validateStyleInData(data, 'entity.data');
+		validateEntityDataSize(data, 'entity.data');
 		updates.data = data;
 	}
 
@@ -297,6 +298,14 @@ export const DELETE: RequestHandler = async (event) => {
 					.update(relationshipsTable)
 					.set({ endActId: moveScenesTo })
 					.where(and(inArray(relationshipsTable.endSceneId, sceneIds), eq(relationshipsTable.userId, userId)));
+				// NOTE (2026-06 review): map_placements + world_maps variants scene-
+				// anchored to a moved scene are deliberately NOT reanchored here. Their
+				// act FK hits ON DELETE SET NULL when this Act is deleted, so the
+				// trailing recompute normalizes them to "default" (scope cleared) —
+				// see recomputePlacementBoundsAll / recomputeWorldMapVariantsAll. That
+				// is the intended degenerate handling for an Act *delete* (the scope's
+				// anchoring Act is gone), distinct from a plain scene *move*
+				// (moveSceneToAct), which reanchors all four so scope is preserved.
 			}
 		}
 
