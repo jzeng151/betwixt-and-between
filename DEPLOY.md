@@ -147,7 +147,7 @@ If any step fails: `wrangler tail` for live logs, or Cloudflare dashboard → yo
 
 ## Magic-link email (production gate)
 
-Until `RESEND_API_KEY` + `RESEND_FROM_EMAIL` are set, magic-links are `console.log`-only on prod — no real user can complete login. **Do not announce the public URL until this verifies.**
+Until `RESEND_API_KEY` + `RESEND_FROM_EMAIL` are set, a built/prod Worker **refuses to issue magic-links** — the sign-in request throws ("refusing to deliver a magic link outside dev") and no real user can complete login. (In `vite dev` / Vitest the link is `console.log`-ed instead, so local sign-in still works.) **Do not announce the public URL until this verifies.**
 
 Setup:
 
@@ -162,7 +162,7 @@ Setup:
 
 4. From an incognito window: `/auth/login` → enter your real email → check inbox → click link → confirm `/app` loads.
 
-The `sendMagicLink` callback in `src/lib/server/auth.ts` falls back to `console.log` when the Resend env vars are missing, so requests succeed silently but emails never arrive.
+The `deliverMagicLink` helper in `src/lib/server/auth.ts` (called by the `sendMagicLink` callback) only `console.log`s the link when the Resend env vars are missing **and** the build is dev (`import.meta.env.DEV`). In a built Worker that branch throws instead, so a misconfigured prod fails the sign-in request rather than silently leaking the link to logs.
 
 ## Backups
 
@@ -184,7 +184,8 @@ Cloudflare retains previous Worker versions. To revert: dashboard → your Worke
 |---|---|
 | All requests 500 immediately after deploy | `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL` / `DATABASE_URL` set on the Worker? `wrangler secret list`. |
 | Login succeeds but `/app` 500s | `DATABASE_URL` points at the right Neon branch? Migration applied to that branch? |
-| Magic-link form 200s but no email arrives | `RESEND_API_KEY` / `RESEND_FROM_EMAIL` set? Resend domain verified? `wrangler tail` for the `console.log` fallback. |
+| Magic-link form 500s / errors on prod | `RESEND_API_KEY` / `RESEND_FROM_EMAIL` set? A built Worker fails closed without them (`wrangler tail` shows the "refusing to deliver a magic link outside dev" throw). |
+| Magic-link form 200s but no email arrives | `RESEND_API_KEY` / `RESEND_FROM_EMAIL` set and Resend domain verified? Send-failure surfaces as a thrown `Resend send failed: <status>` in `wrangler tail`. |
 | Map image upload returns 500 | `MAP_UPLOADS` R2 binding present in `wrangler.jsonc` AND bucket exists (`wrangler r2 bucket list`)? Last `wrangler deploy` ran after the binding was added? |
 | GitHub Action fails at `wrangler deploy` step | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` GitHub secrets set? Token has `Workers Scripts: Edit` permission? |
 | Slow first request | Expected: Neon pool cold-start (~1s) and Worker cold-start. Watch over 1–2 minutes; if persistent, check Neon dashboard for compute scaling state. |
