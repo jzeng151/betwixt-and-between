@@ -9,8 +9,12 @@ import {
 import { intervals as intervalsTable, relationships as relationshipsTable } from '$lib/server/db/schema.js';
 import { and, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { readJson } from '$lib/server/read-json.js';
-import { isUniqueViolation } from '$lib/server/pg-errors.js';
-import { validateStyleInData, validateEntityDataSize } from '$lib/server/style-validation.js';
+import { isPgError, isUniqueViolation } from '$lib/server/pg-errors.js';
+import {
+	validateStyleInData,
+	validateEntityDataSize,
+	validateNoteDataSize
+} from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -67,7 +71,14 @@ export const PATCH: RequestHandler = async (event) => {
 		// data itself stays free-form (per-entity-type field schema varies);
 		// the style sub-key is the closed-enum part the renderer trusts.
 		validateStyleInData(data, 'entity.data');
-		validateEntityDataSize(data, 'entity.data');
+		// Notes store long-form `body` in entities.data, so they get the roomier
+		// note cap — parity with /api/notes/entries (else a 16KB–256KB Note valid
+		// through the notes route is rejected through this generic PATCH).
+		if (entity.type === 'Note') {
+			validateNoteDataSize(data, 'entity.data');
+		} else {
+			validateEntityDataSize(data, 'entity.data');
+		}
 		updates.data = data;
 	}
 
@@ -100,7 +111,15 @@ export const PATCH: RequestHandler = async (event) => {
 			if (isUniqueViolation(err)) {
 				error(409, 'The move collides with an existing row (duplicate temporal bounds)');
 			}
-			// Re-throw unmatched errors (opaque 500) instead of echoing the raw
+			// moveSceneToAct throws plain validation Errors for bad client input
+			// (target isn't an Act, parentId resolves to a non-Scene, etc.) whose
+			// messages are safe, actionable strings — surface them as 400 (restoring
+			// the pre-audit behavior the blanket re-throw regressed to an opaque 500).
+			// Only true driver errors (PG SQLSTATE) stay opaque, per isPgError's contract.
+			if (!isPgError(err)) {
+				error(400, (err as Error).message);
+			}
+			// Re-throw unmatched driver errors (opaque 500) instead of echoing the raw
 			// driver/cascade message — parity with the reorder/delete catches below.
 			throw err;
 		});

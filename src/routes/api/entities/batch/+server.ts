@@ -6,7 +6,11 @@ import { getUserId, assertParentsOwned } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isUniqueViolation } from '$lib/server/pg-errors.js';
 import { recomputeIntervalsForAct } from '$lib/server/intervals.js';
-import { validateStyleInData, validateEntityDataSize } from '$lib/server/style-validation.js';
+import {
+	validateStyleInData,
+	validateEntityDataSize,
+	validateNoteDataSize
+} from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -52,7 +56,13 @@ export const POST: RequestHandler = async (event) => {
 		// whitelist as POST /api/entities so a batch payload can't persist an
 		// invalid/oversized data.style that the placement cascade later consumes.
 		validateStyleInData(item.data, `entities[${i}].data`);
-		validateEntityDataSize(item.data, `entities[${i}].data`);
+		// Notes get the roomier note cap (parity with /api/notes/entries and the
+		// single-entity create/PATCH); item.type is EntityType-validated above.
+		if (item.type === 'Note') {
+			validateNoteDataSize(item.data, `entities[${i}].data`);
+		} else {
+			validateEntityDataSize(item.data, `entities[${i}].data`);
+		}
 	}
 
 	if (items.length === 0) return json([], { status: 201 });

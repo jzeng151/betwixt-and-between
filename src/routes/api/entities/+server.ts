@@ -4,7 +4,11 @@ import { EntityType } from '$lib/server/db/schema.js';
 import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isUniqueViolation } from '$lib/server/pg-errors.js';
-import { validateStyleInData, validateEntityDataSize } from '$lib/server/style-validation.js';
+import {
+	validateStyleInData,
+	validateEntityDataSize,
+	validateNoteDataSize
+} from '$lib/server/style-validation.js';
 import {
 	recomputeAllIntervals,
 	recomputeIntervalsForAct,
@@ -41,7 +45,15 @@ export const POST: RequestHandler = async (event) => {
 
 	// Slice 3 T24 — validate data.style on create.
 	validateStyleInData(data, 'entity.data');
-	validateEntityDataSize(data, 'entity.data');
+	// Notes store long-form `body` in entities.data, so they get the roomier note
+	// cap — parity with /api/notes/entries (else a 16KB–256KB Note valid through
+	// the notes route is rejected through this generic create). type is validated
+	// below; a non-Note bad type still hits the generic cap then the 400.
+	if (type === 'Note') {
+		validateNoteDataSize(data, 'entity.data');
+	} else {
+		validateEntityDataSize(data, 'entity.data');
+	}
 
 	if (!type || !EntityType.includes(type)) {
 		error(400, 'Invalid entity type');

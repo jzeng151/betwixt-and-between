@@ -303,7 +303,7 @@ function deriveEndSide(
 	return fraction === 0 ? i + 1 : i + fraction;
 }
 
-type SwappedFks = {
+export type SwappedFks = {
 	startActId: string;
 	startSceneId: string | null;
 	endActId: string;
@@ -660,6 +660,69 @@ export async function resolveRelationshipBounds(
 }
 
 /**
+ * Resolve derived bounds, swap-normalizing an inversion the way the interval
+ * recompute (computeRowRecompute) does — for the three sibling derived-position
+ * tables that resolve through `resolveRelationshipBounds` (relationships,
+ * world_maps variants, map_placements). Each carries a `start_position <
+ * end_position` CHECK, so a scene reorder that moves a start-anchor scene past
+ * its end-anchor scene in the same act would otherwise derive an inverted range,
+ * trip the CHECK (23514), and roll back the whole reorder as an opaque 500.
+ *
+ * `resolveRelationshipBounds` → `computeIntervalPositions` *throws* on an
+ * inverted/zero-extent derived range (it can't return the inverted numbers), so
+ * the normalization is structured as: try the direct anchors; on throw, retry
+ * with the side anchors swapped. The swap only "wins" when it yields a valid
+ * `start < end`; if it doesn't, the original throw was something else (a corrupt
+ * FK, a scene that left its act) and is re-thrown unchanged so real errors still
+ * surface as before.
+ *
+ * Returns `{ ..bounds, swappedFks: null }` for the normal path (including the
+ * both-null "timeless" bounds each caller clears on its own), or `{ ..swapped,
+ * swappedFks }` when an inversion was normalized — in which case the caller MUST
+ * also persist `swappedFks` (start/end act+scene FK columns) so the row stays
+ * self-consistent (start anchor ↔ start_position).
+ */
+export async function resolveRelationshipBoundsSwapNormalized(
+	db: Db,
+	input: RelationshipBoundsInput,
+	userId: string,
+	cache?: RecomputeCache
+): Promise<RelationshipBoundsResult & { swappedFks: SwappedFks | null }> {
+	try {
+		const direct = await resolveRelationshipBounds(db, input, userId, cache);
+		return { startPosition: direct.startPosition, endPosition: direct.endPosition, swappedFks: null };
+	} catch (directErr) {
+		let swapped: RelationshipBoundsResult;
+		try {
+			swapped = await resolveRelationshipBounds(
+				db,
+				{
+					startActId: input.endActId ?? null,
+					startSceneId: input.endSceneId ?? null,
+					endActId: input.startActId ?? null,
+					endSceneId: input.startSceneId ?? null
+				},
+				userId,
+				cache
+			);
+		} catch {
+			// Swapping didn't fix it → the original error wasn't an inversion. Surface it.
+			throw directErr;
+		}
+		return {
+			startPosition: swapped.startPosition,
+			endPosition: swapped.endPosition,
+			swappedFks: {
+				startActId: input.endActId as string,
+				startSceneId: input.endSceneId ?? null,
+				endActId: input.startActId as string,
+				endSceneId: input.startSceneId ?? null
+			}
+		};
+	}
+}
+
+/**
  * Walk all temporal relationships and recompute their start_position /
  * end_position from FK anchors. Returns the count of rows updated.
  *
@@ -699,7 +762,12 @@ async function recomputeRelationshipBoundsAll(
 	//   clears — partial-anchor rows reverted to timeless (FKs + positions null).
 	//   sets   — rows whose derived start/end positions changed.
 	const clears: string[] = [];
-	const sets: Array<{ id: string; startPosition: number | null; endPosition: number | null }> = [];
+	const sets: Array<{
+		id: string;
+		startPosition: number | null;
+		endPosition: number | null;
+		swappedFks: SwappedFks | null;
+	}> = [];
 
 	for (const row of rows) {
 		try {
@@ -716,7 +784,11 @@ async function recomputeRelationshipBoundsAll(
 				continue;
 			}
 
-			const { startPosition, endPosition } = await resolveRelationshipBounds(
+			// Swap-normalize an inversion (a scene reorder that moves a start-anchor
+			// scene past the end-anchor scene in the same act) instead of writing an
+			// inverted range that trips relationships_position_order → opaque 500
+			// (2026-06 review; the same fix the intervals path got).
+			const resolved = await resolveRelationshipBoundsSwapNormalized(
 				db,
 				{
 					startActId: row.startActId,
@@ -727,6 +799,7 @@ async function recomputeRelationshipBoundsAll(
 				userId,
 				cache
 			);
+			const { startPosition, endPosition, swappedFks } = resolved;
 
 			const startDrift =
 				startPosition !== null &&
@@ -740,9 +813,12 @@ async function recomputeRelationshipBoundsAll(
 			const startChanged = (startPosition === null) !== (row.startPosition === null) || startDrift;
 			const endChanged = (endPosition === null) !== (row.endPosition === null) || endDrift;
 
-			if (!startChanged && !endChanged) continue;
+			// A swap can leave both positions numerically unchanged (the two scenes'
+			// derived spans are symmetric) while still needing the FK columns swapped,
+			// so don't short-circuit when swappedFks is set.
+			if (!startChanged && !endChanged && !swappedFks) continue;
 
-			sets.push({ id: row.id, startPosition, endPosition });
+			sets.push({ id: row.id, startPosition, endPosition, swappedFks });
 		} catch (err) {
 			throw new Error(
 				`recomputeRelationshipBoundsAll failed on relationship ${row.id}: ${(err as Error).message}`
@@ -786,7 +862,13 @@ async function recomputeRelationshipBoundsAll(
 		for (const s of sets) {
 			await db
 				.update(relationships)
-				.set({ startPosition: s.startPosition, endPosition: s.endPosition })
+				.set({
+					startPosition: s.startPosition,
+					endPosition: s.endPosition,
+					// Persist the swapped side anchors so the row stays self-consistent
+					// (start FK ↔ start_position) after an inversion was normalized.
+					...(s.swappedFks ?? {})
+				})
 				.where(and(eq(relationships.id, s.id), eq(relationships.userId, userId)));
 		}
 	}
