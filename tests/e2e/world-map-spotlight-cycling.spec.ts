@@ -11,7 +11,7 @@
  *     T6 behaviour: the map-switcher value changes mid-playback),
  *   - the loading overlay never shows while playing (switch-only-when-ready +
  *     overlay suppression — no strobe),
- *   - the conquest flash and a diegetic caption actually fire on the seeded world
+ *   - the conquest pulse and a diegetic caption actually fire on the seeded world
  *     (DIAG counters, proving the FX + T9 caption pipelines end-to-end).
  *
  * The world: Ash Host musters in the Fen (a map-less sublocation → cycling falls
@@ -292,7 +292,7 @@ test('Play on the seeded demo world cycles between maps, fires FX + captions, an
 	await playerWin.locator('.play-btn').click();
 	await expect(playerWin.locator('.play-btn')).toHaveClass(/playing/);
 
-	// A conquest flash fires as the Fen's owner flips on the visible Northmarch map
+	// A conquest outline pulse fires as the Fen's owner flips on the visible Northmarch map
 	// during forward playback, and a diegetic caption fires for a scoped beat — both
 	// proving the FX + T9 caption pipelines end-to-end on real data.
 	await expect

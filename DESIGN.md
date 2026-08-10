@@ -37,14 +37,15 @@ Near-black surfaces, warm amber accents, off-white text. Nothing competes with t
 
 ### Cinematic Spotlight FX (world-map playback)
 
-The map's punctuation FX (`PixiPunctuationLayer`) render as additive-blend canvas
-graphics over the map during playback, not as DOM/CSS. Their colors are blessed
-exceptions tuned for additive contrast over arbitrary map imagery, semantically
-coded by beat kind:
+The map's punctuation FX (`PixiPunctuationLayer`) render as canvas graphics over
+the map during playback, not as DOM/CSS. March and causal beats use additive
+contrast; conquest uses a low-opacity, normally-composited outline so it does not
+wash out the ownership-tint transition. Their colors are blessed exceptions,
+semantically coded by beat kind:
 
 | Beat | Color | Why off-palette |
 |------|-------|-----------------|
-| Conquest flash | white additive `#ffffff` | a neutral flash reads as "something just changed" on any region tint |
+| Conquest outline | white `#ffffff` at 28% peak alpha, normal blend | briefly punctuates the changed boundary without swapping the region fill |
 | March trail | amber `#ffe08a` | within the `--color-accent` amber family (movement = active state) |
 | Causal ripple | cyan arc `#9fd8ff` / dot `#dff1ff` | deliberately distinct from amber ownership/march so a causal chain reads as a *different* kind of event; no palette token is reused to avoid conflating causality with ownership |
 
