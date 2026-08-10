@@ -4,8 +4,8 @@
 // flipped regions and the moving markers — so playback reads like a camera
 // following the action. This module computes the camera TARGET (center + zoom)
 // from that changed geometry; the integration eases the live pixi-viewport
-// toward it componentwise (centerX / centerY / zoom) with a long τ≈400ms so the
-// camera LAGS and feels cinematic, and pins (suspends) on user interaction.
+// toward it componentwise (centerX / centerY / zoom) and pins (suspends) on
+// user interaction.
 // Keeping the target math pure makes it unit-testable without pixi-viewport.
 //
 // Coordinate space: world pixels — the same space pixi-viewport pans/zooms in
@@ -61,6 +61,10 @@ export type CameraOptions = {
 	// marker, or a degenerate region) — there's no extent to fit, so focus at a
 	// readable zoom instead. Defaults to maxZoom.
 	pointZoom?: number;
+	// Current framing lets the director hold when all action remains inside the
+	// central comfort zone instead of recentering every beat.
+	current?: CameraTarget;
+	comfortFrac?: number;
 };
 
 const DEFAULTS = {
@@ -72,6 +76,18 @@ const DEFAULTS = {
 
 function clamp(v: number, lo: number, hi: number): number {
 	return v < lo ? lo : v > hi ? hi : v;
+}
+
+export function cameraTauMs(secondsPerScene: number): number {
+	return clamp(secondsPerScene * 120, 60, 400);
+}
+
+export function cameraTargetSettled(current: CameraTarget, target: CameraTarget): boolean {
+	const zoom = Math.max(0.25, current.zoom);
+	return (
+		Math.abs(current.zoom - target.zoom) <= 0.001 &&
+		Math.hypot(current.centerX - target.centerX, current.centerY - target.centerY) * zoom <= 0.5
+	);
 }
 
 /**
@@ -96,7 +112,7 @@ export function computeCameraTarget(
 	const paddingFrac = opts.paddingFrac ?? DEFAULTS.paddingFrac;
 	const minZoom = opts.minZoom ?? DEFAULTS.minZoom;
 	const maxZoom = opts.maxZoom ?? DEFAULTS.maxZoom;
-	const pointZoom = opts.pointZoom ?? DEFAULTS.pointZoom;
+	const pointZoom = opts.pointZoom ?? opts.current?.zoom ?? DEFAULTS.pointZoom;
 
 	let minX = Infinity;
 	let minY = Infinity;
@@ -128,10 +144,28 @@ export function computeCameraTarget(
 	const centerY = (minY + maxY) / 2;
 	const bboxW = maxX - minX;
 	const bboxH = maxY - minY;
+	const current = opts.current;
+	if (current && current.zoom > 0) {
+		const comfortFrac = clamp(opts.comfortFrac ?? 0.65, 0, 1);
+		const halfW = (screen.width / current.zoom / 2) * comfortFrac;
+		const halfH = (screen.height / current.zoom / 2) * comfortFrac;
+		if (
+			minX >= current.centerX - halfW &&
+			maxX <= current.centerX + halfW &&
+			minY >= current.centerY - halfH &&
+			maxY <= current.centerY + halfH
+		) {
+			return null;
+		}
+	}
 
 	// Degenerate extent (single point / zero-area) → focus at pointZoom.
 	if (bboxW <= 0 && bboxH <= 0) {
-		return { centerX, centerY, zoom: clamp(pointZoom, minZoom, maxZoom) };
+		return {
+			centerX,
+			centerY,
+			zoom: clamp(pointZoom, minZoom, Math.max(maxZoom, current?.zoom ?? maxZoom))
+		};
 	}
 
 	// Zoom-to-fit with padding: the bbox should occupy (1 - paddingFrac) of the

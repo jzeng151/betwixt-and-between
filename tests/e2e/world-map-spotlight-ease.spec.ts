@@ -249,8 +249,9 @@ test('SHIP GATE: a conquest outline pulse fires when a region owner flips during
 		(window as unknown as { __spotlightFlashCount?: number }).__spotlightFlashCount = 0;
 	});
 
-	await playerWin.locator('.play-btn').click();
-	await expect(playerWin.locator('.play-btn')).toHaveClass(/playing/);
+	const playBtn = playerWin.locator('.play-btn');
+	await playBtn.click();
+	await expect(playBtn).toHaveClass(/playing/);
 
 	// As the playhead auto-advances across an owner-flip (0.3, then 0.6), the
 	// punctuation layer spawns a restrained outline pulse. Poll the legacy diag counter.
@@ -276,6 +277,43 @@ test('SHIP GATE: a conquest outline pulse fires when a region owner flips during
 			{ timeout: 8000, intervals: [200] }
 		)
 		.toBeGreaterThan(0);
+
+	// An unchanged pause/resume keeps the in-flight target current, so follow
+	// continues instead of stopping halfway until the next story beat.
+	await playBtn.click();
+	await expect(playBtn).not.toHaveClass(/playing/);
+	await playBtn.click();
+	await expect(playBtn).toHaveClass(/playing/);
+	const movesAtResume = await page.evaluate(
+		() => (window as unknown as { __spotlightCameraMoves?: number }).__spotlightCameraMoves ?? 0
+	);
+	await expect
+		.poll(
+			() =>
+				page.evaluate(
+					() =>
+						(window as unknown as { __spotlightCameraMoves?: number })
+							.__spotlightCameraMoves ?? 0
+				),
+			{ timeout: 2000, intervals: [50] }
+		)
+		.toBeGreaterThan(movesAtResume);
+
+	// Scrubbing during the ease pauses and seeks atomically. That first manual
+	// playhead move must cancel the old target rather than keep panning toward
+	// action from the previous scene.
+	await page.mouse.click(rowsBox.x + rowsBox.width * 0.85, rowsBox.y + 30);
+	await expect(playBtn).not.toHaveClass(/playing/);
+	await page.waitForTimeout(100);
+	const movesAfterScrub = await page.evaluate(
+		() => (window as unknown as { __spotlightCameraMoves?: number }).__spotlightCameraMoves ?? 0
+	);
+	await page.waitForTimeout(400);
+	expect(
+		await page.evaluate(
+			() => (window as unknown as { __spotlightCameraMoves?: number }).__spotlightCameraMoves ?? 0
+		)
+	).toBe(movesAfterScrub);
 });
 
 // NOTE: pin-on-interact via a VIEWPORT GESTURE (drag/pinch/wheel) is not
@@ -287,7 +325,7 @@ test('SHIP GATE: a conquest outline pulse fires when a region owner flips during
 // pin path (onSwitchMap → playback.pin()) is exercised by
 // world-map-spotlight-nav-regression.spec.ts.
 
-test('reduced motion: the conquest pulse is suppressed (jump-cut)', async ({ page, request }) => {
+test('reduced motion: conquest pulse and automatic camera are suppressed', async ({ page, request }) => {
 	await seed(request);
 	await page.emulateMedia({ reducedMotion: 'reduce' });
 
@@ -334,4 +372,8 @@ test('reduced motion: the conquest pulse is suppressed (jump-cut)', async ({ pag
 		() => (window as unknown as { __spotlightFlashCount?: number }).__spotlightFlashCount ?? 0
 	);
 	expect(flashes).toBe(0);
+	const cameraMoves = await page.evaluate(
+		() => (window as unknown as { __spotlightCameraMoves?: number }).__spotlightCameraMoves ?? 0
+	);
+	expect(cameraMoves).toBe(0);
 });

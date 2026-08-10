@@ -19,7 +19,7 @@ export const isPlaying = { subscribe: _isPlaying.subscribe };
 
 /**
  * Story Player advance speed in seconds per scene boundary.
- * Spec options: 2 / 4 / 8 / 16. Default 4.
+ * Player options: 0.5 / 1 / 2 / 4 / 8 / 16. Default 4.
  */
 export const secondsPerScene = writable(4);
 
