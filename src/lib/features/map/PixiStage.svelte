@@ -28,16 +28,24 @@
 	import type { WorldMap } from './types.js';
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
 	import { createAnimController } from './anim-controller.js';
+	import { coverRect, remapCameraAcrossMaps } from './camera-director.js';
 
 	type PixiApplication = import('pixi.js').Application;
+	type PixiModule = typeof import('pixi.js');
+	type PixiSprite = import('pixi.js').Sprite;
+	type PixiTexture = import('pixi.js').Texture;
 
 	let {
 		activeMap,
 		children,
+		reducedMotion = false,
+		transitionPaused = false,
 		onViewport
 	}: {
 		activeMap: WorldMap | null;
 		children?: Snippet;
+		reducedMotion?: boolean;
+		transitionPaused?: boolean;
 		// Hands the pixi-viewport up to the parent (which sits outside the
 		// stage context) so DOM-level handlers like the palette chip drop
 		// can convert screen coords → world coords through the same pan/zoom
@@ -49,6 +57,19 @@
 	let canvasContainer = $state<HTMLDivElement | null>(null);
 	let loadError = $state<string | null>(null);
 	let ready = $state(false);
+	let PIXI: PixiModule | null = null;
+	let lastMap: { id: string; width: number; height: number } | null = null;
+	let swapSnapshot: { sprite: PixiSprite; texture: PixiTexture; off: () => void } | null = null;
+	const MAX_SWAP_TEXTURE_PX = 2048;
+
+	function clearSwapSnapshot(): void {
+		if (!swapSnapshot) return;
+		const { sprite, texture, off } = swapSnapshot;
+		swapSnapshot = null;
+		off();
+		if (!sprite.destroyed) sprite.destroy();
+		texture.destroy(true);
+	}
 
 	// Reactive context wrapper so descendants can read the live Application
 	// and viewport via getContext(PIXI_STAGE_CONTEXT). $state-backed object:
@@ -62,15 +83,16 @@
 
 		(async () => {
 			try {
-				const [PIXI, pvMod] = await Promise.all([
+				const [pixi, pvMod] = await Promise.all([
 					import('pixi.js'),
 					import('pixi-viewport')
 				]);
 				if (cancelled) return;
+				PIXI = pixi;
 
 				const mapW = activeMap?.width ?? 1024;
 				const mapH = activeMap?.height ?? 768;
-				const newApp = new PIXI.Application();
+				const newApp = new pixi.Application();
 				await newApp.init({
 					width: mapW,
 					height: mapH,
@@ -137,6 +159,7 @@
 
 		return () => {
 			cancelled = true;
+			clearSwapSnapshot();
 			// Stop the shared ticker before destroying the app it ticks on.
 			stageCtx.anim?.destroy();
 			stageCtx.anim = null;
@@ -156,6 +179,7 @@
 				}
 				app = null;
 			}
+			PIXI = null;
 		};
 	});
 
@@ -166,28 +190,89 @@
 	// the wrong screen positions. Skip the resize when activeMap is null
 	// or hasn't been initialized yet (init in onMount already used the
 	// then-current dimensions).
-	$effect(() => {
+	$effect.pre(() => {
 		const app = stageCtx.app;
 		const viewport = stageCtx.viewport;
-		if (!app || !activeMap?.width || !activeMap?.height) return;
+		const anim = stageCtx.anim;
+		if (!app || !viewport || !activeMap?.width || !activeMap?.height || !PIXI) return;
 		const w = activeMap.width;
 		const h = activeMap.height;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const vp = viewport as any;
+		const switching = lastMap !== null && lastMap.id !== activeMap.id;
+		const currentCamera = {
+			centerX: vp.center?.x ?? (lastMap ? lastMap.width / 2 : w / 2),
+			centerY: vp.center?.y ?? (lastMap ? lastMap.height / 2 : h / 2),
+			zoom: vp.scale?.x ?? 1
+		};
+
+		if (switching && !reducedMotion && anim) {
+			if (!swapSnapshot) {
+				try {
+					const displayWidth = app.canvas.clientWidth || MAX_SWAP_TEXTURE_PX;
+					const displayHeight = app.canvas.clientHeight || MAX_SWAP_TEXTURE_PX;
+					const resolution = Math.min(
+						1,
+						displayWidth / app.renderer.width,
+						displayHeight / app.renderer.height,
+						MAX_SWAP_TEXTURE_PX / app.renderer.width,
+						MAX_SWAP_TEXTURE_PX / app.renderer.height
+					);
+					const texture = app.renderer.generateTexture({
+						target: app.stage,
+						frame: new PIXI.Rectangle(0, 0, app.renderer.width, app.renderer.height),
+						resolution
+					});
+					const sprite = new PIXI.Sprite(texture);
+					sprite.eventMode = 'none';
+					app.stage.addChild(sprite);
+					let elapsedMs = 0;
+					const off = anim.register(() => {
+						if (transitionPaused) return;
+						elapsedMs += app.ticker.deltaMS;
+						sprite.alpha = Math.max(0, 1 - elapsedMs / 220);
+						if (elapsedMs >= 220) clearSwapSnapshot();
+					});
+					swapSnapshot = { sprite, texture, off };
+					if (
+						import.meta.env.DEV ||
+						(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ ===
+							true
+					) {
+						const diag = window as unknown as { __spotlightMapTransitionCount?: number };
+						diag.__spotlightMapTransitionCount =
+							(diag.__spotlightMapTransitionCount ?? 0) + 1;
+					}
+				} catch (err) {
+					console.warn('PixiStage: failed to capture map transition frame', err);
+				}
+			}
+		} else {
+			clearSwapSnapshot();
+		}
+
 		if (app.renderer.width !== w || app.renderer.height !== h) {
 			app.renderer.resize(w, h);
 		}
 		// Keep the viewport's screen + world dimensions in sync with the
 		// active map so wheel zoom + pan bounds reference the new image.
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const vp = viewport as any;
-		if (vp) {
-			vp.screenWidth = w;
-			vp.screenHeight = h;
-			vp.worldWidth = w;
-			vp.worldHeight = h;
-			// Reset transform so we're not stuck mid-zoom on the previous map.
-			vp.setZoom?.(1, true);
-			vp.moveCenter?.(w / 2, h / 2);
+		vp.screenWidth = w;
+		vp.screenHeight = h;
+		vp.worldWidth = w;
+		vp.worldHeight = h;
+		const nextCamera = lastMap
+			? remapCameraAcrossMaps(currentCamera, lastMap, { width: w, height: h })
+			: { centerX: w / 2, centerY: h / 2, zoom: 1 };
+		vp.setZoom?.(nextCamera.zoom, true);
+		vp.moveCenter?.(nextCamera.centerX, nextCamera.centerY);
+		if (swapSnapshot) {
+			const rect = coverRect(
+				{ width: swapSnapshot.texture.width, height: swapSnapshot.texture.height },
+				{ width: w, height: h }
+			);
+			Object.assign(swapSnapshot.sprite, rect);
 		}
+		lastMap = { id: activeMap.id, width: w, height: h };
 	});
 
 	// A4 HMR fallback — `import.meta.hot.invalidate()` doesn't escalate to

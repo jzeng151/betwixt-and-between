@@ -2,7 +2,11 @@
 // ease is canvas-only; this pins the pure framing the integration eases toward.
 
 import { describe, it, expect } from 'vitest';
-import { computeCameraTarget } from '../../src/lib/features/map/camera-director.js';
+import {
+	computeCameraTarget,
+	coverRect,
+	remapCameraAcrossMaps
+} from '../../src/lib/features/map/camera-director.js';
 
 const SCREEN = { width: 800, height: 600 };
 
@@ -23,6 +27,25 @@ describe('computeCameraTarget — hold', () => {
 
 	it('returns null when changed polygons are all empty/malformed', () => {
 		expect(computeCameraTarget([[], [[1]]], [], SCREEN)).toBeNull();
+	});
+});
+
+it('preserves normalized framing across maps with different dimensions', () => {
+	expect(
+		remapCameraAcrossMaps(
+			{ centerX: 750, centerY: 100, zoom: 1.5 },
+			{ width: 1000, height: 500 },
+			{ width: 400, height: 800 }
+		)
+	).toEqual({ centerX: 300, centerY: 160, zoom: 1.5 });
+});
+
+it('covers a new aspect ratio without stretching the captured frame', () => {
+	expect(coverRect({ width: 800, height: 400 }, { width: 400, height: 800 })).toEqual({
+		x: -600,
+		y: 0,
+		width: 1600,
+		height: 800
 	});
 });
 

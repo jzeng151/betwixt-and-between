@@ -27,9 +27,11 @@
 	type PixiTexture = import('pixi.js').Texture;
 
 	let {
-		activeMap
+		activeMap,
+		onReady
 	}: {
 		activeMap: WorldMap | null;
+		onReady?: (mapId: string) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -70,9 +72,10 @@
 		const url = activeMap?.baseImageUrl ?? null;
 		const w = activeMap?.width ?? null;
 		const h = activeMap?.height ?? null;
+		const mapId = activeMap?.id ?? null;
 
 		// No image or no dimensions → tear down any existing sprite and stop.
-		if (!url || !w || !h) {
+		if (!url || !w || !h || !mapId) {
 			if (sprite) {
 				try {
 					sprite.destroy();
@@ -82,6 +85,7 @@
 				sprite = null;
 			}
 			loadedUrl = null;
+			if (mapId) onReady?.(mapId);
 			return;
 		}
 
@@ -89,6 +93,7 @@
 		if (sprite && loadedUrl === url) {
 			sprite.width = w;
 			sprite.height = h;
+			onReady?.(mapId);
 			return;
 		}
 
@@ -103,6 +108,7 @@
 		}
 
 		const targetUrl = url;
+		const targetMapId = mapId;
 		let mounted = true;
 		void (async () => {
 			try {
@@ -112,7 +118,7 @@
 				// switching maps mid-load could paint the wrong image.
 				if (!mounted) return;
 				if (!layer) return;
-				if (activeMap?.baseImageUrl !== targetUrl) return;
+				if (activeMap?.id !== targetMapId || activeMap.baseImageUrl !== targetUrl) return;
 				const s = new PIXI!.Sprite(texture);
 				s.x = 0;
 				s.y = 0;
@@ -122,10 +128,12 @@
 				sprite = s;
 				loadedTexture = texture;
 				loadedUrl = targetUrl;
+				onReady?.(targetMapId);
 			} catch (_) {
 				// Image failed to load (network error, 404, CORS). Leave the
 				// gray canvas in place — better than crashing. The user's
 				// upload UX surfaces the URL separately.
+				if (mounted && activeMap?.id === targetMapId) onReady?.(targetMapId);
 			}
 		})();
 

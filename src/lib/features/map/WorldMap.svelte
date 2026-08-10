@@ -821,6 +821,7 @@
 	// baseline. Buffer those beats here and flush them once onReady fires (Codex
 	// PR #72). pixiReady is the readiness flag; pendingBeats holds the init-window beats.
 	let pixiReady = false;
+	let backgroundReadyMapId = $state<string | null>(null);
 	let pendingBeats: Punctuation[] = [];
 	// Reset readiness when the FX layer unmounts (e.g. the last map is deleted → the
 	// {#if !hasMaps} branch destroys PixiPunctuationLayer). A later remount re-imports
@@ -2379,9 +2380,17 @@
 				<span class="map-loading-text">Loading map…</span>
 			</div>
 		{/if}
-		<PixiStage {activeMap} onViewport={(vp) => (pixiViewport = vp)}>
+		<PixiStage
+			{activeMap}
+			{reducedMotion}
+			transitionPaused={(mapLoading && viewPinned) || backgroundReadyMapId !== activeMapId}
+			onViewport={(vp) => (pixiViewport = vp)}
+		>
 			{#snippet children()}
-				<PixiBackgroundLayer {activeMap} />
+				<PixiBackgroundLayer
+					{activeMap}
+					onReady={(mapId) => (backgroundReadyMapId = mapId)}
+				/>
 				<PixiGridLayer {activeMap} />
 				<PixiTerrainLayer {activeMap} cells={boundedTerrainCells} />
 				<!-- Slice 6 D15: sprite-tile terrain on top of the flat layer. -->
