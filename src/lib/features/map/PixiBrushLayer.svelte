@@ -52,7 +52,7 @@
 		activeMap?: WorldMap | null;
 		biome?: string;
 		size?: 1 | 3 | 5;
-		onStrokeComplete?: (cellCount: number) => void;
+		onStrokeComplete?: (mapId: string, cellCount: number, tPosition: number) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -191,7 +191,7 @@
 						commandId: localStrokeId
 					});
 				}
-				onStrokeComplete?.(totalCells);
+				onStrokeComplete?.(mapId, totalCells, tPosition);
 			} catch (err) {
 				// A permanent commit failure (400 after the grid changed,
 				// sustained network loss) just drops the stroke — the gesture is

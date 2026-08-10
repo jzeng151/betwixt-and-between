@@ -58,6 +58,7 @@
 		onDeleteRegion,
 		onDrillIntoLocation,
 		onOpenLocation,
+		onEventCommitted,
 		authoringOpen = $bindable(false)
 	}: {
 		regions: MapRegion[];
@@ -95,6 +96,7 @@
 		// codex PR#57 iter3 P2: Leaflet popup made the Location name
 		// clickable → opened entity-detail. Restore as a menu item.
 		onOpenLocation?: (locationId: string) => void;
+		onEventCommitted?: (mapId: string, tPosition: number) => void;
 		// Bindable: true while this layer owns an open authoring surface (the region
 		// context menu or the "set cause" modal). The parent reads it to suspend
 		// between-map cycling, so a cycle can't flip activeMapId mid-action and route
@@ -329,15 +331,14 @@
 			actionError = 'Map data is still loading — try again in a moment.';
 			return;
 		}
+		const eventMapId = mapId;
 		actionError = null;
 		try {
 			// Anchor the event at the current playhead. When playhead is null
 			// (spotlight off), use T=0 — events apply at any playhead ≥ 0, so
 			// the assignment is "from the start of story-time" by default.
-			// The playhead is intentionally NOT moved by this action;
-			// assigning ownership is a write, not a navigation.
 			const tPosition = get(playhead) ?? 0;
-			await mapEventsStore.create(mapId, {
+			await mapEventsStore.create(eventMapId, {
 				tPosition,
 				kind: 'transfer_region',
 				payloadJsonb: { region_id: regionId, new_faction_id: factionId },
@@ -345,6 +346,7 @@
 				// it is an owned Event (assertSourceEventIdIsEvent); null = no cause.
 				sourceEventId
 			});
+			onEventCommitted?.(eventMapId, tPosition);
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : String(err);
 		}

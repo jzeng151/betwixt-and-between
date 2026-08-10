@@ -236,9 +236,7 @@ test('Play on the seeded demo world cycles between maps, fires FX + captions, an
 	const playerWin = page.locator('.window[aria-label="Story Player"]');
 	await playerWin.locator('.speed-select').selectOption('2');
 
-	// On load WorldMap auto-scrubs the playhead PAST the latest event, so play() would
-	// otherwise start beyond the Act-0 conquest. Scrub back to the start (click the
-	// timeline track near its left edge) so play() crosses the flip going forward
+	// Set the playhead near the start so play() crosses the flip going forward
 	// (mirrors world-map-spotlight-ease.spec.ts).
 	const rowsBox = await tlWin.locator('.rows').boundingBox();
 	if (!rowsBox) throw new Error('timeline rows have no bounding box');
