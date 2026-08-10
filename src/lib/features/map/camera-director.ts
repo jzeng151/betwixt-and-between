@@ -27,6 +27,28 @@ export type CameraTarget = {
 	zoom: number;
 };
 
+export function coverRect(
+	from: { width: number; height: number },
+	to: { width: number; height: number }
+): { x: number; y: number; width: number; height: number } {
+	const scale = Math.max(to.width / from.width, to.height / from.height);
+	const width = from.width * scale;
+	const height = from.height * scale;
+	return { x: (to.width - width) / 2, y: (to.height - height) / 2, width, height };
+}
+
+export function remapCameraAcrossMaps(
+	current: CameraTarget,
+	from: { width: number; height: number },
+	to: { width: number; height: number }
+): CameraTarget {
+	return {
+		centerX: clamp(current.centerX / from.width, 0, 1) * to.width,
+		centerY: clamp(current.centerY / from.height, 0, 1) * to.height,
+		zoom: Number.isFinite(current.zoom) && current.zoom > 0 ? current.zoom : 1
+	};
+}
+
 export type CameraOptions = {
 	// Margin left around the changed bbox, as a fraction of the screen (0.2 = fit
 	// the bbox into the middle 80%). Gives the action breathing room.
