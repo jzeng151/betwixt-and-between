@@ -2,9 +2,8 @@
 	// Cinematic Spotlight (Slice 8) — punctuation FX overlay.
 	//
 	// Renders the frame-diff punctuation beats (punctuation-diff.ts) as decaying
-	// additive Graphics over the map. Three kinds, one overlay + one ticker:
-	//   - CONQUEST FLASH (PR1): an owner-flipped region's polygon flashes
-	//     white-additive and fades over ~300ms.
+	// Graphics over the map. Three kinds, one overlay + one ticker:
+	//   - CONQUEST PULSE (PR1): an owner-flipped region gets a brief outline.
 	//   - MARCH TRAIL (PR2): a moved placement leaves a fading additive streak
 	//     from its previous to its new interpolated position.
 	//   - CAUSAL RIPPLE (PR2, headline): a newly-lit caused_by edge pulses a bright
@@ -58,8 +57,8 @@
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
 
-	const FLASH_MS = 300; // conquest decay (design ~300ms)
-	const FLASH_PEAK = 0.85; // conquest starting additive alpha
+	const FLASH_MS = 220;
+	const FLASH_PEAK = 0.28;
 	const MARCH_MS = 550; // trail decay — outlasts a flash so the path reads
 	const MARCH_PEAK = 0.7;
 	const RIPPLE_MS = 650; // ripple travel + decay — the longest, it's the headline
@@ -226,7 +225,7 @@
 	});
 
 	/**
-	 * Spawn a flash for each conquest flip. Called imperatively by WorldMap when
+	 * Spawn a restrained outline pulse for each conquest flip. Called imperatively by WorldMap when
 	 * the playback controller emits beats. No-op under reduced motion (jump-cut)
 	 * or before pixi/layer are ready.
 	 */
@@ -240,8 +239,7 @@
 			for (const [lat, lng] of region.polygon) flat.push(lng, lat); // → world [x, y]
 			if (flat.length < 6) continue;
 			const g: PixiGraphics = new PIXI.Graphics();
-			g.poly(flat).fill({ color: 0xffffff, alpha: 1 });
-			g.blendMode = 'add'; // additive → reads as a light flash, not a repaint
+			g.poly(flat).stroke({ width: 3, color: 0xffffff, alpha: 1 });
 			g.alpha = 0; // ticker raises it; staggered flips wait out their delay
 			g.eventMode = 'none';
 			layer.addChild(g);

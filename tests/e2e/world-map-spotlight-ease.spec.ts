@@ -211,7 +211,7 @@ test('eased region color glides imperatively: ticker runs at frame rate with NO 
 	expect(ticksDelta).toBeGreaterThan(rebuildsDelta * 10);
 });
 
-test('SHIP GATE: a conquest flash fires when a region owner flips during playback', async ({
+test('SHIP GATE: a conquest outline pulse fires when a region owner flips during playback', async ({
 	page,
 	request
 }) => {
@@ -253,7 +253,7 @@ test('SHIP GATE: a conquest flash fires when a region owner flips during playbac
 	await expect(playerWin.locator('.play-btn')).toHaveClass(/playing/);
 
 	// As the playhead auto-advances across an owner-flip (0.3, then 0.6), the
-	// punctuation layer spawns a white-additive flash. Poll the diag counter.
+	// punctuation layer spawns a restrained outline pulse. Poll the legacy diag counter.
 	await expect
 		.poll(
 			async () =>
@@ -287,7 +287,7 @@ test('SHIP GATE: a conquest flash fires when a region owner flips during playbac
 // pin path (onSwitchMap → playback.pin()) is exercised by
 // world-map-spotlight-nav-regression.spec.ts.
 
-test('reduced motion: the conquest flash is suppressed (jump-cut)', async ({ page, request }) => {
+test('reduced motion: the conquest pulse is suppressed (jump-cut)', async ({ page, request }) => {
 	await seed(request);
 	await page.emulateMedia({ reducedMotion: 'reduce' });
 
@@ -321,7 +321,7 @@ test('reduced motion: the conquest flash is suppressed (jump-cut)', async ({ pag
 	await playerWin.locator('.play-btn').click();
 	await expect(playerWin.locator('.play-btn')).toHaveClass(/playing/);
 
-	// Play past BOTH flips (cross 0.6), then assert NO flash fired — under reduced
+	// Play past BOTH flips (cross 0.6), then assert NO pulse fired — under reduced
 	// motion the owner change still reads via the snapped tint, but the flashing FX
 	// is suppressed.
 	await expect
