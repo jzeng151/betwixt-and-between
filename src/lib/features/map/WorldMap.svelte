@@ -232,21 +232,18 @@
 	// surface any rejection in the existing placement-error banner.
 	async function handleMoveCommit(placementId: string, x: number, y: number) {
 		if (!activeMapId || mapLoading) return;
-		// Author at the current playhead, defaulting to 0 when idle. When the
-		// playhead is null the projection renders at -∞ (before any keyframe →
-		// baseline), so a freshly-authored keyframe would briefly snap back. We
-		// scrub to the committed T after a null-playhead commit so the marker stays
-		// at the dropped position — the auto-scrub effect's one-shot gate can't be
-		// relied on (it no-ops once consumed). (code-reviewer MEDIUM.)
-		const wasNull = $playhead == null;
+		const mapId = activeMapId;
+		// Author at the current playhead, defaulting to 0 when idle. Keep an idle
+		// edit visible through map-local projection state; World Map must not
+		// activate the global Timeline playhead.
 		const tPosition = $playhead ?? 0;
 		try {
-			await mapEventsStore.create(activeMapId, {
+			await mapEventsStore.create(mapId, {
 				tPosition,
 				kind: 'move_entity',
 				payloadJsonb: { placement_id: placementId, position: { x, y }, tween: 'ease_in_out' }
 			});
-			if (wasNull) playhead.scrubTo(tPosition);
+			revealAuthoredTime(mapId, tPosition);
 			moveAnnouncement = `Moved to ${(x * 100).toFixed(0)}%, ${(y * 100).toFixed(0)}% at T ${tPosition.toFixed(3)}`;
 		} catch (err) {
 			placementError = err instanceof Error ? err.message : String(err);
@@ -748,9 +745,20 @@
 		$entities.filter((e) => e.type === 'Event').map((e) => ({ id: e.id, name: e.name }))
 	);
 
+	let idleAuthoredTimes = $state<Record<string, number>>({});
+	function revealAuthoredTime(mapId: string, t: number): void {
+		if ($playhead === null) idleAuthoredTimes[mapId] = t;
+	}
+	$effect(() => {
+		if ($playhead !== null) idleAuthoredTimes = {};
+	});
+
 	let renderedState = $derived.by<RenderedState | null>(() => {
 		if (!projectionCtx) return null;
-		const t = $playhead ?? Number.NEGATIVE_INFINITY;
+		const t =
+			$playhead ??
+			(activeMapId ? idleAuthoredTimes[activeMapId] : undefined) ??
+			Number.NEGATIVE_INFINITY;
 		// Suppress causal edges while the playhead is idle (null). Maps carry a
 		// baseline anchor at t_position = -Infinity, so the fold WOULD otherwise run
 		// at idle and render timeless caused_by links (scoped ones already filtered
@@ -1486,49 +1494,6 @@
 	let scopedRegions = $derived(
 		activeMapId ? $mapRegions.filter((r) => r.mapId === activeMapId) : []
 	);
-
-	// Auto-scrub the playhead past the latest event when entering Pixi mode
-	// with events present. Lives in its own $effect (instead of inside the
-	// map-load effect) so it ALSO fires when the user toggles renderer
-	// mid-session — Codex P2 on PR #55 noticed the prior version only fired
-	// on activeMapId change, leaving a map opened under Leaflet without
-	// auto-jump when the user later switched to Pixi.
-	//
-	// One-shot per "playhead is null" episode: tracked via
-	// pixiAutoScrubAppliedFor so the auto-scrub doesn't re-fire every time
-	// events mutate (e.g., user adds another transfer_region). Once the
-	// playhead is set, this effect no-ops until playhead returns to null
-	// AND a fresh activeMapId arrives.
-	let pixiAutoScrubAppliedFor = $state<string | null>(null);
-
-	$effect(() => {
-		// T13: Pixi is the only renderer now; the renderer-flag gate is gone.
-		if (!activeMapId) return;
-		if (pixiAutoScrubAppliedFor === activeMapId) return;
-		if (dataLoading) return;
-		const events = $mapEventsStore;
-		if (events.length === 0) return;
-		if (get(playhead) != null) {
-			pixiAutoScrubAppliedFor = activeMapId;
-			return;
-		}
-		const maxT = events.reduce(
-			(acc, e) => (e.tPosition > acc ? e.tPosition : acc),
-			Number.NEGATIVE_INFINITY
-		);
-		if (Number.isFinite(maxT) && maxT >= 0) {
-			playhead.scrubTo(maxT);
-			pixiAutoScrubAppliedFor = activeMapId;
-		}
-	});
-
-	// Reset the auto-scrub gate when activeMapId changes so a freshly-
-	// loaded map gets its own auto-scrub attempt.
-	$effect(() => {
-		const _id = activeMapId;
-		pixiAutoScrubAppliedFor = null;
-		void _id;
-	});
 
 	// ── Stage callbacks ──────────────────────────────────────────────────
 	// Pixi polygon-draw entry + commit/cancel + click-to-place. The Pixi
@@ -2442,6 +2407,7 @@
 					{reducedMotion}
 					isInScope={$isInScope}
 					events={causeEvents}
+					onEventCommitted={revealAuthoredTime}
 					onDrawHere={startPixiDraw}
 					onEditRegion={(id) => startEditRegion(id)}
 					onDeleteRegion={(id) => void handleDeleteRegion(id)}
@@ -2555,6 +2521,7 @@
 					{activeMap}
 					biome={brushBiome}
 					size={brushSize}
+					onStrokeComplete={(mapId, _count, t) => revealAuthoredTime(mapId, t)}
 				/>
 				<!-- WM3 Slice A: freeform brush. Same gating as the grid brush, but
 				     active only in freeform sub-mode (the two never capture pointer
@@ -2568,6 +2535,7 @@
 					softness={strokeSoftness}
 					stamp={strokeStamp}
 					layerId={strokeLayerId}
+					onStrokeComplete={revealAuthoredTime}
 					onError={(msg) => (strokeError = msg)}
 				/>
 			{/snippet}

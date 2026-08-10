@@ -48,7 +48,7 @@
 		// Slice B — target art layer (world_maps.art_layers_jsonb id); null =
 		// the implicit base art layer.
 		layerId?: string | null;
-		onStrokeComplete?: () => void;
+		onStrokeComplete?: (mapId: string, tPosition: number) => void;
 		// F17 — the layer has no UI of its own; a rejected/dropped gesture would
 		// otherwise vanish with only a console.error. Surface it to the parent.
 		onError?: (message: string) => void;
@@ -188,7 +188,7 @@
 					payloadJsonb: payload,
 					commandId: localStrokeId
 				});
-				onStrokeComplete?.();
+				onStrokeComplete?.(mapId, tPosition);
 			} catch (err) {
 				// F17: don't swallow — the preview is already cleared, so a silent
 				// drop looks like the brush did nothing. Surface to the parent.

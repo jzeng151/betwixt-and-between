@@ -119,6 +119,21 @@ async function openWorldMap(page: Page) {
 	return win;
 }
 
+test('opening the map does not activate the global playhead', async ({ page, request }) => {
+	await seed(request);
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+	await page.goto('/app');
+
+	await page.click('button[title="Timeline"]');
+	const timeline = page.locator('.window[aria-label="Timeline"]');
+	await expect(timeline).toBeVisible();
+	await expect(timeline.locator('.playhead')).toHaveCount(0);
+
+	const map = await openWorldMap(page);
+	await expect(map.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
+	await expect(timeline.locator('.playhead')).toHaveCount(0);
+});
+
 test('eased region color glides imperatively: ticker runs at frame rate with NO geometry rebuild storm', async ({
 	page,
 	request
@@ -217,9 +232,7 @@ test('SHIP GATE: a conquest flash fires when a region owner flips during playbac
 	await expect(playerWin).toBeVisible();
 	await playerWin.locator('.speed-select').selectOption('2');
 
-	// On load WorldMap auto-scrubs the playhead PAST the latest event (0.6), so
-	// playback would start beyond both flips. Scrub back to the start (click the
-	// timeline track near its left edge) so play() crosses 0.3 then 0.6.
+	// Set the playhead near the start so play() crosses 0.3 then 0.6.
 	const rowsBox = await tlWin.locator('.rows').boundingBox();
 	if (!rowsBox) throw new Error('timeline rows have no bounding box');
 	await page.mouse.click(rowsBox.x + rowsBox.width * 0.02, rowsBox.y + 30);
