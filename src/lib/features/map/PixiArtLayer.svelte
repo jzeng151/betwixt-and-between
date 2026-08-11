@@ -58,7 +58,8 @@
 		activeMap,
 		strokes,
 		playheadT = null,
-		reducedMotion = false
+		reducedMotion = false,
+		onReady
 	}: {
 		activeMap: WorldMap | null;
 		strokes: StoredStroke[];
@@ -68,6 +69,7 @@
 		playheadT?: number | null;
 		// prefers-reduced-motion → jump-cut (matches the FX layer convention).
 		reducedMotion?: boolean;
+		onReady?: (mapId: string) => void;
 	} = $props();
 
 	// Slice D2 diag counter (mirrors PixiPunctuationLayer's __spotlight*Count):
@@ -398,6 +400,7 @@
 		// array with identical content), preserving F8 collision-safety.
 		if (ss === lastStrokesRef && viewKey === lastViewKey) {
 			lastPlayheadT = atT;
+			onReady?.(map.id);
 			return; // nothing visual changed — keep the displayed build
 		}
 
@@ -438,6 +441,7 @@
 		if (!strokesChanged && viewKey === lastViewKey) {
 			lastPlayheadT = atT;
 			lastStrokesRef = ss; // refresh identity so the next tick takes the fast-path
+			onReady?.(map.id);
 			return; // nothing visual changed — keep the displayed build
 		}
 		// A terrain BEAT: the stroke set changed because the playhead moved over
@@ -473,6 +477,7 @@
 		for (const s of ss) for (const u of urlsForStroke(s)) urls.add(u);
 
 		let cancelled = false;
+		const targetMapId = map.id;
 		(async () => {
 			// Load per-URL (allSettled), NOT Assets.load([...urls]) as one batch:
 			// the batch promise is all-or-nothing, so a single 404'd sprite would
@@ -616,6 +621,7 @@
 			} else {
 				disposeBuild(oldBuild);
 			}
+			onReady?.(targetMapId);
 		})();
 		return () => {
 			cancelled = true;

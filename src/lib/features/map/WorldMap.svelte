@@ -822,6 +822,9 @@
 	// PR #72). pixiReady is the readiness flag; pendingBeats holds the init-window beats.
 	let pixiReady = false;
 	let backgroundReadyMapId = $state<string | null>(null);
+	let terrainTilesReadyMapId = $state<string | null>(null);
+	let artReadyMapId = $state<string | null>(null);
+	let placementsReadyMapId = $state<string | null>(null);
 	let pendingBeats: Punctuation[] = [];
 	// Reset readiness when the FX layer unmounts (e.g. the last map is deleted → the
 	// {#if !hasMaps} branch destroys PixiPunctuationLayer). A later remount re-imports
@@ -2383,7 +2386,11 @@
 		<PixiStage
 			{activeMap}
 			{reducedMotion}
-			transitionPaused={(mapLoading && viewPinned) || backgroundReadyMapId !== activeMapId}
+			transitionPaused={(mapLoading && viewPinned) ||
+				backgroundReadyMapId !== activeMapId ||
+				terrainTilesReadyMapId !== activeMapId ||
+				artReadyMapId !== activeMapId ||
+				placementsReadyMapId !== activeMapId}
 			onViewport={(vp) => (pixiViewport = vp)}
 		>
 			{#snippet children()}
@@ -2394,7 +2401,11 @@
 				<PixiGridLayer {activeMap} />
 				<PixiTerrainLayer {activeMap} cells={boundedTerrainCells} />
 				<!-- Slice 6 D15: sprite-tile terrain on top of the flat layer. -->
-				<PixiTerrainTileLayer {activeMap} cells={boundedTerrainCells} />
+				<PixiTerrainTileLayer
+					{activeMap}
+					cells={boundedTerrainCells}
+					onReady={(mapId) => (terrainTilesReadyMapId = mapId)}
+				/>
 				<!-- WM3 Slice A: freeform brush art (paint_stroke) over the grid tiles. -->
 				<!-- Slice D2: playheadT + reducedMotion drive the terrain-transition
 				     dissolve (a stroke-set change caused by a playhead move
@@ -2404,6 +2415,7 @@
 					strokes={renderedState?.strokes ?? []}
 					playheadT={$playhead}
 					{reducedMotion}
+					onReady={(mapId) => (artReadyMapId = mapId)}
 				/>
 				<!-- Slice 6: only water ripples (shimmer applied to water cells alone). -->
 				<PixiWaterLayer {activeMap} cells={boundedTerrainCells} />
@@ -2488,6 +2500,7 @@
 						const loc = activeMap?.locationId;
 						if (loc) invalidateCycleCacheForLocation(loc);
 					}}
+					onReady={(mapId) => (placementsReadyMapId = mapId)}
 					playhead={$playhead}
 					placements={$placementsStore}
 					entities={$entities}

@@ -42,7 +42,10 @@ const post = async <T>(r: APIRequestContext, url: string, data: unknown): Promis
 	(await r.post(url, { data })).json();
 
 /** Seed the demo world. Returns the two map ids and the map-event count. */
-async function seedAshHostWar(request: APIRequestContext) {
+async function seedAshHostWar(
+	request: APIRequestContext,
+	baseImages: Partial<Record<'Northmarch' | 'Greyhold', string>> = {}
+) {
 	await clearAll(request);
 
 	// ── Timeline: 3 acts × 2 scenes → scene boundaries the playhead steps. ──
@@ -77,10 +80,15 @@ async function seedAshHostWar(request: APIRequestContext) {
 
 	// ── Maps (linked to their Location). Northmarch + Greyhold each bear a map;
 	//    Fen / Keep do not. ──
-	async function makeMap(name: string, locationId: string) {
+	async function makeMap(name: 'Northmarch' | 'Greyhold', locationId: string) {
 		const m = await post<{ id: string }>(request, '/api/maps', { name });
 		await request.patch(`/api/maps/${m.id}`, {
-			data: { baseImageUrl: 'about:blank', width: 800, height: 500, locationId }
+			data: {
+				baseImageUrl: baseImages[name] ?? 'about:blank',
+				width: 800,
+				height: 500,
+				locationId
+			}
 		});
 		return m;
 	}
@@ -194,6 +202,67 @@ async function seedAshHostWar(request: APIRequestContext) {
 
 	return { mapNorthId: mapNorth.id, mapGreyId: mapGrey.id, eventCount };
 }
+
+test('reduced-motion switches hold the old map and block input until destination art is ready', async ({
+	page,
+	request
+}) => {
+	let releaseGreyhold!: () => void;
+	const greyholdReady = new Promise<void>((resolve) => (releaseGreyhold = resolve));
+	const pixel = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+		'base64'
+	);
+	await page.route('**/e2e-northmarch.png', (route) =>
+		route.fulfill({ status: 200, contentType: 'image/png', body: pixel })
+	);
+	await page.route('**/e2e-greyhold.png', async (route) => {
+		await greyholdReady;
+		await route.fulfill({ status: 200, contentType: 'image/png', body: pixel });
+	});
+	await seedAshHostWar(request, {
+		Northmarch: '/e2e-northmarch.png',
+		Greyhold: '/e2e-greyhold.png'
+	});
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	await page.addInitScript(() => {
+		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ = true;
+		localStorage.setItem('tutorial-dismissed', 'true');
+	});
+	await page.goto('/app');
+	const win = await openWorldMap(page);
+	const switcher = win.locator('.map-switcher');
+	await switcher.selectOption({ label: 'Northmarch' });
+	await expect(win.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
+
+	await switcher.selectOption({ label: 'Greyhold' });
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as unknown as { __spotlightMapTransitionActive?: boolean })
+						.__spotlightMapTransitionActive ?? false
+			)
+		)
+		.toBe(true);
+
+	const canvas = win.locator('.pixi-stage canvas');
+	const box = await canvas.boundingBox();
+	if (!box) throw new Error('map canvas has no bounding box');
+	await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' });
+	await expect(page.locator('.context-menu')).toHaveCount(0);
+
+	releaseGreyhold();
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as unknown as { __spotlightMapTransitionActive?: boolean })
+						.__spotlightMapTransitionActive ?? false
+			)
+		)
+		.toBe(false);
+});
 
 async function openWorldMap(page: Page) {
 	await page.click('button[title="World Map"]');
