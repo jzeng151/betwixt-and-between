@@ -357,7 +357,7 @@
 	// the user is working in another app, and ignored while typing in a field.
 	function handleMapKeydown(e: KeyboardEvent) {
 		if (!activeMapId) return;
-		if (mapLoading) return; // codex P2: don't undo/redo against a still-loading map
+		if (mapLoading || mapTransitionActive) return;
 		// Scope to THIS window instance. Multiple world-map windows can be open
 		// (default + location-specific), each with its own handler + activeMapId;
 		// comparing the focused window's id (not just appId) ensures only the
