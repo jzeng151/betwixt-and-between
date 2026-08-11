@@ -42,7 +42,7 @@
 		activeMap: WorldMap | null;
 		cells: RenderedCell[];
 		hidden?: boolean;
-		onReady?: (mapId: string) => void;
+		onReady?: (mapId: string | null) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -148,6 +148,7 @@
 		// on a cache miss). Cancel stale passes when cells/map change mid-load.
 		let cancelled = false;
 		const targetMapId = activeMap.id;
+		if (!hidden) onReady?.(null);
 		(async () => {
 			let texMap: Record<string, unknown> = {};
 			if (urls.size > 0) {

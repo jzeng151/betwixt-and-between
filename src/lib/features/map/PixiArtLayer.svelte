@@ -72,7 +72,7 @@
 		reducedMotion?: boolean;
 		// The base pref is explicitly hidden. Named art buckets remain independent.
 		hidden?: boolean;
-		onReady?: (mapId: string) => void;
+		onReady?: (mapId: string | null) => void;
 	} = $props();
 
 	// Slice D2 diag counter (mirrors PixiPunctuationLayer's __spotlight*Count):
@@ -493,6 +493,7 @@
 
 		let cancelled = false;
 		const targetMapId = map.id;
+		if (!allHidden) onReady?.(null);
 		(async () => {
 			// Load per-URL (allSettled), NOT Assets.load([...urls]) as one batch:
 			// the batch promise is all-or-nothing, so a single 404'd sprite would
