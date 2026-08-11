@@ -118,7 +118,7 @@
 		// Fired after a placement style PATCH resolves (Codex PR #72 #521).
 		onStylePersisted?: () => void;
 		hidden?: boolean;
-		onReady?: (mapId: string) => void;
+		onReady?: (mapId: string | null) => void;
 		// Bindable: true while this layer owns an open authoring surface (the marker
 		// context menu or the style popover). The parent reads it to suspend cycling so
 		// a cycle can't flip activeMapId while a menu is open and route a captured
@@ -541,6 +541,7 @@
 		if (iconLoads.length === 0) {
 			onReady?.(targetMapId);
 		} else {
+			if (!hidden) onReady?.(null);
 			void Promise.allSettled(iconLoads).then(() => {
 				if (generation === renderGeneration && activeMap?.id === targetMapId) {
 					onReady?.(targetMapId);
