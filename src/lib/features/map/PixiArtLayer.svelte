@@ -375,6 +375,9 @@
 		if (PIXI && viewport && app && allHidden && map?.width && map?.height) {
 			onReady?.(map.id);
 		}
+		if (PIXI && viewport && app && !allHidden && !manifestSettled && map?.width && map?.height) {
+			onReady?.(null);
+		}
 		if (!PIXI || !viewport || !app || !manifest || !map?.width || !map?.height) {
 			if (layer) {
 				// finishFade disposes a mid-dissolve old build; disposeBuild the

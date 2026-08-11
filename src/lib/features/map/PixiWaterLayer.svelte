@@ -77,6 +77,9 @@
 		if (PIXI && viewport && hidden && activeMap?.width && activeMap?.height) {
 			onReady?.(activeMap.id);
 		}
+		if (PIXI && viewport && !hidden && !manifestSettled && activeMap?.width && activeMap?.height) {
+			onReady?.(null);
+		}
 		if (!PIXI || !viewport || !activeMap?.width || !activeMap?.height) {
 			// Switched to an image-less map: drop the previous map's water so it
 			// doesn't ghost over the blank canvas (Codex #70).

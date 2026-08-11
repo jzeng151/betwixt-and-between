@@ -96,6 +96,9 @@
 		if (PIXI && viewport && hidden && activeMap?.width && activeMap?.height) {
 			onReady?.(activeMap.id);
 		}
+		if (PIXI && viewport && !hidden && !manifestSettled && activeMap?.width && activeMap?.height) {
+			onReady?.(null);
+		}
 		if (!PIXI || !viewport || !manifest || !activeMap?.width || !activeMap?.height) {
 			// Switched to a map with no image/dimensions: drop any tiles we built
 			// for the previous map (this layer persists across switches), else they
