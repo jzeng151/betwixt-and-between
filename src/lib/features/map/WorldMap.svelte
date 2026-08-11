@@ -1502,6 +1502,7 @@
 				!factionsSettled ||
 				(activeMap?.locationId != null && placementsLoading))
 	);
+	let mapLoadingOverlayVisible = $derived(mapLoading && !($isPlaying && !viewPinned));
 
 	// Codex P2 on PR #55 (commits 4ccb183 + da20221): regions and
 	// activeMapId update independently during a map switch. switchMap()
@@ -2396,7 +2397,7 @@
 			ondragover={handleAssetDragOver}
 			ondrop={handleAssetDrop}
 		>
-		{#if mapLoading && !($isPlaying && !viewPinned)}
+		{#if mapLoadingOverlayVisible}
 			<!-- Bug 2: cover the canvas while the saved layer config AND the
 			     placements load, so the user sees an intentional loading state
 			     instead of layers/markers flashing or popping in.
@@ -2415,7 +2416,7 @@
 		<PixiStage
 			{activeMap}
 			{reducedMotion}
-			transitionPaused={(mapLoading && viewPinned) ||
+			transitionPaused={mapLoadingOverlayVisible ||
 				backgroundReadyMapId !== activeMapId ||
 				terrainTilesReadyMapId !== activeMapId ||
 				artReadyMapId !== activeMapId ||

@@ -33,7 +33,7 @@
 	}: {
 		activeMap: WorldMap | null;
 		hidden?: boolean;
-		onReady?: (mapId: string) => void;
+		onReady?: (mapId: string | null) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -114,6 +114,7 @@
 
 		const targetUrl = url;
 		const targetMapId = mapId;
+		if (!hidden) onReady?.(null);
 		let mounted = true;
 		void (async () => {
 			try {
