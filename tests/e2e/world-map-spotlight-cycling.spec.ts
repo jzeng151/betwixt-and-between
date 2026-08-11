@@ -229,7 +229,7 @@ test('reduced-motion switches hold the old map and block input until destination
 	// Manifest failure is a supported flat-color fallback. It must count as a
 	// settled composed layer instead of holding the swap cover forever.
 	await page.route('**/Sprites/terrain-manifest.json', (route) => route.abort());
-	const { greyLocationId, heroId } = await seedAshHostWar(request, {
+	const { mapGreyId, greyLocationId, heroId } = await seedAshHostWar(request, {
 		Northmarch: '/e2e-northmarch.png',
 		Greyhold: '/e2e-greyhold.png'
 	});
@@ -279,6 +279,15 @@ test('reduced-motion switches hold the old map and block input until destination
 		await request.get(`/api/map-placements?locationId=${greyLocationId}`)
 	).json();
 	expect(greyPlacements).toHaveLength(0);
+	const greyEventsBefore: Array<{ id: string }> = await (
+		await request.get(`/api/maps/${mapGreyId}/events`)
+	).json();
+	await page.keyboard.press('Control+z');
+	await page.waitForTimeout(100);
+	const greyEventsAfter: Array<{ id: string }> = await (
+		await request.get(`/api/maps/${mapGreyId}/events`)
+	).json();
+	expect(greyEventsAfter).toHaveLength(greyEventsBefore.length);
 
 	releaseGreyhold();
 	await expect
