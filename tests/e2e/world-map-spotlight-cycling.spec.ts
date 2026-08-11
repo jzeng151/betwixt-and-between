@@ -282,6 +282,7 @@ test('reduced-motion switches hold the old map and block input until destination
 	const { rows: greyEventsBefore }: { rows: Array<{ id: string }> } = await (
 		await request.get(`/api/maps/${mapGreyId}/events`)
 	).json();
+	await expect(win.getByRole('button', { name: /Undo/ })).toBeDisabled();
 	await page.keyboard.press('Control+z');
 	await page.waitForTimeout(100);
 	const { rows: greyEventsAfter }: { rows: Array<{ id: string }> } = await (

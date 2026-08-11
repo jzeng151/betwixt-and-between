@@ -61,7 +61,12 @@
 	let ready = $state(false);
 	let PIXI: PixiModule | null = null;
 	let lastMap: { id: string; width: number; height: number } | null = null;
-	let swapSnapshot: { sprite: PixiSprite; texture: PixiTexture; off: () => void } | null = null;
+	let swapSnapshot: {
+		sprite: PixiSprite;
+		texture: PixiTexture;
+		off: () => void;
+		resumeWheel: () => void;
+	} | null = null;
 	const MAX_SWAP_TEXTURE_PX = 2048;
 	const STAGE_BACKGROUND = 0x222222;
 
@@ -78,9 +83,10 @@
 
 	function clearSwapSnapshot(): void {
 		if (!swapSnapshot) return;
-		const { sprite, texture, off } = swapSnapshot;
+		const { sprite, texture, off, resumeWheel } = swapSnapshot;
 		swapSnapshot = null;
 		off();
+		resumeWheel();
 		if (!sprite.destroyed) sprite.destroy();
 		texture.destroy(true);
 		setTransitionActive(false);
@@ -285,7 +291,13 @@
 					sprite.alpha = Math.max(0, 1 - elapsedMs / 220);
 					if (elapsedMs >= 220) clearSwapSnapshot();
 				});
-				swapSnapshot = { sprite, texture, off };
+				vp.plugins.pause('wheel');
+				swapSnapshot = {
+					sprite,
+					texture,
+					off,
+					resumeWheel: () => vp.plugins.resume('wheel')
+				};
 				setTransitionActive(true);
 				if (
 					import.meta.env.DEV ||
