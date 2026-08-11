@@ -199,7 +199,7 @@
 		// rows, so canUndo can read true from the PREVIOUS map while the overlay
 		// is up — and undo would POST /events/undo against the NEW map, deleting
 		// its latest event. mapLoading stays true until anchors/events settle.
-		if (mapLoading) return;
+		if (mapLoading || mapTransitionActive) return;
 		// Capture before await: undo/redo are keyboard-triggerable (no pointerdown to
 		// pin), so a cycle can move on mid-request; invalidate the mutated map's staged
 		// bundle, not the active one (Codex PR #72 #104).
@@ -213,7 +213,7 @@
 	}
 	async function handleRedo() {
 		if (!activeMapId) return;
-		if (mapLoading) return;
+		if (mapLoading || mapTransitionActive) return;
 		const mapId = activeMapId;
 		try {
 			await mapEventsStore.redo(activeMapId);
@@ -395,9 +395,9 @@
 	// drop's screen coords → world coords through the pan/zoom transform.
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let pixiViewport = $state<any>(null);
-	// Imperative only: DOM drag handlers read this live value, but changing it
-	// must not rerender the Pixi subtree while its cover sprite owns input.
-	let mapTransitionActive = false;
+	// Shared interaction gate for native DOM handlers, keyboard commands, and
+	// toolbar state while the old-map snapshot is authoritative.
+	let mapTransitionActive = $state(false);
 
 	// UI state
 	let activeMapId = $state<string | null>(null);
@@ -2625,8 +2625,8 @@
 				onSelect={(t) => (activeTool = t)}
 				placeEnabled={!!activeMap?.locationId}
 				moveEnabled={!!activeMap?.locationId}
-				canUndo={canUndo && !mapLoading}
-				canRedo={canRedo && !mapLoading}
+				canUndo={canUndo && !mapLoading && !mapTransitionActive}
+				canRedo={canRedo && !mapLoading && !mapTransitionActive}
 				onUndo={handleUndo}
 				onRedo={handleRedo}
 			/>
