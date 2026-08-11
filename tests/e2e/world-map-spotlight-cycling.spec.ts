@@ -330,6 +330,16 @@ test('hidden destination texture layers warm without holding the transition', as
 		Northmarch: '/e2e-northmarch.png',
 		Greyhold: '/e2e-greyhold.png'
 	});
+	const visibleArtLayerId = crypto.randomUUID();
+	const hiddenArtLayerId = crypto.randomUUID();
+	await request.patch(`/api/maps/${mapGreyId}`, {
+		data: {
+			artLayersJsonb: [
+				{ id: visibleArtLayerId, name: 'Visible', blendMode: 'normal', opacity: 1 },
+				{ id: hiddenArtLayerId, name: 'Hidden', blendMode: 'normal', opacity: 1 }
+			]
+		}
+	});
 	await request.post(`/api/maps/${mapGreyId}/events`, {
 		data: {
 			tPosition: 0,
@@ -346,7 +356,8 @@ test('hidden destination texture layers warm without holding the transition', as
 				brushSize: 0.08,
 				softness: 0,
 				mode: 'fill',
-				textureKey: 'Grass'
+				textureKey: 'Grass',
+				layerId: hiddenArtLayerId
 			}
 		}
 	});
@@ -367,6 +378,9 @@ test('hidden destination texture layers warm without holding the transition', as
 			data: { worldMapId: mapGreyId, layerKey, visible: 0 }
 		});
 	}
+	await request.patch('/api/world-map-layer-prefs', {
+		data: { worldMapId: mapGreyId, layerKey: `art:${hiddenArtLayerId}`, visible: 0 }
+	});
 	await page.addInitScript(() => {
 		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ = true;
 		localStorage.setItem('tutorial-dismissed', 'true');
