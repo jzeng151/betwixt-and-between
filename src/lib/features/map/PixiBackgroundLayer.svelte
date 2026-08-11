@@ -28,9 +28,11 @@
 
 	let {
 		activeMap,
+		hidden = false,
 		onReady
 	}: {
 		activeMap: WorldMap | null;
+		hidden?: boolean;
 		onReady?: (mapId: string) => void;
 	} = $props();
 
@@ -73,6 +75,9 @@
 		const w = activeMap?.width ?? null;
 		const h = activeMap?.height ?? null;
 		const mapId = activeMap?.id ?? null;
+		// A hidden background cannot contribute to the composed destination
+		// frame. Release the swap cover now while still warming its texture.
+		if (mapId && hidden) onReady?.(mapId);
 
 		// No image or no dimensions → tear down any existing sprite and stop.
 		if (!url || !w || !h || !mapId) {

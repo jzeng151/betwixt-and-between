@@ -395,6 +395,9 @@
 	// drop's screen coords → world coords through the pan/zoom transform.
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let pixiViewport = $state<any>(null);
+	// Imperative only: DOM drag handlers read this live value, but changing it
+	// must not rerender the Pixi subtree while its cover sprite owns input.
+	let mapTransitionActive = false;
 
 	// UI state
 	let activeMapId = $state<string | null>(null);
@@ -755,10 +758,20 @@
 
 	let renderedState = $derived.by<RenderedState | null>(() => {
 		if (!projectionCtx) return null;
+		const latestHistoryT = Math.max(
+			$mapAnchorsStore.reduce(
+				(max, row) => (typeof row.tPosition === 'number' ? Math.max(max, row.tPosition) : max),
+				Number.NEGATIVE_INFINITY
+			),
+			$mapEventsStore.reduce(
+				(max, row) => (typeof row.tPosition === 'number' ? Math.max(max, row.tPosition) : max),
+				Number.NEGATIVE_INFINITY
+			)
+		);
 		const t =
 			$playhead ??
 			(activeMapId ? idleAuthoredTimes[activeMapId] : undefined) ??
-			Number.NEGATIVE_INFINITY;
+			latestHistoryT;
 		// Suppress causal edges while the playhead is idle (null). Maps carry a
 		// baseline anchor at t_position = -Infinity, so the fold WOULD otherwise run
 		// at idle and render timeless caused_by links (scoped ones already filtered
@@ -774,6 +787,15 @@
 					}
 				: causalInput;
 		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore, causal);
+	});
+	$effect(() => {
+		if (
+			!import.meta.env.DEV &&
+			(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ !== true
+		)
+			return;
+		(window as unknown as { __spotlightRenderedMapT?: number | null }).__spotlightRenderedMapT =
+			renderedState?.tPosition ?? null;
 	});
 
 	// ── Cinematic Spotlight (Slice 8) PR1 — playback reaction ───────────────
@@ -1591,7 +1613,13 @@
 		// event stream, so the drop must respect the same CanvasMode invariant
 		// the click path does). Drops bubble through the loading overlay to
 		// this handler, so guard here too.
-		if (!activeMap?.locationId || mapLoading || canvasMode === 'brush' || canvasMode === 'draw') {
+		if (
+			!activeMap?.locationId ||
+			mapLoading ||
+			mapTransitionActive ||
+			canvasMode === 'brush' ||
+			canvasMode === 'draw'
+		) {
 			e.dataTransfer.dropEffect = 'none';
 			return;
 		}
@@ -1611,7 +1639,7 @@
 		if (canvasMode === 'brush' || canvasMode === 'draw') return;
 		// codex P2: ignore drops while the map is still loading — a placement
 		// POST mid-load can be overwritten by the in-flight placements GET.
-		if (mapLoading) return;
+		if (mapLoading || mapTransitionActive) return;
 		e.preventDefault();
 		// Codex /review P2 — drop coords must reference the actual Pixi
 		// canvas, not the .pixi-drop-target wrapper. When the wrapper is
@@ -2392,10 +2420,13 @@
 				artReadyMapId !== activeMapId ||
 				placementsReadyMapId !== activeMapId}
 			onViewport={(vp) => (pixiViewport = vp)}
+			onTransitionChange={(active) => (mapTransitionActive = active)}
 		>
 			{#snippet children()}
 				<PixiBackgroundLayer
 					{activeMap}
+					hidden={$layerPrefs.status === 'loaded' &&
+						$layerPrefs.prefs.get('background') === false}
 					onReady={(mapId) => (backgroundReadyMapId = mapId)}
 				/>
 				<PixiGridLayer {activeMap} />

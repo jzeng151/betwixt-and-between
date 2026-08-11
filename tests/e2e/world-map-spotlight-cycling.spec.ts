@@ -200,7 +200,13 @@ async function seedAshHostWar(
 		eventCount++;
 	}
 
-	return { mapNorthId: mapNorth.id, mapGreyId: mapGrey.id, eventCount };
+	return {
+		mapNorthId: mapNorth.id,
+		mapGreyId: mapGrey.id,
+		greyLocationId: grey.id,
+		heroId: hero.id,
+		eventCount
+	};
 }
 
 test('reduced-motion switches hold the old map and block input until destination art is ready', async ({
@@ -223,7 +229,7 @@ test('reduced-motion switches hold the old map and block input until destination
 	// Manifest failure is a supported flat-color fallback. It must count as a
 	// settled composed layer instead of holding the swap cover forever.
 	await page.route('**/Sprites/terrain-manifest.json', (route) => route.abort());
-	await seedAshHostWar(request, {
+	const { greyLocationId, heroId } = await seedAshHostWar(request, {
 		Northmarch: '/e2e-northmarch.png',
 		Greyhold: '/e2e-greyhold.png'
 	});
@@ -254,8 +260,147 @@ test('reduced-motion switches hold the old map and block input until destination
 	if (!box) throw new Error('map canvas has no bounding box');
 	await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' });
 	await expect(page.locator('.context-menu')).toHaveCount(0);
+	await win.locator('.pixi-drop-target').evaluate((target, assetId) => {
+		const rect = target.getBoundingClientRect();
+		const dataTransfer = new DataTransfer();
+		dataTransfer.setData('application/x-betwixt-asset', assetId);
+		target.dispatchEvent(
+			new DragEvent('drop', {
+				bubbles: true,
+				cancelable: true,
+				clientX: rect.left + rect.width / 2,
+				clientY: rect.top + rect.height / 2,
+				dataTransfer
+			})
+		);
+	}, heroId);
+	await page.waitForTimeout(100);
+	const greyPlacements: Array<{ id: string }> = await (
+		await request.get(`/api/map-placements?locationId=${greyLocationId}`)
+	).json();
+	expect(greyPlacements).toHaveLength(0);
 
 	releaseGreyhold();
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as unknown as { __spotlightMapTransitionActive?: boolean })
+						.__spotlightMapTransitionActive ?? false
+			)
+		)
+		.toBe(false);
+});
+
+test('a hidden destination background does not hold the transition for its image', async ({
+	page,
+	request
+}) => {
+	let releaseGreyhold!: () => void;
+	const greyholdReady = new Promise<void>((resolve) => (releaseGreyhold = resolve));
+	const pixel = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+		'base64'
+	);
+	await page.route('**/e2e-northmarch.png', (route) =>
+		route.fulfill({ status: 200, contentType: 'image/png', body: pixel })
+	);
+	await page.route('**/e2e-greyhold.png', async (route) => {
+		await greyholdReady;
+		await route.fulfill({ status: 200, contentType: 'image/png', body: pixel });
+	});
+	const { mapGreyId } = await seedAshHostWar(request, {
+		Northmarch: '/e2e-northmarch.png',
+		Greyhold: '/e2e-greyhold.png'
+	});
+	await request.patch('/api/world-map-layer-prefs', {
+		data: { worldMapId: mapGreyId, layerKey: 'background', visible: 0 }
+	});
+	await page.addInitScript(() => {
+		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ = true;
+		localStorage.setItem('tutorial-dismissed', 'true');
+	});
+	await page.goto('/app');
+	const win = await openWorldMap(page);
+	const switcher = win.locator('.map-switcher');
+	await switcher.selectOption({ label: 'Northmarch' });
+	await expect(win.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
+	await switcher.selectOption({ label: 'Greyhold' });
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as unknown as { __spotlightMapTransitionActive?: boolean })
+						.__spotlightMapTransitionActive ?? false
+			)
+		)
+		.toBe(true);
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as unknown as { __spotlightMapTransitionActive?: boolean })
+						.__spotlightMapTransitionActive ?? false
+			)
+		)
+		.toBe(false);
+	releaseGreyhold();
+});
+
+test('a switch that supersedes an active fade gets a fresh transition', async ({ page, request }) => {
+	for (const [name, color] of [
+		['northmarch', '#7c2d12'],
+		['greyhold', '#1e3a8a']
+	] as const) {
+		await page.route(`**/e2e-${name}.svg`, (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'image/svg+xml',
+				body: `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><rect width="800" height="500" fill="${color}"/></svg>`
+			})
+		);
+	}
+	await seedAshHostWar(request, {
+		Northmarch: '/e2e-northmarch.svg',
+		Greyhold: '/e2e-greyhold.svg'
+	});
+	await page.addInitScript(() => {
+		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ = true;
+		localStorage.setItem('tutorial-dismissed', 'true');
+	});
+	await page.goto('/app');
+	const win = await openWorldMap(page);
+	const switcher = win.locator('.map-switcher');
+	await switcher.selectOption({ label: 'Northmarch' });
+	await expect(win.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
+	await switcher.selectOption({ label: 'Greyhold' });
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as unknown as { __spotlightMapTransitionActive?: boolean })
+						.__spotlightMapTransitionActive ?? false
+			)
+		)
+		.toBe(true);
+	await page.waitForTimeout(140);
+	expect(
+		await page.evaluate(
+			() =>
+				(window as unknown as { __spotlightMapTransitionActive?: boolean })
+					.__spotlightMapTransitionActive ?? false
+		)
+	).toBe(true);
+	await switcher.selectOption({ label: 'Northmarch' });
+	await expect(win.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
+	await page.waitForTimeout(120);
+	expect(
+		await page.evaluate(
+			() =>
+				(window as unknown as { __spotlightMapTransitionActive?: boolean })
+					.__spotlightMapTransitionActive ?? false
+		)
+	).toBe(true);
 	await expect
 		.poll(() =>
 			page.evaluate(
