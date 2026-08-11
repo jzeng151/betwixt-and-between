@@ -116,6 +116,7 @@
 
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
+	let manifestSettled = $state(false);
 	let layer: PixiContainer | null = null;
 	// Sprites + RTs owned by the displayed build. A Slice D2 dissolve keeps the
 	// OLD build alive while the new one fades in, then disposes it — so
@@ -198,6 +199,7 @@
 			const m = await loadTerrainManifest();
 			if (cancelled) return;
 			manifest = m;
+			manifestSettled = true;
 		})();
 		return () => {
 			cancelled = true;
@@ -377,6 +379,12 @@
 				lastStrokeKey = null;
 				lastViewKey = null;
 				lastStrokesRef = null;
+			}
+			// A missing manifest is the supported flat-color fallback, not an
+			// in-progress render. Release any map-swap cover once that load attempt
+			// has settled; keep waiting while the initial request is still pending.
+			if (PIXI && viewport && app && manifestSettled && map?.width && map?.height) {
+				onReady?.(map.id);
 			}
 			return;
 		}

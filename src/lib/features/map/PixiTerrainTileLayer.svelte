@@ -52,6 +52,7 @@
 
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
+	let manifestSettled = $state(false);
 
 	// Land tiles only — static (no shimmer). Water ripples in PixiWaterLayer.
 	let layer: PixiContainer | null = null;
@@ -81,6 +82,7 @@
 			const m = await loadTerrainManifest();
 			if (cancelled) return;
 			manifest = m;
+			manifestSettled = true;
 		})();
 		return () => {
 			cancelled = true;
@@ -94,6 +96,9 @@
 			// for the previous map (this layer persists across switches), else they
 			// ghost over the blank canvas (Codex #70).
 			if (layer) layer.removeChildren().forEach((c) => c.destroy());
+			if (PIXI && viewport && manifestSettled && activeMap?.width && activeMap?.height) {
+				onReady?.(activeMap.id);
+			}
 			return;
 		}
 		// Square grids only for the tile render; hex keeps the flat layer's look.
