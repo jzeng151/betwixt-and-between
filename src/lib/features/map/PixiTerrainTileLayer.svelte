@@ -36,10 +36,12 @@
 	let {
 		activeMap,
 		cells,
+		hidden = false,
 		onReady
 	}: {
 		activeMap: WorldMap | null;
 		cells: RenderedCell[];
+		hidden?: boolean;
 		onReady?: (mapId: string) => void;
 	} = $props();
 
@@ -91,6 +93,9 @@
 
 	$effect(() => {
 		const viewport = stageCtx.viewport;
+		if (PIXI && viewport && hidden && activeMap?.width && activeMap?.height) {
+			onReady?.(activeMap.id);
+		}
 		if (!PIXI || !viewport || !manifest || !activeMap?.width || !activeMap?.height) {
 			// Switched to a map with no image/dimensions: drop any tiles we built
 			// for the previous map (this layer persists across switches), else they

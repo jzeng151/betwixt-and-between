@@ -59,6 +59,7 @@
 		strokes,
 		playheadT = null,
 		reducedMotion = false,
+		hidden = false,
 		onReady
 	}: {
 		activeMap: WorldMap | null;
@@ -69,6 +70,8 @@
 		playheadT?: number | null;
 		// prefers-reduced-motion → jump-cut (matches the FX layer convention).
 		reducedMotion?: boolean;
+		// The base pref is explicitly hidden. Named art buckets remain independent.
+		hidden?: boolean;
 		onReady?: (mapId: string) => void;
 	} = $props();
 
@@ -368,6 +371,10 @@
 		// Base (Slice A implicit layer) toggle — the static 'art' pref key.
 		const baseVisible =
 			$layerPrefs.status === 'loading' ? false : ($layerPrefs.prefs.get('art') ?? true);
+		const allHidden = hidden && layerView.every((view) => !view.visible);
+		if (PIXI && viewport && app && allHidden && map?.width && map?.height) {
+			onReady?.(map.id);
+		}
 		if (!PIXI || !viewport || !app || !manifest || !map?.width || !map?.height) {
 			if (layer) {
 				// finishFade disposes a mid-dissolve old build; disposeBuild the
