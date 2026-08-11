@@ -487,9 +487,20 @@
 			viewport.addChild(layer);
 		}
 
-		// Collect texture urls, load (idempotent + cached), then rebuild.
+		// Only visible buckets can hold the composed-frame readiness gate. Keep
+		// warming hidden bucket textures independently for a later visibility flip.
+		const knownIds = new Set(layerView.map((v) => v.id));
+		const visibleIds = new Set(layerView.filter((v) => v.visible).map((v) => v.id));
 		const urls = new Set<string>();
-		for (const s of ss) for (const u of urlsForStroke(s)) urls.add(u);
+		const warmingUrls = new Set<string>();
+		for (const s of ss) {
+			const bucketVisible =
+				s.layerId != null && knownIds.has(s.layerId)
+					? visibleIds.has(s.layerId)
+					: baseVisible;
+			for (const u of urlsForStroke(s)) (bucketVisible ? urls : warmingUrls).add(u);
+		}
+		void Promise.allSettled([...warmingUrls].map((u) => PIXI!.Assets.load(u)));
 
 		let cancelled = false;
 		const targetMapId = map.id;
@@ -527,7 +538,6 @@
 			// and with F5 re-bucketing when a layer is deleted, so they are a
 			// real refactor of this path, not a local tweak. The transient-RT
 			// budget guard below caps the worst-case memory in the meantime.
-			const knownIds = new Set(layerView.map((v) => v.id));
 			const buckets = new Map<string | null, StoredStroke[]>();
 			ss.forEach((s) => {
 				const orphaned = s.layerId != null && !knownIds.has(s.layerId);
