@@ -279,12 +279,12 @@ test('reduced-motion switches hold the old map and block input until destination
 		await request.get(`/api/map-placements?locationId=${greyLocationId}`)
 	).json();
 	expect(greyPlacements).toHaveLength(0);
-	const greyEventsBefore: Array<{ id: string }> = await (
+	const { rows: greyEventsBefore }: { rows: Array<{ id: string }> } = await (
 		await request.get(`/api/maps/${mapGreyId}/events`)
 	).json();
 	await page.keyboard.press('Control+z');
 	await page.waitForTimeout(100);
-	const greyEventsAfter: Array<{ id: string }> = await (
+	const { rows: greyEventsAfter }: { rows: Array<{ id: string }> } = await (
 		await request.get(`/api/maps/${mapGreyId}/events`)
 	).json();
 	expect(greyEventsAfter).toHaveLength(greyEventsBefore.length);
