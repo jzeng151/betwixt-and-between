@@ -14,7 +14,11 @@
 	import { isInScope } from '$lib/os/scope-store.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
-	import { playhead, isPlaying } from '$lib/features/timeline/playhead-store.js';
+	import {
+		playhead,
+		isPlaying,
+		secondsPerScene
+	} from '$lib/features/timeline/playhead-store.js';
 	import { jumpToCause } from '$lib/features/timeline/jump-to-cause.js';
 	import { get } from 'svelte/store';
 	import { windowStore } from '$lib/os/windows-store.js';
@@ -827,12 +831,17 @@
 	// recurring per-flow pin gaps (Codex PR #72 #101/#102/#856/… — the specific
 	// gates/pins remain for the "form stays open across a Play" case the pin alone
 	// wouldn't cover). Capture phase so the pin lands BEFORE the child handler reads
-	// activeMapId. Idempotent; only during playback (a Play unpins, restoring follow).
+	// activeMapId. While paused, the same capture cancels any finishing camera ease
+	// before the user interacts with a surface that should stay still.
 	function pinOnMapInteraction(): void {
-		if (get(isPlaying) && !playback.pinned) pinView();
+		if (get(isPlaying)) {
+			if (!playback.pinned) pinView();
+		} else {
+			cameraTarget = null;
+		}
 	}
-	// prefers-reduced-motion → jump-cut: suppress the flashing FX (the owner
-	// change still reads via the region tint). Set from matchMedia on mount.
+	// prefers-reduced-motion: suppress moving FX and automatic camera motion; the
+	// ownership change still reads through the snapped region tint.
 	let reducedMotion = $state(false);
 	// Imperative handle to the FX layer (spawnConquest / clearAll).
 	let punctuationLayer = $state<ReturnType<typeof PixiPunctuationLayer> | null>(null);
@@ -865,6 +874,9 @@
 	// toward. $state so PixiCameraLayer sees it; updated only when beats fire
 	// (per boundary), not per frame. Null = hold.
 	let cameraTarget = $state<CameraTarget | null>(null);
+	$effect(() => {
+		if (reducedMotion) cameraTarget = null;
+	});
 
 	// A region's polygon in world [x, y] order (regions store [lat, lng] px, which
 	// PixiRegionLayer draws as [lng, lat]). For the camera bbox.
@@ -919,6 +931,7 @@
 		punctuationLayer?.spawnConquest(conquests);
 		punctuationLayer?.spawnMarch(marches);
 		punctuationLayer?.spawnRipple(ripples);
+		if (!get(isPlaying) || playback.pinned || reducedMotion) return;
 
 		// Aim the camera at the LOCALIZED changes this frame — flipped regions and
 		// the markers that actually moved. Marches only (not every mover): an
@@ -933,10 +946,23 @@
 		const movers =
 			mapW > 0 && mapH > 0 ? marches.map((m) => ({ x: m.toX * mapW, y: m.toY * mapH })) : [];
 		if (polys.length === 0 && movers.length === 0) return;
-		const vp = pixiViewport as { screenWidth?: number; screenHeight?: number } | null;
+		const vp = pixiViewport as {
+			screenWidth?: number;
+			screenHeight?: number;
+			center?: { x: number; y: number };
+			scale?: { x: number };
+		} | null;
 		const screen = { width: vp?.screenWidth ?? mapW, height: vp?.screenHeight ?? mapH };
-		const t = computeCameraTarget(polys, movers, screen);
-		if (t) cameraTarget = t;
+		const current = {
+			centerX: vp?.center?.x ?? mapW / 2,
+			centerY: vp?.center?.y ?? mapH / 2,
+			zoom: vp?.scale?.x ?? 1
+		};
+		const t = computeCameraTarget(polys, movers, screen, {
+			current,
+			pointZoom: current.zoom
+		});
+		cameraTarget = t;
 	});
 
 	// A map switch drops the camera target so the camera doesn't drift toward the
@@ -953,9 +979,15 @@
 	// Unpin the view when playback (re)starts: pressing Play resumes camera-follow
 	// even if the user had pinned by panning. One-shot on the false→true edge.
 	let wasPlaying = false;
+	let pausedPlayheadT: number | null | undefined;
+	let lastPlayingPlayheadT: number | null | undefined;
 	$effect(() => {
 		const playing = $isPlaying;
+		const t = $playhead;
 		if (playing && !wasPlaying) {
+			const resumeCurrentTarget =
+				pausedPlayheadT !== undefined && t === pausedPlayheadT && !playback.pinned;
+			pausedPlayheadT = undefined;
 			unpinView();
 			// Restart cycling hysteresis from a clean slate: the previous run's
 			// target Location must not stick across a fresh Play (or the user may
@@ -980,23 +1012,29 @@
 			// playback.frame() on that backward jump (no reverse flashes), but any FX
 			// still gliding from the final scene — and the last camera target — would
 			// otherwise linger over the rewound map; clear them so the replay starts clean.
+			if (!resumeCurrentTarget) cameraTarget = null;
 			if (get(playhead) === 0) {
 				punctuationLayer?.clearAll();
+			}
+		} else if (!playing) {
+			if (wasPlaying || pausedPlayheadT === undefined) {
+				if (wasPlaying && lastPlayingPlayheadT !== undefined && t !== lastPlayingPlayheadT) {
+					cameraTarget = null;
+				}
+				pausedPlayheadT = t;
+			} else if (t !== pausedPlayheadT) {
 				cameraTarget = null;
+				pausedPlayheadT = t;
 			}
 		}
+		if (playing) lastPlayingPlayheadT = t;
 		wasPlaying = playing;
 	});
 
-	// Camera-follow is active during playback when not pinned. Reduced motion does
-	// NOT disable it: the camera still frames conquests, but PixiCameraLayer eases
-	// with tau=0 so the move is an instant jump-cut rather than a glide — matching
-	// the changelog ("camera moves become instant jump-cuts") and the layer's own
-	// reduced-motion path. Suppressing follow here would leave a reduced-motion user
-	// panned away from a conquest with no way to see it. A getter (not reactive) the
-	// camera ticker calls each frame.
+	// The ticker may finish an in-flight move after playback pauses; pinning or
+	// reduced motion still stops it immediately.
 	function cameraActive(): boolean {
-		return get(isPlaying) && !playback.pinned;
+		return !playback.pinned && !reducedMotion;
 	}
 
 	// ── Between-map Spotlight cycling (Slice 8) PR2 ─────────────────────────
@@ -2529,6 +2567,7 @@
 				<PixiCameraLayer
 					target={cameraTarget}
 					active={cameraActive}
+					secondsPerScene={$secondsPerScene}
 					{reducedMotion}
 					onUserInteract={() => pinView()}
 				/>

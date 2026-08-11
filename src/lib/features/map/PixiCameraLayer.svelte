@@ -3,8 +3,7 @@
 	//
 	// Renders nothing; it drives the shared pixi-viewport. Each frame, while
 	// active, it eases the viewport center + zoom toward the target the
-	// camera-director computed (the changed-this-frame bbox), with a long τ≈400ms
-	// so the camera LAGS and feels cinematic (design). The ease is imperative on
+	// camera-director computed (the changed-this-frame bbox). The ease is imperative on
 	// the shared anim-controller tick — never $state (the PR0 invariant).
 	//
 	// Pin-on-interact (eng decision #3): any manual pan / pinch / wheel fires
@@ -13,29 +12,34 @@
 	// those gesture events, so the camera never pins itself.
 	//
 	// `active` is a getter called per frame (not a reactive prop) so the parent
-	// can fold in the playhead-store isPlaying state + the pin flag + reduced
-	// motion without this component importing them.
+	// can fold in its pin and reduced-motion state without this component
+	// importing those stores.
 
 	import { getContext, onDestroy } from 'svelte';
 	import { PIXI_STAGE_CONTEXT, type PixiStageContext } from './pixi-context.js';
 	import { easeToward } from './ease.js';
-	import type { CameraTarget } from './camera-director.js';
+	import {
+		cameraTargetSettled,
+		cameraTauMs,
+		type CameraTarget
+	} from './camera-director.js';
 
 	let {
 		target,
 		active,
+		secondsPerScene = 4,
 		reducedMotion = false,
 		onUserInteract
 	}: {
 		target: CameraTarget | null;
 		active: () => boolean;
-		// Reduced motion: snap to the target instead of gliding (jump-cut).
+		secondsPerScene?: number;
+		// Reduced motion: keep the user's stable framing; do not auto-pan/zoom.
 		reducedMotion?: boolean;
 		onUserInteract: () => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
-	const CAM_TAU_MS = 400; // long → the camera lags cinematically
 	// Opt-in diagnostic (same gate as the other Spotlight layers): counts frames
 	// the camera actually drove the viewport, so an e2e can confirm follow engages
 	// during playback and stops when pinned. Prod stays clean.
@@ -46,6 +50,7 @@
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	type Vp = any;
+	let settledTarget: CameraTarget | null = null;
 
 	// Pin-on-interact: user gestures on the viewport. pixi-viewport emits these
 	// only for real input — programmatic moves don't — so the follow can't trip it.
@@ -77,18 +82,31 @@
 		const vp = stageCtx.viewport as Vp;
 		if (!app || !anim || !vp) return;
 		const off = anim.register(() => {
-			if (!target || !active()) return;
+			if (!target) {
+				settledTarget = null;
+				return;
+			}
+			if (reducedMotion || !active() || target === settledTarget) return;
+			const c = vp.center;
+			const current = {
+				centerX: c.x,
+				centerY: c.y,
+				zoom: vp.scale?.x ?? 1
+			};
+			if (cameraTargetSettled(current, target)) {
+				settledTarget = target;
+				return;
+			}
 			if (DIAG && typeof window !== 'undefined') {
 				const w = window as unknown as { __spotlightCameraMoves?: number };
 				w.__spotlightCameraMoves = (w.__spotlightCameraMoves ?? 0) + 1;
 			}
 			const dt = app.ticker.deltaMS;
-			const tau = reducedMotion ? 0 : CAM_TAU_MS;
+			const tau = cameraTauMs(secondsPerScene);
 			// Zoom first (keeping the current screen center fixed), then recenter —
 			// so the two eases don't fight over the frame's transform.
-			const nz = easeToward(vp.scale?.x ?? 1, target.zoom, dt, tau);
+			const nz = easeToward(current.zoom, target.zoom, dt, tau);
 			vp.setZoom?.(nz, true);
-			const c = vp.center;
 			const nx = easeToward(c.x, target.centerX, dt, tau);
 			const ny = easeToward(c.y, target.centerY, dt, tau);
 			vp.moveCenter?.(nx, ny);

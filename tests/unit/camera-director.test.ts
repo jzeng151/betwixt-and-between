@@ -5,6 +5,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	computeCameraTarget,
 	coverRect,
+	cameraTargetSettled,
+	cameraTauMs,
 	remapCameraAcrossMaps
 } from '../../src/lib/features/map/camera-director.js';
 
@@ -49,6 +51,17 @@ it('covers a new aspect ratio without stretching the captured frame', () => {
 	});
 });
 
+it('scales camera easing to playback speed and caps slow scenes', () => {
+	expect(cameraTauMs(0.5)).toBe(60);
+	expect(cameraTauMs(2)).toBe(240);
+	expect(cameraTauMs(16)).toBe(400);
+});
+
+it('treats sub-pixel camera differences as settled', () => {
+	const current = { centerX: 100, centerY: 100, zoom: 1 };
+	expect(cameraTargetSettled(current, { centerX: 100.4, centerY: 100.2, zoom: 1.0005 })).toBe(true);
+	expect(cameraTargetSettled(current, { centerX: 102, centerY: 100, zoom: 1 })).toBe(false);
+});
 describe('computeCameraTarget — centering', () => {
 	it('centers on a single changed region bbox', () => {
 		const t = computeCameraTarget([square(100, 100, 300, 200)], [], SCREEN);
@@ -77,6 +90,21 @@ describe('computeCameraTarget — centering', () => {
 		expect(t!.centerX).toBe(50);
 		expect(t!.centerY).toBe(50);
 	});
+
+	it('holds while changed geometry stays inside the current comfort zone', () => {
+		const t = computeCameraTarget([square(350, 250, 450, 350)], [], SCREEN, {
+			current: { centerX: 400, centerY: 300, zoom: 1 }
+		});
+		expect(t).toBeNull();
+	});
+
+	it('reframes when changed geometry leaves the current comfort zone', () => {
+		const t = computeCameraTarget([square(700, 500, 780, 580)], [], SCREEN, {
+			current: { centerX: 400, centerY: 300, zoom: 1 }
+		});
+		expect(t?.centerX).toBe(740);
+		expect(t?.centerY).toBe(540);
+	});
 });
 
 describe('computeCameraTarget — zoom', () => {
@@ -101,6 +129,13 @@ describe('computeCameraTarget — zoom', () => {
 	it('focuses a single point (one mover) at pointZoom, not Infinity', () => {
 		const t = computeCameraTarget([], [{ x: 250, y: 250 }], SCREEN, { pointZoom: 1.5 });
 		expect(t).toEqual({ centerX: 250, centerY: 250, zoom: 1.5 });
+	});
+
+	it('preserves the current zoom above the default fit clamp for a point event', () => {
+		const t = computeCameraTarget([], [{ x: 250, y: 250 }], SCREEN, {
+			current: { centerX: 0, centerY: 0, zoom: 6 }
+		});
+		expect(t).toEqual({ centerX: 250, centerY: 250, zoom: 6 });
 	});
 
 	it('handles a zero-height bbox (a horizontal line of movers) via the x axis only', () => {
