@@ -33,7 +33,15 @@
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
 
-	let { activeMap, cells }: { activeMap: WorldMap | null; cells: RenderedCell[] } = $props();
+	let {
+		activeMap,
+		cells,
+		onReady
+	}: {
+		activeMap: WorldMap | null;
+		cells: RenderedCell[];
+		onReady?: (mapId: string) => void;
+	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
 
@@ -94,6 +102,7 @@
 		// otherwise the stale sprites ghost on top of the hex map.
 		if (activeMap.gridType === 'hex') {
 			if (layer) layer.removeChildren().forEach((c) => c.destroy());
+			onReady?.(activeMap.id);
 			return;
 		}
 
@@ -128,6 +137,7 @@
 		// textures keyed by url, so we never probe with Assets.get (which warns
 		// on a cache miss). Cancel stale passes when cells/map change mid-load.
 		let cancelled = false;
+		const targetMapId = activeMap.id;
 		(async () => {
 			let texMap: Record<string, unknown> = {};
 			if (urls.size > 0) {
@@ -150,6 +160,7 @@
 				sprite.height = cellH;
 				layer.addChild(sprite);
 			}
+			onReady?.(targetMapId);
 		})();
 		return () => {
 			cancelled = true;
