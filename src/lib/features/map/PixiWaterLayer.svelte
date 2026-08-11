@@ -27,7 +27,17 @@
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
 
-	let { activeMap, cells }: { activeMap: WorldMap | null; cells: RenderedCell[] } = $props();
+	let {
+		activeMap,
+		cells,
+		hidden = false,
+		onReady
+	}: {
+		activeMap: WorldMap | null;
+		cells: RenderedCell[];
+		hidden?: boolean;
+		onReady?: (mapId: string | null) => void;
+	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
 
@@ -40,6 +50,7 @@
 
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
+	let manifestSettled = $state(false);
 	let layer: PixiContainer | null = null;
 	let shimmer: import('./terrain-shimmer.js').TerrainShimmer | null = null;
 	let offShimmer: (() => void) | null = null;
@@ -54,6 +65,7 @@
 			const m = await loadTerrainManifest();
 			if (cancelled) return;
 			manifest = m;
+			manifestSettled = true;
 		})();
 		return () => {
 			cancelled = true;
@@ -62,6 +74,12 @@
 
 	$effect(() => {
 		const viewport = stageCtx.viewport;
+		if (PIXI && viewport && hidden && activeMap?.width && activeMap?.height) {
+			onReady?.(activeMap.id);
+		}
+		if (PIXI && viewport && !hidden && !manifestSettled && activeMap?.width && activeMap?.height) {
+			onReady?.(null);
+		}
 		if (!PIXI || !viewport || !activeMap?.width || !activeMap?.height) {
 			// Switched to an image-less map: drop the previous map's water so it
 			// doesn't ghost over the blank canvas (Codex #70).
@@ -113,6 +131,7 @@
 			}
 			layer.removeChildren().forEach((c) => c.destroy());
 			layer.addChild(g);
+			if (manifestSettled) onReady?.(activeMap.id);
 			return;
 		}
 
@@ -127,6 +146,8 @@
 		}
 
 		let cancelled = false;
+		const targetMapId = activeMap.id;
+		if (!hidden) onReady?.(null);
 		(async () => {
 			let texMap: Record<string, unknown> = {};
 			if (urls.size > 0) {
@@ -158,6 +179,7 @@
 				}
 			}
 			layer.addChildAt(g, 0);
+			onReady?.(targetMapId);
 		})();
 		return () => {
 			cancelled = true;

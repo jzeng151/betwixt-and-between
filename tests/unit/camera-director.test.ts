@@ -62,7 +62,6 @@ it('treats sub-pixel camera differences as settled', () => {
 	expect(cameraTargetSettled(current, { centerX: 100.4, centerY: 100.2, zoom: 1.0005 })).toBe(true);
 	expect(cameraTargetSettled(current, { centerX: 102, centerY: 100, zoom: 1 })).toBe(false);
 });
-
 describe('computeCameraTarget — centering', () => {
 	it('centers on a single changed region bbox', () => {
 		const t = computeCameraTarget([square(100, 100, 300, 200)], [], SCREEN);

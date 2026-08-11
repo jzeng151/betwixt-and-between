@@ -58,7 +58,9 @@
 		activeMap,
 		strokes,
 		playheadT = null,
-		reducedMotion = false
+		reducedMotion = false,
+		hidden = false,
+		onReady
 	}: {
 		activeMap: WorldMap | null;
 		strokes: StoredStroke[];
@@ -68,6 +70,9 @@
 		playheadT?: number | null;
 		// prefers-reduced-motion → jump-cut (matches the FX layer convention).
 		reducedMotion?: boolean;
+		// The base pref is explicitly hidden. Named art buckets remain independent.
+		hidden?: boolean;
+		onReady?: (mapId: string | null) => void;
 	} = $props();
 
 	// Slice D2 diag counter (mirrors PixiPunctuationLayer's __spotlight*Count):
@@ -114,6 +119,7 @@
 
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
+	let manifestSettled = $state(false);
 	let layer: PixiContainer | null = null;
 	// Sprites + RTs owned by the displayed build. A Slice D2 dissolve keeps the
 	// OLD build alive while the new one fades in, then disposes it — so
@@ -196,6 +202,7 @@
 			const m = await loadTerrainManifest();
 			if (cancelled) return;
 			manifest = m;
+			manifestSettled = true;
 		})();
 		return () => {
 			cancelled = true;
@@ -364,6 +371,13 @@
 		// Base (Slice A implicit layer) toggle — the static 'art' pref key.
 		const baseVisible =
 			$layerPrefs.status === 'loading' ? false : ($layerPrefs.prefs.get('art') ?? true);
+		const allHidden = hidden && layerView.every((view) => !view.visible);
+		if (PIXI && viewport && app && allHidden && map?.width && map?.height) {
+			onReady?.(map.id);
+		}
+		if (PIXI && viewport && app && !allHidden && !manifestSettled && map?.width && map?.height) {
+			onReady?.(null);
+		}
 		if (!PIXI || !viewport || !app || !manifest || !map?.width || !map?.height) {
 			if (layer) {
 				// finishFade disposes a mid-dissolve old build; disposeBuild the
@@ -375,6 +389,12 @@
 				lastStrokeKey = null;
 				lastViewKey = null;
 				lastStrokesRef = null;
+			}
+			// A missing manifest is the supported flat-color fallback, not an
+			// in-progress render. Release any map-swap cover once that load attempt
+			// has settled; keep waiting while the initial request is still pending.
+			if (PIXI && viewport && app && manifestSettled && map?.width && map?.height) {
+				onReady?.(map.id);
 			}
 			return;
 		}
@@ -398,6 +418,7 @@
 		// array with identical content), preserving F8 collision-safety.
 		if (ss === lastStrokesRef && viewKey === lastViewKey) {
 			lastPlayheadT = atT;
+			onReady?.(map.id);
 			return; // nothing visual changed — keep the displayed build
 		}
 
@@ -438,6 +459,7 @@
 		if (!strokesChanged && viewKey === lastViewKey) {
 			lastPlayheadT = atT;
 			lastStrokesRef = ss; // refresh identity so the next tick takes the fast-path
+			onReady?.(map.id);
 			return; // nothing visual changed — keep the displayed build
 		}
 		// A terrain BEAT: the stroke set changed because the playhead moved over
@@ -468,11 +490,24 @@
 			viewport.addChild(layer);
 		}
 
-		// Collect texture urls, load (idempotent + cached), then rebuild.
+		// Only visible buckets can hold the composed-frame readiness gate. Keep
+		// warming hidden bucket textures independently for a later visibility flip.
+		const knownIds = new Set(layerView.map((v) => v.id));
+		const visibleIds = new Set(layerView.filter((v) => v.visible).map((v) => v.id));
 		const urls = new Set<string>();
-		for (const s of ss) for (const u of urlsForStroke(s)) urls.add(u);
+		const warmingUrls = new Set<string>();
+		for (const s of ss) {
+			const bucketVisible =
+				s.layerId != null && knownIds.has(s.layerId)
+					? visibleIds.has(s.layerId)
+					: baseVisible;
+			for (const u of urlsForStroke(s)) (bucketVisible ? urls : warmingUrls).add(u);
+		}
+		void Promise.allSettled([...warmingUrls].map((u) => PIXI!.Assets.load(u)));
 
 		let cancelled = false;
+		const targetMapId = map.id;
+		if (!allHidden) onReady?.(null);
 		(async () => {
 			// Load per-URL (allSettled), NOT Assets.load([...urls]) as one batch:
 			// the batch promise is all-or-nothing, so a single 404'd sprite would
@@ -506,7 +541,6 @@
 			// and with F5 re-bucketing when a layer is deleted, so they are a
 			// real refactor of this path, not a local tweak. The transient-RT
 			// budget guard below caps the worst-case memory in the meantime.
-			const knownIds = new Set(layerView.map((v) => v.id));
 			const buckets = new Map<string | null, StoredStroke[]>();
 			ss.forEach((s) => {
 				const orphaned = s.layerId != null && !knownIds.has(s.layerId);
@@ -616,6 +650,7 @@
 			} else {
 				disposeBuild(oldBuild);
 			}
+			onReady?.(targetMapId);
 		})();
 		return () => {
 			cancelled = true;

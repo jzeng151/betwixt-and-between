@@ -28,10 +28,12 @@
 
 	let {
 		activeMap,
+		hidden = false,
 		onReady
 	}: {
 		activeMap: WorldMap | null;
-		onReady?: (mapId: string) => void;
+		hidden?: boolean;
+		onReady?: (mapId: string | null) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -73,6 +75,9 @@
 		const w = activeMap?.width ?? null;
 		const h = activeMap?.height ?? null;
 		const mapId = activeMap?.id ?? null;
+		// A hidden background cannot contribute to the composed destination
+		// frame. Release the swap cover now while still warming its texture.
+		if (mapId && hidden) onReady?.(mapId);
 
 		// No image or no dimensions → tear down any existing sprite and stop.
 		if (!url || !w || !h || !mapId) {
@@ -109,6 +114,7 @@
 
 		const targetUrl = url;
 		const targetMapId = mapId;
+		if (!hidden) onReady?.(null);
 		let mounted = true;
 		void (async () => {
 			try {

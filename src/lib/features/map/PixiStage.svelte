@@ -40,7 +40,8 @@
 		children,
 		reducedMotion = false,
 		transitionPaused = false,
-		onViewport
+		onViewport,
+		onTransitionChange
 	}: {
 		activeMap: WorldMap | null;
 		children?: Snippet;
@@ -52,6 +53,7 @@
 		// transform the Pixi layers use. Called with null on teardown.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		onViewport?: (viewport: any | null) => void;
+		onTransitionChange?: (active: boolean) => void;
 	} = $props();
 
 	let canvasContainer = $state<HTMLDivElement | null>(null);
@@ -59,16 +61,35 @@
 	let ready = $state(false);
 	let PIXI: PixiModule | null = null;
 	let lastMap: { id: string; width: number; height: number } | null = null;
-	let swapSnapshot: { sprite: PixiSprite; texture: PixiTexture; off: () => void } | null = null;
+	let swapSnapshot: {
+		sprite: PixiSprite;
+		texture: PixiTexture;
+		off: () => void;
+		resumeWheel: () => void;
+	} | null = null;
 	const MAX_SWAP_TEXTURE_PX = 2048;
+	const STAGE_BACKGROUND = 0x222222;
+
+	function setTransitionActive(active: boolean): void {
+		onTransitionChange?.(active);
+		if (
+			!import.meta.env.DEV &&
+			(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ !== true
+		)
+			return;
+		(window as unknown as { __spotlightMapTransitionActive?: boolean })
+			.__spotlightMapTransitionActive = active;
+	}
 
 	function clearSwapSnapshot(): void {
 		if (!swapSnapshot) return;
-		const { sprite, texture, off } = swapSnapshot;
+		const { sprite, texture, off, resumeWheel } = swapSnapshot;
 		swapSnapshot = null;
 		off();
+		resumeWheel();
 		if (!sprite.destroyed) sprite.destroy();
 		texture.destroy(true);
+		setTransitionActive(false);
 	}
 
 	// Reactive context wrapper so descendants can read the live Application
@@ -96,7 +117,7 @@
 				await newApp.init({
 					width: mapW,
 					height: mapH,
-					background: 0x222222,
+					background: STAGE_BACKGROUND,
 					antialias: true
 				});
 
@@ -194,7 +215,15 @@
 		const app = stageCtx.app;
 		const viewport = stageCtx.viewport;
 		const anim = stageCtx.anim;
-		if (!app || !viewport || !activeMap?.width || !activeMap?.height || !PIXI) return;
+		if (!app || !viewport || !PIXI) return;
+		if (!activeMap?.width || !activeMap?.height) {
+			// Persistent layers clear their composition during a real null-map gap
+			// (notably optimistic deletion). Forget the prior framing baseline so
+			// the replacement map does not crossfade a newly captured gray stage.
+			lastMap = null;
+			clearSwapSnapshot();
+			return;
+		}
 		const w = activeMap.width;
 		const h = activeMap.height;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -206,49 +235,81 @@
 			zoom: vp.scale?.x ?? 1
 		};
 
-		if (switching && !reducedMotion && anim) {
-			if (!swapSnapshot) {
+		if (switching && anim) {
+			try {
+				const displayWidth = app.canvas.clientWidth || MAX_SWAP_TEXTURE_PX;
+				const displayHeight = app.canvas.clientHeight || MAX_SWAP_TEXTURE_PX;
+				const resolution = Math.min(
+					1,
+					displayWidth / app.renderer.width,
+					displayHeight / app.renderer.height,
+					MAX_SWAP_TEXTURE_PX / app.renderer.width,
+					MAX_SWAP_TEXTURE_PX / app.renderer.height
+				);
+				// Capture only the map viewport. Screen-space children such as the
+				// persistent caption stay live above the transition instead of being
+				// baked into it. clearColor includes the renderer's gray background,
+				// which is otherwise absent from generated stage textures.
+				const priorSnapshot = swapSnapshot;
+				const hiddenStageChildren = app.stage.children.filter(
+					(child) => child !== viewport && child !== priorSnapshot?.sprite && child.visible
+				);
+				hiddenStageChildren.forEach((child) => (child.visible = false));
+				let texture: PixiTexture;
 				try {
-					const displayWidth = app.canvas.clientWidth || MAX_SWAP_TEXTURE_PX;
-					const displayHeight = app.canvas.clientHeight || MAX_SWAP_TEXTURE_PX;
-					const resolution = Math.min(
-						1,
-						displayWidth / app.renderer.width,
-						displayHeight / app.renderer.height,
-						MAX_SWAP_TEXTURE_PX / app.renderer.width,
-						MAX_SWAP_TEXTURE_PX / app.renderer.height
-					);
-					const texture = app.renderer.generateTexture({
+					texture = app.renderer.generateTexture({
 						target: app.stage,
 						frame: new PIXI.Rectangle(0, 0, app.renderer.width, app.renderer.height),
-						resolution
+						resolution,
+						clearColor: STAGE_BACKGROUND
 					});
-					const sprite = new PIXI.Sprite(texture);
-					sprite.eventMode = 'none';
-					app.stage.addChild(sprite);
-					let elapsedMs = 0;
-					const off = anim.register(() => {
-						if (transitionPaused) return;
-						elapsedMs += app.ticker.deltaMS;
-						sprite.alpha = Math.max(0, 1 - elapsedMs / 220);
-						if (elapsedMs >= 220) clearSwapSnapshot();
-					});
-					swapSnapshot = { sprite, texture, off };
-					if (
-						import.meta.env.DEV ||
-						(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ ===
-							true
-					) {
-						const diag = window as unknown as { __spotlightMapTransitionCount?: number };
-						diag.__spotlightMapTransitionCount =
-							(diag.__spotlightMapTransitionCount ?? 0) + 1;
-					}
-				} catch (err) {
-					console.warn('PixiStage: failed to capture map transition frame', err);
+				} finally {
+					hiddenStageChildren.forEach((child) => (child.visible = true));
 				}
+				// A switch that supersedes an in-flight fade captures the exact
+				// blended frame currently on screen, then gives the new destination
+				// its own full hold + fade instead of inheriting the old timer.
+				clearSwapSnapshot();
+				const sprite = new PIXI.Sprite(texture);
+				// The old frame is visually authoritative until the destination is
+				// ready, so it must also be interaction-authoritative. A static top
+				// hit target prevents clicks, drops, pans, and context menus from
+				// reaching destination-map coordinates the user cannot see yet.
+				sprite.eventMode = 'static';
+				sprite.hitArea = new PIXI.Rectangle(0, 0, texture.width, texture.height);
+				// Insert directly above the viewport so live screen-space captions
+				// remain above the old map frame throughout the transition.
+				app.stage.addChildAt(sprite, app.stage.getChildIndex(viewport) + 1);
+				let elapsedMs = 0;
+				const off = anim.register(() => {
+					if (transitionPaused) return;
+					if (reducedMotion) {
+						clearSwapSnapshot();
+						return;
+					}
+					elapsedMs += app.ticker.deltaMS;
+					sprite.alpha = Math.max(0, 1 - elapsedMs / 220);
+					if (elapsedMs >= 220) clearSwapSnapshot();
+				});
+				vp.plugins.pause('wheel');
+				swapSnapshot = {
+					sprite,
+					texture,
+					off,
+					resumeWheel: () => vp.plugins.resume('wheel')
+				};
+				setTransitionActive(true);
+				if (
+					import.meta.env.DEV ||
+					(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ === true
+				) {
+					const diag = window as unknown as { __spotlightMapTransitionCount?: number };
+					diag.__spotlightMapTransitionCount =
+						(diag.__spotlightMapTransitionCount ?? 0) + 1;
+				}
+			} catch (err) {
+				console.warn('PixiStage: failed to capture map transition frame', err);
 			}
-		} else {
-			clearSwapSnapshot();
 		}
 
 		if (app.renderer.width !== w || app.renderer.height !== h) {

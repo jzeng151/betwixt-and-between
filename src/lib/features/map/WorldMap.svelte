@@ -203,7 +203,7 @@
 		// rows, so canUndo can read true from the PREVIOUS map while the overlay
 		// is up — and undo would POST /events/undo against the NEW map, deleting
 		// its latest event. mapLoading stays true until anchors/events settle.
-		if (mapLoading) return;
+		if (mapLoading || mapTransitionActive) return;
 		// Capture before await: undo/redo are keyboard-triggerable (no pointerdown to
 		// pin), so a cycle can move on mid-request; invalidate the mutated map's staged
 		// bundle, not the active one (Codex PR #72 #104).
@@ -217,7 +217,7 @@
 	}
 	async function handleRedo() {
 		if (!activeMapId) return;
-		if (mapLoading) return;
+		if (mapLoading || mapTransitionActive) return;
 		const mapId = activeMapId;
 		try {
 			await mapEventsStore.redo(activeMapId);
@@ -361,7 +361,7 @@
 	// the user is working in another app, and ignored while typing in a field.
 	function handleMapKeydown(e: KeyboardEvent) {
 		if (!activeMapId) return;
-		if (mapLoading) return; // codex P2: don't undo/redo against a still-loading map
+		if (mapLoading || mapTransitionActive) return;
 		// Scope to THIS window instance. Multiple world-map windows can be open
 		// (default + location-specific), each with its own handler + activeMapId;
 		// comparing the focused window's id (not just appId) ensures only the
@@ -399,6 +399,9 @@
 	// drop's screen coords → world coords through the pan/zoom transform.
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let pixiViewport = $state<any>(null);
+	// Shared interaction gate for native DOM handlers, keyboard commands, and
+	// toolbar state while the old-map snapshot is authoritative.
+	let mapTransitionActive = $state(false);
 
 	// UI state
 	let activeMapId = $state<string | null>(null);
@@ -759,10 +762,20 @@
 
 	let renderedState = $derived.by<RenderedState | null>(() => {
 		if (!projectionCtx) return null;
+		const latestHistoryT = Math.max(
+			$mapAnchorsStore.reduce(
+				(max, row) => (typeof row.tPosition === 'number' ? Math.max(max, row.tPosition) : max),
+				Number.NEGATIVE_INFINITY
+			),
+			$mapEventsStore.reduce(
+				(max, row) => (typeof row.tPosition === 'number' ? Math.max(max, row.tPosition) : max),
+				Number.NEGATIVE_INFINITY
+			)
+		);
 		const t =
 			$playhead ??
 			(activeMapId ? idleAuthoredTimes[activeMapId] : undefined) ??
-			Number.NEGATIVE_INFINITY;
+			latestHistoryT;
 		// Suppress causal edges while the playhead is idle (null). Maps carry a
 		// baseline anchor at t_position = -Infinity, so the fold WOULD otherwise run
 		// at idle and render timeless caused_by links (scoped ones already filtered
@@ -778,6 +791,15 @@
 					}
 				: causalInput;
 		return projectState(t, $mapAnchorsStore, $mapEventsStore, projectionCtx, $placementsStore, causal);
+	});
+	$effect(() => {
+		if (
+			!import.meta.env.DEV &&
+			(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ !== true
+		)
+			return;
+		(window as unknown as { __spotlightRenderedMapT?: number | null }).__spotlightRenderedMapT =
+			renderedState?.tPosition ?? null;
 	});
 
 	// ── Cinematic Spotlight (Slice 8) PR1 — playback reaction ───────────────
@@ -831,6 +853,10 @@
 	// PR #72). pixiReady is the readiness flag; pendingBeats holds the init-window beats.
 	let pixiReady = false;
 	let backgroundReadyMapId = $state<string | null>(null);
+	let terrainTilesReadyMapId = $state<string | null>(null);
+	let artReadyMapId = $state<string | null>(null);
+	let waterReadyMapId = $state<string | null>(null);
+	let placementsReadyMapId = $state<string | null>(null);
 	let pendingBeats: Punctuation[] = [];
 	// Reset readiness when the FX layer unmounts (e.g. the last map is deleted → the
 	// {#if !hasMaps} branch destroys PixiPunctuationLayer). A later remount re-imports
@@ -1514,6 +1540,7 @@
 				!factionsSettled ||
 				(activeMap?.locationId != null && placementsLoading))
 	);
+	let mapLoadingOverlayVisible = $derived(mapLoading && !($isPlaying && !viewPinned));
 
 	// Codex P2 on PR #55 (commits 4ccb183 + da20221): regions and
 	// activeMapId update independently during a map switch. switchMap()
@@ -1626,7 +1653,13 @@
 		// event stream, so the drop must respect the same CanvasMode invariant
 		// the click path does). Drops bubble through the loading overlay to
 		// this handler, so guard here too.
-		if (!activeMap?.locationId || mapLoading || canvasMode === 'brush' || canvasMode === 'draw') {
+		if (
+			!activeMap?.locationId ||
+			mapLoading ||
+			mapTransitionActive ||
+			canvasMode === 'brush' ||
+			canvasMode === 'draw'
+		) {
 			e.dataTransfer.dropEffect = 'none';
 			return;
 		}
@@ -1646,7 +1679,7 @@
 		if (canvasMode === 'brush' || canvasMode === 'draw') return;
 		// codex P2: ignore drops while the map is still loading — a placement
 		// POST mid-load can be overwritten by the in-flight placements GET.
-		if (mapLoading) return;
+		if (mapLoading || mapTransitionActive) return;
 		e.preventDefault();
 		// Codex /review P2 — drop coords must reference the actual Pixi
 		// canvas, not the .pixi-drop-target wrapper. When the wrapper is
@@ -2402,7 +2435,7 @@
 			ondragover={handleAssetDragOver}
 			ondrop={handleAssetDrop}
 		>
-		{#if mapLoading && !($isPlaying && !viewPinned)}
+		{#if mapLoadingOverlayVisible}
 			<!-- Bug 2: cover the canvas while the saved layer config AND the
 			     placements load, so the user sees an intentional loading state
 			     instead of layers/markers flashing or popping in.
@@ -2421,18 +2454,32 @@
 		<PixiStage
 			{activeMap}
 			{reducedMotion}
-			transitionPaused={(mapLoading && viewPinned) || backgroundReadyMapId !== activeMapId}
+			transitionPaused={mapLoadingOverlayVisible ||
+				backgroundReadyMapId !== activeMapId ||
+				terrainTilesReadyMapId !== activeMapId ||
+				artReadyMapId !== activeMapId ||
+				waterReadyMapId !== activeMapId ||
+				placementsReadyMapId !== activeMapId}
 			onViewport={(vp) => (pixiViewport = vp)}
+			onTransitionChange={(active) => (mapTransitionActive = active)}
 		>
 			{#snippet children()}
 				<PixiBackgroundLayer
 					{activeMap}
+					hidden={$layerPrefs.status === 'loaded' &&
+						$layerPrefs.prefs.get('background') === false}
 					onReady={(mapId) => (backgroundReadyMapId = mapId)}
 				/>
 				<PixiGridLayer {activeMap} />
 				<PixiTerrainLayer {activeMap} cells={boundedTerrainCells} />
 				<!-- Slice 6 D15: sprite-tile terrain on top of the flat layer. -->
-				<PixiTerrainTileLayer {activeMap} cells={boundedTerrainCells} />
+				<PixiTerrainTileLayer
+					{activeMap}
+					cells={boundedTerrainCells}
+					hidden={$layerPrefs.status === 'loaded' &&
+						$layerPrefs.prefs.get('terrain') === false}
+					onReady={(mapId) => (terrainTilesReadyMapId = mapId)}
+				/>
 				<!-- WM3 Slice A: freeform brush art (paint_stroke) over the grid tiles. -->
 				<!-- Slice D2: playheadT + reducedMotion drive the terrain-transition
 				     dissolve (a stroke-set change caused by a playhead move
@@ -2442,9 +2489,17 @@
 					strokes={renderedState?.strokes ?? []}
 					playheadT={$playhead}
 					{reducedMotion}
+					hidden={$layerPrefs.status === 'loaded' && $layerPrefs.prefs.get('art') === false}
+					onReady={(mapId) => (artReadyMapId = mapId)}
 				/>
 				<!-- Slice 6: only water ripples (shimmer applied to water cells alone). -->
-				<PixiWaterLayer {activeMap} cells={boundedTerrainCells} />
+				<PixiWaterLayer
+					{activeMap}
+					cells={boundedTerrainCells}
+					hidden={$layerPrefs.status === 'loaded' &&
+						$layerPrefs.prefs.get('terrain') === false}
+					onReady={(mapId) => (waterReadyMapId = mapId)}
+				/>
 				<PixiRegionLayer
 					regions={scopedRegions}
 					{renderedState}
@@ -2518,6 +2573,8 @@
 				/>
 				<PixiPlacementLayer
 					{activeMap}
+					hidden={$layerPrefs.status === 'loaded' &&
+						$layerPrefs.prefs.get('placements') === false}
 					bind:authoringOpen={placementAuthoringOpen}
 					onStylePersisted={() => {
 						// Post-PATCH: re-invalidate the Location's cycle bundles so a prefetch
@@ -2527,6 +2584,7 @@
 						const loc = activeMap?.locationId;
 						if (loc) invalidateCycleCacheForLocation(loc);
 					}}
+					onReady={(mapId) => (placementsReadyMapId = mapId)}
 					playhead={$playhead}
 					placements={$placementsStore}
 					entities={$entities}
@@ -2607,8 +2665,8 @@
 				onSelect={(t) => (activeTool = t)}
 				placeEnabled={!!activeMap?.locationId}
 				moveEnabled={!!activeMap?.locationId}
-				canUndo={canUndo && !mapLoading}
-				canRedo={canRedo && !mapLoading}
+				canUndo={canUndo && !mapLoading && !mapTransitionActive}
+				canRedo={canRedo && !mapLoading && !mapTransitionActive}
 				onUndo={handleUndo}
 				onRedo={handleRedo}
 			/>

@@ -64,6 +64,8 @@
 		onDeletePlacement,
 		onCanvasClick,
 		onStylePersisted,
+		hidden = false,
+		onReady,
 		authoringOpen = $bindable(false)
 	}: {
 		activeMap: WorldMap | null;
@@ -115,6 +117,8 @@
 		onCanvasClick?: (fx: number, fy: number) => void;
 		// Fired after a placement style PATCH resolves (Codex PR #72 #521).
 		onStylePersisted?: () => void;
+		hidden?: boolean;
+		onReady?: (mapId: string | null) => void;
 		// Bindable: true while this layer owns an open authoring surface (the marker
 		// context menu or the style popover). The parent reads it to suspend cycling so
 		// a cycle can't flip activeMapId while a menu is open and route a captured
@@ -292,6 +296,9 @@
 		if (!activeMap?.width || !activeMap?.height) return;
 
 		const generation = ++renderGeneration;
+		const targetMapId = activeMap.id;
+		if (hidden) onReady?.(targetMapId);
+		const iconLoads: Promise<void>[] = [];
 		// Capture moveMode for the closures below; reading it here also makes this
 		// effect rebuild markers (grab cursor + drag handler) when the tool toggles.
 		const inMoveMode = moveMode;
@@ -520,7 +527,9 @@
 			// loads and as the fallback if the load fails; on success the icon
 			// sprite overlays it and the circle is hidden.
 			if (resolved.icon) {
-				void loadIconSprite(resolved.icon, cx, cy, radius, fillAlpha, marker, g, ring, generation);
+				iconLoads.push(
+					loadIconSprite(resolved.icon, cx, cy, radius, fillAlpha, marker, g, ring, generation)
+				);
 			}
 		}
 
@@ -528,6 +537,16 @@
 		// re-entering marker snaps fresh instead of gliding from a stale spot.
 		for (const id of posCurrentById.keys()) {
 			if (!activeIds.has(id)) posCurrentById.delete(id);
+		}
+		if (iconLoads.length === 0) {
+			onReady?.(targetMapId);
+		} else {
+			if (!hidden) onReady?.(null);
+			void Promise.allSettled(iconLoads).then(() => {
+				if (generation === renderGeneration && activeMap?.id === targetMapId) {
+					onReady?.(targetMapId);
+				}
+			});
 		}
 	});
 

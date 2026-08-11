@@ -33,7 +33,17 @@
 	type PixiModule = typeof import('pixi.js');
 	type PixiContainer = import('pixi.js').Container;
 
-	let { activeMap, cells }: { activeMap: WorldMap | null; cells: RenderedCell[] } = $props();
+	let {
+		activeMap,
+		cells,
+		hidden = false,
+		onReady
+	}: {
+		activeMap: WorldMap | null;
+		cells: RenderedCell[];
+		hidden?: boolean;
+		onReady?: (mapId: string | null) => void;
+	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
 
@@ -44,6 +54,7 @@
 
 	let PIXI = $state<PixiModule | null>(null);
 	let manifest = $state<TerrainManifest | null>(null);
+	let manifestSettled = $state(false);
 
 	// Land tiles only — static (no shimmer). Water ripples in PixiWaterLayer.
 	let layer: PixiContainer | null = null;
@@ -73,6 +84,7 @@
 			const m = await loadTerrainManifest();
 			if (cancelled) return;
 			manifest = m;
+			manifestSettled = true;
 		})();
 		return () => {
 			cancelled = true;
@@ -81,11 +93,20 @@
 
 	$effect(() => {
 		const viewport = stageCtx.viewport;
+		if (PIXI && viewport && hidden && activeMap?.width && activeMap?.height) {
+			onReady?.(activeMap.id);
+		}
+		if (PIXI && viewport && !hidden && !manifestSettled && activeMap?.width && activeMap?.height) {
+			onReady?.(null);
+		}
 		if (!PIXI || !viewport || !manifest || !activeMap?.width || !activeMap?.height) {
 			// Switched to a map with no image/dimensions: drop any tiles we built
 			// for the previous map (this layer persists across switches), else they
 			// ghost over the blank canvas (Codex #70).
 			if (layer) layer.removeChildren().forEach((c) => c.destroy());
+			if (PIXI && viewport && manifestSettled && activeMap?.width && activeMap?.height) {
+				onReady?.(activeMap.id);
+			}
 			return;
 		}
 		// Square grids only for the tile render; hex keeps the flat layer's look.
@@ -94,6 +115,7 @@
 		// otherwise the stale sprites ghost on top of the hex map.
 		if (activeMap.gridType === 'hex') {
 			if (layer) layer.removeChildren().forEach((c) => c.destroy());
+			onReady?.(activeMap.id);
 			return;
 		}
 
@@ -128,6 +150,8 @@
 		// textures keyed by url, so we never probe with Assets.get (which warns
 		// on a cache miss). Cancel stale passes when cells/map change mid-load.
 		let cancelled = false;
+		const targetMapId = activeMap.id;
+		if (!hidden) onReady?.(null);
 		(async () => {
 			let texMap: Record<string, unknown> = {};
 			if (urls.size > 0) {
@@ -150,6 +174,7 @@
 				sprite.height = cellH;
 				layer.addChild(sprite);
 			}
+			onReady?.(targetMapId);
 		})();
 		return () => {
 			cancelled = true;

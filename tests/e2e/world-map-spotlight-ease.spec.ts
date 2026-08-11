@@ -121,7 +121,10 @@ async function openWorldMap(page: Page) {
 
 test('opening the map does not activate the global playhead', async ({ page, request }) => {
 	await seed(request);
-	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+	await page.addInitScript(() => {
+		localStorage.setItem('tutorial-dismissed', 'true');
+		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ = true;
+	});
 	await page.goto('/app');
 
 	await page.click('button[title="Timeline"]');
@@ -132,6 +135,15 @@ test('opening the map does not activate the global playhead', async ({ page, req
 	const map = await openWorldMap(page);
 	await expect(map.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
 	await expect(timeline.locator('.playhead')).toHaveCount(0);
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as unknown as { __spotlightRenderedMapT?: number | null })
+						.__spotlightRenderedMapT ?? null
+			)
+		)
+		.toBe(0.6);
 });
 
 test('eased region color glides imperatively: ticker runs at frame rate with NO geometry rebuild storm', async ({
