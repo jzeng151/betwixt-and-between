@@ -292,12 +292,12 @@ test('reduced-motion switches hold the old map and block input until destination
 		.toBe(false);
 });
 
-test('a hidden destination background does not hold the transition for its image', async ({
+test('hidden destination texture layers warm without holding the transition', async ({
 	page,
 	request
 }) => {
-	let releaseGreyhold!: () => void;
-	const greyholdReady = new Promise<void>((resolve) => (releaseGreyhold = resolve));
+	let releaseHiddenAssets!: () => void;
+	const hiddenAssetsReady = new Promise<void>((resolve) => (releaseHiddenAssets = resolve));
 	const pixel = Buffer.from(
 		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
 		'base64'
@@ -305,17 +305,58 @@ test('a hidden destination background does not hold the transition for its image
 	await page.route('**/e2e-northmarch.png', (route) =>
 		route.fulfill({ status: 200, contentType: 'image/png', body: pixel })
 	);
-	await page.route('**/e2e-greyhold.png', async (route) => {
-		await greyholdReady;
-		await route.fulfill({ status: 200, contentType: 'image/png', body: pixel });
-	});
-	const { mapGreyId } = await seedAshHostWar(request, {
+	for (const asset of [
+		'e2e-greyhold.png',
+		'grass_water_256_06.png',
+		'grass_01_tile_256_01.png',
+		'e2e-placement-icon.png'
+	]) {
+		await page.route(`**/${asset}`, async (route) => {
+			await hiddenAssetsReady;
+			await route.fulfill({ status: 200, contentType: 'image/png', body: pixel });
+		});
+	}
+	const { mapGreyId, greyLocationId } = await seedAshHostWar(request, {
 		Northmarch: '/e2e-northmarch.png',
 		Greyhold: '/e2e-greyhold.png'
 	});
-	await request.patch('/api/world-map-layer-prefs', {
-		data: { worldMapId: mapGreyId, layerKey: 'background', visible: 0 }
+	await request.post(`/api/maps/${mapGreyId}/events`, {
+		data: {
+			tPosition: 0,
+			kind: 'paint_cells',
+			payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'water_grass' }] }
+		}
 	});
+	await request.post(`/api/maps/${mapGreyId}/events`, {
+		data: {
+			tPosition: 0,
+			kind: 'paint_stroke',
+			payloadJsonb: {
+				path: [{ x: 0.2, y: 0.2 }],
+				brushSize: 0.08,
+				softness: 0,
+				mode: 'fill',
+				textureKey: 'Grass'
+			}
+		}
+	});
+	const iconEntity = await post<Ent>(request, '/api/entities', {
+		type: 'Character',
+		name: 'Hidden icon',
+		data: { style: { icon: '/e2e-placement-icon.png' } }
+	});
+	await post(request, '/api/map-placements', {
+		placeableId: iconEntity.id,
+		locationId: greyLocationId,
+		mapId: mapGreyId,
+		x: 0.5,
+		y: 0.5
+	});
+	for (const layerKey of ['background', 'terrain', 'art', 'placements']) {
+		await request.patch('/api/world-map-layer-prefs', {
+			data: { worldMapId: mapGreyId, layerKey, visible: 0 }
+		});
+	}
 	await page.addInitScript(() => {
 		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ = true;
 		localStorage.setItem('tutorial-dismissed', 'true');
@@ -344,7 +385,66 @@ test('a hidden destination background does not hold the transition for its image
 			)
 		)
 		.toBe(false);
-	releaseGreyhold();
+	releaseHiddenAssets();
+});
+
+test('destination water textures hold the snapshot until they are composed', async ({
+	page,
+	request
+}) => {
+	let releaseWater!: () => void;
+	const waterReady = new Promise<void>((resolve) => (releaseWater = resolve));
+	let waterRequested = false;
+	const pixel = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+		'base64'
+	);
+	for (const image of ['e2e-northmarch.png', 'e2e-greyhold.png']) {
+		await page.route(`**/${image}`, (route) =>
+			route.fulfill({ status: 200, contentType: 'image/png', body: pixel })
+		);
+	}
+	await page.route('**/grass_water_256_06.png', async (route) => {
+		waterRequested = true;
+		await waterReady;
+		await route.fulfill({ status: 200, contentType: 'image/png', body: pixel });
+	});
+	const { mapGreyId } = await seedAshHostWar(request, {
+		Northmarch: '/e2e-northmarch.png',
+		Greyhold: '/e2e-greyhold.png'
+	});
+	const waterPaint = await request.post(`/api/maps/${mapGreyId}/events`, {
+		data: {
+			tPosition: 0,
+			kind: 'paint_cells',
+			payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'water_grass' }] }
+		}
+	});
+	if (!waterPaint.ok()) {
+		throw new Error(`seed water paint failed: ${waterPaint.status()} ${await waterPaint.text()}`);
+	}
+	await page.addInitScript(() => {
+		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ = true;
+		localStorage.setItem('tutorial-dismissed', 'true');
+	});
+	await page.goto('/app');
+	const win = await openWorldMap(page);
+	const switcher = win.locator('.map-switcher');
+	await switcher.selectOption({ label: 'Northmarch' });
+	await expect(win.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
+	await switcher.selectOption({ label: 'Greyhold' });
+	await expect.poll(() => waterRequested).toBe(true);
+	const transitionActive = () =>
+		page.evaluate(
+			() =>
+				(window as unknown as { __spotlightMapTransitionActive?: boolean })
+					.__spotlightMapTransitionActive ?? false
+		);
+	await expect.poll(transitionActive).toBe(true);
+	await page.waitForTimeout(700);
+	expect(await transitionActive()).toBe(true);
+	releaseWater();
+	await expect.poll(transitionActive).toBe(false);
 });
 
 test('a switch that supersedes an active fade gets a fresh transition', async ({ page, request }) => {

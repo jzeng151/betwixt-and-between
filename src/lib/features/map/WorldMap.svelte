@@ -846,6 +846,7 @@
 	let backgroundReadyMapId = $state<string | null>(null);
 	let terrainTilesReadyMapId = $state<string | null>(null);
 	let artReadyMapId = $state<string | null>(null);
+	let waterReadyMapId = $state<string | null>(null);
 	let placementsReadyMapId = $state<string | null>(null);
 	let pendingBeats: Punctuation[] = [];
 	// Reset readiness when the FX layer unmounts (e.g. the last map is deleted → the
@@ -2418,6 +2419,7 @@
 				backgroundReadyMapId !== activeMapId ||
 				terrainTilesReadyMapId !== activeMapId ||
 				artReadyMapId !== activeMapId ||
+				waterReadyMapId !== activeMapId ||
 				placementsReadyMapId !== activeMapId}
 			onViewport={(vp) => (pixiViewport = vp)}
 			onTransitionChange={(active) => (mapTransitionActive = active)}
@@ -2435,6 +2437,8 @@
 				<PixiTerrainTileLayer
 					{activeMap}
 					cells={boundedTerrainCells}
+					hidden={$layerPrefs.status === 'loaded' &&
+						$layerPrefs.prefs.get('terrain') === false}
 					onReady={(mapId) => (terrainTilesReadyMapId = mapId)}
 				/>
 				<!-- WM3 Slice A: freeform brush art (paint_stroke) over the grid tiles. -->
@@ -2446,10 +2450,17 @@
 					strokes={renderedState?.strokes ?? []}
 					playheadT={$playhead}
 					{reducedMotion}
+					hidden={$layerPrefs.status === 'loaded' && $layerPrefs.prefs.get('art') === false}
 					onReady={(mapId) => (artReadyMapId = mapId)}
 				/>
 				<!-- Slice 6: only water ripples (shimmer applied to water cells alone). -->
-				<PixiWaterLayer {activeMap} cells={boundedTerrainCells} />
+				<PixiWaterLayer
+					{activeMap}
+					cells={boundedTerrainCells}
+					hidden={$layerPrefs.status === 'loaded' &&
+						$layerPrefs.prefs.get('terrain') === false}
+					onReady={(mapId) => (waterReadyMapId = mapId)}
+				/>
 				<PixiRegionLayer
 					regions={scopedRegions}
 					{renderedState}
@@ -2522,6 +2533,8 @@
 				/>
 				<PixiPlacementLayer
 					{activeMap}
+					hidden={$layerPrefs.status === 'loaded' &&
+						$layerPrefs.prefs.get('placements') === false}
 					bind:authoringOpen={placementAuthoringOpen}
 					onStylePersisted={() => {
 						// Post-PATCH: re-invalidate the Location's cycle bundles so a prefetch

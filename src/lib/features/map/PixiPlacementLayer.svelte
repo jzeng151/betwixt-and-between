@@ -64,6 +64,7 @@
 		onDeletePlacement,
 		onCanvasClick,
 		onStylePersisted,
+		hidden = false,
 		onReady,
 		authoringOpen = $bindable(false)
 	}: {
@@ -116,6 +117,7 @@
 		onCanvasClick?: (fx: number, fy: number) => void;
 		// Fired after a placement style PATCH resolves (Codex PR #72 #521).
 		onStylePersisted?: () => void;
+		hidden?: boolean;
 		onReady?: (mapId: string) => void;
 		// Bindable: true while this layer owns an open authoring surface (the marker
 		// context menu or the style popover). The parent reads it to suspend cycling so
@@ -295,6 +297,7 @@
 
 		const generation = ++renderGeneration;
 		const targetMapId = activeMap.id;
+		if (hidden) onReady?.(targetMapId);
 		const iconLoads: Promise<void>[] = [];
 		// Capture moveMode for the closures below; reading it here also makes this
 		// effect rebuild markers (grab cursor + drag handler) when the tool toggles.
