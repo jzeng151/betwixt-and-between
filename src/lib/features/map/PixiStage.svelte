@@ -206,7 +206,15 @@
 		const app = stageCtx.app;
 		const viewport = stageCtx.viewport;
 		const anim = stageCtx.anim;
-		if (!app || !viewport || !activeMap?.width || !activeMap?.height || !PIXI) return;
+		if (!app || !viewport || !PIXI) return;
+		if (!activeMap?.width || !activeMap?.height) {
+			// Persistent layers clear their composition during a real null-map gap
+			// (notably optimistic deletion). Forget the prior framing baseline so
+			// the replacement map does not crossfade a newly captured gray stage.
+			lastMap = null;
+			clearSwapSnapshot();
+			return;
+		}
 		const w = activeMap.width;
 		const h = activeMap.height;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any

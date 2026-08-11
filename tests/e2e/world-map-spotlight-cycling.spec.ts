@@ -220,6 +220,9 @@ test('reduced-motion switches hold the old map and block input until destination
 		await greyholdReady;
 		await route.fulfill({ status: 200, contentType: 'image/png', body: pixel });
 	});
+	// Manifest failure is a supported flat-color fallback. It must count as a
+	// settled composed layer instead of holding the swap cover forever.
+	await page.route('**/Sprites/terrain-manifest.json', (route) => route.abort());
 	await seedAshHostWar(request, {
 		Northmarch: '/e2e-northmarch.png',
 		Greyhold: '/e2e-greyhold.png'
@@ -262,6 +265,50 @@ test('reduced-motion switches hold the old map and block input until destination
 			)
 		)
 		.toBe(false);
+});
+
+test('deleting the active map does not crossfade the temporary null-map gap', async ({
+	page,
+	request
+}) => {
+	await seedAshHostWar(request);
+	await page.addInitScript(() => {
+		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ = true;
+		localStorage.setItem('tutorial-dismissed', 'true');
+	});
+	await page.goto('/app');
+	const win = await openWorldMap(page);
+	const switcher = win.locator('.map-switcher');
+	await switcher.selectOption({ label: 'Northmarch' });
+	await expect(win.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
+	await page.evaluate(() => {
+		const w = window as unknown as {
+			__spotlightMapTransitionCount?: number;
+			__spotlightMapTransitionActive?: boolean;
+		};
+		w.__spotlightMapTransitionCount = 0;
+		w.__spotlightMapTransitionActive = false;
+	});
+
+	await win.getByTitle('Delete map').click();
+	const dialog = page.getByRole('dialog', { name: 'Delete Northmarch?' });
+	await expect(dialog).toBeVisible();
+	await dialog.getByRole('button', { name: 'Delete Map' }).click();
+	await expect(switcher.locator('option')).toHaveCount(1);
+	await expect
+		.poll(() =>
+			page.evaluate(() => {
+				const w = window as unknown as {
+					__spotlightMapTransitionCount?: number;
+					__spotlightMapTransitionActive?: boolean;
+				};
+				return {
+					count: w.__spotlightMapTransitionCount ?? 0,
+					active: w.__spotlightMapTransitionActive ?? false
+				};
+			})
+		)
+		.toEqual({ count: 0, active: false });
 });
 
 async function openWorldMap(page: Page) {
