@@ -168,7 +168,6 @@
           }}
           title={group.label}
         >
-          <span class="dock-icon">{group.icon}</span>
           <span class="dock-label">{group.label}</span>
           {#if group.windows.length > 1}
             <span class="count-badge">{group.windows.length}</span>
@@ -225,9 +224,8 @@
     left: 0;
     right: 0;
     height: var(--taskbar-height);
-    background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
+    background: var(--color-surface-2);
     border-top: 1px solid var(--color-border);
-    backdrop-filter: blur(12px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -247,61 +245,54 @@
 
   .dock-btn {
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 2px;
-    padding: 6px 12px;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: 4px;
     color: var(--color-text-muted);
     font-size: 11px;
     font-family: var(--font-ui);
     transition: background 0.12s, color 0.12s;
     cursor: pointer;
     position: relative;
-    min-width: 56px;
   }
 
-  .dock-btn:hover,
-  .dock-btn.has-windows {
+  .dock-btn:hover {
     background: var(--color-surface);
     color: var(--color-text);
   }
 
-  .dock-icon {
-    font-size: 19px;
-    line-height: 1;
+  .dock-btn.has-windows {
+    color: var(--color-text);
+    font-weight: 600;
   }
 
   .dock-label {
-    font-size: 10px;
-    letter-spacing: 0.02em;
+    font-size: 12px;
   }
 
   .active-dot {
     position: absolute;
-    bottom: 3px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
+    bottom: -2px;
+    left: 12px;
+    right: 12px;
+    height: 2px;
     background: var(--color-accent);
   }
 
   .count-badge {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    background: var(--color-accent);
-    color: var(--color-surface);
+    position: static;
+    background: var(--color-surface);
+    color: var(--color-text-muted);
     font-size: 10px;
     font-weight: 700;
     width: 14px;
     height: 14px;
-    border-radius: 50%;
+    border-radius: 3px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -353,7 +344,12 @@
   }
 
   .picker-icon {
-    font-size: 16px;
+    width: 24px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-align: center;
+    color: var(--color-text-muted);
     line-height: 1;
     flex-shrink: 0;
   }

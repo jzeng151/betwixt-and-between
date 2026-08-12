@@ -176,23 +176,6 @@
       aria-label="{title} window. Alt plus arrow keys moves; Shift, Alt, and arrow keys resizes."
       tabindex="0"
     >
-      <div class="win-controls">
-        <button
-          class="win-control close"
-          aria-label="Close"
-          onclick={(e) => { e.stopPropagation(); windowStore.close(id); }}
-        ></button>
-        <button
-          class="win-control minimize"
-          aria-label="Minimize"
-          onclick={(e) => { e.stopPropagation(); minimizeWindow(); }}
-        ></button>
-        <button
-          class="win-control maximize-btn"
-          aria-label={maximized ? 'Restore' : 'Maximize'}
-          onclick={(e) => { e.stopPropagation(); windowStore.maximize(id); }}
-        ></button>
-      </div>
       <span class="win-title">{title}</span>
       <!-- Item 3: persist this window's current size (+ position for
            single-instance apps) as the open default for its app. -->
@@ -202,7 +185,24 @@
         aria-label="Set current size and position as default"
         title="Set current size & position as default"
         onclick={(e) => { e.stopPropagation(); windowStore.setAsDefault(id); }}
-      >⊡</button>
+      >Set default</button>
+      <div class="win-controls">
+        <button
+          class="win-control close"
+          aria-label="Close"
+          onclick={(e) => { e.stopPropagation(); windowStore.close(id); }}
+        >×</button>
+        <button
+          class="win-control minimize"
+          aria-label="Minimize"
+          onclick={(e) => { e.stopPropagation(); minimizeWindow(); }}
+        >−</button>
+        <button
+          class="win-control maximize-btn"
+          aria-label={maximized ? 'Restore' : 'Maximize'}
+          onclick={(e) => { e.stopPropagation(); windowStore.maximize(id); }}
+        >{maximized ? '◇' : '□'}</button>
+      </div>
     </div>
     <div class="win-content" class:bare>
       {@render children?.()}
@@ -268,19 +268,21 @@
     padding: 0;
     display: grid;
     place-items: center;
+    color: var(--color-text-muted);
+    border-radius: 4px;
+    font-size: 15px;
+    line-height: 1;
   }
 
-  .win-control::after {
-    content: '';
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--control-color);
+  .win-control:hover {
+    background: var(--color-surface);
+    color: var(--color-text);
   }
 
-  .win-control.close    { --control-color: var(--color-danger); }
-  .win-control.minimize { --control-color: #c8942a; }
-  .win-control.maximize-btn { --control-color: var(--color-success); }
+  .win-control.close:hover {
+    background: var(--color-danger-solid);
+    color: var(--color-on-danger);
+  }
 
   .window.maximized {
     position: fixed;
@@ -292,14 +294,12 @@
   }
 
   .win-title {
-    font-family: var(--font-ui);
-    font-size: 12px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--color-text-muted);
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-text);
     flex: 1;
-    text-align: center;
+    text-align: left;
     pointer-events: none;
   }
 
@@ -308,11 +308,11 @@
     background: transparent;
     border: none;
     color: var(--color-text-muted);
-    font-size: 13px;
-    line-height: 1;
-    width: 24px;
+    font-size: 11px;
+    line-height: 1.2;
+    width: auto;
     height: 24px;
-    padding: 0;
+    padding: 0 6px;
     border-radius: 4px;
     cursor: pointer;
   }

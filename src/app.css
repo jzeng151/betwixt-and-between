@@ -74,11 +74,11 @@
 
   /* Window chrome */
   --window-radius:   8px;
-  --window-shadow:   0 20px 60px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(255,255,255,0.04);
+  --window-shadow:   0 2px 8px rgba(0,0,0,0.45);
   --titlebar-height: 36px;
   /* Shell taskbar (dock). Read from JS via getComputedStyle for layout math
      (see TASKBAR_HEIGHT in src/lib/os/windows-store.ts). */
-  --taskbar-height:  52px;
+  --taskbar-height:  44px;
 }
 
 [data-theme="light"] {
@@ -90,7 +90,7 @@
   --color-text-muted: #606773;
   --color-focus:      #775700;
   --color-danger:     #b42318;
-  --window-shadow:    0 20px 60px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.08);
+  --window-shadow:    0 2px 8px rgba(0,0,0,0.12);
 }
 
 *, *::before, *::after {
