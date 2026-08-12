@@ -797,6 +797,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		flex: 1;
 		gap: 6px;
 		/* Break the min-content propagation chain so the parent
 		   .act-col-header can actually shrink to its flex allocation. */
