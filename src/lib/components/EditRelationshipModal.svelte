@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { focusTrap } from '$lib/actions/focus-trap.js';
   import type { Relationship } from '$lib/stores/relationships.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
   import { REL_TYPES } from '$lib/relationship-colors.js';
@@ -101,7 +102,14 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="backdrop" onclick={onClose} role="presentation"></div>
 
-<div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-rel-title">
+<div
+  class="modal"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="edit-rel-title"
+  tabindex="-1"
+  use:focusTrap={{ onEscape: () => !saving && onClose() }}
+>
   <h2 class="modal-title" id="edit-rel-title">Edit relationship</h2>
 
   <div class="field-row">

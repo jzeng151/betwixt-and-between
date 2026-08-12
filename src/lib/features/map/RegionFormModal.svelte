@@ -7,6 +7,7 @@
 	// :global(.color-*), :global(.scene-*), :global(.act-*) rules.
 
 	import type { Entity } from '$lib/stores/entities.js';
+	import { focusTrap } from '$lib/actions/focus-trap.js';
 	import { MAP_PALETTE as PALETTE } from './color-palette.js';
 
 	let {
@@ -48,9 +49,16 @@
 	} = $props();
 </script>
 
-<div class="modal-overlay" role="dialog" aria-modal="true">
+<div
+	class="modal-overlay"
+	role="dialog"
+	aria-modal="true"
+	aria-labelledby="region-form-title"
+	tabindex="-1"
+	use:focusTrap={{ onEscape: onCancel }}
+>
 	<div class="modal-content">
-		<h3>{isEditing ? 'Edit Region' : 'New Region'}</h3>
+		<h3 id="region-form-title">{isEditing ? 'Edit Region' : 'New Region'}</h3>
 
 		<label>
 			Linked Location

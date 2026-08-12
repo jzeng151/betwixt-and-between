@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { focusTrap } from '$lib/actions/focus-trap.js';
+
 	/**
 	 * Segment of an impact line. Strings render as auto-escaped text;
 	 * `{ bold }` renders as `<strong>` wrapping auto-escaped text. No raw
@@ -30,19 +32,21 @@
 		onCancel: () => void;
 	} = $props();
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && !deleting) onCancel();
-	}
 </script>
-
-<svelte:window onkeydown={handleKeydown} />
 
 <div
 	class="delete-backdrop"
 	role="presentation"
 	onclick={() => !deleting && onCancel()}
 ></div>
-<div class="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+<div
+	class="delete-modal"
+	role="dialog"
+	aria-modal="true"
+	aria-labelledby="delete-title"
+	tabindex="-1"
+	use:focusTrap={{ onEscape: () => !deleting && onCancel() }}
+>
 	<h2 id="delete-title" class="delete-title">
 		Delete <strong>{name}</strong>?
 	</h2>

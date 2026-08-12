@@ -12,6 +12,7 @@
 	// PR 1 ships the dependent count via GET /api/factions/[id]/dependents.
 
 	import { onDestroy } from 'svelte';
+	import { focusTrap } from '$lib/actions/focus-trap.js';
 	import { factions as factionsStore, type Faction } from './factions-store.js';
 	import { MAP_PALETTE, DEFAULT_FACTION_COLOR } from './color-palette.js';
 	import { layerPrefs } from './layer-prefs-store.js';
@@ -267,12 +268,6 @@
 			e.stopPropagation();
 			cancelDelete();
 		}
-	}
-
-	// Move focus into a dialog when it opens (the dialog node is tabindex=-1) so
-	// keyboard + screen-reader users land inside the modal, not behind it.
-	function focusOnOpen(node: HTMLElement) {
-		node.focus();
 	}
 
 	// Faction rename + recolor. The ✎ button next to delete (or the name)
@@ -612,7 +607,7 @@
 		aria-modal="true"
 		aria-labelledby="faction-del-title"
 		tabindex="-1"
-		use:focusOnOpen
+		use:focusTrap={{ onEscape: () => !deleteBusy && cancelDelete() }}
 	>
 		<div class="modal-content">
 			<h3 id="faction-del-title">Delete faction "{dc.faction.name}"?</h3>
@@ -651,7 +646,7 @@
 		aria-modal="true"
 		aria-labelledby="art-del-title"
 		tabindex="-1"
-		use:focusOnOpen
+		use:focusTrap={{ onEscape: () => (artDeleteTarget = null) }}
 	>
 		<div class="modal-content">
 			<h3 id="art-del-title">Delete layer "{al.name}"?</h3>

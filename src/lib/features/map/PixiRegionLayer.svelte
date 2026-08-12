@@ -21,6 +21,7 @@
 
 	import { getContext, onDestroy, onMount, untrack } from 'svelte';
 	import { playhead } from '$lib/features/timeline/playhead-store.js';
+	import { focusTrap } from '$lib/actions/focus-trap.js';
 	import { get } from 'svelte/store';
 	import {
 		PIXI_STAGE_CONTEXT,
@@ -814,9 +815,16 @@
 
 <!-- Slice 5 PR-E (D6) — authoring: change owner + attribute a cause Event. -->
 {#if causeModal}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
+	<div
+		class="modal-overlay"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="change-owner-title"
+		tabindex="-1"
+		use:focusTrap={{ onEscape: () => (causeModal = null) }}
+	>
 		<div class="modal-content">
-			<h3>Change owner with cause</h3>
+			<h3 id="change-owner-title">Change owner with cause</h3>
 			<label class="cause-field">
 				New owner
 				<select bind:value={causeModal.factionId}>
@@ -853,9 +861,16 @@
 
 <!-- Slice 5 PR-E (D6) — read: the traced causal lineage of a region's state. -->
 {#if provenance}
-	<div class="modal-overlay" role="dialog" aria-modal="true">
+	<div
+		class="modal-overlay"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="provenance-title"
+		tabindex="-1"
+		use:focusTrap={{ onEscape: () => (provenance = null) }}
+	>
 		<div class="modal-content">
-			<h3>Why is this region the way it is?</h3>
+			<h3 id="provenance-title">Why is this region the way it is?</h3>
 			{#if provenance.loading}
 				<p class="variant-help">Tracing cause…</p>
 			{:else if provenance.error}

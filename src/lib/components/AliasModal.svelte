@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { focusTrap } from '$lib/actions/focus-trap.js';
+
   interface Entity {
     id: string;
     type: string;
@@ -73,7 +75,14 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="backdrop" onclick={onClose} role="presentation"></div>
 
-<div class="modal" role="dialog" aria-modal="true" aria-labelledby="alias-modal-title">
+<div
+  class="modal"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="alias-modal-title"
+  tabindex="-1"
+  use:focusTrap={{ onEscape: () => !saving && onClose() }}
+>
   <h2 class="modal-title" id="alias-modal-title">
     Mark <em>{entity.name}</em> as alias of…
   </h2>

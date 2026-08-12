@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { focusTrap } from '$lib/actions/focus-trap.js';
 	// Variant editor: edits the (startAct/Scene, endAct/Scene) tuple on the
 	// active world_map. Form state is bindable so the parent owns the values
 	// for save/cancel symmetry with the rest of WorldMap.svelte. Styles come
@@ -31,9 +32,16 @@
 	} = $props();
 </script>
 
-<div class="modal-overlay" role="dialog" aria-modal="true">
+<div
+	class="modal-overlay"
+	role="dialog"
+	aria-modal="true"
+	aria-labelledby="variant-form-title"
+	tabindex="-1"
+	use:focusTrap={{ onEscape: onCancel }}
+>
 	<div class="modal-content">
-		<h3>Variant range</h3>
+		<h3 id="variant-form-title">Variant range</h3>
 		<p class="variant-help">
 			Which story-time slice does this map depict? Default variant shows whenever
 			no scoped variant covers the playhead. A single-Act variant is fine — pick
