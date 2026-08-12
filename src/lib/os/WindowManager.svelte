@@ -1,18 +1,35 @@
 <script lang="ts">
+  import type { Component } from 'svelte';
   import { windowStore, type AppId } from '$lib/os/windows-store.js';
   import { APP_CATALOG, isBare } from '$lib/os/app-catalog.js';
   import { entities } from '$lib/stores/entities.js';
   import Window from './Window.svelte';
-  import CharacterEditor from '$lib/features/character/CharacterEditor.svelte';
-  import Wiki from '$lib/components/apps/Wiki.svelte';
-  import Timeline from '$lib/features/timeline/Timeline.svelte';
-  import WorldMap from '$lib/features/map/WorldMap.svelte';
-  import StoryGraph from '$lib/features/graph/StoryGraph.svelte';
-  import FocusedGraph from '$lib/features/graph/FocusedGraph.svelte';
-  import Settings from '$lib/components/apps/Settings.svelte';
-  import Notes from '$lib/components/apps/Notes.svelte';
-  import PlayerDock from '$lib/features/timeline/PlayerDock.svelte';
-  import EntityDetail from '$lib/components/EntityDetail.svelte';
+
+  // Dynamic windows have deliberately different prop contracts. The runtime
+  // branch below narrows appId before rendering each component.
+  type AppComponent = Component<any>;
+  const appLoaders: Record<AppId, () => Promise<{ default: AppComponent }>> = {
+    'character-editor': () => import('$lib/features/character/CharacterEditor.svelte'),
+    'wiki': () => import('$lib/components/apps/Wiki.svelte'),
+    'timeline': () => import('$lib/features/timeline/Timeline.svelte'),
+    'world-map': () => import('$lib/features/map/WorldMap.svelte'),
+    'story-graph': () => import('$lib/features/graph/StoryGraph.svelte'),
+    'focused-graph': () => import('$lib/features/graph/FocusedGraph.svelte'),
+    'settings': () => import('$lib/components/apps/Settings.svelte'),
+    'notes': () => import('$lib/components/apps/Notes.svelte'),
+    'story-player': () => import('$lib/features/timeline/PlayerDock.svelte'),
+    'entity-detail': () => import('$lib/components/EntityDetail.svelte')
+  };
+  const appPromises = new Map<AppId, Promise<AppComponent>>();
+
+  function loadApp(appId: AppId): Promise<AppComponent> {
+    let promise = appPromises.get(appId);
+    if (!promise) {
+      promise = appLoaders[appId]().then((module) => module.default);
+      appPromises.set(appId, promise);
+    }
+    return promise;
+  }
 
   function windowTitle(appId: AppId, entityId: string | null): string {
     const fallback = APP_CATALOG[appId].title;
@@ -56,30 +73,51 @@
     compact={win.appId === 'story-player'}
     alwaysOnTop={win.alwaysOnTop ?? false}
   >
-    {#if win.appId === 'character-editor'}
-      <CharacterEditor winId={win.id} entityId={win.entityId} />
-    {:else if win.appId === 'wiki'}
-      <Wiki entityId={win.entityId} />
-    {:else if win.appId === 'timeline'}
-      <Timeline />
-    {:else if win.appId === 'entity-detail'}
-      <EntityDetail
-        entityId={win.entityId}
-        isPopout={true}
-        onClose={() => windowStore.close(win.id)}
-      />
-    {:else if win.appId === 'world-map'}
-      <WorldMap entityId={win.entityId ?? undefined} windowId={win.id} />
-    {:else if win.appId === 'story-graph'}
-      <StoryGraph />
-    {:else if win.appId === 'focused-graph'}
-      <FocusedGraph windowId={win.id} />
-    {:else if win.appId === 'settings'}
-      <Settings />
-    {:else if win.appId === 'notes'}
-      <Notes />
-    {:else if win.appId === 'story-player'}
-      <PlayerDock winId={win.id} pinned={win.alwaysOnTop ?? false} />
-    {/if}
+    {#await loadApp(win.appId)}
+      <div class="app-loading" role="status">Opening {APP_CATALOG[win.appId].title}…</div>
+    {:then App}
+      {#if win.appId === 'character-editor'}
+        <App winId={win.id} entityId={win.entityId} />
+      {:else if win.appId === 'wiki'}
+        <App entityId={win.entityId} />
+      {:else if win.appId === 'timeline'}
+        <App />
+      {:else if win.appId === 'entity-detail'}
+        <App
+          entityId={win.entityId}
+          isPopout={true}
+          onClose={() => windowStore.close(win.id)}
+        />
+      {:else if win.appId === 'world-map'}
+        <App entityId={win.entityId ?? undefined} windowId={win.id} />
+      {:else if win.appId === 'story-graph'}
+        <App />
+      {:else if win.appId === 'focused-graph'}
+        <App windowId={win.id} />
+      {:else if win.appId === 'settings'}
+        <App />
+      {:else if win.appId === 'notes'}
+        <App />
+      {:else if win.appId === 'story-player'}
+        <App winId={win.id} pinned={win.alwaysOnTop ?? false} />
+      {/if}
+    {:catch}
+      <div class="app-loading app-loading--error" role="alert">
+        Couldn't open {APP_CATALOG[win.appId].title}.
+      </div>
+    {/await}
   </Window>
 {/each}
+
+<style>
+  .app-loading {
+    min-height: 100%;
+    display: grid;
+    place-items: center;
+    color: var(--color-text-muted);
+    font-size: 13px;
+  }
+  .app-loading--error {
+    color: var(--color-danger);
+  }
+</style>

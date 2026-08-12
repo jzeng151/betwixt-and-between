@@ -6,11 +6,10 @@
   import TooSmall from '$lib/os/TooSmall.svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
-  import { entityAliases } from '$lib/stores/entity-aliases.js';
-  import { worldMapStore } from '$lib/features/map/store.js';
 
   onMount(async () => {
-    await Promise.all([entities.load(), relationships.load(), entityAliases.load(), worldMapStore.loadMaps()]);
+    if (window.innerWidth < 1280) return;
+    await Promise.all([entities.load(), relationships.load()]);
   });
 </script>
 
