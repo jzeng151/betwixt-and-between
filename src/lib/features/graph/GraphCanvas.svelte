@@ -469,6 +469,39 @@
 		onContextMenu?.(id, e.clientX, e.clientY);
 	}
 
+	function onNodeKeydown(e: KeyboardEvent, id: string) {
+		if (e.target !== e.currentTarget) return;
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			onNodeOpen?.(id);
+			return;
+		}
+		if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && onContextMenu) {
+			e.preventDefault();
+			const p = nodePos[id];
+			if (!p) return;
+			const rect = viewport.getBoundingClientRect();
+			onContextMenu(
+				id,
+				rect.left + panX + (p.x + (p.w || NODE_W) / 2) * zoom,
+				rect.top + panY + (p.y + (p.h || NODE_H) / 2) * zoom
+			);
+			return;
+		}
+		if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+		e.preventDefault();
+		const p = nodePos[id];
+		if (!p) return;
+		const step = e.shiftKey ? 32 : 8;
+		const next = {
+			...p,
+			x: p.x + (e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0),
+			y: p.y + (e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0)
+		};
+		nodePos = { ...nodePos, [id]: next };
+		onNodePositionChange?.(id, next);
+	}
+
 	function onEdgeContextMenuHandler(e: MouseEvent, id: string) {
 		e.preventDefault();
 		e.stopPropagation();
@@ -487,6 +520,33 @@
 		// `clickable` flag already encodes scoped-caused_by && !mystery (Codex P1).
 		if (!clickable) return;
 		onEdgeClick?.(id);
+	}
+
+	function edgeLabel(edge: GraphEdge): string {
+		const from = nodes.find((node) => node.id === edge.fromId)?.name ?? 'Unknown';
+		const to = nodes.find((node) => node.id === edge.toId)?.name ?? 'Unknown';
+		return `${edge.label || 'Connection'} from ${from} to ${to}`;
+	}
+
+	function activateEdgeFromKeyboard(edge: GraphEdge & { x1: number; y1: number; x2: number; y2: number }) {
+		if (edge.clickable && onEdgeClick) {
+			onEdgeClick(edge.id);
+			return;
+		}
+		if (!onEdgeContextMenu) return;
+		const rect = viewport.getBoundingClientRect();
+		onEdgeContextMenu(edge.id, rect.left + (edge.x1 + edge.x2) / 2, rect.top + (edge.y1 + edge.y2) / 2);
+	}
+
+	function onEdgeKeyboardMenu(
+		e: KeyboardEvent,
+		edge: GraphEdge & { x1: number; y1: number; x2: number; y2: number }
+	) {
+		if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
+		e.preventDefault();
+		if (!onEdgeContextMenu) return;
+		const rect = viewport.getBoundingClientRect();
+		onEdgeContextMenu(edge.id, rect.left + (edge.x1 + edge.x2) / 2, rect.top + (edge.y1 + edge.y2) / 2);
 	}
 
 	/**
@@ -655,6 +715,19 @@
 		{/if}
 	</svg>
 
+	{#if onEdgeClick || onEdgeContextMenu}
+		{#each screenEdges as edge (edge.id)}
+			<button
+				type="button"
+				class="edge-keyboard-action"
+				style="left:{(edge.x1 + edge.x2) / 2 - 12}px; top:{(edge.y1 + edge.y2) / 2 - 12}px"
+				aria-label={edgeLabel(edge)}
+				onclick={() => activateEdgeFromKeyboard(edge)}
+				onkeydown={(e) => onEdgeKeyboardMenu(e, edge)}
+			></button>
+		{/each}
+	{/if}
+
 	<!-- Node canvas layer: pan/zoom applied here -->
 	<div
 		class="canvas"
@@ -675,6 +748,7 @@
 					onpointerdown={(e) => onNodePointerDown(e, node.id)}
 					ondblclick={(e) => onNodeDblClick(e, node.id)}
 					oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
+					onkeydown={(e) => onNodeKeydown(e, node.id)}
 					onpointerenter={() => (hoveredNodeId = node.id)}
 					onpointerleave={() => {
 						if (draggingNode?.id !== node.id) hoveredNodeId = null;
@@ -734,6 +808,23 @@
 	   cursor so the otherwise-invisible interaction is discoverable. */
 	.edge-clickable {
 		cursor: pointer;
+	}
+
+	.edge-keyboard-action {
+		position: absolute;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border: 0;
+		border-radius: 50%;
+		background: transparent;
+		opacity: 0;
+		pointer-events: none;
+	}
+	.edge-keyboard-action:focus-visible {
+		opacity: 1;
+		background: var(--color-surface-2);
+		border: 2px solid var(--color-focus);
 	}
 
 	.canvas {

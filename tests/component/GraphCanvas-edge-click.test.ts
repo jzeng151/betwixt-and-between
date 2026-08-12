@@ -33,7 +33,11 @@ const initialPositions = {
 	other: { x: 0, y: 200, w: 120, h: 32 }
 };
 
-function renderCanvas(onEdgeClick: (id: string) => void) {
+function renderCanvas(
+	onEdgeClick: (id: string) => void,
+	onNodeOpen?: (id: string) => void,
+	onNodePositionChange?: (id: string, position: { x: number; y: number }) => void
+) {
 	return render(GraphCanvas, {
 		props: {
 			nodes,
@@ -46,7 +50,9 @@ function renderCanvas(onEdgeClick: (id: string) => void) {
 			],
 			dimmedNodes: new Set<string>(),
 			initialPositions,
-			onEdgeClick
+			onEdgeClick,
+			onNodeOpen,
+			onNodePositionChange
 		}
 	});
 }
@@ -78,5 +84,33 @@ describe('GraphCanvas edge click gate', () => {
 
 		const clickable = container.querySelectorAll('line.edge-clickable');
 		expect(clickable.length).toBe(1);
+	});
+
+	it('opens and moves graph nodes from the keyboard', async () => {
+		const onNodeOpen = vi.fn();
+		const onNodePositionChange = vi.fn();
+		const { container } = renderCanvas(vi.fn(), onNodeOpen, onNodePositionChange);
+		await tick();
+		const node = container.querySelector('[data-entity-id="cause"]') as HTMLElement;
+
+		await fireEvent.keyDown(node, { key: 'Enter' });
+		await fireEvent.keyDown(node, { key: 'ArrowRight' });
+
+		expect(onNodeOpen).toHaveBeenCalledWith('cause');
+		expect(onNodePositionChange).toHaveBeenCalledWith(
+			'cause',
+			expect.objectContaining({ x: 8, y: 0 })
+		);
+	});
+
+	it('exposes edge actions in the keyboard tab order', async () => {
+		const onEdgeClick = vi.fn();
+		const { container } = renderCanvas(onEdgeClick);
+		await tick();
+		const actions = container.querySelectorAll<HTMLButtonElement>('.edge-keyboard-action');
+
+		expect(actions.length).toBe(2);
+		await fireEvent.click(actions[0]);
+		expect(onEdgeClick).toHaveBeenCalledWith('edge-clickable');
 	});
 });
