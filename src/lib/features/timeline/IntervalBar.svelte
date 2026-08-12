@@ -196,7 +196,7 @@
       rx="6"
       ry="6"
       fill="none"
-      stroke="var(--color-accent, #c8942a)"
+      stroke="var(--color-focus)"
       stroke-width="2"
     />
   {/if}

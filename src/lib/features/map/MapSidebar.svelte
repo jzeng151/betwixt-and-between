@@ -746,7 +746,7 @@
 	/* F16: DESIGN.md forbids `outline: none` without a visible replacement. Keep a
 	   real focus ring for keyboard users (the border alone is ~1.3:1 — too faint). */
 	.art-layer-name:focus-visible {
-		outline: 2px solid var(--color-accent);
+		outline: 2px solid var(--color-focus);
 		outline-offset: 1px;
 	}
 	.art-layer-controls {
