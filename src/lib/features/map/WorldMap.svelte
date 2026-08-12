@@ -3054,7 +3054,7 @@
 
 	:global(.variant-error) {
 		margin: 10px 0 0 0;
-		color: var(--color-rel-rival, #ef4444);
+		color: var(--color-danger);
 		font-size: 12px;
 	}
 
@@ -3083,7 +3083,7 @@
 		padding: 0;
 	}
 	:global(.btn-icon:hover) { background: var(--color-border); }
-	:global(.btn-danger:hover) { background: #c0392b; color: #fff; }
+	:global(.btn-danger:hover) { background: var(--color-danger-hover); color: var(--color-on-danger); }
 
 	.empty-state {
 		display: flex;
@@ -3137,7 +3137,7 @@
 
 	:global(.btn-primary) {
 		background: var(--color-accent);
-		color: #000;
+		color: var(--color-on-accent);
 		border: none;
 		border-radius: 6px;
 		padding: 8px 16px;
@@ -3278,7 +3278,7 @@
 	}
 	:global(.region-new-loc-error) {
 		font-size: 11px;
-		color: var(--color-rel-rival, #ef4444);
+		color: var(--color-danger);
 	}
 
 	:global(.color-palette) {
@@ -3380,11 +3380,11 @@
 		background: var(--color-border, #eee);
 	}
 	:global(.region-popup-btn-danger) {
-		color: #c0392b;
+		color: var(--color-danger);
 	}
 	:global(.region-popup-btn-danger:hover) {
-		background: #c0392b;
-		color: #fff;
+		background: var(--color-danger-hover);
+		color: var(--color-on-danger);
 	}
 	:global(.region-popup-btn-drill) {
 		align-self: stretch;
@@ -3393,7 +3393,7 @@
 	}
 	:global(.region-popup-btn-drill:hover) {
 		background: var(--color-accent, #e8a838);
-		color: #1a1a1a;
+		color: var(--color-on-accent);
 	}
 	:global(.region-popup-hint) {
 		font-size: 11px;

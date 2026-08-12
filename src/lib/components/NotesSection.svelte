@@ -219,7 +219,7 @@
 		cursor: pointer;
 	}
 	.note-detach:hover {
-		color: #ef4444;
+		color: var(--color-danger);
 	}
 
 	.note-body {
@@ -249,7 +249,7 @@
 
 	.notes-error {
 		margin-top: 6px;
-		color: #ef4444;
+		color: var(--color-danger);
 		font-size: 11px;
 	}
 </style>

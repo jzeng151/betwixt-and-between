@@ -747,7 +747,7 @@
 		left: 0;
 		right: 0;
 		font-size: 10px;
-		color: #ef4444;
+		color: var(--color-danger);
 		text-align: center;
 	}
 	.act-col-header {
@@ -903,7 +903,7 @@
 		opacity: 1;
 	}
 	.act-delete-btn:hover {
-		color: #ef4444;
+		color: var(--color-danger);
 	}
 
 	.act-meta {
@@ -961,7 +961,7 @@
 	}
 	.scene-error {
 		font-size: 11px;
-		color: #ef4444;
+		color: var(--color-danger);
 	}
 	.scene-form-btns {
 		display: flex;
@@ -1006,7 +1006,7 @@
 		accent-color: var(--color-accent, #c8942a);
 	}
 	.reparent-opt--danger {
-		color: #ef4444;
+		color: var(--color-danger);
 	}
 
 	/* Shared button styles */
@@ -1015,7 +1015,7 @@
 		background: var(--color-accent, #c8942a);
 		border: none;
 		border-radius: 4px;
-		color: #0d0f14;
+		color: var(--color-on-accent);
 		cursor: pointer;
 		font-size: 11px;
 		font-family: inherit;
@@ -1024,8 +1024,8 @@
 		transition: opacity 0.15s;
 	}
 	.btn-danger {
-		background: #ef4444;
-		color: #fff;
+		background: var(--color-danger-solid);
+		color: var(--color-on-danger);
 	}
 	.btn-save:disabled,
 	.btn-danger:disabled {
@@ -1122,8 +1122,8 @@
 		bottom: 16px;
 		left: 50%;
 		transform: translateX(-50%);
-		background: #ef4444;
-		color: #fff;
+		background: var(--color-danger-solid);
+		color: var(--color-on-danger);
 		font-size: 12px;
 		padding: 6px 12px;
 		border-radius: 4px;

@@ -903,7 +903,7 @@
     color: var(--color-text);
   }
   .link-btn.danger:not(:disabled):hover {
-    color: #ef4444;
+    color: var(--color-danger);
   }
   .link-btn:disabled {
     opacity: 0.4;
@@ -978,8 +978,8 @@
     padding: 3px 10px;
   }
   .confirm-btn.danger {
-    border-color: #ef4444;
-    color: #ef4444;
+    border-color: var(--color-danger);
+    color: var(--color-danger);
   }
   .confirm-btn:focus-visible,
   .cancel-btn:focus-visible {
@@ -989,6 +989,6 @@
   .inline-error {
     margin: 8px 0 0 0;
     font-size: 11px;
-    color: #ef4444;
+    color: var(--color-danger);
   }
 </style>

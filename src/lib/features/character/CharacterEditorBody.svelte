@@ -290,5 +290,5 @@
 		border-color: var(--color-accent);
 	}
 
-	.save-error { color: var(--color-rel-rival, #ef4444); font-size: 12px; }
+	.save-error { color: var(--color-danger); font-size: 12px; }
 </style>

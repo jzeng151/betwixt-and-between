@@ -394,7 +394,7 @@
 
   .folder-item.selected {
     background: var(--color-accent);
-    color: #000;
+    color: var(--color-on-accent);
   }
 
   .folder-name {
@@ -448,8 +448,8 @@
   }
 
   .confirm-btn.delete {
-    background: #ef4444;
-    color: #fff;
+    background: var(--color-danger-solid);
+    color: var(--color-on-danger);
   }
 
   .confirm-btn.delete:hover {
@@ -499,7 +499,7 @@
 
   .content-entry-item.selected {
     background: var(--color-accent);
-    color: #000;
+    color: var(--color-on-accent);
   }
 
   .content-entry-name {
@@ -621,7 +621,7 @@
 
   .dialog-btn.primary {
     background: var(--color-accent);
-    color: #000;
+    color: var(--color-on-accent);
     font-weight: 600;
   }
 

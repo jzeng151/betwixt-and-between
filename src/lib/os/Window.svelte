@@ -278,9 +278,9 @@
     background: var(--control-color);
   }
 
-  .win-control.close    { --control-color: #ef4444; }
+  .win-control.close    { --control-color: var(--color-danger); }
   .win-control.minimize { --control-color: #c8942a; }
-  .win-control.maximize-btn { --control-color: #28c840; }
+  .win-control.maximize-btn { --control-color: var(--color-success); }
 
   .window.maximized {
     position: fixed;

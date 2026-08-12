@@ -421,7 +421,7 @@
     background: var(--color-accent);
     border: none;
     border-radius: 6px;
-    color: #fff;
+    color: var(--color-on-accent);
     font-family: var(--font-ui);
     font-size: 13px;
     padding: 6px 10px;
@@ -459,10 +459,10 @@
      .btn-danger so destructive actions feel consistent across the app. */
   .btn-danger {
     flex-shrink: 0;
-    background: #ef4444;
+    background: var(--color-danger-solid);
     border: none;
     border-radius: 4px;
-    color: #fff;
+    color: var(--color-on-danger);
     font-family: var(--font-ui);
     font-size: 12px;
     padding: 6px 12px;
@@ -696,14 +696,14 @@
   .btn-delete {
     background: transparent;
     border: 1px solid var(--color-border);
-    color: #ef4444;
+    color: var(--color-danger);
     border-radius: 4px;
     padding: 6px 10px;
     font-size: 12px;
     font-family: var(--font-ui);
     cursor: pointer;
   }
-  .btn-delete:hover { border-color: #ef4444; }
+  .btn-delete:hover { border-color: var(--color-danger); }
   .delete-confirm {
     flex: 1;
     display: flex;
@@ -721,7 +721,7 @@
     justify-content: flex-end;
   }
   .delete-error {
-    color: #ef4444;
+    color: var(--color-danger);
     font-size: 11px;
     font-family: var(--font-ui);
   }

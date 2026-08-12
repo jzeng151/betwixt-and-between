@@ -211,7 +211,7 @@
   .error {
     margin: 0;
     font-size: 12px;
-    color: var(--color-rel-rival, #ef4444);
+    color: var(--color-danger);
   }
 
   .actions {
@@ -240,6 +240,6 @@
   .actions button.primary {
     background: var(--color-accent);
     border-color: var(--color-accent);
-    color: #fff;
+    color: var(--color-on-accent);
   }
 </style>

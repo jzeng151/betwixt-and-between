@@ -281,13 +281,13 @@
 		padding-left: 8px;
 	}
 	.chip.eraser:hover {
-		border-color: #ef4444;
+		border-color: var(--color-danger);
 	}
 	.chip.eraser.armed {
-		border-color: #ef4444;
+		border-color: var(--color-danger);
 		border-style: solid;
-		background: color-mix(in srgb, #ef4444 18%, transparent);
-		box-shadow: 0 0 0 1px #ef4444;
+		background: color-mix(in srgb, var(--color-danger) 18%, transparent);
+		box-shadow: 0 0 0 1px var(--color-danger);
 	}
 	.eraser-glyph {
 		font-size: 11px;

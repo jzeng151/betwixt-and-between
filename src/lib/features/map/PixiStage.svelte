@@ -390,7 +390,7 @@
 	}
 	.pixi-error-title {
 		margin: 0;
-		color: var(--color-rel-rival, #ef4444);
+		color: var(--color-danger);
 		font-weight: 600;
 	}
 	.pixi-error-msg {
