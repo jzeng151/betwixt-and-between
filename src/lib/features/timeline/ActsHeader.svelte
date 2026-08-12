@@ -1081,8 +1081,6 @@
 		border-right: 1px dashed rgba(42, 45, 53, 0.6);
 		font-size: 10px;
 		color: var(--color-text-muted, #6b7280);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
 		display: flex;
 		align-items: center;
 		justify-content: center;

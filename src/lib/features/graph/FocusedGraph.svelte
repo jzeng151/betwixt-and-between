@@ -969,8 +969,6 @@
     font-family: var(--font-ui);
     font-size: 12px;
     color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
   }
 
   .fg-mode select {

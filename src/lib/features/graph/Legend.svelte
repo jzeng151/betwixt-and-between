@@ -175,8 +175,6 @@
 		margin: 0;
 		color: var(--color-text-muted);
 		font-size: 11px;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 	}
 
 	.legend-edge-labels {
