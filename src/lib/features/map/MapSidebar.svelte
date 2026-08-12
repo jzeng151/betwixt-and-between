@@ -37,6 +37,9 @@
 		activeMapId = null,
 		activeMap = null
 	}: { activeMapId?: string | null; activeMap?: WorldMap | null } = $props();
+	const instanceId = $props.id();
+	const factionDeleteTitleId = `${instanceId}-faction-delete-title`;
+	const artDeleteTitleId = `${instanceId}-art-delete-title`;
 
 	function isVisible(key: LayerKey | string): boolean {
 		const v = $layerPrefs.prefs.get(key);
@@ -605,12 +608,12 @@
 		class="modal-overlay"
 		role="dialog"
 		aria-modal="true"
-		aria-labelledby="faction-del-title"
+		aria-labelledby={factionDeleteTitleId}
 		tabindex="-1"
 		use:focusTrap={{ onEscape: () => !deleteBusy && cancelDelete() }}
 	>
 		<div class="modal-content">
-			<h3 id="faction-del-title">Delete faction "{dc.faction.name}"?</h3>
+			<h3 id={factionDeleteTitleId}>Delete faction "{dc.faction.name}"?</h3>
 			{#if dc.dependentCount > 0}
 				<p class="warn-text">
 					This faction is referenced by <strong>{dc.dependentCount}</strong>
@@ -644,12 +647,12 @@
 		class="modal-overlay"
 		role="dialog"
 		aria-modal="true"
-		aria-labelledby="art-del-title"
+		aria-labelledby={artDeleteTitleId}
 		tabindex="-1"
 		use:focusTrap={{ onEscape: () => (artDeleteTarget = null) }}
 	>
 		<div class="modal-content">
-			<h3 id="art-del-title">Delete layer "{al.name}"?</h3>
+			<h3 id={artDeleteTitleId}>Delete layer "{al.name}"?</h3>
 			<p class="warn-text">
 				Fill and stamp strokes on this layer move to the base art layer; erase
 				strokes on it are removed. The layer's blend mode and opacity can't be

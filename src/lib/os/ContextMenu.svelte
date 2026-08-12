@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { clearNextFocusTrapReturn, setNextFocusTrapReturn } from '$lib/actions/focus-trap.js';
   import { clampToViewport } from './context-menu-clamp.js';
 
   interface Item {
@@ -20,6 +21,7 @@
   let { items, x, y, onClose }: Props = $props();
 
   let menuEl: HTMLDivElement | undefined = $state();
+  const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   let buttonEls: (HTMLButtonElement | null)[] = $state([]);
   let pos = $state({ x: 0, y: 0 });
   // Focused item index; starts at first non-disabled item.
@@ -28,11 +30,13 @@
   function selectItem(i: number) {
     const item = items[i];
     if (!item || item.disabled) return;
+    setNextFocusTrapReturn(returnFocus);
     item.onSelect();
     /* Close after select. The component owns dismiss for Escape and click-outside;
        selection should follow the same shape so callsites don't have to wrap
        every onSelect with an explicit close. */
     onClose();
+    queueMicrotask(clearNextFocusTrapReturn);
   }
 
   function focusItem(i: number) {

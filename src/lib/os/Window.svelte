@@ -41,7 +41,8 @@
   }
 
   $effect(() => {
-    if (!minimized && windowStore.focusedWindow()?.id === id) focusWindow();
+    const focused = windowStore.focusedWindow();
+    if (!minimized && focused?.id === id && focused.zIndex === zIndex) focusWindow();
   });
 
   onMount(() => {
