@@ -248,6 +248,28 @@
 		const side: 'left' | 'right' = e.clientX - rect.left < rect.width / 2 ? 'left' : 'right';
 		actDropTarget = { idx, side };
 	}
+	async function moveAct(actId: string, targetPos: number) {
+		const movedFromIdx = acts.findIndex((act) => act.id === actId);
+		if (movedFromIdx < 0 || targetPos === movedFromIdx) return;
+		try {
+			const res = await fetch(`/api/entities/${actId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ position: targetPos })
+			});
+			if (!res.ok) throw new Error(await res.text());
+			await refreshTimelineStores();
+		} catch (err) {
+			reorderErrorToast.show((err as Error).message);
+		}
+	}
+	function moveActWithKeyboard(e: KeyboardEvent, actId: string) {
+		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+		e.preventDefault();
+		const from = acts.findIndex((act) => act.id === actId);
+		const target = Math.max(0, Math.min(acts.length - 1, from + (e.key === 'ArrowLeft' ? -1 : 1)));
+		void moveAct(actId, target);
+	}
 	async function actDrop(e: DragEvent, idx: number) {
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === ACT_MIME)) return;
 		e.preventDefault();
@@ -263,17 +285,7 @@
 		let targetPos = target.side === 'left' ? target.idx : target.idx + 1;
 		if (movedFromIdx < targetPos) targetPos -= 1;
 		if (targetPos === movedFromIdx) return; // no-op
-		try {
-			const res = await fetch(`/api/entities/${movedId}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ position: targetPos })
-			});
-			if (!res.ok) throw new Error(await res.text());
-			await refreshTimelineStores();
-		} catch (err) {
-			reorderErrorToast.show((err as Error).message);
-		}
+		await moveAct(movedId, targetPos);
 	}
 
 	// ── Scene drag-reorder + cross-act move ──────────────────────────────────
@@ -303,6 +315,38 @@
 		const idx = Math.max(0, Math.min(Math.floor(relX / cellWidth + 0.5), list.length));
 		sceneDropTarget = { actId, idx };
 	}
+	async function moveScene(sceneId: string, targetActId: string, targetPos: number) {
+		try {
+			const res = await fetch(`/api/entities/${sceneId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ parentId: targetActId, position: targetPos })
+			});
+			if (!res.ok) throw new Error(await res.text());
+			await refreshTimelineStores();
+		} catch (err) {
+			reorderErrorToast.show((err as Error).message);
+		}
+	}
+	function onSceneKeydown(e: KeyboardEvent, scene: Entity, actIdx: number, sceneIdx: number) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			onSelectScene?.(scene.id);
+			return;
+		}
+		if (!e.altKey || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+		e.preventDefault();
+		if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+			const scenes = scenesByActId.get(acts[actIdx].id) ?? [];
+			const target = Math.max(0, Math.min(scenes.length - 1, sceneIdx + (e.key === 'ArrowLeft' ? -1 : 1)));
+			void moveScene(scene.id, acts[actIdx].id, target);
+			return;
+		}
+		const targetAct = acts[actIdx + (e.key === 'ArrowUp' ? -1 : 1)];
+		if (!targetAct) return;
+		const targetScenes = scenesByActId.get(targetAct.id) ?? [];
+		void moveScene(scene.id, targetAct.id, Math.min(sceneIdx, targetScenes.length));
+	}
 	async function sceneActDrop(e: DragEvent, actId: string) {
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === SCENE_MIME)) return;
 		e.preventDefault();
@@ -323,17 +367,7 @@
 			if (fromIdx >= 0 && fromIdx < targetPos) targetPos -= 1;
 			if (targetPos === fromIdx) return;
 		}
-		try {
-			const res = await fetch(`/api/entities/${movedId}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ parentId: target.actId, position: targetPos })
-			});
-			if (!res.ok) throw new Error(await res.text());
-			await refreshTimelineStores();
-		} catch (err) {
-			reorderErrorToast.show((err as Error).message);
-		}
+		await moveScene(movedId, target.actId, targetPos);
 	}
 
 	// ── Act-width resize ─────────────────────────────────────────────────────
@@ -400,6 +434,20 @@
 			onWeightCommit?.(updates);
 		}
 	}
+
+	function resizeActWithKeyboard(e: KeyboardEvent, idx: number) {
+		if (!weights || trackWidthPx === 0 || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+		e.preventDefault();
+		const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+		const minWeight = (MIN_ACT_PX / trackWidthPx) * totalWeight;
+		const delta = totalWeight * 0.025 * (e.key === 'ArrowLeft' ? -1 : 1);
+		const left = weights[idx] + delta;
+		const right = weights[idx + 1] - delta;
+		if (left < minWeight || right < minWeight) return;
+		const updates = { [acts[idx].id]: left, [acts[idx + 1].id]: right };
+		onWeightPreview?.(updates);
+		onWeightCommit?.(updates);
+	}
 </script>
 
 <div class="acts-header">
@@ -429,15 +477,22 @@
 		>
 			{#if actIdx < acts.length - 1}
 				<!-- Right-edge handle for resizing this act vs. its neighbor. Hidden until hover. -->
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div
-					class="width-handle"
-					class:dragging={widthDrag?.idx === actIdx}
-					title="Drag to resize {act.name}"
-					onpointerdown={(e) => startWidthDrag(e, actIdx)}
-					onpointermove={moveWidthDrag}
-					onpointerup={endWidthDrag}
-				></div>
+					<div
+						class="width-handle"
+						class:dragging={widthDrag?.idx === actIdx}
+						title="Drag to resize {act.name}"
+						role="slider"
+						aria-orientation="horizontal"
+						aria-label="Width of {act.name} relative to {acts[actIdx + 1].name}"
+						aria-valuemin="0"
+						aria-valuemax="100"
+						aria-valuenow={Math.round(weights ? weights[actIdx] / (weights[actIdx] + weights[actIdx + 1]) * 100 : 50)}
+						tabindex="0"
+						onpointerdown={(e) => startWidthDrag(e, actIdx)}
+						onpointermove={moveWidthDrag}
+						onpointerup={endWidthDrag}
+						onkeydown={(e) => resizeActWithKeyboard(e, actIdx)}
+					></div>
 			{/if}
 			<!-- Insert-between overlay on the act's LEFT boundary. Absolute so it doesn't take flex space (D6/5A). -->
 			<div class="insert-overlay" class:active={insertingAtIdx === actIdx}>
@@ -470,13 +525,16 @@
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<span
 						class="act-grip"
-						aria-label="Drag to reorder {act.name}"
-						title="Drag to reorder"
+						role="button"
+						tabindex="0"
+						aria-label="Reorder {act.name} with left and right arrow keys"
+						title="Drag or use arrow keys to reorder"
 						draggable="true"
 						ondragstart={(e) => actDragStart(e, act.id)}
 						ondragend={actDragEnd}
+						onkeydown={(e) => moveActWithKeyboard(e, act.id)}
 					>⋮⋮</span>
-					<div class="act-name">{act.name}</div>
+					<button class="act-name" onclick={() => onSelectAct?.(act.id)}>{act.name}</button>
 					<button
 						class="act-delete-btn"
 						aria-label="Delete {act.name}"
@@ -587,10 +645,11 @@
 			>
 				{#if (scenesByActId.get(act.id)?.length ?? 0) > 0}
 					{#each scenesByActId.get(act.id)! as scene, k (scene.id)}
-						<!-- svelte-ignore a11y_click_events_have_key_events -->
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div
 							class="scene-cell"
+							role="button"
+							tabindex="0"
+							aria-label="Select {scene.name}. Alt plus left and right reorders; Alt plus up and down moves between acts."
 							data-entity-id={scene.id}
 							class:scene-cell--selected={selectedEntityId === scene.id}
 							class:scene-cell--dragging={dragSceneId === scene.id}
@@ -599,6 +658,7 @@
 							ondragstart={(e) => sceneDragStart(e, scene.id)}
 							ondragend={sceneDragEnd}
 							onclick={() => onSelectScene?.(scene.id)}
+							onkeydown={(e) => onSceneKeydown(e, scene, sceneActIdx, k)}
 						>s{k + 1}</div>
 					{/each}
 				{:else}
@@ -661,6 +721,9 @@
 		transition: opacity 0.12s, color 0.12s, border-color 0.12s;
 	}
 	.insert-overlay:hover .insert-btn {
+		opacity: 1;
+	}
+	.insert-btn:focus-visible {
 		opacity: 1;
 	}
 	.insert-btn:hover {
@@ -756,6 +819,9 @@
 	.act-col-header:hover .act-grip {
 		opacity: 0.7;
 	}
+	.act-grip:focus-visible {
+		opacity: 1;
+	}
 	.act-grip:hover {
 		opacity: 1 !important;
 		color: var(--color-text, #e8e0d0);
@@ -787,7 +853,8 @@
 		transition: opacity 0.12s ease;
 	}
 	.act-col-header:hover .width-handle,
-	.width-handle.dragging {
+	.width-handle.dragging,
+	.width-handle:focus-visible {
 		opacity: 1;
 	}
 	.width-handle::after {
@@ -800,6 +867,9 @@
 		background: rgba(200, 148, 42, 0.55);
 	}
 	.act-name {
+		background: none;
+		border: 0;
+		padding: 0;
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);
 		font-size: 17px;
 		font-weight: 500;
@@ -808,6 +878,7 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		cursor: pointer;
 	}
 	.act-delete-btn {
 		background: none;
@@ -825,6 +896,9 @@
 		transition: opacity 0.15s, color 0.15s;
 	}
 	.act-col-header:hover .act-delete-btn {
+		opacity: 1;
+	}
+	.act-delete-btn:focus-visible {
 		opacity: 1;
 	}
 	.act-delete-btn:hover {
