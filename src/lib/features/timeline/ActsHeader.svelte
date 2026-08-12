@@ -630,9 +630,9 @@
 	.insert-overlay {
 		position: absolute;
 		top: 0;
-		left: -8px;
+		left: -12px;
 		bottom: 0;
-		width: 16px;
+		width: 24px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -654,8 +654,9 @@
 		border-radius: 4px;
 		font-size: 14px;
 		line-height: 1;
-		padding: 0 6px;
-		height: 22px;
+		padding: 0;
+		width: 24px;
+		height: 24px;
 		cursor: pointer;
 		transition: opacity 0.12s, color 0.12s, border-color 0.12s;
 	}
@@ -745,7 +746,10 @@
 		font-size: 12px;
 		letter-spacing: -1px;
 		user-select: none;
-		padding: 2px 1px;
+		width: 24px;
+		height: 24px;
+		display: grid;
+		place-items: center;
 		flex-shrink: 0;
 		transition: opacity 0.15s, color 0.15s;
 	}
@@ -774,9 +778,9 @@
 	.width-handle {
 		position: absolute;
 		top: 0;
-		right: -3px;
+		right: -12px;
 		bottom: 0;
-		width: 6px;
+		width: 24px;
 		cursor: ew-resize;
 		z-index: 6;
 		opacity: 0;
@@ -785,7 +789,15 @@
 	.act-col-header:hover .width-handle,
 	.width-handle.dragging {
 		opacity: 1;
-		background: rgba(200, 148, 42, 0.35);
+	}
+	.width-handle::after {
+		content: '';
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 11px;
+		width: 2px;
+		background: rgba(200, 148, 42, 0.55);
 	}
 	.act-name {
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);
@@ -804,7 +816,9 @@
 		cursor: pointer;
 		font-size: 15px;
 		line-height: 1;
-		padding: 2px 4px;
+		width: 24px;
+		height: 24px;
+		padding: 0;
 		border-radius: 3px;
 		flex-shrink: 0;
 		opacity: 0;

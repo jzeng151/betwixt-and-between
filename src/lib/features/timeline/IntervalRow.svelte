@@ -410,12 +410,12 @@
 	}
 	/* Resize handles. Mockup spec: 4px wide vertical bar in amber, only
 	   visible on hover/focus or while resizing. We render a wider hit-box
-	   (10px) for ergonomics but the visible mark is 4px via inner gradient. */
+	   for ergonomics but the visible mark stays 4px. */
 	.resize-handle {
 		position: absolute;
 		top: 14px;
 		bottom: 14px;
-		width: 10px;
+		width: 24px;
 		cursor: ew-resize;
 		z-index: 2;
 		opacity: 0;

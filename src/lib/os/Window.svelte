@@ -221,22 +221,32 @@
 
   .win-controls {
     display: flex;
-    gap: 6px;
+    gap: 0;
     flex-shrink: 0;
   }
 
   .win-control {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+    display: grid;
+    place-items: center;
+  }
+
+  .win-control::after {
+    content: '';
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    border: none;
-    cursor: pointer;
-    padding: 0;
+    background: var(--control-color);
   }
 
-  .win-control.close    { background: #ef4444; }
-  .win-control.minimize { background: #c8942a; }
-  .win-control.maximize-btn { background: #28c840; }
+  .win-control.close    { --control-color: #ef4444; }
+  .win-control.minimize { --control-color: #c8942a; }
+  .win-control.maximize-btn { --control-color: #28c840; }
 
   .window.maximized {
     position: fixed;
@@ -266,7 +276,9 @@
     color: var(--color-text-muted);
     font-size: 13px;
     line-height: 1;
-    padding: 2px 4px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
     border-radius: 4px;
     cursor: pointer;
   }

@@ -144,9 +144,9 @@
         class="hairline-hit"
         role="button"
         aria-label="Split interval at this act boundary"
-        x={fraction * widthPx - 4}
+        x={fraction * widthPx - 12}
         y={BODY_Y}
-        width="8"
+        width="24"
         height={BODY_H}
         fill="transparent"
         onclick={(e) => {
