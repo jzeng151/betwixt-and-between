@@ -104,6 +104,9 @@
 		// a captured region id / snapshot through a different map (Codex PR #72 #953).
 		authoringOpen?: boolean;
 	} = $props();
+	const instanceId = $props.id();
+	const changeOwnerTitleId = `${instanceId}-change-owner-title`;
+	const provenanceTitleId = `${instanceId}-provenance-title`;
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
 
@@ -819,12 +822,12 @@
 		class="modal-overlay"
 		role="dialog"
 		aria-modal="true"
-		aria-labelledby="change-owner-title"
+		aria-labelledby={changeOwnerTitleId}
 		tabindex="-1"
 		use:focusTrap={{ onEscape: () => (causeModal = null) }}
 	>
 		<div class="modal-content">
-			<h3 id="change-owner-title">Change owner with cause</h3>
+			<h3 id={changeOwnerTitleId}>Change owner with cause</h3>
 			<label class="cause-field">
 				New owner
 				<select bind:value={causeModal.factionId}>
@@ -865,12 +868,12 @@
 		class="modal-overlay"
 		role="dialog"
 		aria-modal="true"
-		aria-labelledby="provenance-title"
+		aria-labelledby={provenanceTitleId}
 		tabindex="-1"
 		use:focusTrap={{ onEscape: () => (provenance = null) }}
 	>
 		<div class="modal-content">
-			<h3 id="provenance-title">Why is this region the way it is?</h3>
+			<h3 id={provenanceTitleId}>Why is this region the way it is?</h3>
 			{#if provenance.loading}
 				<p class="variant-help">Tracing cause…</p>
 			{:else if provenance.error}

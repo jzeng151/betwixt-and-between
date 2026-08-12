@@ -30,18 +30,20 @@
 		onSave: () => void;
 		onCancel: () => void;
 	} = $props();
+
+	const titleId = $props.id();
 </script>
 
 <div
 	class="modal-overlay"
 	role="dialog"
 	aria-modal="true"
-	aria-labelledby="variant-form-title"
+	aria-labelledby={titleId}
 	tabindex="-1"
 	use:focusTrap={{ onEscape: onCancel }}
 >
 	<div class="modal-content">
-		<h3 id="variant-form-title">Variant range</h3>
+		<h3 id={titleId}>Variant range</h3>
 		<p class="variant-help">
 			Which story-time slice does this map depict? Default variant shows whenever
 			no scoped variant covers the playhead. A single-Act variant is fine — pick
