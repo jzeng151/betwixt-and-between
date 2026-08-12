@@ -21,6 +21,8 @@
     'entity-detail': () => import('$lib/components/EntityDetail.svelte')
   };
   const appPromises = new Map<AppId, Promise<AppComponent>>();
+  let loadedApps = $state<Partial<Record<AppId, AppComponent>>>({});
+  let failedApps = $state<Set<AppId>>(new Set());
 
   function loadApp(appId: AppId): Promise<AppComponent> {
     let promise = appPromises.get(appId);
@@ -30,6 +32,19 @@
     }
     return promise;
   }
+
+  $effect(() => {
+    for (const win of $windowStore) {
+      if (loadedApps[win.appId] || failedApps.has(win.appId)) continue;
+      void loadApp(win.appId)
+        .then((component) => {
+          loadedApps = { ...loadedApps, [win.appId]: component };
+        })
+        .catch(() => {
+          failedApps = new Set(failedApps).add(win.appId);
+        });
+    }
+  });
 
   function windowTitle(appId: AppId, entityId: string | null): string {
     const fallback = APP_CATALOG[appId].title;
@@ -73,9 +88,8 @@
     compact={win.appId === 'story-player'}
     alwaysOnTop={win.alwaysOnTop ?? false}
   >
-    {#await loadApp(win.appId)}
-      <div class="app-loading" role="status">Opening {APP_CATALOG[win.appId].title}…</div>
-    {:then App}
+    {@const App = loadedApps[win.appId]}
+    {#if App}
       {#if win.appId === 'character-editor'}
         <App winId={win.id} entityId={win.entityId} />
       {:else if win.appId === 'wiki'}
@@ -101,11 +115,13 @@
       {:else if win.appId === 'story-player'}
         <App winId={win.id} pinned={win.alwaysOnTop ?? false} />
       {/if}
-    {:catch}
+    {:else if failedApps.has(win.appId)}
       <div class="app-loading app-loading--error" role="alert">
         Couldn't open {APP_CATALOG[win.appId].title}.
       </div>
-    {/await}
+    {:else}
+      <div class="app-loading" role="status">Opening {APP_CATALOG[win.appId].title}…</div>
+    {/if}
   </Window>
 {/each}
 
