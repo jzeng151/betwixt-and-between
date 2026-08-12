@@ -72,6 +72,33 @@
     e.preventDefault();
   }
 
+  function onTitlebarKeydown(e: KeyboardEvent) {
+    if (e.target !== e.currentTarget || !e.altKey || maximized) return;
+    const delta = 16;
+    const direction = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1
+      : e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1
+      : 0;
+    if (direction === 0) return;
+    e.preventDefault();
+    if (e.shiftKey) {
+      const nextWidth = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+        ? Math.max(MIN_W, width + direction * delta)
+        : width;
+      const nextHeight = e.key === 'ArrowUp' || e.key === 'ArrowDown'
+        ? Math.max(MIN_H, height + direction * delta)
+        : height;
+      windowStore.resize(id, nextWidth, nextHeight);
+    } else {
+      const nextX = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+        ? Math.max(0, x + direction * delta)
+        : x;
+      const nextY = e.key === 'ArrowUp' || e.key === 'ArrowDown'
+        ? Math.max(0, y + direction * delta)
+        : y;
+      windowStore.move(id, nextX, nextY);
+    }
+  }
+
   function onResizeMousedown(e: MouseEvent, dir: ResizeDir) {
     if (maximized) return;
     resizeDir = dir;
@@ -141,7 +168,14 @@
     aria-label={title}
     tabindex="-1"
   >
-    <div class="titlebar" onmousedown={onTitlebarMousedown} role="presentation">
+    <div
+      class="titlebar"
+      onmousedown={onTitlebarMousedown}
+      onkeydown={onTitlebarKeydown}
+      role="toolbar"
+      aria-label="{title} window. Alt plus arrow keys moves; Shift, Alt, and arrow keys resizes."
+      tabindex="0"
+    >
       <div class="win-controls">
         <button
           class="win-control close"
