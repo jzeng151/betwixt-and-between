@@ -439,11 +439,9 @@
 		gap: 8px;
 	}
 	.entity-detail-eyebrow {
-		font-size: 10px;
+		font-size: 11px;
 		font-weight: 600;
 		color: var(--color-text-muted, #6b7280);
-		text-transform: uppercase;
-		letter-spacing: 0.12em;
 	}
 	.entity-detail-actions {
 		display: flex;
@@ -459,8 +457,6 @@
 		font-size: 11px;
 		font-weight: 600;
 		font-family: var(--font-ui, 'Inter', sans-serif);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
 		cursor: pointer;
 	}
 	.mode-toggle:hover {
@@ -475,8 +471,6 @@
 		font-size: 11px;
 		font-weight: 600;
 		font-family: var(--font-ui, 'Inter', sans-serif);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
 		cursor: pointer;
 	}
 	.mode-cancel:hover {
@@ -561,11 +555,9 @@
 	.body-eyebrow {
 		margin: 0 0 8px;
 		font-family: var(--font-ui, 'Inter', sans-serif);
-		font-size: 9px;
+		font-size: 11px;
 		font-weight: 600;
 		color: var(--color-text-muted, #6b7280);
-		text-transform: uppercase;
-		letter-spacing: 0.12em;
 	}
 	.entity-detail-footer {
 		margin-top: auto;

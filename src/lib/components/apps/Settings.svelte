@@ -621,10 +621,8 @@
   .setting-label {
     display: block;
     margin-bottom: 8px;
-    font-size: 9px;
+    font-size: 11px;
     color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
   }
 
   .radio-group {
@@ -783,11 +781,9 @@
   /* ── Phase 3: active-profile indicator (Gap Y mitigation) ── */
   .active-profile-line {
     margin: -12px 0 18px 0;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
   }
 
   /* ── Phase 3: presets (D2) ── */
