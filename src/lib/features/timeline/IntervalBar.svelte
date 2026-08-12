@@ -47,6 +47,8 @@
     isEvent?: boolean;
     /** Click on an internal hairline → split the interval at that fraction. */
     onSplit?: (fraction: number) => void;
+    /** Enter or Space on the bar selects it. */
+    onActivate?: () => void;
   }
 
   let {
@@ -58,6 +60,7 @@
     internalBoundaries = [],
     isEvent = false,
     onSplit,
+    onActivate,
   }: Props = $props();
 
   const widthClass: WidthClass = $derived(widthClassForBar(widthPx));
@@ -76,6 +79,12 @@
   const nameBaseline = $derived(showNote ? 'hanging' : 'middle');
 
   let focused = $state(false);
+
+  function activateFromKeyboard(event: KeyboardEvent) {
+    if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    onActivate?.();
+  }
 </script>
 
 <svg
@@ -89,6 +98,7 @@
   tabindex="0"
   onfocus={() => (focused = true)}
   onblur={() => (focused = false)}
+  onkeydown={activateFromKeyboard}
 >
   <!--
     No <title> child — the visible tooltip is rendered by IntervalRow's
@@ -137,12 +147,11 @@
       pointer-events="none"
     />
     {#if onSplit}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <!-- svelte-ignore a11y_interactive_supports_focus -->
       <rect
         class="hairline-hit"
         role="button"
+        tabindex="0"
         aria-label="Split interval at this act boundary"
         x={fraction * widthPx - 12}
         y={BODY_Y}
@@ -150,6 +159,12 @@
         height={BODY_H}
         fill="transparent"
         onclick={(e) => {
+          e.stopPropagation();
+          onSplit?.(fraction);
+        }}
+        onkeydown={(e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
           e.stopPropagation();
           onSplit?.(fraction);
         }}

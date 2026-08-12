@@ -96,6 +96,45 @@
 		return scenesByActId.get(act.id)?.length ?? 0;
 	}
 
+	function storyStops(): number[] {
+		const stops = [0];
+		for (let actIdx = 0; actIdx < actCount; actIdx++) {
+			const count = sceneCountFor(actIdx);
+			if (count > 1) {
+				for (let sceneIdx = 1; sceneIdx < count; sceneIdx++) {
+					stops.push(actIdx + sceneIdx / count);
+				}
+			}
+			stops.push(actIdx + 1);
+		}
+		return stops;
+	}
+
+	async function resizeWithKeyboard(
+		e: KeyboardEvent,
+		iv: Interval,
+		edge: 'start' | 'end'
+	) {
+		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+		e.preventDefault();
+		e.stopPropagation();
+		const current = edge === 'start' ? iv.startPosition : iv.endPosition;
+		const stops = storyStops();
+		const next = e.key === 'ArrowLeft'
+			? [...stops].reverse().find((stop) => stop < current - 1e-9)
+			: stops.find((stop) => stop > current + 1e-9);
+		if (next == null || (edge === 'start' ? next >= iv.endPosition : next <= iv.startPosition)) return;
+		const patch = edge === 'start'
+			? positionToStartFKs(next, acts, scenesByActId)
+			: positionToEndFKs(next, acts, scenesByActId);
+		if (!patch) return;
+		try {
+			await intervalsStore.updateInterval(iv.id, patch);
+		} catch (err) {
+			onError((err as Error).message);
+		}
+	}
+
 	function startResize(e: PointerEvent, iv: Interval, edge: 'start' | 'end') {
 		e.preventDefault();
 		e.stopPropagation();
@@ -325,28 +364,31 @@
 					return boundaryPositions.map((p) => (posToFrac(p) - sf) / span);
 				})()}
 				isEvent={entity.type === 'Event'}
-				onSplit={async (fraction) => {
+					onSplit={async (fraction) => {
 					const atPosition = iv.startPosition + fraction * (iv.endPosition - iv.startPosition);
 					try {
 						await intervalsStore.splitIntervalAt(iv.id, atPosition);
 					} catch (err) {
 						onError((err as Error).message);
 					}
-				}}
-			/>
+					}}
+					onActivate={() => onSelect?.(entity.id, iv.id)}
+				/>
 			<div
 				class="resize-handle resize-handle--left"
 				role="button"
 				aria-label="Drag to resize interval start"
-				tabindex="-1"
-				onpointerdown={(e) => startResize(e, iv, 'start')}
+					tabindex="0"
+					onpointerdown={(e) => startResize(e, iv, 'start')}
+					onkeydown={(e) => void resizeWithKeyboard(e, iv, 'start')}
 			></div>
 			<div
 				class="resize-handle resize-handle--right"
 				role="button"
 				aria-label="Drag to resize interval end"
-				tabindex="-1"
-				onpointerdown={(e) => startResize(e, iv, 'end')}
+					tabindex="0"
+					onpointerdown={(e) => startResize(e, iv, 'end')}
+					onkeydown={(e) => void resizeWithKeyboard(e, iv, 'end')}
 			></div>
 		</div>
 	{/each}
