@@ -34,6 +34,7 @@
   }
 
   let { relationship, acts, scenes = [], onSave, onClose }: Props = $props();
+  const titleId = $props.id();
 
   let editType = $state<RelationshipType>('allied_with');
   let editLabel = $state('');
@@ -106,11 +107,11 @@
   class="modal"
   role="dialog"
   aria-modal="true"
-  aria-labelledby="edit-rel-title"
+  aria-labelledby={titleId}
   tabindex="-1"
   use:focusTrap={{ onEscape: () => !saving && onClose() }}
 >
-  <h2 class="modal-title" id="edit-rel-title">Edit relationship</h2>
+  <h2 class="modal-title" id={titleId}>Edit relationship</h2>
 
   <div class="field-row">
     <label for="edit-rel-type">Type</label>

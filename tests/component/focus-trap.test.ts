@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { focusTrap } from '$lib/actions/focus-trap.js';
+import { focusTrap, setNextFocusTrapReturn } from '$lib/actions/focus-trap.js';
 
 describe('focusTrap', () => {
 	it('moves, contains, and restores focus', async () => {
@@ -26,5 +26,19 @@ describe('focusTrap', () => {
 
 		action.destroy();
 		expect(document.activeElement).toBe(trigger);
+	});
+
+	it('restores focus past a transient menu', async () => {
+		const opener = document.body.appendChild(document.createElement('button'));
+		const menuItem = document.body.appendChild(document.createElement('button'));
+		menuItem.focus();
+		setNextFocusTrapReturn(opener);
+		menuItem.remove();
+
+		const dialog = document.body.appendChild(document.createElement('div'));
+		const action = focusTrap(dialog);
+		action.destroy();
+
+		expect(document.activeElement).toBe(opener);
 	});
 });

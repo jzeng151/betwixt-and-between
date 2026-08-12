@@ -47,18 +47,20 @@
 		onCommitCreateLocation: () => void;
 		onToggleScene: (sceneId: string) => void;
 	} = $props();
+
+	const titleId = $props.id();
 </script>
 
 <div
 	class="modal-overlay"
 	role="dialog"
 	aria-modal="true"
-	aria-labelledby="region-form-title"
+	aria-labelledby={titleId}
 	tabindex="-1"
 	use:focusTrap={{ onEscape: onCancel }}
 >
 	<div class="modal-content">
-		<h3 id="region-form-title">{isEditing ? 'Edit Region' : 'New Region'}</h3>
+		<h3 id={titleId}>{isEditing ? 'Edit Region' : 'New Region'}</h3>
 
 		<label>
 			Linked Location
@@ -70,12 +72,17 @@
 						type="text"
 						placeholder="Name of new location…"
 						aria-label="Name of new location"
+						data-escape-contained
 						bind:value={newLocationName}
 						autofocus
 						disabled={newLocationBusy}
 						onkeydown={(e) => {
 							if (e.key === 'Enter') onCommitCreateLocation();
-							if (e.key === 'Escape') onCancelCreateLocation();
+							if (e.key === 'Escape') {
+								e.preventDefault();
+								e.stopPropagation();
+								onCancelCreateLocation();
+							}
 						}}
 					/>
 					<button type="button" onclick={onCommitCreateLocation} disabled={newLocationBusy}>Add</button>
