@@ -31,6 +31,7 @@
 		onConfirm: () => void;
 		onCancel: () => void;
 	} = $props();
+	const titleId = $props.id();
 
 </script>
 
@@ -43,11 +44,11 @@
 	class="delete-modal"
 	role="dialog"
 	aria-modal="true"
-	aria-labelledby="delete-title"
+	aria-labelledby={titleId}
 	tabindex="-1"
 	use:focusTrap={{ onEscape: () => !deleting && onCancel() }}
 >
-	<h2 id="delete-title" class="delete-title">
+	<h2 id={titleId} class="delete-title">
 		Delete <strong>{name}</strong>?
 	</h2>
 	<p class="delete-lead">

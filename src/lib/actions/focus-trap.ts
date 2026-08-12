@@ -2,6 +2,16 @@ type FocusTrapOptions = {
 	onEscape?: () => void;
 };
 
+let nextReturnFocus: HTMLElement | null = null;
+
+export function setNextFocusTrapReturn(element: HTMLElement | null) {
+	nextReturnFocus = element?.isConnected ? element : null;
+}
+
+export function clearNextFocusTrapReturn() {
+	nextReturnFocus = null;
+}
+
 const FOCUSABLE = [
 	'a[href]',
 	'button:not([disabled])',
@@ -18,13 +28,16 @@ function focusableChildren(node: HTMLElement): HTMLElement[] {
 }
 
 export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
-	const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+	const returnFocus = nextReturnFocus
+		?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+	nextReturnFocus = null;
 	let currentOptions = options;
 
 	queueMicrotask(() => focusableChildren(node)[0]?.focus() ?? node.focus());
 
 	function onKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape' && currentOptions.onEscape) {
+			if (event.target instanceof Element && event.target.closest('[data-escape-contained]')) return;
 			event.preventDefault();
 			event.stopPropagation();
 			currentOptions.onEscape();

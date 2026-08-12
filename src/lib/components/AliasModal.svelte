@@ -31,6 +31,7 @@
   }
 
   let { entity, allEntities, acts, scenes = [], onSave, onClose }: Props = $props();
+  const titleId = $props.id();
 
   // Same-type candidates, excluding the entity itself and any already-alias pairs
   // (server enforces uniqueness; modal just shows the sensible picker)
@@ -79,11 +80,11 @@
   class="modal"
   role="dialog"
   aria-modal="true"
-  aria-labelledby="alias-modal-title"
+  aria-labelledby={titleId}
   tabindex="-1"
   use:focusTrap={{ onEscape: () => !saving && onClose() }}
 >
-  <h2 class="modal-title" id="alias-modal-title">
+  <h2 class="modal-title" id={titleId}>
     Mark <em>{entity.name}</em> as alias of…
   </h2>
 
