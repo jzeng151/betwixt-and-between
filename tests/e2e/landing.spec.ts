@@ -39,9 +39,13 @@ test.describe('Landing page', () => {
 });
 
 test.describe('App route migration', () => {
-  test('/app loads the desktop', async ({ page }) => {
+  test('/app offers a useful empty workspace', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
     await page.goto('/app');
     await expect(page.locator('.app-shell')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Start with one true thing.' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Create a character' }).click();
+    await expect(page.getByRole('dialog', { name: 'Characters' })).toBeVisible();
   });
 });
