@@ -11,7 +11,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	resolvePaletteVars,
 	paletteVarsToCss,
-	managedPaletteVars
+	managedPaletteVars,
+	accentForeground
 } from '../../src/lib/palette-vars.js';
 import { ENTITY_TYPE_COLOR_VAR } from '../../src/lib/entity-type-colors.js';
 import { NODE_COLOR } from '../../src/lib/relationship-colors.js';
@@ -32,6 +33,7 @@ describe('T5 resolvePaletteVars', () => {
 		};
 		expect(resolvePaletteVars(app)).toEqual({
 			'--color-accent': '#111111',
+			'--color-on-accent': '#ffffff',
 			'--color-type-character': '#c8942a',
 			'--color-type-location': '#00ff00',
 			'--color-role-protagonist': '#abcdef'
@@ -60,9 +62,15 @@ describe('T5 resolvePaletteVars', () => {
 	it('managedPaletteVars covers accent, all type vars, and all role vars', () => {
 		const managed = new Set(managedPaletteVars());
 		expect(managed.has('--color-accent')).toBe(true);
+		expect(managed.has('--color-on-accent')).toBe(true);
 		expect(managed.has('--color-type-character')).toBe(true);
 		expect(managed.has('--color-role-protagonist')).toBe(true);
 		expect(managed.has('--color-rel-rival')).toBe(true);
+	});
+
+	it('chooses a contrasting foreground for light and dark accents', () => {
+		expect(accentForeground('#111111')).toBe('#ffffff');
+		expect(accentForeground('#f2b84b')).toBe('#000000');
 	});
 });
 

@@ -7,9 +7,17 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
 
-  onMount(async () => {
-    if (window.innerWidth < 1280) return;
-    await Promise.all([entities.load(), relationships.load()]);
+  onMount(() => {
+    const supported = window.matchMedia('(min-width: 1280px)');
+    let loaded = false;
+    function loadCoreStores() {
+      if (loaded || !supported.matches) return;
+      loaded = true;
+      void Promise.all([entities.load(), relationships.load()]);
+    }
+    loadCoreStores();
+    supported.addEventListener('change', loadCoreStores);
+    return () => supported.removeEventListener('change', loadCoreStores);
   });
 </script>
 
