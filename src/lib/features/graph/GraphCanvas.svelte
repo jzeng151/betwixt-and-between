@@ -475,6 +475,19 @@
 		onContextMenu?.(id, e.clientX, e.clientY);
 	}
 
+	function revealNode(position: NodePosition) {
+		const rect = viewport.getBoundingClientRect();
+		if (rect.width <= 0 || rect.height <= 0) return;
+		const left = panX + position.x * zoom;
+		const top = panY + position.y * zoom;
+		const right = left + (position.w || NODE_W) * zoom;
+		const bottom = top + (position.h || NODE_H) * zoom;
+		if (left < 0) panX -= left;
+		else if (right > rect.width) panX -= right - rect.width;
+		if (top < 0) panY -= top;
+		else if (bottom > rect.height) panY -= bottom - rect.height;
+	}
+
 	function onNodeKeydown(e: KeyboardEvent, id: string) {
 		if (e.target !== e.currentTarget) return;
 		if (e.key === 'Enter' || e.key === ' ') {
@@ -505,17 +518,7 @@
 			y: p.y + (e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0)
 		};
 		nodePos = { ...nodePos, [id]: next };
-		const rect = viewport.getBoundingClientRect();
-		if (rect.width > 0 && rect.height > 0) {
-			const left = panX + next.x * zoom;
-			const top = panY + next.y * zoom;
-			const right = left + (next.w || NODE_W) * zoom;
-			const bottom = top + (next.h || NODE_H) * zoom;
-			if (left < 0) panX -= left;
-			else if (right > rect.width) panX -= right - rect.width;
-			if (top < 0) panY -= top;
-			else if (bottom > rect.height) panY -= bottom - rect.height;
-		}
+		revealNode(next);
 		onNodePositionChange?.(id, next);
 	}
 
@@ -780,6 +783,7 @@
 					ondblclick={(e) => onNodeDblClick(e, node.id)}
 					oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
 					onkeydown={(e) => onNodeKeydown(e, node.id)}
+					onfocus={() => revealNode(p)}
 					onpointerenter={() => (hoveredNodeId = node.id)}
 					onpointerleave={() => {
 						if (draggingNode?.id !== node.id) hoveredNodeId = null;

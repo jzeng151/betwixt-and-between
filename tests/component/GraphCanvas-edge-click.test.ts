@@ -133,6 +133,23 @@ describe('GraphCanvas edge click gate', () => {
 		expect(canvas.style.transform).not.toBe(before);
 	});
 
+	it('pans an off-screen node into view on focus', async () => {
+		const { container } = renderCanvas(vi.fn());
+		const viewport = container.querySelector('.viewport') as HTMLElement;
+		viewport.getBoundingClientRect = () => ({
+			x: 0, y: 0, left: 0, top: 0, right: 40, bottom: 40, width: 40, height: 40,
+			toJSON: () => ({})
+		}) as DOMRect;
+		await tick();
+		const canvas = container.querySelector('.canvas') as HTMLElement;
+		const before = canvas.style.transform;
+
+		(container.querySelector('[data-entity-id="other"]') as HTMLElement).focus();
+		await tick();
+
+		expect(canvas.style.transform).not.toBe(before);
+	});
+
 	it('leaves reserved modified Arrow shortcuts to the browser', async () => {
 		const onNodePositionChange = vi.fn();
 		const { container } = renderCanvas(vi.fn(), undefined, onNodePositionChange);
