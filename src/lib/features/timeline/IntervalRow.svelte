@@ -400,7 +400,7 @@
 				})()}
 				isEvent={entity.type === 'Event'}
 					onSplit={async (fraction) => {
-					const atPosition = iv.startPosition + fraction * (iv.endPosition - iv.startPosition);
+					const atPosition = fracToPos(leftFrac + fraction * (rightFrac - leftFrac));
 					try {
 						await intervalsStore.splitIntervalAt(iv.id, atPosition);
 						await focusInterval(iv.id);
