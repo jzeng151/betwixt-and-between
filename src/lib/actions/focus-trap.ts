@@ -3,6 +3,7 @@ type FocusTrapOptions = {
 };
 
 let nextReturnFocus: HTMLElement | null = null;
+const trapStack: HTMLElement[] = [];
 
 export function setNextFocusTrapReturn(element: HTMLElement | null) {
 	nextReturnFocus = element?.isConnected ? element : null;
@@ -38,13 +39,17 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 		document.activeElement instanceof HTMLElement ? document.activeElement : null
 	);
 	let currentOptions = options;
+	trapStack.push(node);
+	const isActive = () => trapStack.at(-1) === node;
 	function focusFirst() {
+		if (!isActive()) return;
 		focusableChildren(node)[0]?.focus() ?? node.focus();
 	}
 
 	queueMicrotask(focusFirst);
 
 	function onKeydown(event: KeyboardEvent) {
+		if (!isActive()) return;
 		if (event.key === 'Escape' && currentOptions.onEscape) {
 			if (event.target instanceof Element && event.target.closest('[data-escape-contained]')) return;
 			event.preventDefault();
@@ -76,11 +81,12 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 	}
 
 	function onFocusIn(event: FocusEvent) {
-		if (!node.contains(event.target as Node)) queueMicrotask(focusFirst);
+		if (isActive() && !node.contains(event.target as Node)) queueMicrotask(focusFirst);
 	}
 
 	const observer = new MutationObserver(() => {
 		queueMicrotask(() => {
+			if (!isActive()) return;
 			const active = document.activeElement;
 			if (active === node) return;
 			if (!(active instanceof HTMLElement) || !focusableChildren(node).includes(active)) focusFirst();
@@ -99,6 +105,8 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 			node.removeEventListener('keydown', onKeydown);
 			document.removeEventListener('focusin', onFocusIn);
 			observer.disconnect();
+			const index = trapStack.lastIndexOf(node);
+			if (index >= 0) trapStack.splice(index, 1);
 			if (returnFocus?.isConnected) returnFocus.focus();
 		}
 	};

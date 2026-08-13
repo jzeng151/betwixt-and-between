@@ -42,4 +42,21 @@ describe('entityAliases load state', () => {
 
 		expect(get(entityAliasesLoadStatus)).toBe('error');
 	});
+
+	it('ignores a stale load after creating an alias', async () => {
+		let resolveLoad!: (value: Response) => void;
+		const created = { id: 'new', primaryEntityId: 'p', aliasEntityId: 'x', revealedAtPosition: null };
+		globalThis.fetch = vi.fn((_url, options) => options?.method === 'POST'
+			? Promise.resolve(response(created))
+			: new Promise<Response>((resolve) => { resolveLoad = resolve; })
+		) as unknown as typeof fetch;
+
+		const load = entityAliases.load();
+		await entityAliases.createAlias('p', 'x');
+		resolveLoad(response([]));
+		await load;
+
+		expect(get(entityAliases)).toContainEqual(created);
+		expect(get(entityAliasesLoadStatus)).toBe('ready');
+	});
 });

@@ -186,6 +186,7 @@ function createWorldMapStore() {
 			throw new Error('Failed to delete map');
 		}
 		commitMapMutation();
+		maps.update((all) => all.filter((m) => m.id !== id));
 		regions.update((all) => all.filter((r) => r.mapId !== id));
 	}
 

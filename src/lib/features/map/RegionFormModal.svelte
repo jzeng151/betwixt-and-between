@@ -57,7 +57,7 @@
 	aria-modal="true"
 	aria-labelledby={titleId}
 	tabindex="-1"
-	use:focusTrap={{ onEscape: onCancel }}
+	use:focusTrap={{ onEscape: () => !newLocationBusy && onCancel() }}
 >
 	<div class="modal-content">
 		<h3 id={titleId}>{isEditing ? 'Edit Region' : 'New Region'}</h3>
