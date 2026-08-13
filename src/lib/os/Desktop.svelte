@@ -1,9 +1,27 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { windowStore } from '$lib/os/windows-store.js';
   import { entities, entityLoadStatus } from '$lib/stores/entities.js';
 
   const hasVisibleWindows = $derived($windowStore.some((window) => !window.minimized));
   let returnFocusKey = $state<string | null>(null);
+  let overviewElement: HTMLElement;
+  let retryButton = $state<HTMLButtonElement>();
+  let retrying = $state(false);
+
+  async function retryEntities() {
+    if (retrying) return;
+    retrying = true;
+    try {
+      await entities.load();
+    } catch {
+      // The load status renders the error; keep the click handler settled.
+    } finally {
+      retrying = false;
+      await tick();
+      (retryButton?.isConnected ? retryButton : overviewElement)?.focus();
+    }
+  }
 
   function openEntity(entity: (typeof $entities)[number]) {
     returnFocusKey = entity.id;
@@ -20,9 +38,9 @@
     const key = returnFocusKey;
     returnFocusKey = null;
     queueMicrotask(() => {
-      [...document.querySelectorAll<HTMLElement>('[data-workspace-return]')]
-        .find((element) => element.dataset.workspaceReturn === key)
-        ?.focus();
+      const target = [...document.querySelectorAll<HTMLElement>('[data-workspace-return]')]
+        .find((element) => element.dataset.workspaceReturn === key);
+      (target ?? overviewElement)?.focus();
     });
   });
 
@@ -48,19 +66,20 @@
     <main
       class="story-index"
       class:hidden={hasVisibleWindows}
+      bind:this={overviewElement}
       aria-hidden={hasVisibleWindows}
       aria-label="Story workspace overview"
+      tabindex="-1"
     >
-      {#if $entityLoadStatus === 'idle' || $entityLoadStatus === 'loading'}
-        <div class="empty-state" role="status"><p>Loading your story…</p></div>
-      {:else if $entityLoadStatus === 'error'}
-        <div class="empty-state" role="alert">
-          <p>Couldn't load your story.</p>
-          <div class="empty-actions">
-            <button class="secondary-action" onclick={() => void entities.load()}>Retry</button>
+      {#if $entities.length > 0}
+        {#if $entityLoadStatus === 'error' || retrying}
+          <div class="refresh-error" role="alert">
+            <span>Couldn't refresh your story. Showing the saved entries.</span>
+            <button bind:this={retryButton} disabled={retrying} onclick={retryEntities}>
+              {retrying ? 'Retrying…' : 'Retry'}
+            </button>
           </div>
-        </div>
-      {:else if $entities.length > 0}
+        {/if}
         <header class="index-heading">
           <h1>The story so far</h1>
           <p>{$entities.length} {$entities.length === 1 ? 'entry' : 'entries'} across your cast, structure, and world.</p>
@@ -87,6 +106,17 @@
             </section>
           {/each}
         </div>
+      {:else if $entityLoadStatus === 'error' || retrying}
+        <div class="empty-state" role="alert">
+          <p>Couldn't load your story.</p>
+          <div class="empty-actions">
+            <button bind:this={retryButton} class="secondary-action" disabled={retrying} onclick={retryEntities}>
+              {retrying ? 'Retrying…' : 'Retry'}
+            </button>
+          </div>
+        </div>
+      {:else if $entityLoadStatus === 'idle' || $entityLoadStatus === 'loading'}
+        <div class="empty-state" role="status"><p>Loading your story…</p></div>
       {:else}
         <div class="empty-state">
           <h1>Start with one true thing.</h1>
@@ -125,6 +155,25 @@
   .index-heading,
   .empty-state {
     max-width: 620px;
+  }
+
+  .refresh-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-danger);
+    color: var(--color-text);
+    font-size: 12px;
+  }
+
+  .refresh-error button {
+    border: 0;
+    background: transparent;
+    color: var(--color-accent);
+    font-weight: 600;
   }
 
   h1 {
