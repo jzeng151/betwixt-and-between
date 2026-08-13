@@ -105,6 +105,32 @@ describe('GraphCanvas edge click gate', () => {
 			'cause',
 			expect.objectContaining({ x: 8, y: 0 })
 		);
+		const description = document.getElementById(node.getAttribute('aria-describedby')!);
+		expect(description).toHaveTextContent(/Arrow keys to move.*Hold Shift/i);
+	});
+
+	it('pans to keep a keyboard-moved node visible', async () => {
+		const { container } = renderCanvas(vi.fn(), undefined, vi.fn());
+		const viewport = container.querySelector('.viewport') as HTMLElement;
+		Object.defineProperties(viewport, {
+			clientWidth: { value: 240 },
+			clientHeight: { value: 160 }
+		});
+		viewport.getBoundingClientRect = () => ({
+			x: 0, y: 0, left: 0, top: 0, right: 240, bottom: 160, width: 240, height: 160,
+			toJSON: () => ({})
+		}) as DOMRect;
+		await tick();
+		await Promise.resolve();
+		await tick();
+		const node = container.querySelector('[data-entity-id="cause"]') as HTMLElement;
+		const canvas = container.querySelector('.canvas') as HTMLElement;
+		const before = canvas.style.transform;
+
+		for (let i = 0; i < 50; i++) await fireEvent.keyDown(node, { key: 'ArrowLeft' });
+		await tick();
+
+		expect(canvas.style.transform).not.toBe(before);
 	});
 
 	it('exposes edge actions in the keyboard tab order', async () => {
