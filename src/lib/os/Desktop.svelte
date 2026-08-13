@@ -1,7 +1,11 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { windowStore } from '$lib/os/windows-store.js';
-  import { entities, entityLoadStatus } from '$lib/stores/entities.js';
+  import {
+    entities,
+    entityLoadStatus,
+    entitySnapshotReady
+  } from '$lib/stores/entities.js';
 
   const hasVisibleWindows = $derived($windowStore.some((window) => !window.minimized));
   let returnFocusKey = $state<string | null>(null);
@@ -73,8 +77,8 @@
       aria-label="Story workspace overview"
       tabindex="-1"
     >
-      {#if $entities.length > 0}
-        {#if $entityLoadStatus === 'error' || retrying}
+      {#if $entitySnapshotReady}
+		{#if $entityLoadStatus === 'error' || retrying}
           <div class="refresh-error" role="alert">
             <span>Couldn't refresh your story. Showing the saved entries.</span>
             <button bind:this={retryButton} disabled={retrying} onclick={retryEntities}>
@@ -82,7 +86,8 @@
             </button>
           </div>
         {/if}
-        <header class="index-heading">
+		{#if $entities.length > 0}
+		<header class="index-heading">
           <h1>The story so far</h1>
           <p>{$entities.length} {$entities.length === 1 ? 'entry' : 'entries'} across your cast, structure, and world.</p>
         </header>
@@ -107,8 +112,18 @@
               {/if}
             </section>
           {/each}
-        </div>
-      {:else if $entityLoadStatus === 'error' || retrying}
+		</div>
+		{:else}
+		<div class="empty-state">
+		  <h1>Start with one true thing.</h1>
+		  <p>Give the story a person, a place, or a piece of the world. The shape can come later.</p>
+		  <div class="empty-actions">
+			<button data-workspace-return="character-editor" class="primary-action" onclick={() => openApp('character-editor')}>Create a character</button>
+			<button data-workspace-return="wiki" class="secondary-action" onclick={() => openApp('wiki')}>Open the wiki</button>
+		  </div>
+		</div>
+		{/if}
+	  {:else if $entityLoadStatus === 'error' || retrying}
         <div class="empty-state" role="alert">
           <p>Couldn't load your story.</p>
           <div class="empty-actions">
@@ -119,16 +134,7 @@
         </div>
       {:else if $entityLoadStatus === 'idle' || $entityLoadStatus === 'loading'}
         <div class="empty-state" role="status"><p>Loading your story…</p></div>
-      {:else}
-        <div class="empty-state">
-          <h1>Start with one true thing.</h1>
-          <p>Give the story a person, a place, or a piece of the world. The shape can come later.</p>
-          <div class="empty-actions">
-            <button data-workspace-return="character-editor" class="primary-action" onclick={() => openApp('character-editor')}>Create a character</button>
-            <button data-workspace-return="wiki" class="secondary-action" onclick={() => openApp('wiki')}>Open the wiki</button>
-          </div>
-        </div>
-      {/if}
+	  {/if}
     </main>
 </div>
 

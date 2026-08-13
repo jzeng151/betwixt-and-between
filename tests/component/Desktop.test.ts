@@ -31,6 +31,16 @@ describe('Desktop workspace overview', () => {
 		expect(view.getByRole('alert')).toHaveTextContent('Showing the saved entries');
 	});
 
+	it('keeps a confirmed empty workspace after a refresh failure', async () => {
+		const view = render(Desktop);
+		globalThis.fetch = vi.fn().mockResolvedValue(response('offline', false, 503)) as unknown as typeof fetch;
+
+		await expect(entities.load()).rejects.toThrow();
+
+		expect(view.getByRole('heading', { name: 'Start with one true thing.' })).toBeInTheDocument();
+		expect(view.getByRole('alert')).toHaveTextContent('Showing the saved entries');
+	});
+
 	it('keeps retry focus stable after another load failure', async () => {
 		globalThis.fetch = vi.fn().mockResolvedValue(response('offline', false, 503)) as unknown as typeof fetch;
 		await expect(entities.load()).rejects.toThrow();

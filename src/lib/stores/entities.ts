@@ -4,6 +4,7 @@ import { intervals as intervalsStore } from '$lib/features/timeline/intervals-st
 import { relationships } from '$lib/stores/relationships.js';
 
 export const entityLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
+export const entitySnapshotReady = writable(false);
 
 export type Entity = {
 	id: string;
@@ -52,6 +53,7 @@ function createEntityStore() {
 			const data: Entity[] = await res.json();
 			if (generation !== loadGeneration) return;
 			set(data);
+			entitySnapshotReady.set(true);
 			entityLoadStatus.set('ready');
 		})().catch((error) => {
 			if (generation === loadGeneration) entityLoadStatus.set('error');
