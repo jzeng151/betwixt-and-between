@@ -49,10 +49,11 @@
         returnFocus.focus();
         return;
       }
-      [...document.querySelectorAll<HTMLElement>('.window')]
+      const fallback = [...document.querySelectorAll<HTMLElement>('.window')]
         .sort((a, b) => Number(a.style.zIndex) - Number(b.style.zIndex))
-        .at(-1)
-        ?.focus();
+        .at(-1);
+      if (fallback?.dataset.windowId) windowStore.focus(fallback.dataset.windowId);
+      fallback?.focus();
     });
   }
 
@@ -177,6 +178,7 @@
   <div
     bind:this={windowElement}
     class="window"
+	data-window-id={id}
     class:maximized
     class:compact
     class:pinned={alwaysOnTop}

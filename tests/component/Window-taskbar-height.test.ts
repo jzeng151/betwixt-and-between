@@ -29,4 +29,31 @@ describe('Window keyboard movement', () => {
 
 		expect(move).toHaveBeenCalledWith('window-1', 100, 356);
 	});
+
+	it('promotes the fallback window in the window store', async () => {
+		const hiddenOverview = document.body.appendChild(document.createElement('main'));
+		hiddenOverview.setAttribute('aria-hidden', 'true');
+		const opener = hiddenOverview.appendChild(document.createElement('button'));
+		opener.focus();
+		const focus = vi.spyOn(windowStore, 'focus').mockImplementation(() => {});
+		const view = render(Window, {
+			props: {
+				id: 'window-1', title: 'Test', x: 0, y: 0, width: 300, height: 200,
+				zIndex: 1, minimized: false, maximized: false
+			}
+		});
+		const fallback = document.body.appendChild(document.createElement('div'));
+		fallback.className = 'window';
+		fallback.dataset.windowId = 'window-2';
+		fallback.style.zIndex = '2';
+		fallback.tabIndex = -1;
+
+		await fireEvent.click(view.getByRole('button', { name: 'Minimize' }));
+		await Promise.resolve();
+
+		expect(focus).toHaveBeenCalledWith('window-2');
+		expect(fallback).toHaveFocus();
+		fallback.remove();
+		hiddenOverview.remove();
+	});
 });
