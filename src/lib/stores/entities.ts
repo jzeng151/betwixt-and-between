@@ -23,6 +23,7 @@ export type Entity = {
 function createEntityStore() {
 	const { subscribe, set, update } = writable<Entity[]>([]);
 	let loadPromise: Promise<void> | null = null;
+	let loadGeneration = 0;
 	// Per-entity update sequence. updateEntity applies an optimistic merge then
 	// installs the PATCH response; without sequencing, two edits to the same row
 	// racing on the wire can land out of order — e.g. a style save and an
@@ -41,17 +42,19 @@ function createEntityStore() {
 	// one for the same id so requests reach the API in call order.
 	const updateChains = new Map<string, Promise<unknown>>();
 
-	function load(): Promise<void> {
-		if (loadPromise) return loadPromise;
+	function load({ fresh = false }: { fresh?: boolean } = {}): Promise<void> {
+		if (loadPromise && !fresh) return loadPromise;
+		const generation = ++loadGeneration;
 		entityLoadStatus.set('loading');
 		const request = (async () => {
 			const res = await fetch('/api/entities');
 			if (!res.ok) throw new Error(`entities.load failed: ${res.status} ${await res.text()}`);
 			const data: Entity[] = await res.json();
+			if (generation !== loadGeneration) return;
 			set(data);
 			entityLoadStatus.set('ready');
 		})().catch((error) => {
-			entityLoadStatus.set('error');
+			if (generation === loadGeneration) entityLoadStatus.set('error');
 			throw error;
 		});
 		loadPromise = request;
@@ -171,7 +174,7 @@ function createEntityStore() {
 			if (latestUpdate.get(id) === seq) {
 				latestUpdate.delete(id);
 				updateChains.delete(id);
-				await load();
+				await load({ fresh: true });
 			}
 			throw err;
 		}
@@ -219,11 +222,11 @@ function createEntityStore() {
 			res = await fetch(`/api/entities/${id}`, { method: 'DELETE' });
 		} catch (err) {
 			// Network error before any response — recover the optimistic remove.
-			await load();
+			await load({ fresh: true });
 			throw err;
 		}
 		if (!res.ok) {
-			await load();
+			await load({ fresh: true });
 			throw new Error(await res.text());
 		}
 		// Server-side delete cascades to intervals (entity_id / start_act_id /

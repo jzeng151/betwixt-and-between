@@ -14,5 +14,5 @@ import { intervals as intervalsStore } from '$lib/features/timeline/intervals-st
 
 /** Reload entities + intervals in parallel. Resolves once both have settled. */
 export async function refreshTimelineStores(): Promise<void> {
-	await Promise.all([entities.load(), intervalsStore.load()]);
+	await Promise.all([entities.load({ fresh: true }), intervalsStore.load()]);
 }

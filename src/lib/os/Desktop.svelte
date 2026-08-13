@@ -19,7 +19,9 @@
     } finally {
       retrying = false;
       await tick();
-      (retryButton?.isConnected ? retryButton : overviewElement)?.focus();
+      if (!hasVisibleWindows) {
+        (retryButton?.isConnected ? retryButton : overviewElement)?.focus();
+      }
     }
   }
 
@@ -62,7 +64,7 @@
   ]);
 </script>
 
-<div class="desktop">
+<div class="desktop" class:locked={hasVisibleWindows}>
     <main
       class="story-index"
       class:hidden={hasVisibleWindows}
@@ -138,6 +140,10 @@
     overflow: auto;
     background: var(--color-desktop);
     pointer-events: auto;
+  }
+
+  .desktop.locked {
+    overflow: hidden;
   }
 
   .story-index {

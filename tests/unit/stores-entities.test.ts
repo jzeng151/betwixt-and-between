@@ -82,6 +82,22 @@ describe('entities.load', () => {
 		expect(get(entities)[0].id).toBe('kept');
 		expect(get(entityLoadStatus)).toBe('ready');
 	});
+
+	it('bypasses an in-flight snapshot for post-mutation refreshes', async () => {
+		let resolveOld!: (response: Response) => void;
+		const fetchMock = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveOld = resolve; }))
+			.mockResolvedValueOnce(makeResponse([entity({ id: 'new', name: 'New' })]));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const oldLoad = entities.load();
+		await entities.load({ fresh: true });
+		resolveOld(makeResponse([entity({ id: 'old', name: 'Old' })]));
+		await oldLoad;
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(get(entities)[0].id).toBe('new');
+	});
 });
 
 // =============================================================================
