@@ -3,6 +3,7 @@
 	import {
 		worldMapStore,
 		worldMaps,
+		worldMapsLoadStatus,
 		mapRegions,
 		type LoadRegionsResult
 	} from '$lib/features/map/store.js';
@@ -536,8 +537,6 @@
 	// window would persist null faction_ids. Track factionsLoaded so the
 	// dataLoading prop reflects all three sources.
 	let factionsLoaded = $state(false);
-	let mapsLoading = $state(true);
-	let mapsLoadError = $state(false);
 	// Bounded "settled" flags (success OR failure) for the loading overlay.
 	// Distinct from the *Healthy/*Loaded flags above, which stay false on error
 	// (to keep writes gated): these flip true once the load SETTLES so the
@@ -549,13 +548,7 @@
 	onMount(() => {
 		void worldMapStore
 			.loadMaps()
-			.catch((err) => {
-				console.error('Failed to load maps:', err);
-				mapsLoadError = true;
-			})
-			.finally(() => {
-				mapsLoading = false;
-			});
+			.catch((err) => console.error('Failed to load maps:', err));
 		intervalsStore.load();
 		relationships.load();
 		// Factions are user-scoped (not map-scoped) — load once per session.
@@ -2371,9 +2364,9 @@
 
 <svelte:window onkeydown={handleMapKeydown} />
 
-{#if mapsLoading && !hasMaps}
+{#if ($worldMapsLoadStatus === 'idle' || $worldMapsLoadStatus === 'loading') && !hasMaps}
 	<div class="empty-state" role="status">Loading maps…</div>
-{:else if mapsLoadError && !hasMaps}
+{:else if $worldMapsLoadStatus === 'error' && !hasMaps}
 	<div class="empty-state" role="alert">Couldn't load maps.</div>
 {:else if !hasMaps}
 	<!-- Empty state: no maps -->

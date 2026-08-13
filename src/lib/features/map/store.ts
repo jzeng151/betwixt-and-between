@@ -3,6 +3,8 @@ import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } fr
 import type { MapArtLayer } from './projection.js';
 import { errorMessage } from '$lib/util/api-error-message.js';
 
+export const worldMapsLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
+
 // Result of loadMapRegions. `superseded` is distinct from `not-found` so the
 // caller does NOT flip its region-readiness gate on a stale A→B→A load that
 // resolved after a newer load became authoritative (Codex PR #72): only a
@@ -39,12 +41,23 @@ function createWorldMapStore() {
 	// store): every commit — load OR cached apply — bumps it, so any older
 	// in-flight load is dropped regardless of which map it was for.
 	let loadSeq = 0;
+	let mapListLoadSeq = 0;
 
 	async function loadMaps(): Promise<void> {
-		const res = await fetch('/api/maps');
-		if (!res.ok) throw new Error('Failed to load maps');
-		const data: WorldMap[] = await res.json();
-		maps.set(data);
+		const seq = ++mapListLoadSeq;
+		worldMapsLoadStatus.set('loading');
+		try {
+			const res = await fetch('/api/maps');
+			if (!res.ok) throw new Error('Failed to load maps');
+			const data: WorldMap[] = await res.json();
+			if (seq === mapListLoadSeq) {
+				maps.set(data);
+				worldMapsLoadStatus.set('ready');
+			}
+		} catch (error) {
+			if (seq === mapListLoadSeq) worldMapsLoadStatus.set('error');
+			throw error;
+		}
 	}
 
 	async function loadMapRegions(mapId: string): Promise<LoadRegionsResult> {
@@ -106,6 +119,7 @@ function createWorldMapStore() {
 		if (!res.ok) throw new Error(await errorMessage(res));
 		const created: WorldMap = await res.json();
 		maps.update((all) => [...all, created]);
+		worldMapsLoadStatus.set('ready');
 		return created;
 	}
 
@@ -160,6 +174,7 @@ function createWorldMapStore() {
 			throw new Error('Failed to delete map');
 		}
 		regions.update((all) => all.filter((r) => r.mapId !== id));
+		worldMapsLoadStatus.set('ready');
 	}
 
 	async function createRegion(mapId: string, payload: CreateRegionPayload): Promise<MapRegion> {
@@ -205,6 +220,7 @@ function createWorldMapStore() {
 		const data = await res.json();
 		const { regions: cloneRegions, ...clone } = data;
 		maps.update((all) => [...all, clone as WorldMap]);
+		worldMapsLoadStatus.set('ready');
 		// New regions belong to a different mapId, so they won't collide with the
 		// currently-loaded set. Append rather than replace — caller switches to
 		// the clone via the picker, which triggers loadMapRegions if needed.
