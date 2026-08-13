@@ -3,6 +3,8 @@ import type { EntityType } from '$lib/server/db/schema.js';
 import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 import { relationships } from '$lib/stores/relationships.js';
 
+export const entityLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
+
 export type Entity = {
 	id: string;
 	type: EntityType;
@@ -20,6 +22,7 @@ export type Entity = {
 
 function createEntityStore() {
 	const { subscribe, set, update } = writable<Entity[]>([]);
+	let loadSeq = 0;
 	// Per-entity update sequence. updateEntity applies an optimistic merge then
 	// installs the PATCH response; without sequencing, two edits to the same row
 	// racing on the wire can land out of order — e.g. a style save and an
@@ -39,10 +42,20 @@ function createEntityStore() {
 	const updateChains = new Map<string, Promise<unknown>>();
 
 	async function load() {
-		const res = await fetch('/api/entities');
-		if (!res.ok) throw new Error(`entities.load failed: ${res.status} ${await res.text()}`);
-		const data: Entity[] = await res.json();
-		set(data);
+		const seq = ++loadSeq;
+		entityLoadStatus.set('loading');
+		try {
+			const res = await fetch('/api/entities');
+			if (!res.ok) throw new Error(`entities.load failed: ${res.status} ${await res.text()}`);
+			const data: Entity[] = await res.json();
+			if (seq === loadSeq) {
+				set(data);
+				entityLoadStatus.set('ready');
+			}
+		} catch (error) {
+			if (seq === loadSeq) entityLoadStatus.set('error');
+			throw error;
+		}
 	}
 
 	/**

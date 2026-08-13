@@ -1,6 +1,6 @@
 <script lang="ts">
   import { windowStore } from '$lib/os/windows-store.js';
-  import { entities } from '$lib/stores/entities.js';
+  import { entities, entityLoadStatus } from '$lib/stores/entities.js';
 
   const hasVisibleWindows = $derived($windowStore.some((window) => !window.minimized));
   let returnFocusKey = $state<string | null>(null);
@@ -29,19 +29,17 @@
   const sections = $derived([
     {
       title: 'Cast',
-      entries: $entities.filter((entity) => entity.type === 'Character').slice(0, 6)
+      entries: $entities.filter((entity) => entity.type === 'Character')
     },
     {
       title: 'Story',
       entries: $entities
         .filter((entity) => entity.type === 'Act' || entity.type === 'Scene' || entity.type === 'Event')
-        .slice(0, 6)
     },
     {
       title: 'World and notes',
       entries: $entities
         .filter((entity) => !['Character', 'Act', 'Scene', 'Event'].includes(entity.type))
-        .slice(0, 6)
     }
   ]);
 </script>
@@ -53,7 +51,16 @@
       aria-hidden={hasVisibleWindows}
       aria-label="Story workspace overview"
     >
-      {#if $entities.length > 0}
+      {#if $entityLoadStatus === 'idle' || $entityLoadStatus === 'loading'}
+        <div class="empty-state" role="status"><p>Loading your story…</p></div>
+      {:else if $entityLoadStatus === 'error'}
+        <div class="empty-state" role="alert">
+          <p>Couldn't load your story.</p>
+          <div class="empty-actions">
+            <button class="secondary-action" onclick={() => void entities.load()}>Retry</button>
+          </div>
+        </div>
+      {:else if $entities.length > 0}
         <header class="index-heading">
           <h1>The story so far</h1>
           <p>{$entities.length} {$entities.length === 1 ? 'entry' : 'entries'} across your cast, structure, and world.</p>

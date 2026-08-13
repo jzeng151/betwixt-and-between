@@ -43,6 +43,19 @@
     });
   }
 
+  function restoreFocus() {
+    queueMicrotask(() => {
+      if (returnFocus?.isConnected && !returnFocus.closest('[aria-hidden="true"]')) {
+        returnFocus.focus();
+        return;
+      }
+      [...document.querySelectorAll<HTMLElement>('.window')]
+        .sort((a, b) => Number(a.style.zIndex) - Number(b.style.zIndex))
+        .at(-1)
+        ?.focus();
+    });
+  }
+
   $effect(() => {
     const focused = windowStore.focusedWindow();
     if (!minimized && focused?.id === id && focused.zIndex === zIndex) focusWindow();
@@ -52,14 +65,12 @@
     returnFocus = takeNextFocusReturn(
       document.activeElement instanceof HTMLElement ? document.activeElement : null
     );
-    return () => {
-      if (returnFocus?.isConnected) returnFocus.focus();
-    };
+    return restoreFocus;
   });
 
   function minimizeWindow() {
     windowStore.minimize(id);
-    queueMicrotask(() => returnFocus?.isConnected && returnFocus.focus());
+    restoreFocus();
   }
 
   // svelte-ignore state_referenced_locally

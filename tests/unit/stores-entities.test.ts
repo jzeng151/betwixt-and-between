@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { entities, type Entity } from '../../src/lib/stores/entities.js';
+import { entities, entityLoadStatus, type Entity } from '../../src/lib/stores/entities.js';
 import { intervals as intervalsStore } from '../../src/lib/features/timeline/intervals-store.js';
 import { relationships } from '../../src/lib/stores/relationships.js';
 
@@ -49,6 +49,7 @@ describe('entities.load', () => {
 		expect(fetchMock).toHaveBeenCalledWith('/api/entities');
 		expect(get(entities)).toHaveLength(2);
 		expect(get(entities)[0].id).toBe('a');
+		expect(get(entityLoadStatus)).toBe('ready');
 	});
 
 	it('throws on non-OK response and leaves the store untouched', async () => {
@@ -62,6 +63,7 @@ describe('entities.load', () => {
 		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse('upstream boom', false, 503)) as unknown as typeof fetch;
 		await expect(entities.load()).rejects.toThrow(/503.*upstream boom/);
 		expect(get(entities)).toEqual(before);
+		expect(get(entityLoadStatus)).toBe('error');
 	});
 });
 

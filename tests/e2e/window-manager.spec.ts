@@ -110,4 +110,21 @@ test.describe('Window Manager', () => {
 		const detailZ = await detailWin.evaluate((el) => parseInt(getComputedStyle(el).zIndex));
 		expect(detailZ).toBeGreaterThan(listZ);
 	});
+
+	test('closing an overview window focuses the remaining window', async ({ page, request }) => {
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Elara' } });
+		await page.goto('/app');
+
+		await page.getByRole('button', { name: /Elara/ }).click();
+		const detailWin = page.locator('.window[aria-label="Elara"]');
+		await expect(detailWin).toBeVisible();
+		await page.click('button[title="Wiki"]');
+		const wikiWin = page.locator('.window[aria-label="Wiki"]');
+
+		await page.keyboard.press('Control+Shift+Tab');
+		await expect(detailWin).toBeFocused();
+		await detailWin.getByRole('button', { name: 'Close' }).click();
+
+		await expect(wikiWin).toBeFocused();
+	});
 });
