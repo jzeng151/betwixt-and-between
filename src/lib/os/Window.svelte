@@ -191,8 +191,10 @@
       onmousedown={onTitlebarMousedown}
       onkeydown={onTitlebarKeydown}
       role="toolbar"
-      aria-label="{title} window. Alt plus arrow keys moves; Shift, Alt, and arrow keys resizes."
-      tabindex="0"
+      aria-label={maximized
+        ? `${title} window`
+        : `${title} window. Alt plus arrow keys moves; Shift, Alt, and arrow keys resizes.`}
+      tabindex={maximized ? undefined : 0}
     >
       <span class="win-title">{title}</span>
       <!-- Item 3: persist this window's current size (+ position for

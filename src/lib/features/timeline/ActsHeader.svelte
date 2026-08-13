@@ -331,6 +331,10 @@
 		sceneDropTarget = { actId, idx };
 	}
 	async function moveScene(sceneId: string, targetActId: string, targetPos: number, restoreFocus = false) {
+		const focusOwner = restoreFocus && document.activeElement instanceof HTMLElement &&
+			document.activeElement.dataset.entityId === sceneId
+			? document.activeElement
+			: null;
 		try {
 			const res = await fetch(`/api/entities/${sceneId}`, {
 				method: 'PATCH',
@@ -339,11 +343,13 @@
 			});
 			if (!res.ok) throw new Error(await res.text());
 			await refreshTimelineStores();
-			if (restoreFocus) {
+			if (focusOwner) {
 				await tick();
-				[...document.querySelectorAll<HTMLElement>('.scene-cell')]
-					.find((element) => element.dataset.entityId === sceneId)
-					?.focus();
+				if (document.activeElement === document.body || document.activeElement === focusOwner) {
+					[...document.querySelectorAll<HTMLElement>('.scene-cell')]
+						.find((element) => element.dataset.entityId === sceneId)
+						?.focus();
+				}
 			}
 		} catch (err) {
 			reorderErrorToast.show((err as Error).message);
@@ -516,7 +522,7 @@
 				onSelectAct?.(act.id);
 			}}
 		>
-			{#if actIdx < acts.length - 1}
+			{#if actIdx < acts.length - 1 && minWidthPercent < 50}
 				<!-- Right-edge handle for resizing this act vs. its neighbor. Hidden until hover. -->
 					<div
 						class="width-handle"
