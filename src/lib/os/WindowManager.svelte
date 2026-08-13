@@ -124,6 +124,7 @@
       <div class="app-loading app-loading--error" role="alert">
         <span>Couldn't open {APP_CATALOG[win.appId].title}.</span>
         <button type="button" onclick={() => retryApp(win.appId)}>Retry</button>
+        <button type="button" onclick={() => location.reload()}>Reload app</button>
       </div>
     {:else}
       <div class="app-loading" role="status">Opening {APP_CATALOG[win.appId].title}…</div>

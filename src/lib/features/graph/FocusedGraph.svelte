@@ -27,7 +27,7 @@
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
   import Legend from '$lib/features/graph/Legend.svelte';
-  import { entityAliases } from '$lib/stores/entity-aliases.js';
+  import { entityAliases, entityAliasesLoadStatus } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
   import {
     buildEntityIntervalMap,
@@ -303,7 +303,7 @@
 
   onMount(() => {
     intervalsStore.load();
-    entityAliases.load();
+    void entityAliases.load().catch(() => {});
     worldMapStore.loadMaps();
     void (async () => {
       // FG canvas is independent of StoryGraph: each FG window has
@@ -719,6 +719,14 @@
   }}
 />
 
+{#if $entityAliasesLoadStatus === 'idle' || $entityAliasesLoadStatus === 'loading'}
+  <div class="graph-load" role="status">Loading aliases…</div>
+{:else if $entityAliasesLoadStatus === 'error'}
+  <div class="graph-load" role="alert">
+    <span>Couldn't load aliases.</span>
+    <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button>
+  </div>
+{:else}
 <div class="fg">
   <header class="fg-header">
     <label class="fg-mode">
@@ -940,7 +948,10 @@
   />
 {/if}
 
+{/if}
+
 <style>
+	.graph-load { min-height: 100%; display: grid; place-content: center; gap: 10px; color: var(--color-text-muted); }
   .fg {
     position: absolute;
     inset: 0;
