@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { entities, entityLoadStatus, type Entity } from '../../src/lib/stores/entities.js';
+import {
+	entities,
+	entityLoadStatus,
+	entitySnapshotReady,
+	type Entity
+} from '../../src/lib/stores/entities.js';
 import { intervals as intervalsStore } from '../../src/lib/features/timeline/intervals-store.js';
 import { relationships } from '../../src/lib/stores/relationships.js';
 
@@ -129,6 +134,19 @@ describe('entities.createEntity', () => {
 
 		await expect(entities.createEntity('Character', 'Bad')).rejects.toThrow(/boom/);
 		expect(get(entities)).toHaveLength(0);
+	});
+
+	it('treats a successful create as usable after an initial load failure', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse('offline', false, 503)) as unknown as typeof fetch;
+		await expect(entities.load()).rejects.toThrow();
+		const created = entity({ id: 'created', name: 'Created' });
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(created)) as unknown as typeof fetch;
+
+		await entities.createEntity('Character', 'Created');
+
+		expect(get(entitySnapshotReady)).toBe(true);
+		expect(get(entityLoadStatus)).toBe('ready');
+		expect(get(entities).some((item) => item.id === 'created')).toBe(true);
 	});
 
 	it('serializes data=undefined as undefined in the body', async () => {

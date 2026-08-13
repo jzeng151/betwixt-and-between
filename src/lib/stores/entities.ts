@@ -42,6 +42,12 @@ function createEntityStore() {
 	// disappears on reload (Codex P2). Chain each PATCH behind the prior in-flight
 	// one for the same id so requests reach the API in call order.
 	const updateChains = new Map<string, Promise<unknown>>();
+	function markMutationReady() {
+		loadGeneration++;
+		loadPromise = null;
+		entitySnapshotReady.set(true);
+		entityLoadStatus.set('ready');
+	}
 
 	function load({ fresh = false }: { fresh?: boolean } = {}): Promise<void> {
 		if (loadPromise && !fresh) return loadPromise;
@@ -87,6 +93,7 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity = await res.json();
+		markMutationReady();
 		update((all) => [...all, created]);
 		return created;
 	}
@@ -113,6 +120,7 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity[] = await res.json();
+		markMutationReady();
 		update((all) => [...all, ...created]);
 		return created;
 	}
