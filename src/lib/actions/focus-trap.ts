@@ -12,6 +12,12 @@ export function clearNextFocusTrapReturn() {
 	nextReturnFocus = null;
 }
 
+export function takeNextFocusReturn(fallback: HTMLElement | null): HTMLElement | null {
+	const returnFocus = nextReturnFocus ?? fallback;
+	nextReturnFocus = null;
+	return returnFocus;
+}
+
 const FOCUSABLE = [
 	'a[href]',
 	'button:not([disabled])',
@@ -28,9 +34,9 @@ function focusableChildren(node: HTMLElement): HTMLElement[] {
 }
 
 export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
-	const returnFocus = nextReturnFocus
-		?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
-	nextReturnFocus = null;
+	const returnFocus = takeNextFocusReturn(
+		document.activeElement instanceof HTMLElement ? document.activeElement : null
+	);
 	let currentOptions = options;
 
 	queueMicrotask(() => focusableChildren(node)[0]?.focus() ?? node.focus());

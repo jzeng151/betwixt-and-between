@@ -19,6 +19,9 @@ test.describe('Window Manager', () => {
 		await page.click('button[title="Characters"]');
 		const win = page.locator('.window[aria-label="Characters"]');
 		await expect(win).toBeVisible();
+		const search = win.getByPlaceholder('Search characters…');
+		await search.click();
+		await expect(search).toBeFocused();
 	});
 
 	test('click taskbar button → window comes to front (z-index check)', async ({ page }) => {
