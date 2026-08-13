@@ -46,7 +46,7 @@
     /** Used by event bars to pick the neutral-gray treatment. */
     isEvent?: boolean;
     /** Click on an internal hairline → split the interval at that fraction. */
-    onSplit?: (fraction: number) => void;
+    onSplit?: (fraction: number, origin: Element) => void;
     /** Enter or Space on the bar selects it. */
     onActivate?: () => void;
   }
@@ -196,12 +196,12 @@
       <rect class="hairline-hit" role="button" tabindex="0"
         aria-label={`Split interval at ${Math.round(fraction * 100)}% of this interval`}
         x={hitLeft} y={BODY_Y} width={hitRight - hitLeft} height={BODY_H} fill="transparent"
-        onclick={(e) => { e.stopPropagation(); onSplit?.(fraction); }}
+        onclick={(e) => { e.stopPropagation(); onSplit?.(fraction, e.currentTarget); }}
         onkeydown={(e) => {
           if (e.key !== 'Enter' && e.key !== ' ') return;
           e.preventDefault();
           e.stopPropagation();
-          onSplit?.(fraction);
+          onSplit?.(fraction, e.currentTarget);
         }}
       ><title>Click to split here</title></rect>
     {/if}

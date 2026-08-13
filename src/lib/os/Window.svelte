@@ -97,10 +97,10 @@
       windowStore.resize(id, nextWidth, nextHeight);
     } else {
       const nextX = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
-        ? Math.max(0, x + direction * delta)
+		? Math.max(0, Math.min(window.innerWidth - width, x + direction * delta))
         : x;
       const nextY = e.key === 'ArrowUp' || e.key === 'ArrowDown'
-        ? Math.max(0, y + direction * delta)
+		? Math.max(0, Math.min(window.innerHeight - height - 52, y + direction * delta))
         : y;
       windowStore.move(id, nextX, nextY);
     }
