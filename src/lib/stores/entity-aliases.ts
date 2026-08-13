@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 
 export const entityAliasesLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
+export const entityAliasesSnapshotReady = writable(false);
 
 type EntityAlias = {
 	id: string;
@@ -21,6 +22,7 @@ function createEntityAliasStore() {
 			if (!res.ok) throw new Error(await res.text());
 			const data: EntityAlias[] = await res.json();
 			set(data);
+			entityAliasesSnapshotReady.set(true);
 			entityAliasesLoadStatus.set('ready');
 		})().catch((error) => {
 			entityAliasesLoadStatus.set('error');
@@ -45,6 +47,7 @@ function createEntityAliasStore() {
 		if (!res.ok) throw new Error(await res.text());
 		const created: EntityAlias = await res.json();
 		update((all) => [...all, created]);
+		entityAliasesSnapshotReady.set(true);
 		entityAliasesLoadStatus.set('ready');
 		return created;
 	}
