@@ -158,6 +158,29 @@ describe('GraphCanvas edge click gate', () => {
 		expect(onEdgeClick).toHaveBeenCalledWith('edge-clickable');
 	});
 
+	it('pans an off-screen edge action into view on focus', async () => {
+		const { container } = renderCanvas(vi.fn());
+		const viewport = container.querySelector('.viewport') as HTMLElement;
+		Object.defineProperties(viewport, {
+			clientWidth: { value: 160, configurable: true },
+			clientHeight: { value: 120, configurable: true }
+		});
+		await tick();
+		await Promise.resolve();
+		await tick();
+		const action = container.querySelector<HTMLButtonElement>('.edge-keyboard-action')!;
+		const before = action.style.left;
+		Object.defineProperties(viewport, {
+			clientWidth: { value: 40, configurable: true },
+			clientHeight: { value: 40, configurable: true }
+		});
+
+		action.focus();
+		await tick();
+
+		expect(action.style.left).not.toBe(before);
+	});
+
 	it('keeps mystery and synthetic alias edges out of keyboard actions', async () => {
 		const onEdgeContextMenu = vi.fn();
 		const { container } = renderCanvas(vi.fn(), undefined, undefined, onEdgeContextMenu);

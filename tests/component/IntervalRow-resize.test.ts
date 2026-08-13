@@ -148,6 +148,40 @@ describe('IntervalRow resize handles', () => {
 		await waitFor(() => expect(getByRole('button', { name: 'Mara interval' })).toHaveFocus());
 	});
 
+	it('ignores repeated split activation while the first request is pending', async () => {
+		const act = { id: 'act-1', type: 'Act', name: 'One' } as Entity;
+		const scenes = [
+			{ id: 'scene-1', type: 'Scene', name: 'Opening', parentId: act.id },
+			{ id: 'scene-2', type: 'Scene', name: 'Turn', parentId: act.id }
+		] as Entity[];
+		const interval = {
+			id: 'interval-1', entityId: 'character-1', startActId: act.id, endActId: act.id,
+			startSceneId: null, endSceneId: null, startPosition: 0, endPosition: 1
+		} as Interval;
+		let resolveSplit!: (response: Response) => void;
+		const fetchMock = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveSplit = resolve; }))
+			.mockResolvedValueOnce({ ok: true, json: async () => [interval] });
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const view = render(IntervalRow, {
+			props: {
+				entity: { id: 'character-1', type: 'Character', name: 'Mara' } as Entity,
+				intervals: [interval], idx: 0, trackWidthPx: 100, actCount: 1, acts: [act],
+				scenesByActId: new Map([[act.id, scenes]]), colorFor: () => '#c8942a',
+				dataNoteSnippet: () => null, tooltipFor: () => 'Mara interval',
+				posToFrac: (value: number) => value, fracToPos: (value: number) => value,
+				pxForRange: () => 100, onLockAcquire: vi.fn(), onLockRelease: vi.fn(), onError: vi.fn()
+			}
+		});
+		const split = view.getByRole('button', { name: /Split interval at 50%/ });
+
+		await fireEvent.keyDown(split, { key: 'Enter' });
+		await fireEvent.keyDown(split, { key: 'Enter' });
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		resolveSplit({ ok: true } as Response);
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+	});
+
 	it('converts rendered split fractions back through the weighted timeline', async () => {
 		const acts = [
 			{ id: 'act-1', type: 'Act', name: 'One' },

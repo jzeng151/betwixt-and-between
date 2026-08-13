@@ -88,11 +88,13 @@
     e.preventDefault();
     windowStore.focus(id);
     if (e.shiftKey) {
+      const maxWidth = Math.max(MIN_W, window.innerWidth - x);
+      const maxHeight = Math.max(MIN_H, window.innerHeight - y - 52);
       const nextWidth = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
-        ? Math.max(MIN_W, width + direction * delta)
+        ? Math.min(maxWidth, Math.max(MIN_W, width + direction * delta))
         : width;
       const nextHeight = e.key === 'ArrowUp' || e.key === 'ArrowDown'
-        ? Math.max(MIN_H, height + direction * delta)
+        ? Math.min(maxHeight, Math.max(MIN_H, height + direction * delta))
         : height;
       windowStore.resize(id, nextWidth, nextHeight);
     } else {
