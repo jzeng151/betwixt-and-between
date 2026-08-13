@@ -3,6 +3,29 @@
   import { entities } from '$lib/stores/entities.js';
 
   const hasVisibleWindows = $derived($windowStore.some((window) => !window.minimized));
+  let returnFocusKey = $state<string | null>(null);
+
+  function openEntity(entity: (typeof $entities)[number]) {
+    returnFocusKey = entity.id;
+    windowStore.openForEntity(entity.id, entity.type);
+  }
+
+  function openApp(appId: 'character-editor' | 'wiki') {
+    returnFocusKey = appId;
+    windowStore.open(appId);
+  }
+
+  $effect(() => {
+    if (hasVisibleWindows || !returnFocusKey) return;
+    const key = returnFocusKey;
+    returnFocusKey = null;
+    queueMicrotask(() => {
+      [...document.querySelectorAll<HTMLElement>('[data-workspace-return]')]
+        .find((element) => element.dataset.workspaceReturn === key)
+        ?.focus();
+    });
+  });
+
   const sections = $derived([
     {
       title: 'Cast',
@@ -17,15 +40,19 @@
     {
       title: 'World and notes',
       entries: $entities
-        .filter((entity) => entity.type === 'Location' || entity.type === 'Artifact' || entity.type === 'Item' || entity.type === 'Note')
+        .filter((entity) => !['Character', 'Act', 'Scene', 'Event'].includes(entity.type))
         .slice(0, 6)
     }
   ]);
 </script>
 
 <div class="desktop">
-  {#if !hasVisibleWindows}
-    <main class="story-index" aria-label="Story workspace overview">
+    <main
+      class="story-index"
+      class:hidden={hasVisibleWindows}
+      aria-hidden={hasVisibleWindows}
+      aria-label="Story workspace overview"
+    >
       {#if $entities.length > 0}
         <header class="index-heading">
           <h1>The story so far</h1>
@@ -40,7 +67,7 @@
                 <ul>
                   {#each section.entries as entity}
                     <li>
-                      <button onclick={() => windowStore.openForEntity(entity.id, entity.type)}>
+                      <button data-workspace-return={entity.id} onclick={() => openEntity(entity)}>
                         <span class="entry-name">{entity.name}</span>
                         <span class="entry-type">{entity.type}</span>
                       </button>
@@ -58,13 +85,12 @@
           <h1>Start with one true thing.</h1>
           <p>Give the story a person, a place, or a piece of the world. The shape can come later.</p>
           <div class="empty-actions">
-            <button class="primary-action" onclick={() => windowStore.open('character-editor')}>Create a character</button>
-            <button class="secondary-action" onclick={() => windowStore.open('wiki')}>Open the wiki</button>
+            <button data-workspace-return="character-editor" class="primary-action" onclick={() => openApp('character-editor')}>Create a character</button>
+            <button data-workspace-return="wiki" class="secondary-action" onclick={() => openApp('wiki')}>Open the wiki</button>
           </div>
         </div>
       {/if}
     </main>
-  {/if}
 </div>
 
 <style>
@@ -82,6 +108,11 @@
     margin: 0 auto;
     padding: clamp(56px, 10vh, 104px) 0 56px;
     pointer-events: auto;
+  }
+
+  .story-index.hidden {
+    visibility: hidden;
+    pointer-events: none;
   }
 
   .index-heading,

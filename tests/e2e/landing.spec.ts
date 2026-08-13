@@ -45,8 +45,13 @@ test.describe('App route migration', () => {
     await expect(page.locator('.app-shell')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Start with one true thing.' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Create a character' }).click();
-    await expect(page.getByRole('dialog', { name: 'Characters' })).toBeVisible();
+    const createCharacter = page.getByRole('button', { name: 'Create a character' });
+    await createCharacter.click();
+    const characters = page.getByRole('dialog', { name: 'Characters' });
+    await expect(characters).toBeVisible();
+
+    await characters.getByRole('button', { name: 'Close' }).click();
+    await expect(createCharacter).toBeFocused();
   });
 
   test('/app loads project data after the viewport expands', async ({ page }) => {

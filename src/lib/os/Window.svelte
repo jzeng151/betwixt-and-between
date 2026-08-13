@@ -301,7 +301,11 @@
     font-weight: 600;
     color: var(--color-text);
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
     text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     pointer-events: none;
   }
 
