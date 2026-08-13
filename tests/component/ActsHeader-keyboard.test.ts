@@ -31,11 +31,14 @@ describe('ActsHeader keyboard controls', () => {
 
 		await fireEvent.click(getByRole('button', { name: 'Act One' }));
 		await fireEvent.keyDown(getByRole('button', { name: /Select Opening/ }), { key: ' ' });
-		await fireEvent.keyDown(getByRole('slider'), { key: 'ArrowRight' });
+		const slider = getByRole('slider');
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
 
 		expect(onSelectAct).toHaveBeenCalledWith('act-1');
 		expect(onSelectScene).toHaveBeenCalledWith('scene-1');
 		expect(onWeightPreview).toHaveBeenCalledOnce();
 		expect(onWeightCommit).toHaveBeenCalledOnce();
+		expect(slider).toHaveAttribute('aria-valuemin', '10');
+		expect(slider).toHaveAttribute('aria-valuemax', '90');
 	});
 });

@@ -246,7 +246,8 @@
     transition: opacity 0.12s ease;
   }
   .interval-bar:hover .hairline,
-  .interval-bar:hover .hairline-hit {
+  .interval-bar:hover .hairline-hit,
+  .hairline-hit:focus-visible {
     opacity: 1;
   }
   .hairline-hit {
