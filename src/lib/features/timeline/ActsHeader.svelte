@@ -223,7 +223,7 @@
 
 	let dragActId: string | null = $state(null);
 	let actDropTarget: { idx: number; side: 'left' | 'right' } | null = $state(null);
-	let keyboardActOrder: string[] | null = null;
+	let keyboardActOrder: string[] | null = $state(null);
 	let keyboardActPending = 0;
 	let keyboardActTail: Promise<void> = Promise.resolve();
 	let reorderError: string | null = $state(null);
@@ -383,9 +383,10 @@
 		}
 		if (targetActIdx === currentActIdx && targetSceneIdx === currentSceneIdx) return;
 		source.splice(currentSceneIdx, 1);
-		(order.get(acts[targetActIdx].id) ?? source).splice(targetSceneIdx, 0, scene.id);
+		const targetActId = acts[targetActIdx].id;
+		(order.get(targetActId) ?? source).splice(targetSceneIdx, 0, scene.id);
 		keyboardScenePending++;
-		const request = keyboardSceneTail.then(() => moveScene(scene.id, acts[targetActIdx].id, targetSceneIdx, true));
+		const request = keyboardSceneTail.then(() => moveScene(scene.id, targetActId, targetSceneIdx, true));
 		const tail = request.catch(() => {});
 		keyboardSceneTail = tail;
 		void tail.finally(() => {
@@ -589,7 +590,7 @@
 						aria-orientation="horizontal"
 						aria-valuemin={1}
 						aria-valuemax={acts.length}
-						aria-valuenow={actIdx + 1}
+						aria-valuenow={(keyboardActOrder?.indexOf(act.id) ?? actIdx) + 1}
 						title="Drag or use arrow keys to reorder"
 						draggable="true"
 						ondragstart={(e) => actDragStart(e, act.id)}
