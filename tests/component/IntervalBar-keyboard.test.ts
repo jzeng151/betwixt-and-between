@@ -46,4 +46,25 @@ describe('IntervalBar keyboard controls', () => {
 
 		expect(firstRight).toBe(secondLeft);
 	});
+
+	it('gives each split point a distinct position label', () => {
+		const { container } = render(IntervalBar, {
+			props: {
+				name: 'Journey',
+				tooltipText: 'Journey interval',
+				color: '#c8942a',
+				widthPx: 100,
+				internalBoundaries: [0.25, 0.75],
+				onSplit: vi.fn()
+			}
+		});
+		const labels = [...container.querySelectorAll('rect.hairline-hit')].map((hit) =>
+			hit.getAttribute('aria-label')
+		);
+
+		expect(labels).toEqual([
+			'Split interval at 25% of this interval',
+			'Split interval at 75% of this interval'
+		]);
+	});
 });

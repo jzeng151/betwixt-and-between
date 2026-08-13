@@ -376,16 +376,26 @@
 				/>
 			<div
 				class="resize-handle resize-handle--left"
-				role="button"
-				aria-label="Drag to resize interval start"
+				role="slider"
+				aria-label="Interval start. Use Left and Right Arrow keys to resize"
+				aria-orientation="horizontal"
+				aria-valuemin={0}
+				aria-valuemax={iv.endPosition}
+				aria-valuenow={iv.startPosition}
+				style:clip-path={`inset(0 ${Math.max(0, (24 - widthPx) / 2)}px 0 0)`}
 					tabindex="0"
 					onpointerdown={(e) => startResize(e, iv, 'start')}
 					onkeydown={(e) => void resizeWithKeyboard(e, iv, 'start')}
 			></div>
 			<div
 				class="resize-handle resize-handle--right"
-				role="button"
-				aria-label="Drag to resize interval end"
+				role="slider"
+				aria-label="Interval end. Use Left and Right Arrow keys to resize"
+				aria-orientation="horizontal"
+				aria-valuemin={iv.startPosition}
+				aria-valuemax={actCount}
+				aria-valuenow={iv.endPosition}
+				style:clip-path={`inset(0 0 0 ${Math.max(0, (24 - widthPx) / 2)}px)`}
 					tabindex="0"
 					onpointerdown={(e) => startResize(e, iv, 'end')}
 					onkeydown={(e) => void resizeWithKeyboard(e, iv, 'end')}

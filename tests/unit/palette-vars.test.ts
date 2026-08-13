@@ -71,6 +71,8 @@ describe('T5 resolvePaletteVars', () => {
 	it('chooses a contrasting foreground for light and dark accents', () => {
 		expect(accentForeground('#111111')).toBe('#ffffff');
 		expect(accentForeground('#f2b84b')).toBe('#000000');
+		expect(accentForeground('#fff')).toBe('#000000');
+		expect(accentForeground('#000')).toBe('#ffffff');
 	});
 });
 
