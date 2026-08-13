@@ -64,6 +64,7 @@
   }: Props = $props();
 
   const widthClass: WidthClass = $derived(widthClassForBar(widthPx));
+  const boundaries = $derived([...internalBoundaries].sort((a, b) => a - b));
   const showName = $derived(widthClass !== 'tiny');
   const showNote = $derived(widthClass === 'normal' && note != null && note.trim() !== '');
 
@@ -135,11 +136,16 @@
   <!-- Internal act boundaries — clickable to split the interval (D7/5b A).
        Hairlines hidden until the bar is hovered to keep the resting state
        calm. CSS gates visibility via .interval-bar:hover. -->
-  {#each internalBoundaries as fraction (fraction)}
+  {#each boundaries as fraction, index (fraction)}
+    {@const center = fraction * widthPx}
+    {@const previousMidpoint = index > 0 ? (boundaries[index - 1] * widthPx + center) / 2 : 0}
+    {@const nextMidpoint = index < boundaries.length - 1 ? (center + boundaries[index + 1] * widthPx) / 2 : widthPx}
+    {@const hitLeft = Math.max(previousMidpoint, center - 12)}
+    {@const hitRight = Math.min(nextMidpoint, center + 12)}
     <line
       class="hairline"
-      x1={fraction * widthPx}
-      x2={fraction * widthPx}
+      x1={center}
+      x2={center}
       y1={BODY_Y + 4}
       y2={BODY_Y + BODY_H - 4}
       stroke="rgba(255, 255, 255, 0.18)"
@@ -153,9 +159,9 @@
         role="button"
         tabindex="0"
         aria-label="Split interval at this act boundary"
-        x={fraction * widthPx - 12}
+        x={hitLeft}
         y={BODY_Y}
-        width="24"
+        width={hitRight - hitLeft}
         height={BODY_H}
         fill="transparent"
         onclick={(e) => {

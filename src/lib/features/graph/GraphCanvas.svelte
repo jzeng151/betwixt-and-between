@@ -292,6 +292,11 @@
 		}
 		return out;
 	});
+	const keyboardEdges = $derived(
+		screenEdges.filter(
+			(edge) => !edge.mysteryMode && !edge.id.startsWith('alias-') && (edge.clickable || onEdgeContextMenu)
+		)
+	);
 
 	const connectLineStart = $derived(
 		connecting
@@ -716,7 +721,7 @@
 	</svg>
 
 	{#if onEdgeClick || onEdgeContextMenu}
-		{#each screenEdges as edge (edge.id)}
+		{#each keyboardEdges as edge (edge.id)}
 			<button
 				type="button"
 				class="edge-keyboard-action"

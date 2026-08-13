@@ -28,4 +28,22 @@ describe('IntervalBar keyboard controls', () => {
 		expect(onActivate).toHaveBeenCalledOnce();
 		expect(onSplit).toHaveBeenCalledWith(0.5);
 	});
+
+	it('partitions nearby split hit areas without overlap', () => {
+		const { container } = render(IntervalBar, {
+			props: {
+				name: 'Journey',
+				tooltipText: 'Journey interval',
+				color: '#c8942a',
+				widthPx: 100,
+				internalBoundaries: [0.45, 0.5],
+				onSplit: vi.fn()
+			}
+		});
+		const hits = [...container.querySelectorAll<SVGRectElement>('rect.hairline-hit')];
+		const firstRight = Number(hits[0].getAttribute('x')) + Number(hits[0].getAttribute('width'));
+		const secondLeft = Number(hits[1].getAttribute('x'));
+
+		expect(firstRight).toBe(secondLeft);
+	});
 });
