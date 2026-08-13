@@ -2371,9 +2371,9 @@
 
 <svelte:window onkeydown={handleMapKeydown} />
 
-{#if mapsLoading}
+{#if mapsLoading && !hasMaps}
 	<div class="empty-state" role="status">Loading maps…</div>
-{:else if mapsLoadError}
+{:else if mapsLoadError && !hasMaps}
 	<div class="empty-state" role="alert">Couldn't load maps.</div>
 {:else if !hasMaps}
 	<!-- Empty state: no maps -->
