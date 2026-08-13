@@ -158,7 +158,7 @@
         class="hairline-hit"
         role="button"
         tabindex="0"
-        aria-label="Split interval at this act boundary"
+        aria-label={`Split interval at ${Math.round(fraction * 100)}% of this interval`}
         x={hitLeft}
         y={BODY_Y}
         width={hitRight - hitLeft}
