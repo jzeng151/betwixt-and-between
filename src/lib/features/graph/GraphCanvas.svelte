@@ -782,6 +782,7 @@
 					onpointerdown={(e) => onNodePointerDown(e, node.id)}
 					ondblclick={(e) => onNodeDblClick(e, node.id)}
 					oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
+					onclick={(e) => { if (e.detail === 0) onNodeOpen?.(node.id); }}
 					onkeydown={(e) => onNodeKeydown(e, node.id)}
 					onfocus={() => revealNode(p)}
 					onpointerenter={() => (hoveredNodeId = node.id)}
@@ -860,6 +861,7 @@
 
 	.edge-keyboard-action {
 		position: absolute;
+		z-index: 1;
 		width: 24px;
 		height: 24px;
 		padding: 0;

@@ -109,6 +109,18 @@ describe('GraphCanvas edge click gate', () => {
 		expect(description).toHaveTextContent(/Arrow keys to move.*Hold Shift/i);
 	});
 
+	it('opens graph nodes from synthesized accessibility clicks only', async () => {
+		const onNodeOpen = vi.fn();
+		const { container } = renderCanvas(vi.fn(), onNodeOpen);
+		await tick();
+		const node = container.querySelector('[data-entity-id="cause"]') as HTMLElement;
+
+		node.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+		node.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+
+		expect(onNodeOpen).toHaveBeenCalledOnce();
+	});
+
 	it('pans to keep a keyboard-moved node visible', async () => {
 		const { container } = renderCanvas(vi.fn(), undefined, vi.fn());
 		const viewport = container.querySelector('.viewport') as HTMLElement;
