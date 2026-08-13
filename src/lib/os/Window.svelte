@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { takeNextFocusReturn } from '$lib/actions/focus-trap.js';
   import { windowStore, PIN_Z_BASE } from '$lib/os/windows-store.js';
 
   interface Props {
@@ -37,7 +38,9 @@
   let returnFocus: HTMLElement | null = null;
 
   function focusWindow() {
-    queueMicrotask(() => windowElement?.focus());
+    queueMicrotask(() => {
+      if (windowElement && !windowElement.contains(document.activeElement)) windowElement.focus();
+    });
   }
 
   $effect(() => {
@@ -46,7 +49,9 @@
   });
 
   onMount(() => {
-    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    returnFocus = takeNextFocusReturn(
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    );
     return () => {
       if (returnFocus?.isConnected) returnFocus.focus();
     };
