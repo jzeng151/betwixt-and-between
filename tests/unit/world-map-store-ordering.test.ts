@@ -96,6 +96,24 @@ describe('loadMaps status', () => {
 		expect(get(worldMaps)).toHaveLength(0);
 		expect(get(worldMapsLoadStatus)).toBe('ready');
 	});
+
+	it('removes a deleted map restored by an overlapping refresh', async () => {
+		worldMaps.set([{ id: 'A', name: 'A' } as never]);
+		let resolveRefresh!: (response: Response) => void;
+		let resolveDelete!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRefresh = resolve; }))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveDelete = resolve; })) as unknown as typeof fetch;
+
+		const refresh = worldMapStore.loadMaps();
+		const deletion = worldMapStore.deleteMap('A');
+		resolveRefresh(makeResponse([{ id: 'A', name: 'A' }]));
+		await refresh;
+		resolveDelete(makeResponse(null));
+		await deletion;
+
+		expect(get(worldMaps)).toHaveLength(0);
+	});
 });
 
 describe('prefetchMapRegions', () => {
