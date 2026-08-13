@@ -19,7 +19,7 @@
     deletePresetRequest,
     applyPreset
   } from '$lib/os/preferences-presets-client.js';
-  import { applyPaletteVars } from '$lib/palette-vars.js';
+  import { accentForeground, applyPaletteVars } from '$lib/palette-vars.js';
   import { PREFERENCES_DEFAULTS, type Editor, type ProfileSummary } from '$lib/types/preferences.js';
   import type { PresetSummary } from '$lib/appearance-presets.js';
   import {
@@ -68,6 +68,9 @@
     if (typeof document === 'undefined') return;
     const name = cssVarToken.replace(/^var\((--[a-z0-9-]+)\)$/, '$1');
     document.documentElement.style.setProperty(name, hex);
+    if (name === '--color-accent') {
+      document.documentElement.style.setProperty('--color-on-accent', accentForeground(hex));
+    }
   }
   // On blur, drop any uncommitted preview by reconciling EVERY managed var back
   // to the store (applyPaletteVars sets overridden vars + REMOVES non-overridden

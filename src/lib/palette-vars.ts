@@ -40,7 +40,7 @@ function varName(token: string): string | null {
  * falls back to the app.css default.
  */
 export function managedPaletteVars(): string[] {
-	const set = new Set<string>(['--color-accent']);
+	const set = new Set<string>(['--color-accent', '--color-on-accent']);
 	for (const token of Object.values(ENTITY_TYPE_COLOR_VAR)) {
 		const v = varName(token);
 		if (v) set.add(v);
@@ -53,11 +53,23 @@ export function managedPaletteVars(): string[] {
 	return [...set];
 }
 
+export function accentForeground(hex: string): '#000000' | '#ffffff' {
+	const channels = [hex.slice(1, 3), hex.slice(3, 5), hex.slice(5, 7)].map((value) => {
+		const channel = Number.parseInt(value, 16) / 255;
+		return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+	});
+	const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+	return luminance > 0.179 ? '#000000' : '#ffffff';
+}
+
 /** Resolve an Appearance's overrides to a { cssVarName: hex } map. */
 export function resolvePaletteVars(appearance: Appearance | undefined): Record<string, string> {
 	const out: Record<string, string> = {};
 	if (!appearance) return out;
-	if (appearance.accentColor) out['--color-accent'] = appearance.accentColor;
+	if (appearance.accentColor) {
+		out['--color-accent'] = appearance.accentColor;
+		out['--color-on-accent'] = accentForeground(appearance.accentColor);
+	}
 	for (const [type, hex] of Object.entries(appearance.entityTypeColors ?? {})) {
 		const token = ENTITY_TYPE_COLOR_VAR[type as keyof typeof ENTITY_TYPE_COLOR_VAR];
 		const v = token ? varName(token) : null;

@@ -48,4 +48,20 @@ test.describe('App route migration', () => {
     await page.getByRole('button', { name: 'Create a character' }).click();
     await expect(page.getByRole('dialog', { name: 'Characters' })).toBeVisible();
   });
+
+  test('/app loads project data after the viewport expands', async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 800 });
+    let entityRequests = 0;
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/api/entities') entityRequests += 1;
+    });
+
+    await page.goto('/app');
+    await expect(page.getByText('Expand your browser window to continue.')).toBeVisible();
+    expect(entityRequests).toBe(0);
+
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await expect.poll(() => entityRequests).toBe(1);
+    await expect(page.locator('.app-shell')).toBeVisible();
+  });
 });

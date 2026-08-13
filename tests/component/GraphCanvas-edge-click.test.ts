@@ -36,7 +36,8 @@ const initialPositions = {
 function renderCanvas(
 	onEdgeClick: (id: string) => void,
 	onNodeOpen?: (id: string) => void,
-	onNodePositionChange?: (id: string, position: { x: number; y: number }) => void
+	onNodePositionChange?: (id: string, position: { x: number; y: number }) => void,
+	onEdgeContextMenu?: (id: string, x: number, y: number) => void
 ) {
 	return render(GraphCanvas, {
 		props: {
@@ -46,11 +47,14 @@ function renderCanvas(
 				{ id: 'edge-clickable', fromId: 'effect', toId: 'cause', color: '#888', label: '', dimmed: false, clickable: true },
 				// Same shape but clickable false (the mystery / unscoped case as
 				// the host would compute it) → must NOT jump.
-				{ id: 'edge-blocked', fromId: 'effect', toId: 'other', color: '#888', label: '', dimmed: false, clickable: false }
+				{ id: 'edge-blocked', fromId: 'effect', toId: 'other', color: '#888', label: 'Blocked', dimmed: false, clickable: false },
+				{ id: 'edge-mystery', fromId: 'cause', toId: 'other', color: '#888', label: 'Secret alliance', dimmed: false, mysteryMode: true },
+				{ id: 'alias-pair', fromId: 'cause', toId: 'effect', color: '#888', label: 'Alias identity', dimmed: false }
 			],
 			dimmedNodes: new Set<string>(),
 			initialPositions,
 			onEdgeClick,
+			onEdgeContextMenu,
 			onNodeOpen,
 			onNodePositionChange
 		}
@@ -67,7 +71,7 @@ describe('GraphCanvas edge click gate', () => {
 		const hitAreas = Array.from(
 			container.querySelectorAll('line[pointer-events="stroke"]')
 		) as SVGLineElement[];
-		expect(hitAreas.length).toBe(2); // both edges render a hit-area
+		expect(hitAreas.length).toBe(4); // every visual edge retains a pointer hit-area
 
 		// Click every hit-area. Only the clickable edge may reach onEdgeClick.
 		for (const line of hitAreas) await fireEvent.click(line);
@@ -109,8 +113,20 @@ describe('GraphCanvas edge click gate', () => {
 		await tick();
 		const actions = container.querySelectorAll<HTMLButtonElement>('.edge-keyboard-action');
 
-		expect(actions.length).toBe(2);
+		expect(actions.length).toBe(1);
 		await fireEvent.click(actions[0]);
 		expect(onEdgeClick).toHaveBeenCalledWith('edge-clickable');
+	});
+
+	it('keeps mystery and synthetic alias edges out of keyboard actions', async () => {
+		const onEdgeContextMenu = vi.fn();
+		const { container } = renderCanvas(vi.fn(), undefined, undefined, onEdgeContextMenu);
+		await tick();
+		const actions = [...container.querySelectorAll<HTMLButtonElement>('.edge-keyboard-action')];
+
+		expect(actions).toHaveLength(2);
+		expect(actions.map((action) => action.getAttribute('aria-label')).join(' ')).not.toMatch(/Secret|Alias/);
+		await fireEvent.click(actions.find((action) => action.getAttribute('aria-label')?.startsWith('Blocked'))!);
+		expect(onEdgeContextMenu).toHaveBeenCalledWith('edge-blocked', expect.any(Number), expect.any(Number));
 	});
 });
