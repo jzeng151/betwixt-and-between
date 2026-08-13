@@ -54,6 +54,7 @@ export function managedPaletteVars(): string[] {
 }
 
 export function accentForeground(hex: string): '#000000' | '#ffffff' {
+	hex = hex.length === 4 ? `#${[...hex.slice(1)].map((value) => value + value).join('')}` : hex;
 	const channels = [hex.slice(1, 3), hex.slice(3, 5), hex.slice(5, 7)].map((value) => {
 		const channel = Number.parseInt(value, 16) / 255;
 		return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;

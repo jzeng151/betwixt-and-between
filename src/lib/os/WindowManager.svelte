@@ -33,6 +33,11 @@
     return promise;
   }
 
+  function retryApp(appId: AppId) {
+    appPromises.delete(appId);
+    failedApps = new Set([...failedApps].filter((id) => id !== appId));
+  }
+
   $effect(() => {
     for (const win of $windowStore) {
       if (loadedApps[win.appId] || failedApps.has(win.appId)) continue;
@@ -117,7 +122,8 @@
       {/if}
     {:else if failedApps.has(win.appId)}
       <div class="app-loading app-loading--error" role="alert">
-        Couldn't open {APP_CATALOG[win.appId].title}.
+        <span>Couldn't open {APP_CATALOG[win.appId].title}.</span>
+        <button type="button" onclick={() => retryApp(win.appId)}>Retry</button>
       </div>
     {:else}
       <div class="app-loading" role="status">Opening {APP_CATALOG[win.appId].title}…</div>
@@ -135,5 +141,14 @@
   }
   .app-loading--error {
     color: var(--color-danger);
+    gap: 10px;
+  }
+  .app-loading--error button {
+    color: var(--color-text);
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    cursor: pointer;
   }
 </style>
