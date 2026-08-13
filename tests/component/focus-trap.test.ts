@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { focusTrap, setNextFocusTrapReturn } from '$lib/actions/focus-trap.js';
+import { focusTrap, setNextFocusTrapReturn, takeNextFocusReturn } from '$lib/actions/focus-trap.js';
 
 describe('focusTrap', () => {
 	it('moves, contains, and restores focus', async () => {
@@ -40,5 +40,13 @@ describe('focusTrap', () => {
 		action.destroy();
 
 		expect(document.activeElement).toBe(opener);
+	});
+
+	it('hands a transient opener to a newly created window', () => {
+		const opener = document.body.appendChild(document.createElement('button'));
+		setNextFocusTrapReturn(opener);
+
+		expect(takeNextFocusReturn(null)).toBe(opener);
+		expect(takeNextFocusReturn(null)).toBeNull();
 	});
 });
