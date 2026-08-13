@@ -183,9 +183,14 @@ function createWorldMapStore() {
 	}
 
 	async function deleteMap(id: string): Promise<void> {
-		maps.update((all) => all.filter((m) => m.id !== id));
+		let removed: WorldMap | undefined;
+		maps.update((all) => {
+			removed = all.find((m) => m.id === id);
+			return all.filter((m) => m.id !== id);
+		});
 		const res = await fetch(`/api/maps/${id}`, { method: 'DELETE' });
 		if (!res.ok) {
+			if (removed) maps.update((all) => upsertMap(all, removed!));
 			await loadMaps();
 			throw new Error('Failed to delete map');
 		}

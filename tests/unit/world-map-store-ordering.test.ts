@@ -150,6 +150,23 @@ describe('loadMaps status', () => {
 
 		expect(get(worldMaps).filter((map) => map.id === 'clone')).toHaveLength(1);
 	});
+
+	it('restores a failed deletion even when another mutation invalidates its refresh', async () => {
+		worldMaps.set([{ id: 'A', name: 'A' } as never]);
+		let resolveRecovery!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockResolvedValueOnce(makeResponse('nope', false, 500))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRecovery = resolve; }))
+			.mockResolvedValueOnce(makeResponse({ id: 'B', name: 'B' })) as unknown as typeof fetch;
+
+		const deletion = worldMapStore.deleteMap('A');
+		await vi.waitFor(() => expect(get(worldMaps).some((map) => map.id === 'A')).toBe(true));
+		await worldMapStore.createMap('B');
+		resolveRecovery(makeResponse([{ id: 'A', name: 'A' }]));
+
+		await expect(deletion).rejects.toThrow('Failed to delete map');
+		expect(get(worldMaps).some((map) => map.id === 'A')).toBe(true);
+	});
 });
 
 describe('prefetchMapRegions', () => {
