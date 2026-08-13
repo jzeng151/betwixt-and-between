@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { takeNextFocusReturn } from '$lib/actions/focus-trap.js';
-  import { windowStore, PIN_Z_BASE } from '$lib/os/windows-store.js';
+  import { windowStore, PIN_Z_BASE, readTaskbarHeight } from '$lib/os/windows-store.js';
 
   interface Props {
     id: string;
@@ -111,7 +111,7 @@
 		? Math.max(0, Math.min(window.innerWidth - width, x + direction * delta))
         : x;
       const nextY = e.key === 'ArrowUp' || e.key === 'ArrowDown'
-		? Math.max(0, Math.min(window.innerHeight - height - 52, y + direction * delta))
+		? Math.max(0, Math.min(window.innerHeight - height - readTaskbarHeight(), y + direction * delta))
         : y;
       windowStore.move(id, nextX, nextY);
     }
