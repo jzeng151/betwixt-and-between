@@ -496,7 +496,7 @@
 		const right = pairWeight - left;
 		const updates = { [acts[idx].id]: left, [acts[idx + 1].id]: right };
 		onWeightPreview?.(updates);
-		pendingKeyboardWeightCommit = updates;
+		pendingKeyboardWeightCommit = { ...pendingKeyboardWeightCommit, ...updates };
 		if (keyboardWeightCommitTimer) clearTimeout(keyboardWeightCommitTimer);
 		keyboardWeightCommitTimer = setTimeout(flushKeyboardWeightCommit, 150);
 	}

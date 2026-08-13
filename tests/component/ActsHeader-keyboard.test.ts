@@ -222,6 +222,31 @@ describe('ActsHeader keyboard controls', () => {
 		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
 	});
 
+	it('preserves keyboard width updates from adjacent handles', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' },
+			{ id: 'act-3', type: 'Act', name: 'Three' }
+		] as Entity[];
+		const onWeightCommit = vi.fn();
+		const view = render(ActsHeader, {
+			props: {
+				acts, scenesByActId: new Map(), weights: [1, 1, 1], trackWidthPx: 600,
+				onWeightCommit
+			}
+		});
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Width of One/ }), { key: 'ArrowRight' });
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Width of Two/ }), { key: 'ArrowRight' });
+
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
+		expect(onWeightCommit).toHaveBeenCalledWith({
+			'act-1': 1.075,
+			'act-2': 1.075,
+			'act-3': 0.925
+		});
+	});
+
 	it('hides width sliders when the minimum widths cannot fit', () => {
 		const acts = Array.from({ length: 12 }, (_, index) => ({
 			id: `act-${index}`, type: 'Act', name: `Act ${index + 1}`
