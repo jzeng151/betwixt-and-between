@@ -38,8 +38,11 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 		document.activeElement instanceof HTMLElement ? document.activeElement : null
 	);
 	let currentOptions = options;
+	function focusFirst() {
+		focusableChildren(node)[0]?.focus() ?? node.focus();
+	}
 
-	queueMicrotask(() => focusableChildren(node)[0]?.focus() ?? node.focus());
+	queueMicrotask(focusFirst);
 
 	function onKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape' && currentOptions.onEscape) {
@@ -60,7 +63,10 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 
 		const first = items[0];
 		const last = items.at(-1)!;
-		if (event.shiftKey && document.activeElement === first) {
+		if (!items.includes(document.activeElement as HTMLElement)) {
+			event.preventDefault();
+			(event.shiftKey ? last : first).focus();
+		} else if (event.shiftKey && document.activeElement === first) {
 			event.preventDefault();
 			last.focus();
 		} else if (!event.shiftKey && document.activeElement === last) {
@@ -69,7 +75,21 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 		}
 	}
 
+	function onFocusIn(event: FocusEvent) {
+		if (!node.contains(event.target as Node)) queueMicrotask(focusFirst);
+	}
+
+	const observer = new MutationObserver(() => {
+		queueMicrotask(() => {
+			const active = document.activeElement;
+			if (active === node) return;
+			if (!(active instanceof HTMLElement) || !focusableChildren(node).includes(active)) focusFirst();
+		});
+	});
+	observer.observe(node, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled', 'tabindex', 'hidden'] });
+
 	node.addEventListener('keydown', onKeydown);
+	document.addEventListener('focusin', onFocusIn);
 
 	return {
 		update(next: FocusTrapOptions = {}) {
@@ -77,6 +97,8 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 		},
 		destroy() {
 			node.removeEventListener('keydown', onKeydown);
+			document.removeEventListener('focusin', onFocusIn);
+			observer.disconnect();
 			if (returnFocus?.isConnected) returnFocus.focus();
 		}
 	};

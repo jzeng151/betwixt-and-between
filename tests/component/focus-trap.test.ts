@@ -49,4 +49,23 @@ describe('focusTrap', () => {
 		expect(takeNextFocusReturn(null)).toBe(opener);
 		expect(takeNextFocusReturn(null)).toBeNull();
 	});
+
+	it('redirects focus when the active control becomes disabled', async () => {
+		const dialog = document.body.appendChild(document.createElement('div'));
+		const first = dialog.appendChild(document.createElement('button'));
+		const busy = dialog.appendChild(document.createElement('button'));
+		for (const element of [dialog, first, busy]) {
+			element.getClientRects = () => [{ width: 1, height: 1 }] as unknown as DOMRectList;
+		}
+		const action = focusTrap(dialog);
+		await Promise.resolve();
+		busy.focus();
+
+		busy.disabled = true;
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(document.activeElement).toBe(first);
+		action.destroy();
+	});
 });
