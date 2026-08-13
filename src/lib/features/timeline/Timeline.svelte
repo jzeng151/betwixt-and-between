@@ -153,7 +153,9 @@
 		return acts.map((a) => weightOverride[a.id] ?? actBaseWeight(a));
 	});
 
+	let weightCommitGeneration = 0;
 	async function commitActWeights(updates: { id: string; weight: number }[]) {
+		const generation = ++weightCommitGeneration;
 		try {
 			await Promise.all(
 				updates.map(async ({ id, weight }) => {
@@ -168,7 +170,7 @@
 		} catch (err) {
 			showError((err as Error).message);
 		} finally {
-			weightOverride = {};
+			if (generation === weightCommitGeneration) weightOverride = {};
 		}
 	}
 	const totalWeight = $derived(weights.reduce((a, b) => a + b, 0));

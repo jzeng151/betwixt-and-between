@@ -87,8 +87,11 @@
 		if (splittingIntervals.has(iv.id)) return;
 		splittingIntervals.add(iv.id);
 		const focusOwner = document.activeElement === origin ? origin : null;
-		const atPosition = fracToPos(posToFrac(iv.startPosition) + fraction * (
-			posToFrac(iv.endPosition) - posToFrac(iv.startPosition)
+		const pending = keyboardResizeAria[iv.id];
+		const start = pending?.start ?? iv.startPosition;
+		const end = pending?.end ?? iv.endPosition;
+		const atPosition = fracToPos(posToFrac(start) + fraction * (
+			posToFrac(end) - posToFrac(start)
 		));
 		try {
 			await intervalsStore.splitIntervalAt(iv.id, atPosition);
