@@ -93,4 +93,23 @@ describe('focusTrap', () => {
 		expect(document.activeElement).toBe(firstButton);
 		firstAction.destroy();
 	});
+
+	it('does not restore focus when an inactive trap is destroyed', async () => {
+		const firstDialog = document.body.appendChild(document.createElement('div'));
+		const firstButton = firstDialog.appendChild(document.createElement('button'));
+		const secondDialog = document.body.appendChild(document.createElement('div'));
+		const secondButton = secondDialog.appendChild(document.createElement('button'));
+		for (const element of [firstDialog, firstButton, secondDialog, secondButton]) {
+			element.getClientRects = () => [{ width: 1, height: 1 }] as unknown as DOMRectList;
+		}
+		const firstAction = focusTrap(firstDialog);
+		await Promise.resolve();
+		const secondAction = focusTrap(secondDialog);
+		await Promise.resolve();
+
+		firstAction.destroy();
+
+		expect(document.activeElement).toBe(secondButton);
+		secondAction.destroy();
+	});
 });

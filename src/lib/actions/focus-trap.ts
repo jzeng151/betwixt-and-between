@@ -105,9 +105,10 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 			node.removeEventListener('keydown', onKeydown);
 			document.removeEventListener('focusin', onFocusIn);
 			observer.disconnect();
+			const wasActive = isActive();
 			const index = trapStack.lastIndexOf(node);
 			if (index >= 0) trapStack.splice(index, 1);
-			if (returnFocus?.isConnected) returnFocus.focus();
+			if (wasActive && returnFocus?.isConnected) returnFocus.focus();
 		}
 	};
 }
