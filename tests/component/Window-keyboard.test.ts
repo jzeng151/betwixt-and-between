@@ -9,6 +9,25 @@ afterEach(() => {
 });
 
 describe('Window keyboard resizing', () => {
+	it('leaves geometry shortcuts with extra modifiers to the browser', () => {
+		const focus = vi.spyOn(windowStore, 'focus').mockImplementation(() => {});
+		const view = render(Window, {
+			props: {
+				id: 'window-1', title: 'Test', x: 0, y: 0, width: 300, height: 248,
+				zIndex: 1, minimized: false, maximized: false
+			}
+		});
+		const titlebar = view.getByRole('toolbar');
+		for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+			const event = new KeyboardEvent('keydown', {
+				key: 'ArrowRight', altKey: true, bubbles: true, cancelable: true, ...modifier
+			});
+			titlebar.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(false);
+		}
+		expect(focus).not.toHaveBeenCalled();
+	});
+
 	it('caps growth at the usable viewport edge', async () => {
 		Object.defineProperties(window, {
 			innerWidth: { value: 800, configurable: true },

@@ -79,7 +79,7 @@
   }
 
   function onTitlebarKeydown(e: KeyboardEvent) {
-    if (e.target !== e.currentTarget || !e.altKey || maximized) return;
+    if (e.target !== e.currentTarget || !e.altKey || e.ctrlKey || e.metaKey || maximized) return;
     const delta = 16;
     const direction = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1
       : e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1
