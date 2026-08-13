@@ -51,7 +51,11 @@ function createEntityAliasStore() {
 		const created: EntityAlias = await res.json();
 		generation++;
 		loadPromise = null;
-		update((all) => [...all, created]);
+		update((all) =>
+			all.some((alias) => alias.id === created.id)
+				? all.map((alias) => (alias.id === created.id ? created : alias))
+				: [...all, created]
+		);
 		entityAliasesSnapshotReady.set(true);
 		entityAliasesLoadStatus.set('ready');
 		return created;

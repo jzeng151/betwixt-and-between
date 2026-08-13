@@ -43,6 +43,10 @@ function createWorldMapStore() {
 	let loadSeq = 0;
 	let mapListLoadPromise: Promise<void> | null = null;
 	let mapListGeneration = 0;
+	const upsertMap = (all: WorldMap[], map: WorldMap) =>
+		all.some((item) => item.id === map.id)
+			? all.map((item) => (item.id === map.id ? map : item))
+			: [...all, map];
 
 	function commitMapMutation() {
 		mapListGeneration++;
@@ -130,7 +134,7 @@ function createWorldMapStore() {
 		if (!res.ok) throw new Error(await errorMessage(res));
 		const created: WorldMap = await res.json();
 		commitMapMutation();
-		maps.update((all) => [...all, created]);
+		maps.update((all) => upsertMap(all, created));
 		return created;
 	}
 
@@ -233,7 +237,7 @@ function createWorldMapStore() {
 		const data = await res.json();
 		const { regions: cloneRegions, ...clone } = data;
 		commitMapMutation();
-		maps.update((all) => [...all, clone as WorldMap]);
+		maps.update((all) => upsertMap(all, clone as WorldMap));
 		// New regions belong to a different mapId, so they won't collide with the
 		// currently-loaded set. Append rather than replace — caller switches to
 		// the clone via the picker, which triggers loadMapRegions if needed.

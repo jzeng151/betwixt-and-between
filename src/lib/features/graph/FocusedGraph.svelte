@@ -9,7 +9,7 @@
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
   import { jumpToCause, isCausalEdgeClickable } from '$lib/features/timeline/jump-to-cause.js';
   import { windowStore, type FocusedGraphMode } from '$lib/os/windows-store.js';
-  import { worldMapStore, worldMaps } from '$lib/features/map/store.js';
+  import { worldMapStore, worldMaps, worldMapsLoadStatus } from '$lib/features/map/store.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
@@ -305,10 +305,14 @@
   let winMapLoaded = $state(false);
   let radialSeeded = $state(false);
 
+  function loadMaps() {
+    void worldMapStore.loadMaps().catch(() => {});
+  }
+
   onMount(() => {
     intervalsStore.load();
     void entityAliases.load().catch(() => {});
-    worldMapStore.loadMaps();
+    loadMaps();
     void (async () => {
       // FG canvas is independent of StoryGraph: each FG window has
       // its own per-window state (Lane A). We don't inherit the
@@ -731,8 +735,11 @@
     <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button>
   </div>
 {:else}
-{#if $entityAliasesLoadStatus === 'error'}
-  <div class="graph-refresh" role="alert">Couldn't refresh aliases. <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button></div>
+{#if $entityAliasesLoadStatus === 'error' || $worldMapsLoadStatus === 'error'}
+  <div class="graph-refresh" role="alert">
+    {#if $entityAliasesLoadStatus === 'error'}<span>Couldn't refresh aliases. <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button></span>{/if}
+    {#if $worldMapsLoadStatus === 'error'}<span>Couldn't load maps. <button onclick={loadMaps}>Retry</button></span>{/if}
+  </div>
 {/if}
 <div class="fg">
   <header class="fg-header">

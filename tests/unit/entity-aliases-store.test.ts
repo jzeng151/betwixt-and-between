@@ -59,4 +59,23 @@ describe('entityAliases load state', () => {
 		expect(get(entityAliases)).toContainEqual(created);
 		expect(get(entityAliasesLoadStatus)).toBe('ready');
 	});
+
+	it('upserts an alias already returned by an overlapping refresh', async () => {
+		const created = { id: 'overlap', primaryEntityId: 'p', aliasEntityId: 'x', revealedAtPosition: null };
+		let resolveLoad!: (value: Response) => void;
+		let resolveCreate!: (value: Response) => void;
+		globalThis.fetch = vi.fn((_url, options) => options?.method === 'POST'
+			? new Promise<Response>((resolve) => { resolveCreate = resolve; })
+			: new Promise<Response>((resolve) => { resolveLoad = resolve; })
+		) as unknown as typeof fetch;
+
+		const load = entityAliases.load();
+		const creation = entityAliases.createAlias('p', 'x');
+		resolveLoad(response([created]));
+		await load;
+		resolveCreate(response(created));
+		await creation;
+
+		expect(get(entityAliases).filter((alias) => alias.id === created.id)).toHaveLength(1);
+	});
 });

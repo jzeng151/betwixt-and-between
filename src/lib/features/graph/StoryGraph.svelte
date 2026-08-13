@@ -9,7 +9,7 @@
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
   import { jumpToCause, isCausalEdgeClickable } from '$lib/features/timeline/jump-to-cause.js';
   import { windowStore } from '$lib/os/windows-store.js';
-  import { worldMapStore, worldMaps } from '$lib/features/map/store.js';
+  import { worldMapStore, worldMaps, worldMapsLoadStatus } from '$lib/features/map/store.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
@@ -52,7 +52,10 @@
   function loadAliases() {
     void entityAliases.load().catch(() => {});
   }
-  onMount(() => { intervalsStore.load(); loadAliases(); worldMapStore.loadMaps(); });
+  function loadMaps() {
+    void worldMapStore.loadMaps().catch(() => {});
+  }
+  onMount(() => { intervalsStore.load(); loadAliases(); loadMaps(); });
 
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
@@ -659,8 +662,11 @@
     <button onclick={loadAliases}>Retry</button>
   </div>
 {:else}
-{#if $entityAliasesLoadStatus === 'error'}
-  <div class="graph-refresh" role="alert">Couldn't refresh aliases. <button onclick={loadAliases}>Retry</button></div>
+{#if $entityAliasesLoadStatus === 'error' || $worldMapsLoadStatus === 'error'}
+  <div class="graph-refresh" role="alert">
+    {#if $entityAliasesLoadStatus === 'error'}<span>Couldn't refresh aliases. <button onclick={loadAliases}>Retry</button></span>{/if}
+    {#if $worldMapsLoadStatus === 'error'}<span>Couldn't load maps. <button onclick={loadMaps}>Retry</button></span>{/if}
+  </div>
 {/if}
 <GraphCanvas
   bind:this={canvas}

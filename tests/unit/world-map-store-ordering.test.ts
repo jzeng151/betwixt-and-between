@@ -114,6 +114,42 @@ describe('loadMaps status', () => {
 
 		expect(get(worldMaps)).toHaveLength(0);
 	});
+
+	it('upserts a create already returned by an overlapping refresh', async () => {
+		const created = { id: 'new', name: 'New' };
+		let resolveRefresh!: (response: Response) => void;
+		let resolveCreate!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRefresh = resolve; }))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveCreate = resolve; })) as unknown as typeof fetch;
+
+		const refresh = worldMapStore.loadMaps();
+		const creation = worldMapStore.createMap('New');
+		resolveRefresh(makeResponse([created]));
+		await refresh;
+		resolveCreate(makeResponse(created));
+		await creation;
+
+		expect(get(worldMaps).filter((map) => map.id === 'new')).toHaveLength(1);
+	});
+
+	it('upserts a duplicate already returned by an overlapping refresh', async () => {
+		const clone = { id: 'clone', name: 'Clone', regions: [] };
+		let resolveRefresh!: (response: Response) => void;
+		let resolveDuplicate!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRefresh = resolve; }))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveDuplicate = resolve; })) as unknown as typeof fetch;
+
+		const refresh = worldMapStore.loadMaps();
+		const duplication = worldMapStore.duplicateMap('source');
+		resolveRefresh(makeResponse([{ id: 'clone', name: 'Clone' }]));
+		await refresh;
+		resolveDuplicate(makeResponse(clone));
+		await duplication;
+
+		expect(get(worldMaps).filter((map) => map.id === 'clone')).toHaveLength(1);
+	});
 });
 
 describe('prefetchMapRegions', () => {
