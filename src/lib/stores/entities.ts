@@ -101,7 +101,10 @@ function createEntityStore() {
 		if (needsFreshSnapshot) invalidateLoadAfterMutation();
 		else markMutationReady();
 		update((all) => [...all, created]);
-		if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
+		if (needsFreshSnapshot) {
+			entitySnapshotReady.set(true);
+			await load({ fresh: true }).catch(() => {});
+		}
 		return created;
 	}
 
@@ -131,7 +134,10 @@ function createEntityStore() {
 		if (needsFreshSnapshot) invalidateLoadAfterMutation();
 		else markMutationReady();
 		update((all) => [...all, ...created]);
-		if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
+		if (needsFreshSnapshot) {
+			entitySnapshotReady.set(true);
+			await load({ fresh: true }).catch(() => {});
+		}
 		return created;
 	}
 

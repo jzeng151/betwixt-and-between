@@ -169,6 +169,26 @@ describe('entities.createEntity', () => {
 		expect(get(entitySnapshotReady)).toBe(true);
 	});
 
+	it('keeps a created entity usable when its replacement load fails', async () => {
+		entitySnapshotReady.set(false);
+		entityLoadStatus.set('idle');
+		let resolveInitial!: (response: Response) => void;
+		const created = entity({ id: 'created', name: 'Created' });
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveInitial = resolve; }))
+			.mockResolvedValueOnce(makeResponse(created))
+			.mockResolvedValueOnce(makeResponse('offline', false, 503)) as unknown as typeof fetch;
+
+		const initial = entities.load();
+		await entities.createEntity('Character', 'Created');
+		resolveInitial(makeResponse([]));
+		await initial;
+
+		expect(get(entitySnapshotReady)).toBe(true);
+		expect(get(entityLoadStatus)).toBe('error');
+		expect(get(entities).map((item) => item.id)).toEqual(['created']);
+	});
+
 	it('serializes data=undefined as undefined in the body', async () => {
 		const created = entity({ id: 'x', name: 'Plain' });
 		const fetchMock = vi.fn().mockResolvedValue(makeResponse(created));
