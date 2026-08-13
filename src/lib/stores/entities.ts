@@ -200,7 +200,7 @@ function createEntityStore() {
 			if (latestUpdate.get(id) === seq) {
 				latestUpdate.delete(id);
 				updateChains.delete(id);
-				await load({ fresh: true });
+				await load();
 			}
 			throw err;
 		}
@@ -252,11 +252,11 @@ function createEntityStore() {
 			res = await fetch(`/api/entities/${id}`, { method: 'DELETE' });
 		} catch (err) {
 			// Network error before any response — recover the optimistic remove.
-			await load({ fresh: true });
+			await load();
 			throw err;
 		}
 		if (!res.ok) {
-			await load({ fresh: true });
+			await load();
 			throw new Error(await res.text());
 		}
 		const needsFreshSnapshot = loadPromise !== null;

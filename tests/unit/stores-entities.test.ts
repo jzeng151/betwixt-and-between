@@ -304,6 +304,32 @@ describe('entities.updateEntity', () => {
 		expect(get(entityLoadStatus)).toBe('ready');
 	});
 
+	it('shares rollback loads across overlapping failed updates', async () => {
+		const seeded = [
+			entity({ id: 'a', name: 'A' }),
+			entity({ id: 'b', name: 'B' })
+		];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await entities.load();
+		let resolveRollback!: (response: Response) => void;
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(makeResponse('A rejected', false, 400))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRollback = resolve; }))
+			.mockResolvedValueOnce(makeResponse('B rejected', false, 400));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const rejectedA = entities.updateEntity('a', { name: 'A rejected' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		const rejectedB = entities.updateEntity('b', { name: 'B rejected' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		resolveRollback(makeResponse(seeded));
+
+		await expect(rejectedA).rejects.toThrow(/A rejected/);
+		await expect(rejectedB).rejects.toThrow(/B rejected/);
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+		expect(get(entities).map((item) => item.name)).toEqual(['A', 'B']);
+	});
+
 	it('applies optimistic data as object in the store (jsonb shape post-T8a)', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			makeResponse(entity({ id: 'e1', name: 'Old', type: 'Character', data: { age: 99 } }))
