@@ -87,7 +87,8 @@ describe('focusTrap', () => {
 
 		firstButton.focus();
 		await Promise.resolve();
-		expect(document.activeElement).toBe(secondButton);
+		expect(document.activeElement).toBe(firstButton);
+		expect(isActiveFocusTrapTarget(firstButton)).toBe(true);
 
 		secondAction.destroy();
 		expect(document.activeElement).toBe(firstButton);

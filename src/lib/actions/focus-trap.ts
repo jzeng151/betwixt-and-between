@@ -86,7 +86,12 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 	}
 
 	function onFocusIn(event: FocusEvent) {
-		if (isActive() && !node.contains(event.target as Node)) queueMicrotask(focusFirst);
+		if (node.contains(event.target as Node)) {
+			const index = trapStack.lastIndexOf(node);
+			if (index >= 0 && !isActive()) trapStack.push(trapStack.splice(index, 1)[0]);
+			return;
+		}
+		if (isActive()) queueMicrotask(focusFirst);
 	}
 
 	const observer = new MutationObserver(() => {
