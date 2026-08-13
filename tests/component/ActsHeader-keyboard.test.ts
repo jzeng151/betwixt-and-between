@@ -76,4 +76,51 @@ describe('ActsHeader keyboard controls', () => {
 			{ parentId: 'act-2', position: 0 }, { parentId: 'act-3', position: 0 }
 		]);
 	});
+
+	it('hides width sliders when the minimum widths cannot fit', () => {
+		const acts = Array.from({ length: 12 }, (_, index) => ({
+			id: `act-${index}`, type: 'Act', name: `Act ${index + 1}`
+		})) as Entity[];
+		const view = render(ActsHeader, {
+			props: {
+				acts,
+				scenesByActId: new Map(),
+				weights: acts.map(() => 1),
+				trackWidthPx: 700
+			}
+		});
+
+		expect(view.queryAllByRole('slider')).toHaveLength(0);
+	});
+
+	it('does not restore scene focus after the user moves elsewhere', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' }
+		] as Entity[];
+		const scene = { id: 'scene-1', type: 'Scene', name: 'Opening', parentId: 'act-1' } as Entity;
+		let resolvePatch!: (response: Response) => void;
+		const fetchMock = vi.fn((_url, options) => options?.method === 'PATCH'
+			? new Promise<Response>((resolve) => { resolvePatch = resolve; })
+			: Promise.resolve({ ok: true, json: async () => [] } as Response)
+		);
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const view = render(ActsHeader, {
+			props: {
+				acts,
+				scenesByActId: new Map([['act-1', [scene]], ['act-2', []]]),
+				weights: [1, 1],
+				trackWidthPx: 600
+			}
+		});
+		const sceneCell = view.getByRole('button', { name: /Select Opening/ });
+		const other = view.getByRole('button', { name: 'Two' });
+		sceneCell.focus();
+		await fireEvent.keyDown(sceneCell, { key: 'ArrowDown', altKey: true });
+		other.focus();
+		resolvePatch({ ok: true, json: async () => ({}) } as Response);
+
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		expect(other).toHaveFocus();
+	});
 });
