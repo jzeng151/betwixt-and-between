@@ -65,7 +65,7 @@ describe('IntervalRow resize handles', () => {
 			ok: true,
 			json: async () => interval
 		}) as unknown as typeof fetch;
-		const { getAllByRole } = render(IntervalRow, {
+		const { getAllByRole, container } = render(IntervalRow, {
 			props: {
 				entity: { id: 'character-1', type: 'Character', name: 'Mara' } as Entity,
 				intervals: [interval], idx: 0, trackWidthPx: 100, actCount: 1, acts: [act],
@@ -78,6 +78,7 @@ describe('IntervalRow resize handles', () => {
 
 		await fireEvent.keyDown(getAllByRole('slider')[0], { key: 'ArrowRight' });
 
+		expect(container.querySelector('.bar-wrapper')).toHaveStyle({ left: '10%' });
 		expect(globalThis.fetch).toHaveBeenCalledWith('/api/intervals/interval-1',
 			expect.objectContaining({ body: expect.stringContaining('"startPosition":0.1') }));
 	});

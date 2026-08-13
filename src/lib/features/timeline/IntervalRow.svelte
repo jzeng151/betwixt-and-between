@@ -360,25 +360,25 @@
 
 <div class="row" data-entity-id={entity.id} bind:this={rowEl}>
 	{#each intervals as iv (iv.id)}
+		{@const keyboardResize = keyboardResizeAria[iv.id]}
 		{@const previewStart =
-			resizing?.intervalId === iv.id
+			keyboardResize?.start ?? (resizing?.intervalId === iv.id
 				? resizing.previewStart
 				: translating?.intervalId === iv.id && translating.moved
 					? translating.previewStart
-					: iv.startPosition}
+					: iv.startPosition)}
 		{@const previewEnd =
-			resizing?.intervalId === iv.id
+			keyboardResize?.end ?? (resizing?.intervalId === iv.id
 				? resizing.previewEnd
 				: translating?.intervalId === iv.id && translating.moved
 					? translating.previewEnd
-					: iv.endPosition}
+					: iv.endPosition)}
 		{@const span = previewEnd - previewStart}
 		{@const leftFrac = posToFrac(previewStart)}
 		{@const rightFrac = posToFrac(previewEnd)}
 		{@const leftPct = leftFrac * 100}
 		{@const widthPct = (rightFrac - leftFrac) * 100}
 		{@const widthPx = pxForRange(previewStart, previewEnd)}
-		{@const keyboardResize = keyboardResizeAria[iv.id]}
 		{@const ariaStart = keyboardResize?.start ?? iv.startPosition}
 		{@const ariaEnd = keyboardResize?.end ?? iv.endPosition}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->

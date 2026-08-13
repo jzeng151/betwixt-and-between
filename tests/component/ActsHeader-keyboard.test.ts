@@ -67,6 +67,7 @@ describe('ActsHeader keyboard controls', () => {
 		const sceneCell = view.getByRole('button', { name: /Select Opening/ });
 		await fireEvent.keyDown(sceneCell, { key: 'ArrowDown', altKey: true });
 		await fireEvent.keyDown(sceneCell, { key: 'ArrowDown', altKey: true });
+		expect(sceneCell).toHaveAccessibleName(/Three, scene 1 of 1/);
 
 		await waitFor(() => expect(patches).toHaveLength(4));
 		expect(patches.filter((patch) => !('parentId' in patch))).toEqual([
@@ -101,6 +102,25 @@ describe('ActsHeader keyboard controls', () => {
 		}
 		expect(globalThis.fetch).not.toHaveBeenCalled();
 		expect(onWeightPreview).not.toHaveBeenCalled();
+	});
+
+	it('leaves scene movement chords with extra modifiers to the browser', () => {
+		const acts = [{ id: 'act-1', type: 'Act', name: 'One' }] as Entity[];
+		const scene = { id: 'scene-1', type: 'Scene', name: 'Opening', parentId: 'act-1' } as Entity;
+		globalThis.fetch = vi.fn();
+		const view = render(ActsHeader, {
+			props: { acts, scenesByActId: new Map([['act-1', [scene]]]), weights: [1], trackWidthPx: 600 }
+		});
+		const control = view.getByRole('button', { name: /Select Opening/ });
+
+		for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+			const event = new KeyboardEvent('keydown', {
+				key: 'ArrowRight', altKey: true, bubbles: true, cancelable: true, ...modifier
+			});
+			control.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(false);
+		}
+		expect(globalThis.fetch).not.toHaveBeenCalled();
 	});
 
 	it('derives queued keyboard moves from the optimistic act order', async () => {

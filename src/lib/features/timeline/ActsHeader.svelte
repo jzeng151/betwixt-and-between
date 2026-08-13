@@ -304,7 +304,7 @@
 	// ── Scene drag-reorder + cross-act move ──────────────────────────────────
 	let dragSceneId: string | null = $state(null);
 	let sceneDropTarget: { actId: string; idx: number } | null = $state(null);
-	let keyboardSceneOrder: Map<string, string[]> | null = null;
+	let keyboardSceneOrder: Map<string, string[]> | null = $state(null);
 	let keyboardScenePending = 0;
 	let keyboardSceneTail: Promise<void> = Promise.resolve();
 
@@ -362,7 +362,7 @@
 			onSelectScene?.(scene.id);
 			return;
 		}
-		if (!e.altKey || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+		if (!e.altKey || e.ctrlKey || e.metaKey || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
 		e.preventDefault();
 		const order = keyboardSceneOrder ??= new Map(
 			acts.map((act) => [act.id, (scenesByActId.get(act.id) ?? []).map((item) => item.id)])
@@ -385,6 +385,7 @@
 		source.splice(currentSceneIdx, 1);
 		const targetActId = acts[targetActIdx].id;
 		(order.get(targetActId) ?? source).splice(targetSceneIdx, 0, scene.id);
+		keyboardSceneOrder = new Map(order);
 		keyboardScenePending++;
 		const request = keyboardSceneTail.then(() => moveScene(scene.id, targetActId, targetSceneIdx, true));
 		const tail = request.catch(() => {});
@@ -392,6 +393,14 @@
 		void tail.finally(() => {
 			if (--keyboardScenePending === 0) keyboardSceneOrder = null;
 		});
+	}
+	function scenePositionLabel(scene: Entity): string {
+		const order = keyboardSceneOrder;
+		const actIdx = acts.findIndex((act) => (order?.get(act.id) ?? scenesByActId.get(act.id) ?? []).some((item) =>
+			typeof item === 'string' ? item === scene.id : item.id === scene.id
+		));
+		const siblings = order?.get(acts[actIdx]?.id) ?? (scenesByActId.get(acts[actIdx]?.id) ?? []).map((item) => item.id);
+		return `${acts[actIdx]?.name ?? 'Unknown act'}, scene ${siblings.indexOf(scene.id) + 1} of ${siblings.length}`;
 	}
 	async function sceneActDrop(e: DragEvent, actId: string) {
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === SCENE_MIME)) return;
@@ -723,7 +732,7 @@
 							class="scene-cell"
 							role="button"
 							tabindex="0"
-							aria-label="Select {scene.name}. Alt plus left and right reorders; Alt plus up and down moves between acts."
+							aria-label="Select {scene.name}. {scenePositionLabel(scene)}. Alt plus left and right reorders; Alt plus up and down moves between acts."
 							data-entity-id={scene.id}
 							class:scene-cell--selected={selectedEntityId === scene.id}
 							class:scene-cell--dragging={dragSceneId === scene.id}
