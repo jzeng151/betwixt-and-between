@@ -123,6 +123,7 @@
     onfocus={() => (focused = true)}
     onblur={() => (focused = false)}
     onkeydown={activateFromKeyboard}
+    onclick={(event) => event.detail === 0 && onActivate?.()}
   >
     <rect
       x="0"

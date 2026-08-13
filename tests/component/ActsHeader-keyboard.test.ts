@@ -77,6 +77,33 @@ describe('ActsHeader keyboard controls', () => {
 		]);
 	});
 
+	it('serializes keyboard moves across the whole act list', async () => {
+		const acts = ['One', 'Two', 'Three'].map((name, index) => ({
+			id: `act-${index + 1}`, type: 'Act', name
+		})) as Entity[];
+		const patchResolvers: Array<(response: Response) => void> = [];
+		const fetchMock = vi.fn((_url, options) => options?.method === 'PATCH'
+			? new Promise<Response>((resolve) => patchResolvers.push(resolve))
+			: Promise.resolve({ ok: true, json: async () => [] } as Response)
+		);
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const view = render(ActsHeader, {
+			props: {
+				acts,
+				scenesByActId: new Map(),
+				weights: [1, 1, 1],
+				trackWidthPx: 600
+			}
+		});
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowRight' });
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder Three/ }), { key: 'ArrowLeft' });
+		await waitFor(() => expect(patchResolvers).toHaveLength(1));
+		patchResolvers[0]({ ok: true, json: async () => ({}) } as Response);
+		await waitFor(() => expect(patchResolvers).toHaveLength(2));
+		patchResolvers[1]({ ok: true, json: async () => ({}) } as Response);
+	});
+
 	it('hides width sliders when the minimum widths cannot fit', () => {
 		const acts = Array.from({ length: 12 }, (_, index) => ({
 			id: `act-${index}`, type: 'Act', name: `Act ${index + 1}`
