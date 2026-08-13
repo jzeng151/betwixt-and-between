@@ -106,4 +106,28 @@ test.describe('V2 Scene cross-act move (T3-pulled-in + moveSceneToAct)', () => {
 			expect(iv.endActId).toBe(aB.id);
 		}).toPass({ timeout: 3000 });
 	});
+
+	test('keyboard move restores focus to the scene in its destination act', async ({ page, request }) => {
+		const actA = await (
+			await request.post('/api/entities', { data: { type: 'Act', name: 'A', position: 0 } })
+		).json();
+		const actB = await (
+			await request.post('/api/entities', { data: { type: 'Act', name: 'B', position: 1 } })
+		).json();
+		const scene = await (
+			await request.post('/api/entities', {
+				data: { type: 'Scene', name: 'Scene1', parentId: actA.id, position: 0 }
+			})
+		).json();
+
+		const win = await openTimeline(page);
+		const movedCell = win.locator(`.scene-cell[data-entity-id="${scene.id}"]`);
+		await movedCell.press('Alt+ArrowDown');
+
+		await expect(movedCell).toBeFocused();
+		await expect(async () => {
+			const entities = await (await request.get('/api/entities')).json();
+			expect(entities.find((entity: any) => entity.id === scene.id).parentId).toBe(actB.id);
+		}).toPass();
+	});
 });

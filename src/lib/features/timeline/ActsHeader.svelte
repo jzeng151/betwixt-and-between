@@ -8,7 +8,7 @@
 -->
 
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { entities } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { refreshTimelineStores } from '$lib/features/timeline/loaders.js';
@@ -315,7 +315,7 @@
 		const idx = Math.max(0, Math.min(Math.floor(relX / cellWidth + 0.5), list.length));
 		sceneDropTarget = { actId, idx };
 	}
-	async function moveScene(sceneId: string, targetActId: string, targetPos: number) {
+	async function moveScene(sceneId: string, targetActId: string, targetPos: number, restoreFocus = false) {
 		try {
 			const res = await fetch(`/api/entities/${sceneId}`, {
 				method: 'PATCH',
@@ -324,6 +324,12 @@
 			});
 			if (!res.ok) throw new Error(await res.text());
 			await refreshTimelineStores();
+			if (restoreFocus) {
+				await tick();
+				[...document.querySelectorAll<HTMLElement>('.scene-cell')]
+					.find((element) => element.dataset.entityId === sceneId)
+					?.focus();
+			}
 		} catch (err) {
 			reorderErrorToast.show((err as Error).message);
 		}
@@ -339,13 +345,13 @@
 		if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
 			const scenes = scenesByActId.get(acts[actIdx].id) ?? [];
 			const target = Math.max(0, Math.min(scenes.length - 1, sceneIdx + (e.key === 'ArrowLeft' ? -1 : 1)));
-			void moveScene(scene.id, acts[actIdx].id, target);
+			void moveScene(scene.id, acts[actIdx].id, target, true);
 			return;
 		}
 		const targetAct = acts[actIdx + (e.key === 'ArrowUp' ? -1 : 1)];
 		if (!targetAct) return;
 		const targetScenes = scenesByActId.get(targetAct.id) ?? [];
-		void moveScene(scene.id, targetAct.id, Math.min(sceneIdx, targetScenes.length));
+		void moveScene(scene.id, targetAct.id, Math.min(sceneIdx, targetScenes.length), true);
 	}
 	async function sceneActDrop(e: DragEvent, actId: string) {
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === SCENE_MIME)) return;

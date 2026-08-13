@@ -81,6 +81,7 @@
       : 0;
     if (direction === 0) return;
     e.preventDefault();
+    windowStore.focus(id);
     if (e.shiftKey) {
       const nextWidth = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
         ? Math.max(MIN_W, width + direction * delta)
