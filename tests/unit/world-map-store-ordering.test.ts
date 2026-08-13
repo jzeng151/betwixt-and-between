@@ -15,7 +15,12 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { worldMapStore, mapRegions } from '../../src/lib/features/map/store.js';
+import {
+	worldMapStore,
+	worldMaps,
+	worldMapsLoadStatus,
+	mapRegions
+} from '../../src/lib/features/map/store.js';
 import type { MapRegion } from '../../src/lib/features/map/types.js';
 
 function makeResponse(body: unknown, ok = true, status = 200): Response {
@@ -38,7 +43,25 @@ function mapPayload(id: string) {
 
 beforeEach(() => {
 	mapRegions.set([]);
+	worldMaps.set([]);
 	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([])) as unknown as typeof fetch;
+});
+
+describe('loadMaps status', () => {
+	it('clears a cached refresh error after a successful delete', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([{ id: 'A', name: 'A' }])) as unknown as typeof fetch;
+		await worldMapStore.loadMaps();
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse('offline', false, 503)) as unknown as typeof fetch;
+		await expect(worldMapStore.loadMaps()).rejects.toThrow('Failed to load maps');
+		expect(get(worldMapsLoadStatus)).toBe('error');
+		expect(get(worldMaps)).toHaveLength(1);
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(null)) as unknown as typeof fetch;
+
+		await worldMapStore.deleteMap('A');
+
+		expect(get(worldMaps)).toHaveLength(0);
+		expect(get(worldMapsLoadStatus)).toBe('ready');
+	});
 });
 
 describe('prefetchMapRegions', () => {
