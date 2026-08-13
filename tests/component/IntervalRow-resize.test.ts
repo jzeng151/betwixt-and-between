@@ -143,4 +143,34 @@ describe('IntervalRow resize handles', () => {
 
 		await waitFor(() => expect(getByRole('button', { name: 'Mara interval' })).toHaveFocus());
 	});
+
+	it('converts rendered split fractions back through the weighted timeline', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' }
+		] as Entity[];
+		const interval = {
+			id: 'interval-1', entityId: 'character-1', startActId: 'act-1', endActId: 'act-2',
+			startSceneId: null, endSceneId: null, startPosition: 0, endPosition: 2
+		} as Interval;
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce({ ok: true })
+			.mockResolvedValueOnce({ ok: true, json: async () => [interval] });
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const view = render(IntervalRow, {
+			props: {
+				entity: { id: 'character-1', type: 'Character', name: 'Mara' } as Entity,
+				intervals: [interval], idx: 0, trackWidthPx: 400, actCount: 2, acts,
+				scenesByActId: new Map(), colorFor: () => '#c8942a', dataNoteSnippet: () => null,
+				tooltipFor: () => 'Mara interval',
+				posToFrac: (position: number) => position <= 1 ? position * 0.25 : 0.25 + (position - 1) * 0.75,
+				fracToPos: (fraction: number) => fraction <= 0.25 ? fraction / 0.25 : 1 + (fraction - 0.25) / 0.75,
+				pxForRange: () => 400, onLockAcquire: vi.fn(), onLockRelease: vi.fn(), onError: vi.fn()
+			}
+		});
+
+		await fireEvent.keyDown(view.getByRole('button', { name: /Split interval at 25%/ }), { key: 'Enter' });
+
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ atPosition: 1 });
+	});
 });
