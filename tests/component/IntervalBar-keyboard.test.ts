@@ -27,7 +27,8 @@ describe('IntervalBar keyboard controls', () => {
 		await fireEvent.keyDown(split, { key: ' ' });
 
 		expect(onActivate).toHaveBeenCalledOnce();
-		expect(onSplit).toHaveBeenCalledWith(0.5);
+		expect(onSplit.mock.calls[0][0]).toBe(0.5);
+		expect(onSplit.mock.calls[0][1]).toBe(split);
 	});
 
 	it('partitions nearby split hit areas without overlap', () => {
