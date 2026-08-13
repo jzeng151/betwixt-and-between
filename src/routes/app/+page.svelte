@@ -14,6 +14,10 @@
   });
 </script>
 
+<svelte:head>
+  <title>Betwixt &amp; Between</title>
+</svelte:head>
+
 <div class="too-small" style="display:none; height:100vh; align-items:center; justify-content:center; background:var(--color-desktop)">
   <TooSmall />
 </div>

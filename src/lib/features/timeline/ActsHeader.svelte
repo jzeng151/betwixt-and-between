@@ -868,7 +868,7 @@
 		box-sizing: border-box;
 	}
 	.scene-textarea:focus {
-		outline: 2px solid var(--color-accent, #c8942a);
+		outline: 2px solid var(--color-focus);
 	}
 	.scene-error {
 		font-size: 11px;

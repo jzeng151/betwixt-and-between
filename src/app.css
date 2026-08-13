@@ -13,10 +13,11 @@
 
   /* Text */
   --color-text:       #e8e0d0;
-  --color-text-muted: #6b7280;
+  --color-text-muted: #858d9b;
 
   /* Accent */
   --color-accent:     #c8942a;
+  --color-focus:      #f2b84b;
 
   /* Relationship type colors */
   --color-rel-arc:    #c8942a;
@@ -78,7 +79,8 @@
   --color-surface-2:  #f5f3f0;
   --color-border:     #d4d0ca;
   --color-text:       #1a1a1a;
-  --color-text-muted: #6b7280;
+  --color-text-muted: #606773;
+  --color-focus:      #775700;
   --window-shadow:    0 20px 60px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.08);
 }
 
@@ -102,7 +104,7 @@ button {
 }
 
 *:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--color-focus) !important;
   outline-offset: 2px;
 }
 
@@ -164,7 +166,7 @@ button {
   cursor: pointer;
 }
 .entity-chip-name:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--color-focus);
   outline-offset: 2px;
   border-radius: 2px;
 }
@@ -192,7 +194,7 @@ button {
   background: color-mix(in srgb, var(--chip-color) 28%, transparent);
 }
 .entity-chip-remove:focus-visible {
-  outline: 1px solid var(--color-accent);
+  outline: 1px solid var(--color-focus);
   outline-offset: 1px;
   opacity: 1;
 }

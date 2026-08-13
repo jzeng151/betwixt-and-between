@@ -685,7 +685,7 @@
   }
 
   .swatch:focus-within {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
 
@@ -817,7 +817,7 @@
     border-color: var(--color-accent);
   }
   .preset-chip:focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
   .preset-tag {
@@ -871,7 +871,7 @@
     background: var(--color-surface-2);
   }
   .profile-name-btn:focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
   .profile-check {
@@ -910,7 +910,7 @@
     cursor: not-allowed;
   }
   .link-btn:focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
 
@@ -924,7 +924,7 @@
     padding: 5px 8px;
   }
   .text-input:focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus);
     outline-offset: 1px;
   }
   .rename-input {
@@ -952,7 +952,7 @@
     cursor: not-allowed;
   }
   .action-btn:focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
   .inline-confirm {
@@ -983,7 +983,7 @@
   }
   .confirm-btn:focus-visible,
   .cancel-btn:focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
   .inline-error {

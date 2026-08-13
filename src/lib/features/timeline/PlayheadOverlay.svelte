@@ -114,7 +114,7 @@
 	}
 	.playhead:focus {
 		outline: none;
-		box-shadow: 0 0 0 2px var(--color-accent, #c8942a), 0 0 8px rgba(200, 148, 42, 0.6);
+		box-shadow: 0 0 0 2px var(--color-focus);
 	}
 	.playhead-handle {
 		position: absolute;

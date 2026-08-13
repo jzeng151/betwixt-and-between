@@ -19,6 +19,9 @@ test.describe('Window Manager', () => {
 		await page.click('button[title="Characters"]');
 		const win = page.locator('.window[aria-label="Characters"]');
 		await expect(win).toBeVisible();
+		const search = win.getByPlaceholder('Search characters…');
+		await search.click();
+		await expect(search).toBeFocused();
 	});
 
 	test('click taskbar button → window comes to front (z-index check)', async ({ page }) => {
@@ -41,6 +44,7 @@ test.describe('Window Manager', () => {
 		// Clicking again restores and focuses it
 		await page.click('button[title="Characters"]');
 		await expect(charactersWin).toBeVisible();
+		await expect(charactersWin).toBeFocused();
 		const charZ2 = await charactersWin.evaluate((el) => parseInt(getComputedStyle(el).zIndex));
 		const timeZ2 = await timelineWin.evaluate((el) => parseInt(getComputedStyle(el).zIndex));
 		expect(charZ2).toBeGreaterThan(timeZ2);

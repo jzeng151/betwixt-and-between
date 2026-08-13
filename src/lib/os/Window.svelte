@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { takeNextFocusReturn } from '$lib/actions/focus-trap.js';
   import { windowStore, PIN_Z_BASE } from '$lib/os/windows-store.js';
 
   interface Props {
@@ -32,6 +34,33 @@
   let resizeStartW = 0;
   let resizeStartH = 0;
   let resizeStartLeft = 0;
+  let windowElement = $state<HTMLElement>();
+  let returnFocus: HTMLElement | null = null;
+
+  function focusWindow() {
+    queueMicrotask(() => {
+      if (windowElement && !windowElement.contains(document.activeElement)) windowElement.focus();
+    });
+  }
+
+  $effect(() => {
+    const focused = windowStore.focusedWindow();
+    if (!minimized && focused?.id === id && focused.zIndex === zIndex) focusWindow();
+  });
+
+  onMount(() => {
+    returnFocus = takeNextFocusReturn(
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    );
+    return () => {
+      if (returnFocus?.isConnected) returnFocus.focus();
+    };
+  });
+
+  function minimizeWindow() {
+    windowStore.minimize(id);
+    queueMicrotask(() => returnFocus?.isConnected && returnFocus.focus());
+  }
 
   // svelte-ignore state_referenced_locally
   const MIN_W = compact ? 240 : 280;
@@ -107,6 +136,7 @@
 {#if !minimized}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
+    bind:this={windowElement}
     class="window"
     class:maximized
     class:compact
@@ -127,7 +157,7 @@
         <button
           class="win-control minimize"
           aria-label="Minimize"
-          onclick={(e) => { e.stopPropagation(); windowStore.minimize(id); }}
+          onclick={(e) => { e.stopPropagation(); minimizeWindow(); }}
         ></button>
         <button
           class="win-control maximize-btn"
@@ -251,7 +281,7 @@
     background: var(--color-surface);
   }
   .titlebar-action:focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-focus);
     outline-offset: 1px;
   }
 

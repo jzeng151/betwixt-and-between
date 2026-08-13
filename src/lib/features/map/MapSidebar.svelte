@@ -12,6 +12,7 @@
 	// PR 1 ships the dependent count via GET /api/factions/[id]/dependents.
 
 	import { onDestroy } from 'svelte';
+	import { focusTrap } from '$lib/actions/focus-trap.js';
 	import { factions as factionsStore, type Faction } from './factions-store.js';
 	import { MAP_PALETTE, DEFAULT_FACTION_COLOR } from './color-palette.js';
 	import { layerPrefs } from './layer-prefs-store.js';
@@ -36,6 +37,9 @@
 		activeMapId = null,
 		activeMap = null
 	}: { activeMapId?: string | null; activeMap?: WorldMap | null } = $props();
+	const instanceId = $props.id();
+	const factionDeleteTitleId = `${instanceId}-faction-delete-title`;
+	const artDeleteTitleId = `${instanceId}-art-delete-title`;
 
 	function isVisible(key: LayerKey | string): boolean {
 		const v = $layerPrefs.prefs.get(key);
@@ -267,12 +271,6 @@
 			e.stopPropagation();
 			cancelDelete();
 		}
-	}
-
-	// Move focus into a dialog when it opens (the dialog node is tabindex=-1) so
-	// keyboard + screen-reader users land inside the modal, not behind it.
-	function focusOnOpen(node: HTMLElement) {
-		node.focus();
 	}
 
 	// Faction rename + recolor. The ✎ button next to delete (or the name)
@@ -610,12 +608,12 @@
 		class="modal-overlay"
 		role="dialog"
 		aria-modal="true"
-		aria-labelledby="faction-del-title"
+		aria-labelledby={factionDeleteTitleId}
 		tabindex="-1"
-		use:focusOnOpen
+		use:focusTrap={{ onEscape: () => !deleteBusy && cancelDelete() }}
 	>
 		<div class="modal-content">
-			<h3 id="faction-del-title">Delete faction "{dc.faction.name}"?</h3>
+			<h3 id={factionDeleteTitleId}>Delete faction "{dc.faction.name}"?</h3>
 			{#if dc.dependentCount > 0}
 				<p class="warn-text">
 					This faction is referenced by <strong>{dc.dependentCount}</strong>
@@ -649,12 +647,12 @@
 		class="modal-overlay"
 		role="dialog"
 		aria-modal="true"
-		aria-labelledby="art-del-title"
+		aria-labelledby={artDeleteTitleId}
 		tabindex="-1"
-		use:focusOnOpen
+		use:focusTrap={{ onEscape: () => (artDeleteTarget = null) }}
 	>
 		<div class="modal-content">
-			<h3 id="art-del-title">Delete layer "{al.name}"?</h3>
+			<h3 id={artDeleteTitleId}>Delete layer "{al.name}"?</h3>
 			<p class="warn-text">
 				Fill and stamp strokes on this layer move to the base art layer; erase
 				strokes on it are removed. The layer's blend mode and opacity can't be
@@ -746,7 +744,7 @@
 	/* F16: DESIGN.md forbids `outline: none` without a visible replacement. Keep a
 	   real focus ring for keyboard users (the border alone is ~1.3:1 — too faint). */
 	.art-layer-name:focus-visible {
-		outline: 2px solid var(--color-accent);
+		outline: 2px solid var(--color-focus);
 		outline-offset: 1px;
 	}
 	.art-layer-controls {

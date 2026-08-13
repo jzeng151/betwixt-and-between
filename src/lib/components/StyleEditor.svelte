@@ -297,7 +297,7 @@
 	}
 	.hex-input:focus-visible,
 	.text-input:focus-visible {
-		outline: 2px solid var(--color-accent, #c8942a);
+		outline: 2px solid var(--color-focus);
 		outline-offset: 1px;
 	}
 	.color-preview {
@@ -333,7 +333,7 @@
 		box-shadow: 0 0 0 2px var(--color-accent, #c8942a);
 	}
 	.swatch:focus-visible {
-		outline: 2px solid var(--color-accent, #c8942a);
+		outline: 2px solid var(--color-focus);
 		outline-offset: 1px;
 	}
 	.clear {

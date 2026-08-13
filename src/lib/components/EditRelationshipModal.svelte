@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { focusTrap } from '$lib/actions/focus-trap.js';
   import type { Relationship } from '$lib/stores/relationships.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
   import { REL_TYPES } from '$lib/relationship-colors.js';
@@ -33,6 +34,7 @@
   }
 
   let { relationship, acts, scenes = [], onSave, onClose }: Props = $props();
+  const titleId = $props.id();
 
   let editType = $state<RelationshipType>('allied_with');
   let editLabel = $state('');
@@ -101,8 +103,15 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="backdrop" onclick={onClose} role="presentation"></div>
 
-<div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-rel-title">
-  <h2 class="modal-title" id="edit-rel-title">Edit relationship</h2>
+<div
+  class="modal"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby={titleId}
+  tabindex="-1"
+  use:focusTrap={{ onEscape: () => !saving && onClose() }}
+>
+  <h2 class="modal-title" id={titleId}>Edit relationship</h2>
 
   <div class="field-row">
     <label for="edit-rel-type">Type</label>
