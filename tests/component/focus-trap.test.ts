@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { focusTrap, setNextFocusTrapReturn, takeNextFocusReturn } from '$lib/actions/focus-trap.js';
+import { focusTrap, isActiveFocusTrapTarget, setNextFocusTrapReturn, takeNextFocusReturn } from '$lib/actions/focus-trap.js';
 
 describe('focusTrap', () => {
 	it('moves, contains, and restores focus', async () => {
@@ -111,5 +111,20 @@ describe('focusTrap', () => {
 
 		expect(document.activeElement).toBe(secondButton);
 		secondAction.destroy();
+	});
+
+	it('identifies event targets in only the active trap', async () => {
+		const first = document.body.appendChild(document.createElement('div'));
+		const firstButton = first.appendChild(document.createElement('button'));
+		const firstAction = focusTrap(first);
+		const second = document.body.appendChild(document.createElement('div'));
+		const secondButton = second.appendChild(document.createElement('button'));
+		const secondAction = focusTrap(second);
+		await Promise.resolve();
+
+		expect(isActiveFocusTrapTarget(firstButton)).toBe(false);
+		expect(isActiveFocusTrapTarget(secondButton)).toBe(true);
+		secondAction.destroy();
+		firstAction.destroy();
 	});
 });

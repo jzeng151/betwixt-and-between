@@ -19,6 +19,11 @@ export function takeNextFocusReturn(fallback: HTMLElement | null): HTMLElement |
 	return returnFocus;
 }
 
+export function isActiveFocusTrapTarget(target: EventTarget | null): boolean {
+	const active = trapStack.at(-1);
+	return !!active && target instanceof Node && active.contains(target);
+}
+
 const FOCUSABLE = [
 	'a[href]',
 	'button:not([disabled])',
