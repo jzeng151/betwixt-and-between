@@ -48,6 +48,23 @@ beforeEach(() => {
 });
 
 describe('loadMaps status', () => {
+	it('deduplicates overlapping map-list loads', async () => {
+		let resolveLoad!: (response: Response) => void;
+		const fetchMock = vi.fn().mockReturnValue(new Promise<Response>((resolve) => {
+			resolveLoad = resolve;
+		}));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const first = worldMapStore.loadMaps();
+		const second = worldMapStore.loadMaps();
+		resolveLoad(makeResponse([{ id: 'A', name: 'A' }]));
+		await Promise.all([first, second]);
+
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(get(worldMaps)).toHaveLength(1);
+		expect(get(worldMapsLoadStatus)).toBe('ready');
+	});
+
 	it('clears a cached refresh error after a successful delete', async () => {
 		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([{ id: 'A', name: 'A' }])) as unknown as typeof fetch;
 		await worldMapStore.loadMaps();

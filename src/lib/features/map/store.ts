@@ -41,23 +41,25 @@ function createWorldMapStore() {
 	// store): every commit — load OR cached apply — bumps it, so any older
 	// in-flight load is dropped regardless of which map it was for.
 	let loadSeq = 0;
-	let mapListLoadSeq = 0;
+	let mapListLoadPromise: Promise<void> | null = null;
 
-	async function loadMaps(): Promise<void> {
-		const seq = ++mapListLoadSeq;
+	function loadMaps(): Promise<void> {
+		if (mapListLoadPromise) return mapListLoadPromise;
 		worldMapsLoadStatus.set('loading');
-		try {
+		const request = (async () => {
 			const res = await fetch('/api/maps');
 			if (!res.ok) throw new Error('Failed to load maps');
 			const data: WorldMap[] = await res.json();
-			if (seq === mapListLoadSeq) {
-				maps.set(data);
-				worldMapsLoadStatus.set('ready');
-			}
-		} catch (error) {
-			if (seq === mapListLoadSeq) worldMapsLoadStatus.set('error');
+			maps.set(data);
+			worldMapsLoadStatus.set('ready');
+		})().catch((error) => {
+			worldMapsLoadStatus.set('error');
 			throw error;
-		}
+		});
+		mapListLoadPromise = request;
+		return request.finally(() => {
+			if (mapListLoadPromise === request) mapListLoadPromise = null;
+		});
 	}
 
 	async function loadMapRegions(mapId: string): Promise<LoadRegionsResult> {
