@@ -363,7 +363,7 @@
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
 		const target = e.target as HTMLElement;
-		if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) return;
+		if (target.closest('input, textarea, select, button, a[href], [role="button"], [role="slider"]') || target.isContentEditable) return;
 		if ($playhead == null) return;
 		switch (e.key) {
 			case ' ':
