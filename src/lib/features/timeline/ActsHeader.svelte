@@ -223,6 +223,8 @@
 
 	let dragActId: string | null = $state(null);
 	let actDropTarget: { idx: number; side: 'left' | 'right' } | null = $state(null);
+	const keyboardActPositions = new Map<string, number>();
+	const keyboardActTails = new Map<string, Promise<void>>();
 	let reorderError: string | null = $state(null);
 	const reorderErrorToast = createAutoDismiss((msg) => {
 		reorderError = msg;
@@ -250,7 +252,7 @@
 	}
 	async function moveAct(actId: string, targetPos: number) {
 		const movedFromIdx = acts.findIndex((act) => act.id === actId);
-		if (movedFromIdx < 0 || targetPos === movedFromIdx) return;
+		if (movedFromIdx < 0) return;
 		try {
 			const res = await fetch(`/api/entities/${actId}`, {
 				method: 'PATCH',
@@ -266,9 +268,20 @@
 	function moveActWithKeyboard(e: KeyboardEvent, actId: string) {
 		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
 		e.preventDefault();
-		const from = acts.findIndex((act) => act.id === actId);
+		const from = keyboardActPositions.get(actId) ?? acts.findIndex((act) => act.id === actId);
 		const target = Math.max(0, Math.min(acts.length - 1, from + (e.key === 'ArrowLeft' ? -1 : 1)));
-		void moveAct(actId, target);
+		if (target === from) return;
+		keyboardActPositions.set(actId, target);
+		const request = (keyboardActTails.get(actId) ?? Promise.resolve())
+			.then(() => moveAct(actId, target));
+		const tail = request.catch(() => {});
+		keyboardActTails.set(actId, tail);
+		void tail.finally(() => {
+			if (keyboardActTails.get(actId) === tail) {
+				keyboardActTails.delete(actId);
+				keyboardActPositions.delete(actId);
+			}
+		});
 	}
 	async function actDrop(e: DragEvent, idx: number) {
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === ACT_MIME)) return;
@@ -291,6 +304,8 @@
 	// ── Scene drag-reorder + cross-act move ──────────────────────────────────
 	let dragSceneId: string | null = $state(null);
 	let sceneDropTarget: { actId: string; idx: number } | null = $state(null);
+	const keyboardScenePositions = new Map<string, { actIdx: number; sceneIdx: number }>();
+	const keyboardSceneTails = new Map<string, Promise<void>>();
 
 	function sceneDragStart(e: DragEvent, sceneId: string) {
 		if (!e.dataTransfer) return;
@@ -342,16 +357,31 @@
 		}
 		if (!e.altKey || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
 		e.preventDefault();
+		const current = keyboardScenePositions.get(scene.id) ?? { actIdx, sceneIdx };
+		let targetActIdx = current.actIdx;
+		let targetSceneIdx = current.sceneIdx;
 		if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-			const scenes = scenesByActId.get(acts[actIdx].id) ?? [];
-			const target = Math.max(0, Math.min(scenes.length - 1, sceneIdx + (e.key === 'ArrowLeft' ? -1 : 1)));
-			void moveScene(scene.id, acts[actIdx].id, target, true);
-			return;
+			const scenes = scenesByActId.get(acts[current.actIdx].id) ?? [];
+			const count = scenes.some((item) => item.id === scene.id) ? scenes.length : scenes.length + 1;
+			targetSceneIdx = Math.max(0, Math.min(count - 1, current.sceneIdx + (e.key === 'ArrowLeft' ? -1 : 1)));
+		} else {
+			targetActIdx = current.actIdx + (e.key === 'ArrowUp' ? -1 : 1);
+			const targetAct = acts[targetActIdx];
+			if (!targetAct) return;
+			targetSceneIdx = Math.min(current.sceneIdx, (scenesByActId.get(targetAct.id) ?? []).length);
 		}
-		const targetAct = acts[actIdx + (e.key === 'ArrowUp' ? -1 : 1)];
-		if (!targetAct) return;
-		const targetScenes = scenesByActId.get(targetAct.id) ?? [];
-		void moveScene(scene.id, targetAct.id, Math.min(sceneIdx, targetScenes.length), true);
+		if (targetActIdx === current.actIdx && targetSceneIdx === current.sceneIdx) return;
+		keyboardScenePositions.set(scene.id, { actIdx: targetActIdx, sceneIdx: targetSceneIdx });
+		const request = (keyboardSceneTails.get(scene.id) ?? Promise.resolve())
+			.then(() => moveScene(scene.id, acts[targetActIdx].id, targetSceneIdx, true));
+		const tail = request.catch(() => {});
+		keyboardSceneTails.set(scene.id, tail);
+		void tail.finally(() => {
+			if (keyboardSceneTails.get(scene.id) === tail) {
+				keyboardSceneTails.delete(scene.id);
+				keyboardScenePositions.delete(scene.id);
+			}
+		});
 	}
 	async function sceneActDrop(e: DragEvent, actId: string) {
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === SCENE_MIME)) return;
