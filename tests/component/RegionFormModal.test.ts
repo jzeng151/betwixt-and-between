@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/svelte';
+import { cleanup, fireEvent, render } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import RegionFormModal from '$lib/features/map/RegionFormModal.svelte';
 
@@ -48,5 +48,14 @@ describe('RegionFormModal accessibility', () => {
 		expect(dialogs[0].getAttribute('aria-labelledby')).not.toBe(
 			dialogs[1].getAttribute('aria-labelledby')
 		);
+	});
+
+	it('ignores dialog Escape while a location is being created', async () => {
+		const handlers = { ...props(), newLocationBusy: true };
+		const { getByRole } = render(RegionFormModal, { props: handlers });
+
+		await fireEvent.keyDown(getByRole('dialog'), { key: 'Escape' });
+
+		expect(handlers.onCancel).not.toHaveBeenCalled();
 	});
 });

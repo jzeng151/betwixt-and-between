@@ -225,6 +225,7 @@
 	let actDropTarget: { idx: number; side: 'left' | 'right' } | null = $state(null);
 	const keyboardActPositions = new Map<string, number>();
 	const keyboardActTails = new Map<string, Promise<void>>();
+	let keyboardActTail: Promise<void> = Promise.resolve();
 	let reorderError: string | null = $state(null);
 	const reorderErrorToast = createAutoDismiss((msg) => {
 		reorderError = msg;
@@ -272,9 +273,9 @@
 		const target = Math.max(0, Math.min(acts.length - 1, from + (e.key === 'ArrowLeft' ? -1 : 1)));
 		if (target === from) return;
 		keyboardActPositions.set(actId, target);
-		const request = (keyboardActTails.get(actId) ?? Promise.resolve())
-			.then(() => moveAct(actId, target));
+		const request = keyboardActTail.then(() => moveAct(actId, target));
 		const tail = request.catch(() => {});
+		keyboardActTail = tail;
 		keyboardActTails.set(actId, tail);
 		void tail.finally(() => {
 			if (keyboardActTails.get(actId) === tail) {

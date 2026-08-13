@@ -24,9 +24,10 @@ describe('IntervalBar keyboard controls', () => {
 		expect(split.parentElement).toHaveAttribute('role', 'group');
 
 		await fireEvent.keyDown(bar, { key: 'Enter' });
+		await fireEvent.click(bar, { detail: 0 });
 		await fireEvent.keyDown(split, { key: ' ' });
 
-		expect(onActivate).toHaveBeenCalledOnce();
+		expect(onActivate).toHaveBeenCalledTimes(2);
 		expect(onSplit.mock.calls[0][0]).toBe(0.5);
 		expect(onSplit.mock.calls[0][1]).toBe(split);
 	});
