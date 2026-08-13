@@ -361,6 +361,7 @@
 	const SPEED_OPTIONS = [0.5, 1, 2, 4, 8, 16];
 
 	function handleKeydown(e: KeyboardEvent) {
+		if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
 		const target = e.target as HTMLElement;
 		if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) return;
 		if ($playhead == null) return;
