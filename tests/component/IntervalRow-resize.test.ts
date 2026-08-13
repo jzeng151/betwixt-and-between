@@ -139,7 +139,9 @@ describe('IntervalRow resize handles', () => {
 			}
 		});
 
-		await fireEvent.keyDown(getByRole('button', { name: /Split interval at 50%/ }), { key: 'Enter' });
+		const split = getByRole('button', { name: /Split interval at 50%/ });
+		split.focus();
+		await fireEvent.keyDown(split, { key: 'Enter' });
 
 		await waitFor(() => expect(getByRole('button', { name: 'Mara interval' })).toHaveFocus());
 	});
@@ -172,5 +174,41 @@ describe('IntervalRow resize handles', () => {
 		await fireEvent.keyDown(view.getByRole('button', { name: /Split interval at 25%/ }), { key: 'Enter' });
 
 		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ atPosition: 1 });
+	});
+
+	it('preserves a deliberate focus change while a split completes', async () => {
+		const act = { id: 'act-1', type: 'Act', name: 'One' } as Entity;
+		const scenes = [
+			{ id: 'scene-1', type: 'Scene', name: 'Opening', parentId: act.id },
+			{ id: 'scene-2', type: 'Scene', name: 'Turn', parentId: act.id }
+		] as Entity[];
+		const interval = {
+			id: 'interval-1', entityId: 'character-1', startActId: act.id, endActId: act.id,
+			startSceneId: null, endSceneId: null, startPosition: 0, endPosition: 1
+		} as Interval;
+		let resolveSplit!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveSplit = resolve; }))
+			.mockResolvedValueOnce({ ok: true, json: async () => [interval] }) as unknown as typeof fetch;
+		const view = render(IntervalRow, {
+			props: {
+				entity: { id: 'character-1', type: 'Character', name: 'Mara' } as Entity,
+				intervals: [interval], idx: 0, trackWidthPx: 100, actCount: 1, acts: [act],
+				scenesByActId: new Map([[act.id, scenes]]), colorFor: () => '#c8942a',
+				dataNoteSnippet: () => null, tooltipFor: () => 'Mara interval',
+				posToFrac: (value: number) => value, fracToPos: (value: number) => value,
+				pxForRange: () => 100, onLockAcquire: vi.fn(), onLockRelease: vi.fn(), onError: vi.fn()
+			}
+		});
+		const split = view.getByRole('button', { name: /Split interval at 50%/ });
+		const elsewhere = document.body.appendChild(document.createElement('button'));
+		split.focus();
+		await fireEvent.keyDown(split, { key: 'Enter' });
+		elsewhere.focus();
+		resolveSplit({ ok: true } as Response);
+
+		await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+		expect(elsewhere).toHaveFocus();
+		elsewhere.remove();
 	});
 });

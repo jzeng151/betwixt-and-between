@@ -572,9 +572,13 @@
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<span
 						class="act-grip"
-						role="button"
+						role="slider"
 						tabindex="0"
 						aria-label="Reorder {act.name} with left and right arrow keys"
+						aria-orientation="horizontal"
+						aria-valuemin={1}
+						aria-valuemax={acts.length}
+						aria-valuenow={actIdx + 1}
 						title="Drag or use arrow keys to reorder"
 						draggable="true"
 						ondragstart={(e) => actDragStart(e, act.id)}

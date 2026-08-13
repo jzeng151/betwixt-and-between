@@ -399,11 +399,14 @@
 					return boundaryPositions.map((p) => (posToFrac(p) - sf) / span);
 				})()}
 				isEvent={entity.type === 'Event'}
-					onSplit={async (fraction) => {
+					onSplit={async (fraction, origin) => {
+					const focusOwner = document.activeElement === origin ? origin : null;
 					const atPosition = fracToPos(leftFrac + fraction * (rightFrac - leftFrac));
 					try {
 						await intervalsStore.splitIntervalAt(iv.id, atPosition);
-						await focusInterval(iv.id);
+						if (focusOwner && (document.activeElement === focusOwner || document.activeElement === document.body)) {
+							await focusInterval(iv.id);
+						}
 					} catch (err) {
 						onError((err as Error).message);
 					}

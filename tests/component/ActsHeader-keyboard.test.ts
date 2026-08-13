@@ -31,7 +31,7 @@ describe('ActsHeader keyboard controls', () => {
 
 		await fireEvent.click(getByRole('button', { name: 'Act One' }));
 		await fireEvent.keyDown(getByRole('button', { name: /Select Opening/ }), { key: ' ' });
-		const slider = getByRole('slider');
+		const slider = getByRole('slider', { name: /Width of Act One/ });
 		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
 
 		expect(onSelectAct).toHaveBeenCalledWith('act-1');
@@ -61,7 +61,7 @@ describe('ActsHeader keyboard controls', () => {
 			}
 		});
 
-		const actGrip = view.getByRole('button', { name: /Reorder One/ });
+		const actGrip = view.getByRole('slider', { name: /Reorder One/ });
 		await fireEvent.keyDown(actGrip, { key: 'ArrowRight' });
 		await fireEvent.keyDown(actGrip, { key: 'ArrowRight' });
 		const sceneCell = view.getByRole('button', { name: /Select Opening/ });
@@ -90,7 +90,7 @@ describe('ActsHeader keyboard controls', () => {
 			}
 		});
 
-		expect(view.queryAllByRole('slider')).toHaveLength(0);
+		expect(view.queryAllByRole('slider', { name: /Width of/ })).toHaveLength(0);
 	});
 
 	it('does not restore scene focus after the user moves elsewhere', async () => {
