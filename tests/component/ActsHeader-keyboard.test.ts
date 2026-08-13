@@ -99,12 +99,44 @@ describe('ActsHeader keyboard controls', () => {
 		});
 
 		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowRight' });
+		expect(view.getByRole('slider', { name: /Reorder One/ })).toHaveAttribute('aria-valuenow', '2');
 		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder Two/ }), { key: 'ArrowRight' });
 		await waitFor(() => expect(patchResolvers).toHaveLength(1));
 		patchResolvers[0]({ ok: true, json: async () => ({}) } as Response);
 		await waitFor(() => expect(patchResolvers).toHaveLength(2));
 		expect(patches).toEqual([{ position: 1 }, { position: 1 }]);
 		patchResolvers[1]({ ok: true, json: async () => ({}) } as Response);
+	});
+
+	it('captures a queued scene move destination before act order changes', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' }
+		] as Entity[];
+		const scene = { id: 'scene-1', type: 'Scene', name: 'Opening', parentId: 'act-1' } as Entity;
+		let resolveFirst!: (response: Response) => void;
+		const patches: Array<{ url: string; body: Record<string, unknown> }> = [];
+		globalThis.fetch = vi.fn((url, options) => {
+			if (options?.method !== 'PATCH') return Promise.resolve({ ok: true, json: async () => [] } as Response);
+			patches.push({ url: String(url), body: JSON.parse(String(options.body)) });
+			if (patches.length === 1) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+			return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+		}) as unknown as typeof fetch;
+		const view = render(ActsHeader, {
+			props: {
+				acts,
+				scenesByActId: new Map([['act-1', [scene]], ['act-2', []]]),
+				weights: [1, 1],
+				trackWidthPx: 600
+			}
+		});
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowRight' });
+		await fireEvent.keyDown(view.getByRole('button', { name: /Select Opening/ }), { key: 'ArrowDown', altKey: true });
+		resolveFirst({ ok: true, json: async () => ({}) } as Response);
+		await waitFor(() => expect(patches).toHaveLength(2));
+
+		expect(patches[1].body).toEqual({ parentId: 'act-2', position: 0 });
 	});
 
 	it('serializes sibling scene moves from one optimistic order', async () => {

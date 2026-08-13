@@ -108,6 +108,8 @@ describe('IntervalRow resize handles', () => {
 
 		await fireEvent.keyDown(start, { key: 'ArrowRight' });
 		await fireEvent.keyDown(start, { key: 'ArrowRight' });
+		await waitFor(() => expect(start).toHaveAttribute('aria-valuenow', '0.2'));
+		expect(start).toHaveAttribute('aria-valuemax', '0.9');
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 		expect(fetchMock.mock.calls[0][1].body).toContain('"startPosition":0.1');
 		resolveFirst({ ok: true, json: async () => ({ ...interval, startPosition: 0.1 }) } as Response);

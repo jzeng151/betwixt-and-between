@@ -81,6 +81,7 @@
 		tail: Promise<void>;
 		last: Promise<void>;
 	}>();
+	let keyboardResizeAria = $state<Record<string, { start: number; end: number }>>({});
 
 	/* Local translate state — drag the bar body to shift it temporally
 	   without changing duration (T5). The `moved` flag (4px threshold)
@@ -145,11 +146,16 @@
 		if (edge === 'start') state.start = next;
 		else state.end = next;
 		if (isNew) keyboardResizes.set(iv.id, state);
+		keyboardResizeAria = { ...keyboardResizeAria, [iv.id]: { start: state.start, end: state.end } };
 		const request = state.tail.then(async () => { await intervalsStore.updateInterval(iv.id, patch); });
 		state.tail = request.catch(() => {});
 		state.last = request;
 		void request.catch((err) => onError((err as Error).message)).finally(() => {
-			if (keyboardResizes.get(iv.id)?.last === request) keyboardResizes.delete(iv.id);
+			if (keyboardResizes.get(iv.id)?.last === request) {
+				keyboardResizes.delete(iv.id);
+				const { [iv.id]: _, ...remaining } = keyboardResizeAria;
+				keyboardResizeAria = remaining;
+			}
 		});
 	}
 
@@ -353,6 +359,9 @@
 		{@const leftPct = leftFrac * 100}
 		{@const widthPct = (rightFrac - leftFrac) * 100}
 		{@const widthPx = pxForRange(previewStart, previewEnd)}
+		{@const keyboardResize = keyboardResizeAria[iv.id]}
+		{@const ariaStart = keyboardResize?.start ?? iv.startPosition}
+		{@const ariaEnd = keyboardResize?.end ?? iv.endPosition}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
@@ -419,8 +428,8 @@
 				aria-label="Interval start. Use Left and Right Arrow keys to resize"
 				aria-orientation="horizontal"
 				aria-valuemin={0}
-				aria-valuemax={Math.max(iv.startPosition, previousStoryStop(iv.endPosition))}
-				aria-valuenow={iv.startPosition}
+				aria-valuemax={Math.max(ariaStart, previousStoryStop(ariaEnd))}
+				aria-valuenow={ariaStart}
 				style:clip-path={`inset(0 ${Math.max(0, (24 - widthPx) / 2)}px 0 0)`}
 					tabindex="0"
 					onpointerdown={(e) => startResize(e, iv, 'start')}
@@ -431,9 +440,9 @@
 				role="slider"
 				aria-label="Interval end. Use Left and Right Arrow keys to resize"
 				aria-orientation="horizontal"
-				aria-valuemin={Math.min(iv.endPosition, nextStoryStop(iv.startPosition))}
+				aria-valuemin={Math.min(ariaEnd, nextStoryStop(ariaStart))}
 				aria-valuemax={actCount}
-				aria-valuenow={iv.endPosition}
+				aria-valuenow={ariaEnd}
 				style:clip-path={`inset(0 0 0 ${Math.max(0, (24 - widthPx) / 2)}px)`}
 					tabindex="0"
 					onpointerdown={(e) => startResize(e, iv, 'end')}

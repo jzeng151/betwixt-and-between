@@ -133,6 +133,20 @@ describe('GraphCanvas edge click gate', () => {
 		expect(canvas.style.transform).not.toBe(before);
 	});
 
+	it('leaves reserved modified Arrow shortcuts to the browser', async () => {
+		const onNodePositionChange = vi.fn();
+		const { container } = renderCanvas(vi.fn(), undefined, onNodePositionChange);
+		await tick();
+		const node = container.querySelector('[data-entity-id="cause"]') as HTMLElement;
+
+		for (const modifier of [{ altKey: true }, { ctrlKey: true }, { metaKey: true }]) {
+			const event = new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true, ...modifier });
+			node.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(false);
+		}
+		expect(onNodePositionChange).not.toHaveBeenCalled();
+	});
+
 	it('exposes edge actions in the keyboard tab order', async () => {
 		const onEdgeClick = vi.fn();
 		const { container } = renderCanvas(onEdgeClick);

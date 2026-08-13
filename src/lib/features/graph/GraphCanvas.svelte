@@ -494,7 +494,7 @@
 			);
 			return;
 		}
-		if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+		if (e.altKey || e.ctrlKey || e.metaKey || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
 		e.preventDefault();
 		const p = nodePos[id];
 		if (!p) return;
