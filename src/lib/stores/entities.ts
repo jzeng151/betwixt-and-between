@@ -97,7 +97,7 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity = await res.json();
-		const needsFreshSnapshot = loadPromise !== null && !get(entitySnapshotReady);
+		const needsFreshSnapshot = loadPromise !== null;
 		if (needsFreshSnapshot) invalidateLoadAfterMutation();
 		else markMutationReady();
 		update((all) => [...all, created]);
@@ -130,7 +130,7 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity[] = await res.json();
-		const needsFreshSnapshot = loadPromise !== null && !get(entitySnapshotReady);
+		const needsFreshSnapshot = loadPromise !== null;
 		if (needsFreshSnapshot) invalidateLoadAfterMutation();
 		else markMutationReady();
 		update((all) => [...all, ...created]);
@@ -204,6 +204,7 @@ function createEntityStore() {
 			}
 			throw err;
 		}
+		const needsFreshSnapshot = loadPromise !== null;
 		invalidateLoadAfterMutation();
 		// Whether THIS patch was a structural Act/Scene change that the server
 		// recomputes interval bounds for. Captured before the supersede check so a
@@ -227,11 +228,13 @@ function createEntityStore() {
 			// (Slice 5 PR-D), and the graph click-to-jump reads $relationships,
 			// so a stale store would jump to the old scene fraction (Codex P2).
 			if (wasStructural) await Promise.all([intervalsStore.load(), relationships.load()]);
+			if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
 			return updated;
 		}
 		latestUpdate.delete(id);
 		updateChains.delete(id);
 		update((all) => all.map((e) => (e.id === id ? updated : e)));
+		if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
 		// Position/parentId changes on Act/Scene cascade to intervals on the
 		// server (sibling reorder + recompute, or scene cross-act move) AND to
 		// scene-anchored relationship positions (Slice 5 PR-D). Keep both stores
@@ -256,8 +259,10 @@ function createEntityStore() {
 			await load({ fresh: true });
 			throw new Error(await res.text());
 		}
+		const needsFreshSnapshot = loadPromise !== null;
 		invalidateLoadAfterMutation();
 		update((all) => all.filter((e) => e.id !== id));
+		if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
 		// Server-side delete cascades to intervals (entity_id / start_act_id /
 		// end_act_id are all CASCADE) and recomputes survivor positions for
 		// Act/Scene deletes. It also cascade-deletes relationships on an endpoint

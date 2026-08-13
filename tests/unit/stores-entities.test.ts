@@ -189,6 +189,34 @@ describe('entities.createEntity', () => {
 		expect(get(entities).map((item) => item.id)).toEqual(['created']);
 	});
 
+	it('replaces a refresh superseded by another create', async () => {
+		entitySnapshotReady.set(false);
+		entityLoadStatus.set('idle');
+		let resolveInitial!: (response: Response) => void;
+		let resolveFirstReplacement!: (response: Response) => void;
+		const first = entity({ id: 'first', name: 'First' });
+		const second = entity({ id: 'second', name: 'Second', type: 'Scene' });
+		const existing = entity({ id: 'existing', name: 'Existing' });
+		const fetchMock = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveInitial = resolve; }))
+			.mockResolvedValueOnce(makeResponse(first))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveFirstReplacement = resolve; }))
+			.mockResolvedValueOnce(makeResponse([second]))
+			.mockResolvedValueOnce(makeResponse([existing, first, second]));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const initial = entities.load();
+		const firstCreate = entities.createEntity('Character', 'First');
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		await entities.createEntities([{ type: 'Scene', name: 'Second' }]);
+		resolveFirstReplacement(makeResponse([first]));
+		resolveInitial(makeResponse([]));
+		await Promise.all([initial, firstCreate]);
+
+		expect(get(entities).map((item) => item.id)).toEqual(['existing', 'first', 'second']);
+		expect(get(entityLoadStatus)).toBe('ready');
+	});
+
 	it('serializes data=undefined as undefined in the body', async () => {
 		const created = entity({ id: 'x', name: 'Plain' });
 		const fetchMock = vi.fn().mockResolvedValue(makeResponse(created));
@@ -248,6 +276,32 @@ describe('entities.updateEntity', () => {
 		await refresh;
 
 		expect(get(entities)[0].name).toBe('New');
+	});
+
+	it('replaces a rollback load superseded by another successful update', async () => {
+		const seeded = [
+			entity({ id: 'a', name: 'A' }),
+			entity({ id: 'b', name: 'B' })
+		];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await entities.load();
+		let resolveRollback!: (response: Response) => void;
+		const updatedB = entity({ id: 'b', name: 'B saved' });
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(makeResponse('rejected', false, 400))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRollback = resolve; }))
+			.mockResolvedValueOnce(makeResponse(updatedB))
+			.mockResolvedValueOnce(makeResponse([seeded[0], updatedB]));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const rejected = entities.updateEntity('a', { name: 'A rejected' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		await entities.updateEntity('b', { name: 'B saved' });
+		resolveRollback(makeResponse(seeded));
+		await expect(rejected).rejects.toThrow(/rejected/);
+
+		expect(get(entities).map((item) => item.name)).toEqual(['A', 'B saved']);
+		expect(get(entityLoadStatus)).toBe('ready');
 	});
 
 	it('applies optimistic data as object in the store (jsonb shape post-T8a)', async () => {
