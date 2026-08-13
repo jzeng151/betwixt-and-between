@@ -8,6 +8,7 @@
 -->
 
 <script lang="ts">
+	import { tick } from 'svelte';
 	import IntervalBar from '$lib/features/timeline/IntervalBar.svelte';
 	import { tooltip } from '$lib/actions/tooltip.js';
 	import {
@@ -74,6 +75,12 @@
 		previewEnd: number;
 	};
 	let resizing: ResizeState | null = $state(null);
+	const keyboardResizes = new Map<string, {
+		start: number;
+		end: number;
+		tail: Promise<void>;
+		last: Promise<void>;
+	}>();
 
 	/* Local translate state — drag the bar body to shift it temporally
 	   without changing duration (T5). The `moved` flag (4px threshold)
@@ -111,7 +118,7 @@
 		return [...stops].sort((a, b) => a - b);
 	}
 
-	async function resizeWithKeyboard(
+	function resizeWithKeyboard(
 		e: KeyboardEvent,
 		iv: Interval,
 		edge: 'start' | 'end'
@@ -119,21 +126,47 @@
 		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
 		e.preventDefault();
 		e.stopPropagation();
-		const current = edge === 'start' ? iv.startPosition : iv.endPosition;
+		let state = keyboardResizes.get(iv.id);
+		const isNew = !state;
+		if (!state) {
+			const settled = Promise.resolve();
+			state = { start: iv.startPosition, end: iv.endPosition, tail: settled, last: settled };
+		}
+		const current = edge === 'start' ? state.start : state.end;
 		const stops = storyStops();
 		const next = e.key === 'ArrowLeft'
 			? [...stops].reverse().find((stop) => stop < current - 1e-9)
 			: stops.find((stop) => stop > current + 1e-9);
-		if (next == null || (edge === 'start' ? next >= iv.endPosition : next <= iv.startPosition)) return;
+		if (next == null || (edge === 'start' ? next >= state.end : next <= state.start)) return;
 		const patch = edge === 'start'
 			? positionToStartFKs(next, acts, scenesByActId)
 			: positionToEndFKs(next, acts, scenesByActId);
 		if (!patch) return;
-		try {
-			await intervalsStore.updateInterval(iv.id, patch);
-		} catch (err) {
-			onError((err as Error).message);
-		}
+		if (edge === 'start') state.start = next;
+		else state.end = next;
+		if (isNew) keyboardResizes.set(iv.id, state);
+		const request = state.tail.then(async () => { await intervalsStore.updateInterval(iv.id, patch); });
+		state.tail = request.catch(() => {});
+		state.last = request;
+		void request.catch((err) => onError((err as Error).message)).finally(() => {
+			if (keyboardResizes.get(iv.id)?.last === request) keyboardResizes.delete(iv.id);
+		});
+	}
+
+	function previousStoryStop(position: number): number {
+		return [...storyStops()].reverse().find((stop) => stop < position - 1e-9) ?? position;
+	}
+
+	function nextStoryStop(position: number): number {
+		return storyStops().find((stop) => stop > position + 1e-9) ?? position;
+	}
+
+	async function focusInterval(intervalId: string) {
+		await tick();
+		[...(rowEl?.querySelectorAll<HTMLElement>('[data-interval-id]') ?? [])]
+			.find((element) => element.dataset.intervalId === intervalId)
+			?.querySelector<HTMLElement>('.bar-activate')
+			?.focus();
 	}
 
 	function startResize(e: PointerEvent, iv: Interval, edge: 'start' | 'end') {
@@ -324,6 +357,7 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="bar-wrapper"
+			data-interval-id={iv.id}
 			class:resizing={resizing?.intervalId === iv.id}
 			class:translating={translating?.intervalId === iv.id && translating.moved}
 			style="left: {leftPct}%; width: {widthPct}%;"
@@ -369,6 +403,7 @@
 					const atPosition = iv.startPosition + fraction * (iv.endPosition - iv.startPosition);
 					try {
 						await intervalsStore.splitIntervalAt(iv.id, atPosition);
+						await focusInterval(iv.id);
 					} catch (err) {
 						onError((err as Error).message);
 					}
@@ -381,7 +416,7 @@
 				aria-label="Interval start. Use Left and Right Arrow keys to resize"
 				aria-orientation="horizontal"
 				aria-valuemin={0}
-				aria-valuemax={iv.endPosition}
+				aria-valuemax={Math.max(iv.startPosition, previousStoryStop(iv.endPosition))}
 				aria-valuenow={iv.startPosition}
 				style:clip-path={`inset(0 ${Math.max(0, (24 - widthPx) / 2)}px 0 0)`}
 					tabindex="0"
@@ -393,7 +428,7 @@
 				role="slider"
 				aria-label="Interval end. Use Left and Right Arrow keys to resize"
 				aria-orientation="horizontal"
-				aria-valuemin={iv.startPosition}
+				aria-valuemin={Math.min(iv.endPosition, nextStoryStop(iv.startPosition))}
 				aria-valuemax={actCount}
 				aria-valuenow={iv.endPosition}
 				style:clip-path={`inset(0 0 0 ${Math.max(0, (24 - widthPx) / 2)}px)`}
