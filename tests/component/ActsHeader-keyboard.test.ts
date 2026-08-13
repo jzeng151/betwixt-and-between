@@ -77,15 +77,17 @@ describe('ActsHeader keyboard controls', () => {
 		]);
 	});
 
-	it('serializes keyboard moves across the whole act list', async () => {
+	it('derives queued keyboard moves from the optimistic act order', async () => {
 		const acts = ['One', 'Two', 'Three'].map((name, index) => ({
 			id: `act-${index + 1}`, type: 'Act', name
 		})) as Entity[];
 		const patchResolvers: Array<(response: Response) => void> = [];
-		const fetchMock = vi.fn((_url, options) => options?.method === 'PATCH'
-			? new Promise<Response>((resolve) => patchResolvers.push(resolve))
-			: Promise.resolve({ ok: true, json: async () => [] } as Response)
-		);
+		const patches: Array<Record<string, unknown>> = [];
+		const fetchMock = vi.fn((_url, options) => {
+			if (options?.method !== 'PATCH') return Promise.resolve({ ok: true, json: async () => [] } as Response);
+			patches.push(JSON.parse(String(options.body)));
+			return new Promise<Response>((resolve) => patchResolvers.push(resolve));
+		});
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 		const view = render(ActsHeader, {
 			props: {
@@ -97,11 +99,71 @@ describe('ActsHeader keyboard controls', () => {
 		});
 
 		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowRight' });
-		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder Three/ }), { key: 'ArrowLeft' });
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder Two/ }), { key: 'ArrowRight' });
 		await waitFor(() => expect(patchResolvers).toHaveLength(1));
 		patchResolvers[0]({ ok: true, json: async () => ({}) } as Response);
 		await waitFor(() => expect(patchResolvers).toHaveLength(2));
+		expect(patches).toEqual([{ position: 1 }, { position: 1 }]);
 		patchResolvers[1]({ ok: true, json: async () => ({}) } as Response);
+	});
+
+	it('serializes sibling scene moves from one optimistic order', async () => {
+		const acts = [{ id: 'act-1', type: 'Act', name: 'One' }] as Entity[];
+		const scenes = ['A', 'B', 'C'].map((name, index) => ({
+			id: `scene-${index + 1}`, type: 'Scene', name, parentId: 'act-1'
+		})) as Entity[];
+		const patchResolvers: Array<(response: Response) => void> = [];
+		const patches: Array<Record<string, unknown>> = [];
+		globalThis.fetch = vi.fn((_url, options) => {
+			if (options?.method !== 'PATCH') return Promise.resolve({ ok: true, json: async () => [] } as Response);
+			patches.push(JSON.parse(String(options.body)));
+			return new Promise<Response>((resolve) => patchResolvers.push(resolve));
+		}) as unknown as typeof fetch;
+		const view = render(ActsHeader, {
+			props: { acts, scenesByActId: new Map([['act-1', scenes]]), weights: [1], trackWidthPx: 600 }
+		});
+
+		await fireEvent.keyDown(view.getByRole('button', { name: /Select A/ }), { key: 'ArrowRight', altKey: true });
+		await fireEvent.keyDown(view.getByRole('button', { name: /Select B/ }), { key: 'ArrowRight', altKey: true });
+		await waitFor(() => expect(patchResolvers).toHaveLength(1));
+		patchResolvers[0]({ ok: true, json: async () => ({}) } as Response);
+		await waitFor(() => expect(patchResolvers).toHaveLength(2));
+		expect(patches).toEqual([
+			{ parentId: 'act-1', position: 1 },
+			{ parentId: 'act-1', position: 1 }
+		]);
+		patchResolvers[1]({ ok: true, json: async () => ({}) } as Response);
+	});
+
+	it('lets an undersized act recover and keeps its ARIA value in range', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' },
+			{ id: 'act-3', type: 'Act', name: 'Three' }
+		] as Entity[];
+		const onWeightCommit = vi.fn();
+		const view = render(ActsHeader, {
+			props: {
+				acts,
+				scenesByActId: new Map(),
+				weights: [0.1, 1.9, 1],
+				trackWidthPx: 600,
+				onWeightCommit
+			}
+		});
+		const slider = view.getByRole('slider', { name: /Width of One/ });
+
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+
+		const committed = onWeightCommit.mock.calls[0][0];
+		expect(committed['act-1']).toBeCloseTo(0.3);
+		expect(committed['act-2']).toBeCloseTo(1.7);
+		expect(Number(slider.getAttribute('aria-valuenow'))).toBeGreaterThanOrEqual(
+			Number(slider.getAttribute('aria-valuemin'))
+		);
+		expect(Number(slider.getAttribute('aria-valuenow'))).toBeLessThanOrEqual(
+			Number(slider.getAttribute('aria-valuemax'))
+		);
 	});
 
 	it('hides width sliders when the minimum widths cannot fit', () => {

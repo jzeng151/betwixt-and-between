@@ -146,6 +146,7 @@
 	// references would dangle and arrowheads would silently disappear.
 	// `crypto.randomUUID()` runs once per component init.
 	const arrowMarkerId = `gc-arrow-${crypto.randomUUID().slice(0, 8)}`;
+	const nodeMovementHelpId = `${arrowMarkerId}-node-movement`;
 
 	// ── Viewport transform ─────────────────────────────────────────────────────
 	let panX = $state(0);
@@ -504,6 +505,17 @@
 			y: p.y + (e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0)
 		};
 		nodePos = { ...nodePos, [id]: next };
+		const rect = viewport.getBoundingClientRect();
+		if (rect.width > 0 && rect.height > 0) {
+			const left = panX + next.x * zoom;
+			const top = panY + next.y * zoom;
+			const right = left + (next.w || NODE_W) * zoom;
+			const bottom = top + (next.h || NODE_H) * zoom;
+			if (left < 0) panX -= left;
+			else if (right > rect.width) panX -= right - rect.width;
+			if (top < 0) panY -= top;
+			else if (bottom > rect.height) panY -= bottom - rect.height;
+		}
 		onNodePositionChange?.(id, next);
 	}
 
@@ -616,6 +628,9 @@
 	onwheel={onWheel}
 	style:cursor={panning ? 'grabbing' : 'default'}
 >
+	<p id={nodeMovementHelpId} class="sr-only">
+		Use Arrow keys to move a node 8 pixels. Hold Shift with an Arrow key to move it 32 pixels.
+	</p>
 	<!-- Edge SVG fills the viewport in screen coords — no transform needed -->
 	<svg class="edges" aria-hidden="true">
 		<!-- One arrowhead marker, color-inheriting via context-stroke so a
@@ -761,6 +776,7 @@
 					role="button"
 					tabindex="0"
 					aria-label="Open {node.name}"
+					aria-describedby={nodeMovementHelpId}
 				>
 					<span class="node-name">{node.name}</span>
 					<span class="node-type">{node.type}</span>
@@ -800,6 +816,18 @@
 		background: var(--color-surface);
 		touch-action: none;
 		user-select: none;
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.edges {
