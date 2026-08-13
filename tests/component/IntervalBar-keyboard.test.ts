@@ -19,8 +19,9 @@ describe('IntervalBar keyboard controls', () => {
 				onSplit
 			}
 		});
-		const bar = container.querySelector('svg.interval-bar') as SVGElement;
+		const bar = container.querySelector('.bar-activate') as SVGElement;
 		const split = container.querySelector('rect.hairline-hit') as SVGElement;
+		expect(split.parentElement).toHaveAttribute('role', 'group');
 
 		await fireEvent.keyDown(bar, { key: 'Enter' });
 		await fireEvent.keyDown(split, { key: ' ' });
