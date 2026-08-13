@@ -22,7 +22,7 @@ export type Entity = {
 
 function createEntityStore() {
 	const { subscribe, set, update } = writable<Entity[]>([]);
-	let loadSeq = 0;
+	let loadPromise: Promise<void> | null = null;
 	// Per-entity update sequence. updateEntity applies an optimistic merge then
 	// installs the PATCH response; without sequencing, two edits to the same row
 	// racing on the wire can land out of order — e.g. a style save and an
@@ -41,21 +41,23 @@ function createEntityStore() {
 	// one for the same id so requests reach the API in call order.
 	const updateChains = new Map<string, Promise<unknown>>();
 
-	async function load() {
-		const seq = ++loadSeq;
+	function load(): Promise<void> {
+		if (loadPromise) return loadPromise;
 		entityLoadStatus.set('loading');
-		try {
+		const request = (async () => {
 			const res = await fetch('/api/entities');
 			if (!res.ok) throw new Error(`entities.load failed: ${res.status} ${await res.text()}`);
 			const data: Entity[] = await res.json();
-			if (seq === loadSeq) {
-				set(data);
-				entityLoadStatus.set('ready');
-			}
-		} catch (error) {
-			if (seq === loadSeq) entityLoadStatus.set('error');
+			set(data);
+			entityLoadStatus.set('ready');
+		})().catch((error) => {
+			entityLoadStatus.set('error');
 			throw error;
-		}
+		});
+		loadPromise = request;
+		return request.finally(() => {
+			if (loadPromise === request) loadPromise = null;
+		});
 	}
 
 	/**

@@ -137,7 +137,7 @@
     bottom: var(--taskbar-height);
     overflow: auto;
     background: var(--color-desktop);
-    pointer-events: none;
+    pointer-events: auto;
   }
 
   .story-index {

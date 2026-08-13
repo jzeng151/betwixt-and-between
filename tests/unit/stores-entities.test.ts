@@ -65,6 +65,23 @@ describe('entities.load', () => {
 		expect(get(entities)).toEqual(before);
 		expect(get(entityLoadStatus)).toBe('error');
 	});
+
+	it('deduplicates overlapping loads so one failure cannot discard a valid response', async () => {
+		let resolveLoad!: (response: Response) => void;
+		const fetchMock = vi.fn().mockReturnValue(new Promise<Response>((resolve) => {
+			resolveLoad = resolve;
+		}));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const first = entities.load();
+		const second = entities.load();
+		resolveLoad(makeResponse([entity({ id: 'kept', name: 'Kept' })]));
+		await Promise.all([first, second]);
+
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(get(entities)[0].id).toBe('kept');
+		expect(get(entityLoadStatus)).toBe('ready');
+	});
 });
 
 // =============================================================================
