@@ -459,6 +459,11 @@
 <div class="acts-header">
 	{#each acts as act, actIdx (act.id)}
 		{@const sceneCount = scenesByActId.get(act.id)?.length ?? 0}
+		{@const totalWeight = weights?.reduce((sum, weight) => sum + weight, 0) ?? 0}
+		{@const pairWeight = (weights?.[actIdx] ?? 0) + (weights?.[actIdx + 1] ?? 0)}
+		{@const minWidthPercent = weights && trackWidthPx > 0 && pairWeight > 0
+			? Math.ceil(MIN_ACT_PX / trackWidthPx * totalWeight / pairWeight * 100)
+			: 0}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
@@ -490,8 +495,8 @@
 						role="slider"
 						aria-orientation="horizontal"
 						aria-label="Width of {act.name} relative to {acts[actIdx + 1].name}"
-						aria-valuemin="0"
-						aria-valuemax="100"
+						aria-valuemin={minWidthPercent}
+						aria-valuemax={100 - minWidthPercent}
 						aria-valuenow={Math.round(weights ? weights[actIdx] / (weights[actIdx] + weights[actIdx + 1]) * 100 : 50)}
 						tabindex="0"
 						onpointerdown={(e) => startWidthDrag(e, actIdx)}

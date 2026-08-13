@@ -97,17 +97,18 @@
 	}
 
 	function storyStops(): number[] {
-		const stops = [0];
+		const stops = new Set<number>([0]);
 		for (let actIdx = 0; actIdx < actCount; actIdx++) {
+			for (let step = 1; step < 10; step++) stops.add(actIdx + step / 10);
 			const count = sceneCountFor(actIdx);
 			if (count > 1) {
 				for (let sceneIdx = 1; sceneIdx < count; sceneIdx++) {
-					stops.push(actIdx + sceneIdx / count);
+					stops.add(actIdx + sceneIdx / count);
 				}
 			}
-			stops.push(actIdx + 1);
+			stops.add(actIdx + 1);
 		}
-		return stops;
+		return [...stops].sort((a, b) => a - b);
 	}
 
 	async function resizeWithKeyboard(
