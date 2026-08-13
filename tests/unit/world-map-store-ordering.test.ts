@@ -79,6 +79,23 @@ describe('loadMaps status', () => {
 		expect(get(worldMaps)).toHaveLength(0);
 		expect(get(worldMapsLoadStatus)).toBe('ready');
 	});
+
+	it('ignores a stale refresh failure after deleting the last cached map', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([{ id: 'A', name: 'A' }])) as unknown as typeof fetch;
+		await worldMapStore.loadMaps();
+		let rejectRefresh!: (error: Error) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((_resolve, reject) => { rejectRefresh = reject; }))
+			.mockResolvedValueOnce(makeResponse(null)) as unknown as typeof fetch;
+		const refresh = worldMapStore.loadMaps();
+
+		await worldMapStore.deleteMap('A');
+		rejectRefresh(new Error('offline'));
+		await expect(refresh).rejects.toThrow('offline');
+
+		expect(get(worldMaps)).toHaveLength(0);
+		expect(get(worldMapsLoadStatus)).toBe('ready');
+	});
 });
 
 describe('prefetchMapRegions', () => {
