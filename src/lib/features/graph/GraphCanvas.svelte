@@ -555,6 +555,16 @@
 		onEdgeContextMenu(edge.id, rect.left + (edge.x1 + edge.x2) / 2, rect.top + (edge.y1 + edge.y2) / 2);
 	}
 
+	function revealEdge(edge: GraphEdge & { x1: number; y1: number; x2: number; y2: number }) {
+		const x = (edge.x1 + edge.x2) / 2;
+		const y = (edge.y1 + edge.y2) / 2;
+		const margin = 12;
+		if (x < margin) panX += margin - x;
+		else if (x > viewport.clientWidth - margin) panX -= x - (viewport.clientWidth - margin);
+		if (y < margin) panY += margin - y;
+		else if (y > viewport.clientHeight - margin) panY -= y - (viewport.clientHeight - margin);
+	}
+
 	function onEdgeKeyboardMenu(
 		e: KeyboardEvent,
 		edge: GraphEdge & { x1: number; y1: number; x2: number; y2: number }
@@ -742,6 +752,7 @@
 				class="edge-keyboard-action"
 				style="left:{(edge.x1 + edge.x2) / 2 - 12}px; top:{(edge.y1 + edge.y2) / 2 - 12}px"
 				aria-label={edgeLabel(edge)}
+				onfocus={() => revealEdge(edge)}
 				onclick={() => activateEdgeFromKeyboard(edge)}
 				onkeydown={(e) => onEdgeKeyboardMenu(e, edge)}
 			></button>

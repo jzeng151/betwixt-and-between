@@ -496,8 +496,19 @@
 		const right = pairWeight - left;
 		const updates = { [acts[idx].id]: left, [acts[idx + 1].id]: right };
 		onWeightPreview?.(updates);
-		onWeightCommit?.(updates);
+		pendingKeyboardWeightCommit = updates;
+		if (keyboardWeightCommitTimer) clearTimeout(keyboardWeightCommitTimer);
+		keyboardWeightCommitTimer = setTimeout(flushKeyboardWeightCommit, 150);
 	}
+	let keyboardWeightCommitTimer: ReturnType<typeof setTimeout> | null = null;
+	let pendingKeyboardWeightCommit: Record<string, number> | null = null;
+	function flushKeyboardWeightCommit() {
+		if (keyboardWeightCommitTimer) clearTimeout(keyboardWeightCommitTimer);
+		keyboardWeightCommitTimer = null;
+		if (pendingKeyboardWeightCommit) onWeightCommit?.(pendingKeyboardWeightCommit);
+		pendingKeyboardWeightCommit = null;
+	}
+	onDestroy(flushKeyboardWeightCommit);
 </script>
 
 <div class="acts-header">

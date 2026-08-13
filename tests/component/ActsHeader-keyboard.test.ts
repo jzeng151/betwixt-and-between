@@ -37,7 +37,7 @@ describe('ActsHeader keyboard controls', () => {
 		expect(onSelectAct).toHaveBeenCalledWith('act-1');
 		expect(onSelectScene).toHaveBeenCalledWith('scene-1');
 		expect(onWeightPreview).toHaveBeenCalledOnce();
-		expect(onWeightCommit).toHaveBeenCalledOnce();
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
 		expect(slider).toHaveAttribute('aria-valuemin', '10');
 		expect(slider).toHaveAttribute('aria-valuemax', '90');
 	});
@@ -187,6 +187,7 @@ describe('ActsHeader keyboard controls', () => {
 
 		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
 
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
 		const committed = onWeightCommit.mock.calls[0][0];
 		expect(committed['act-1']).toBeCloseTo(0.3);
 		expect(committed['act-2']).toBeCloseTo(1.7);
@@ -196,6 +197,29 @@ describe('ActsHeader keyboard controls', () => {
 		expect(Number(slider.getAttribute('aria-valuenow'))).toBeLessThanOrEqual(
 			Number(slider.getAttribute('aria-valuemax'))
 		);
+	});
+
+	it('coalesces repeated keyboard width persistence', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' }
+		] as Entity[];
+		const onWeightPreview = vi.fn();
+		const onWeightCommit = vi.fn();
+		const view = render(ActsHeader, {
+			props: {
+				acts, scenesByActId: new Map(), weights: [1, 1], trackWidthPx: 600,
+				onWeightPreview, onWeightCommit
+			}
+		});
+		const slider = view.getByRole('slider', { name: /Width of One/ });
+
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+
+		expect(onWeightPreview).toHaveBeenCalledTimes(3);
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
 	});
 
 	it('hides width sliders when the minimum widths cannot fit', () => {

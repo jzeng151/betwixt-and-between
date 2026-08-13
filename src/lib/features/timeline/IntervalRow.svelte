@@ -82,6 +82,25 @@
 		last: Promise<void>;
 	}>();
 	let keyboardResizeAria = $state<Record<string, { start: number; end: number }>>({});
+	const splittingIntervals = new Set<string>();
+	async function splitInterval(iv: Interval, fraction: number, origin: Element) {
+		if (splittingIntervals.has(iv.id)) return;
+		splittingIntervals.add(iv.id);
+		const focusOwner = document.activeElement === origin ? origin : null;
+		const atPosition = fracToPos(posToFrac(iv.startPosition) + fraction * (
+			posToFrac(iv.endPosition) - posToFrac(iv.startPosition)
+		));
+		try {
+			await intervalsStore.splitIntervalAt(iv.id, atPosition);
+			if (focusOwner && (document.activeElement === focusOwner || document.activeElement === document.body)) {
+				await focusInterval(iv.id);
+			}
+		} catch (err) {
+			onError((err as Error).message);
+		} finally {
+			splittingIntervals.delete(iv.id);
+		}
+	}
 
 	/* Local translate state — drag the bar body to shift it temporally
 	   without changing duration (T5). The `moved` flag (4px threshold)
@@ -408,18 +427,7 @@
 					return boundaryPositions.map((p) => (posToFrac(p) - sf) / span);
 				})()}
 				isEvent={entity.type === 'Event'}
-					onSplit={async (fraction, origin) => {
-					const focusOwner = document.activeElement === origin ? origin : null;
-					const atPosition = fracToPos(leftFrac + fraction * (rightFrac - leftFrac));
-					try {
-						await intervalsStore.splitIntervalAt(iv.id, atPosition);
-						if (focusOwner && (document.activeElement === focusOwner || document.activeElement === document.body)) {
-							await focusInterval(iv.id);
-						}
-					} catch (err) {
-						onError((err as Error).message);
-					}
-					}}
+				onSplit={(fraction, origin) => void splitInterval(iv, fraction, origin)}
 					onActivate={() => onSelect?.(entity.id, iv.id)}
 				/>
 			<div
