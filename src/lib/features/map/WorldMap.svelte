@@ -544,11 +544,12 @@
 	let factionsSettled = $state(false);
 	let anchorsEventsSettled = $state(false);
 	let regionsSettled = $state(false);
+	function retryMapList() {
+		void worldMapStore.loadMaps().catch((err) => console.error('Failed to load maps:', err));
+	}
 
 	onMount(() => {
-		void worldMapStore
-			.loadMaps()
-			.catch((err) => console.error('Failed to load maps:', err));
+		retryMapList();
 		intervalsStore.load();
 		relationships.load();
 		// Factions are user-scoped (not map-scoped) — load once per session.
@@ -2367,7 +2368,10 @@
 {#if ($worldMapsLoadStatus === 'idle' || $worldMapsLoadStatus === 'loading') && !hasMaps}
 	<div class="empty-state" role="status">Loading maps…</div>
 {:else if $worldMapsLoadStatus === 'error' && !hasMaps}
-	<div class="empty-state" role="alert">Couldn't load maps.</div>
+	<div class="empty-state" role="alert">
+		<p>Couldn't load maps.</p>
+		<button class="btn-primary" onclick={retryMapList}>Retry</button>
+	</div>
 {:else if !hasMaps}
 	<!-- Empty state: no maps -->
 	<div class="empty-state">
