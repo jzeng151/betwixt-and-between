@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
 import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 import { relationships } from '$lib/stores/relationships.js';
@@ -42,9 +42,13 @@ function createEntityStore() {
 	// disappears on reload (Codex P2). Chain each PATCH behind the prior in-flight
 	// one for the same id so requests reach the API in call order.
 	const updateChains = new Map<string, Promise<unknown>>();
-	function markMutationReady() {
+	function invalidateLoadAfterMutation() {
 		loadGeneration++;
 		loadPromise = null;
+		entityLoadStatus.set(get(entitySnapshotReady) ? 'ready' : 'idle');
+	}
+	function markMutationReady() {
+		invalidateLoadAfterMutation();
 		entitySnapshotReady.set(true);
 		entityLoadStatus.set('ready');
 	}
@@ -93,8 +97,11 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity = await res.json();
-		markMutationReady();
+		const needsFreshSnapshot = loadPromise !== null && !get(entitySnapshotReady);
+		if (needsFreshSnapshot) invalidateLoadAfterMutation();
+		else markMutationReady();
 		update((all) => [...all, created]);
+		if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
 		return created;
 	}
 
@@ -120,8 +127,11 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity[] = await res.json();
-		markMutationReady();
+		const needsFreshSnapshot = loadPromise !== null && !get(entitySnapshotReady);
+		if (needsFreshSnapshot) invalidateLoadAfterMutation();
+		else markMutationReady();
 		update((all) => [...all, ...created]);
+		if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
 		return created;
 	}
 
@@ -188,6 +198,7 @@ function createEntityStore() {
 			}
 			throw err;
 		}
+		invalidateLoadAfterMutation();
 		// Whether THIS patch was a structural Act/Scene change that the server
 		// recomputes interval bounds for. Captured before the supersede check so a
 		// later non-structural edit (e.g. a rename) can't make us skip the refresh.
@@ -239,6 +250,8 @@ function createEntityStore() {
 			await load({ fresh: true });
 			throw new Error(await res.text());
 		}
+		invalidateLoadAfterMutation();
+		update((all) => all.filter((e) => e.id !== id));
 		// Server-side delete cascades to intervals (entity_id / start_act_id /
 		// end_act_id are all CASCADE) and recomputes survivor positions for
 		// Act/Scene deletes. It also cascade-deletes relationships on an endpoint

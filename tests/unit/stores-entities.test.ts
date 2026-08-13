@@ -149,6 +149,26 @@ describe('entities.createEntity', () => {
 		expect(get(entities).some((item) => item.id === 'created')).toBe(true);
 	});
 
+	it('refreshes the full snapshot when creating during the initial load', async () => {
+		entitySnapshotReady.set(false);
+		entityLoadStatus.set('idle');
+		let resolveInitial!: (response: Response) => void;
+		const created = entity({ id: 'created', name: 'Created' });
+		const existing = entity({ id: 'existing', name: 'Existing' });
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveInitial = resolve; }))
+			.mockResolvedValueOnce(makeResponse(created))
+			.mockResolvedValueOnce(makeResponse([existing, created])) as unknown as typeof fetch;
+
+		const initial = entities.load();
+		await entities.createEntity('Character', 'Created');
+		resolveInitial(makeResponse([]));
+		await initial;
+
+		expect(get(entities).map((item) => item.id)).toEqual(['existing', 'created']);
+		expect(get(entitySnapshotReady)).toBe(true);
+	});
+
 	it('serializes data=undefined as undefined in the body', async () => {
 		const created = entity({ id: 'x', name: 'Plain' });
 		const fetchMock = vi.fn().mockResolvedValue(makeResponse(created));
@@ -194,6 +214,20 @@ describe('entities.updateEntity', () => {
 
 		// After server response, the entry is replaced with the server version
 		expect(get(entities)[0].name).toBe('NewServer');
+	});
+
+	it('ignores a refresh superseded by a successful update', async () => {
+		let resolveRefresh!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRefresh = resolve; }))
+			.mockResolvedValueOnce(makeResponse(entity({ id: 'e1', name: 'New' }))) as unknown as typeof fetch;
+
+		const refresh = entities.load();
+		await entities.updateEntity('e1', { name: 'New' });
+		resolveRefresh(makeResponse([entity({ id: 'e1', name: 'Old' })]));
+		await refresh;
+
+		expect(get(entities)[0].name).toBe('New');
 	});
 
 	it('applies optimistic data as object in the store (jsonb shape post-T8a)', async () => {
@@ -426,6 +460,27 @@ describe('entities.deleteEntity', () => {
 			'/api/entities/d1',
 			expect.objectContaining({ method: 'DELETE' })
 		);
+	});
+
+	it('removes an entity restored by an overlapping refresh', async () => {
+		let resolveRefresh!: (response: Response) => void;
+		let resolveDelete!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRefresh = resolve; }))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveDelete = resolve; }))
+			.mockResolvedValue(makeResponse([])) as unknown as typeof fetch;
+
+		const refresh = entities.load();
+		const deletion = entities.deleteEntity('d1');
+		resolveRefresh(makeResponse([
+			entity({ id: 'd1', name: 'A' }),
+			entity({ id: 'd2', name: 'B' })
+		]));
+		await refresh;
+		resolveDelete(makeResponse({}, true, 204));
+		await deletion;
+
+		expect(get(entities).map((item) => item.id)).toEqual(['d2']);
 	});
 
 	it('reloads on failure and throws', async () => {
