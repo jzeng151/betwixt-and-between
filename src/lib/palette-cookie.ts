@@ -25,6 +25,18 @@ export interface ParsedPaletteCookie {
 	owner: string | null;
 }
 
+export function accentForeground(hex: string): '#000000' | '#ffffff' {
+	if (hex.length === 4 || hex.length === 5) {
+		hex = `#${[...hex.slice(1)].map((value) => value + value).join('')}`;
+	}
+	const channels = [hex.slice(1, 3), hex.slice(3, 5), hex.slice(5, 7)].map((value) => {
+		const channel = Number.parseInt(value, 16) / 255;
+		return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+	});
+	const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+	return luminance > 0.179 ? '#000000' : '#ffffff';
+}
+
 const VAR_NAME_RE = /^--color-[a-z0-9-]+$/;
 const HEX_RE = /^#[0-9a-f]{3,8}$/i;
 // Owner ids are Better-Auth UUID-ish; bound length + charset so a tampered
@@ -57,7 +69,11 @@ export function parsePaletteCookie(raw: string | undefined | null): ParsedPalett
 /** Build the `:root{…}` body (empty string when no vars). */
 export function paletteCookieToCss(parsed: ParsedPaletteCookie | null): string {
 	if (!parsed) return '';
-	const decls = Object.entries(parsed.vars)
+	const vars = { ...parsed.vars };
+	if (vars['--color-accent'] && !vars['--color-on-accent']) {
+		vars['--color-on-accent'] = accentForeground(vars['--color-accent']);
+	}
+	const decls = Object.entries(vars)
 		.map(([k, v]) => `${k}:${v}`)
 		.join(';');
 	return decls ? `:root{${decls}}` : '';

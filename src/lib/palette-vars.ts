@@ -27,6 +27,9 @@ import type { Appearance } from './types/preferences.js';
 import { ENTITY_TYPE_COLOR_VAR } from './entity-type-colors.js';
 import { REL_COLOR } from './relationship-colors.js';
 import { CHARACTER_ROLES } from './character-roles.js';
+import { accentForeground } from './palette-cookie.js';
+
+export { accentForeground } from './palette-cookie.js';
 
 /** Extract `--x` from a `var(--x)` token; null if not that shape. */
 function varName(token: string): string | null {
@@ -51,16 +54,6 @@ export function managedPaletteVars(): string[] {
 	}
 	for (const role of CHARACTER_ROLES) set.add(`--color-role-${role.toLowerCase()}`);
 	return [...set];
-}
-
-export function accentForeground(hex: string): '#000000' | '#ffffff' {
-	hex = hex.length === 4 ? `#${[...hex.slice(1)].map((value) => value + value).join('')}` : hex;
-	const channels = [hex.slice(1, 3), hex.slice(3, 5), hex.slice(5, 7)].map((value) => {
-		const channel = Number.parseInt(value, 16) / 255;
-		return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-	});
-	const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
-	return luminance > 0.179 ? '#000000' : '#ffffff';
 }
 
 /** Resolve an Appearance's overrides to a { cssVarName: hex } map. */
