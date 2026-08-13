@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import {
 	entityAliases,
-	entityAliasesLoadStatus
+	entityAliasesLoadStatus,
+	entityAliasesSnapshotReady
 } from '$lib/stores/entity-aliases.js';
 
 function response(body: unknown, ok = true): Response {
@@ -10,6 +11,8 @@ function response(body: unknown, ok = true): Response {
 }
 
 beforeEach(() => {
+	entityAliasesSnapshotReady.set(false);
+	entityAliasesLoadStatus.set('idle');
 	globalThis.fetch = vi.fn().mockResolvedValue(response([])) as unknown as typeof fetch;
 });
 
@@ -29,6 +32,7 @@ describe('entityAliases load state', () => {
 		expect(fetchMock).toHaveBeenCalledOnce();
 		expect(get(entityAliases)).toHaveLength(1);
 		expect(get(entityAliasesLoadStatus)).toBe('ready');
+		expect(get(entityAliasesSnapshotReady)).toBe(true);
 	});
 
 	it('exposes errors for retry UI', async () => {

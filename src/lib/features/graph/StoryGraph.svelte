@@ -24,7 +24,11 @@
   import ContextMenu from '$lib/os/ContextMenu.svelte';
   import EntityColorPopover from '$lib/components/EntityColorPopover.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
-  import { entityAliases, entityAliasesLoadStatus } from '$lib/stores/entity-aliases.js';
+  import {
+    entityAliases,
+    entityAliasesLoadStatus,
+    entityAliasesSnapshotReady
+  } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
   import Legend from '$lib/features/graph/Legend.svelte';
   import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
@@ -647,14 +651,17 @@
   }}
 />
 
-{#if $entityAliasesLoadStatus === 'idle' || $entityAliasesLoadStatus === 'loading'}
+{#if !$entityAliasesSnapshotReady && ($entityAliasesLoadStatus === 'idle' || $entityAliasesLoadStatus === 'loading')}
   <div class="graph-load" role="status">Loading aliases…</div>
-{:else if $entityAliasesLoadStatus === 'error'}
+{:else if !$entityAliasesSnapshotReady && $entityAliasesLoadStatus === 'error'}
   <div class="graph-load" role="alert">
     <span>Couldn't load aliases.</span>
     <button onclick={loadAliases}>Retry</button>
   </div>
 {:else}
+{#if $entityAliasesLoadStatus === 'error'}
+  <div class="graph-refresh" role="alert">Couldn't refresh aliases. <button onclick={loadAliases}>Retry</button></div>
+{/if}
 <GraphCanvas
   bind:this={canvas}
   nodes={graphNodes}
@@ -953,6 +960,7 @@
 
 <style>
 	.graph-load { min-height: 100%; display: grid; place-content: center; gap: 10px; color: var(--color-text-muted); }
+	.graph-refresh { position: absolute; z-index: 8; margin: 10px; padding: 8px; background: var(--color-surface-2); color: var(--color-text); }
   /* ── Per-node overlay buttons ───────────────────────────────────────────── */
   .connect-btn,
   .delete-btn {

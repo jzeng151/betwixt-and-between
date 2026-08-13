@@ -27,7 +27,11 @@
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
   import Legend from '$lib/features/graph/Legend.svelte';
-  import { entityAliases, entityAliasesLoadStatus } from '$lib/stores/entity-aliases.js';
+  import {
+    entityAliases,
+    entityAliasesLoadStatus,
+    entityAliasesSnapshotReady
+  } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
   import {
     buildEntityIntervalMap,
@@ -719,14 +723,17 @@
   }}
 />
 
-{#if $entityAliasesLoadStatus === 'idle' || $entityAliasesLoadStatus === 'loading'}
+{#if !$entityAliasesSnapshotReady && ($entityAliasesLoadStatus === 'idle' || $entityAliasesLoadStatus === 'loading')}
   <div class="graph-load" role="status">Loading aliases…</div>
-{:else if $entityAliasesLoadStatus === 'error'}
+{:else if !$entityAliasesSnapshotReady && $entityAliasesLoadStatus === 'error'}
   <div class="graph-load" role="alert">
     <span>Couldn't load aliases.</span>
     <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button>
   </div>
 {:else}
+{#if $entityAliasesLoadStatus === 'error'}
+  <div class="graph-refresh" role="alert">Couldn't refresh aliases. <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button></div>
+{/if}
 <div class="fg">
   <header class="fg-header">
     <label class="fg-mode">
@@ -952,6 +959,7 @@
 
 <style>
 	.graph-load { min-height: 100%; display: grid; place-content: center; gap: 10px; color: var(--color-text-muted); }
+	.graph-refresh { position: absolute; z-index: 8; margin: 10px; padding: 8px; background: var(--color-surface-2); color: var(--color-text); }
   .fg {
     position: absolute;
     inset: 0;
