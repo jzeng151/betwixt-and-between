@@ -143,7 +143,7 @@
 		iv: Interval,
 		edge: 'start' | 'end'
 	) {
-		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+		if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
 		e.preventDefault();
 		e.stopPropagation();
 		let state = keyboardResizes.get(iv.id);

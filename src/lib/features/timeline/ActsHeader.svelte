@@ -267,7 +267,7 @@
 		}
 	}
 	function moveActWithKeyboard(e: KeyboardEvent, actId: string) {
-		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+		if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
 		e.preventDefault();
 		const order = keyboardActOrder ??= acts.map((act) => act.id);
 		const from = order.indexOf(actId);
@@ -482,7 +482,7 @@
 	}
 
 	function resizeActWithKeyboard(e: KeyboardEvent, idx: number) {
-		if (!weights || trackWidthPx === 0 || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+		if (e.altKey || e.ctrlKey || e.metaKey || !weights || trackWidthPx === 0 || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
 		e.preventDefault();
 		const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
 		const minWeight = (MIN_ACT_PX / trackWidthPx) * totalWeight;

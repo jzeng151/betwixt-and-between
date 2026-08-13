@@ -77,6 +77,32 @@ describe('ActsHeader keyboard controls', () => {
 		]);
 	});
 
+	it('leaves modified slider arrows to the browser', () => {
+		const acts = ['One', 'Two'].map((name, index) => ({
+			id: `act-${index + 1}`, type: 'Act', name
+		})) as Entity[];
+		const onWeightPreview = vi.fn();
+		globalThis.fetch = vi.fn();
+		const view = render(ActsHeader, {
+			props: { acts, scenesByActId: new Map(), weights: [1, 1], trackWidthPx: 600, onWeightPreview }
+		});
+
+		for (const slider of [
+			view.getByRole('slider', { name: /Reorder One/ }),
+			view.getByRole('slider', { name: /Width of One/ })
+		]) {
+			for (const modifier of [{ altKey: true }, { ctrlKey: true }, { metaKey: true }]) {
+				const event = new KeyboardEvent('keydown', {
+					key: 'ArrowRight', bubbles: true, cancelable: true, ...modifier
+				});
+				slider.dispatchEvent(event);
+				expect(event.defaultPrevented).toBe(false);
+			}
+		}
+		expect(globalThis.fetch).not.toHaveBeenCalled();
+		expect(onWeightPreview).not.toHaveBeenCalled();
+	});
+
 	it('derives queued keyboard moves from the optimistic act order', async () => {
 		const acts = ['One', 'Two', 'Three'].map((name, index) => ({
 			id: `act-${index + 1}`, type: 'Act', name
