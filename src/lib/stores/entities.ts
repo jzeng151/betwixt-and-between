@@ -84,7 +84,7 @@ function createEntityStore() {
 	}
 	function rollbackSnapshot(): Promise<void> {
 		if (rollbackPromise) return rollbackPromise;
-		const request = load({ fresh: true, rollback: true });
+		const request = loadPromise ?? load({ fresh: true, rollback: true });
 		const pending = request.finally(() => {
 			if (rollbackPromise === pending) rollbackPromise = null;
 		});

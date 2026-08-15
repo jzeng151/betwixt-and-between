@@ -305,6 +305,28 @@ describe('entities.updateEntity', () => {
 		expect(get(entities)[0].name).toBe('New');
 	});
 
+	it('reuses a pending background snapshot for rollback', async () => {
+		const seeded = [entity({ id: 'a', name: 'A' })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await entities.load();
+		let resolveBackground!: (response: Response) => void;
+		const fetchMock = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveBackground = resolve; }))
+			.mockResolvedValueOnce(makeResponse('rejected', false, 400));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const background = entities.load();
+		const rejected = entities.updateEntity('a', { name: 'A rejected' });
+		const rejection = rejected.catch((error: unknown) => error);
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		resolveBackground(makeResponse(seeded));
+
+		await background;
+		expect(await rejection).toBeInstanceOf(Error);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(get(entities)[0].name).toBe('A');
+	});
+
 	it('replaces a mutation refresh superseded by a successful update', async () => {
 		const seeded = [entity({ id: 'a', name: 'A' }), entity({ id: 'b', name: 'B old' })];
 		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
