@@ -121,6 +121,18 @@ describe('GraphCanvas edge click gate', () => {
 		expect(onNodeOpen).toHaveBeenCalledOnce();
 	});
 
+	it('ignores synthesized clicks bubbled from node controls', async () => {
+		const onNodeOpen = vi.fn();
+		const { container } = renderCanvas(vi.fn(), onNodeOpen);
+		await tick();
+		const node = container.querySelector('[data-entity-id="cause"]') as HTMLElement;
+		const control = node.appendChild(document.createElement('button'));
+
+		control.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+
+		expect(onNodeOpen).not.toHaveBeenCalled();
+	});
+
 	it('pans to keep a keyboard-moved node visible', async () => {
 		const { container } = renderCanvas(vi.fn(), undefined, vi.fn());
 		const viewport = container.querySelector('.viewport') as HTMLElement;

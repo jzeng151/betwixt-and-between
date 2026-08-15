@@ -782,7 +782,7 @@
 					onpointerdown={(e) => onNodePointerDown(e, node.id)}
 					ondblclick={(e) => onNodeDblClick(e, node.id)}
 					oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
-					onclick={(e) => { if (e.detail === 0) onNodeOpen?.(node.id); }}
+					onclick={(e) => { if (e.target === e.currentTarget && e.detail === 0) onNodeOpen?.(node.id); }}
 					onkeydown={(e) => onNodeKeydown(e, node.id)}
 					onfocus={() => revealNode(p)}
 					onpointerenter={() => (hoveredNodeId = node.id)}
