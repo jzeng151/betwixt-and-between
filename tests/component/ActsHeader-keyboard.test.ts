@@ -104,6 +104,36 @@ describe('ActsHeader keyboard controls', () => {
 		expect(onWeightPreview).not.toHaveBeenCalled();
 	});
 
+	it('clears newly initialized orders after boundary key presses', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' }
+		] as Entity[];
+		const opening = { id: 'scene-1', type: 'Scene', name: 'Opening', parentId: 'act-1' } as Entity;
+		const props = {
+			acts,
+			scenesByActId: new Map([['act-1', [opening]], ['act-2', []]]),
+			weights: [1, 1],
+			trackWidthPx: 600
+		};
+		const view = render(ActsHeader, { props });
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowLeft' });
+		await fireEvent.keyDown(view.getByRole('button', { name: /Select Opening/ }), {
+			key: 'ArrowLeft', altKey: true
+		});
+		const closing = { id: 'scene-2', type: 'Scene', name: 'Closing', parentId: 'act-1' } as Entity;
+		await view.rerender({
+			...props,
+			acts: [...acts, { id: 'act-3', type: 'Act', name: 'Three' } as Entity],
+			scenesByActId: new Map([['act-1', [opening, closing]], ['act-2', []], ['act-3', []]]),
+			weights: [1, 1, 1]
+		});
+
+		expect(view.getByRole('slider', { name: /Reorder Three/ })).toHaveAttribute('aria-valuenow', '3');
+		expect(view.getByRole('button', { name: /Select Closing/ })).toHaveAccessibleName(/scene 2 of 2/);
+	});
+
 	it('leaves scene movement chords with extra modifiers to the browser', () => {
 		const acts = [{ id: 'act-1', type: 'Act', name: 'One' }] as Entity[];
 		const scene = { id: 'scene-1', type: 'Scene', name: 'Opening', parentId: 'act-1' } as Entity;

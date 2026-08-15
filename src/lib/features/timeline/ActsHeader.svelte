@@ -270,11 +270,18 @@
 	function moveActWithKeyboard(e: KeyboardEvent, actId: string) {
 		if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
 		e.preventDefault();
+		const initializedOrder = keyboardActOrder === null;
 		const order = keyboardActOrder ??= acts.map((act) => act.id);
 		const from = order.indexOf(actId);
-		if (from < 0) return;
+		if (from < 0) {
+			if (initializedOrder) keyboardActOrder = null;
+			return;
+		}
 		const target = Math.max(0, Math.min(acts.length - 1, from + (e.key === 'ArrowLeft' ? -1 : 1)));
-		if (target === from) return;
+		if (target === from) {
+			if (initializedOrder) keyboardActOrder = null;
+			return;
+		}
 		order.splice(target, 0, order.splice(from, 1)[0]);
 		keyboardActPending++;
 		const request = keyboardActTail.then(() => moveAct(actId, target));
@@ -380,13 +387,17 @@
 		}
 		if (!e.altKey || e.ctrlKey || e.metaKey || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
 		e.preventDefault();
+		const initializedOrder = keyboardSceneOrder === null;
 		const order = keyboardSceneOrder ??= new Map(
 			acts.map((act) => [act.id, (scenesByActId.get(act.id) ?? []).map((item) => item.id)])
 		);
 		const currentActIdx = acts.findIndex((act) => order.get(act.id)?.includes(scene.id));
 		const source = order.get(acts[currentActIdx]?.id) ?? [];
 		const currentSceneIdx = source.indexOf(scene.id);
-		if (currentActIdx < 0 || currentSceneIdx < 0) return;
+		if (currentActIdx < 0 || currentSceneIdx < 0) {
+			if (initializedOrder) keyboardSceneOrder = null;
+			return;
+		}
 		let targetActIdx = currentActIdx;
 		let targetSceneIdx = currentSceneIdx;
 		if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -394,10 +405,16 @@
 		} else {
 			targetActIdx = currentActIdx + (e.key === 'ArrowUp' ? -1 : 1);
 			const targetAct = acts[targetActIdx];
-			if (!targetAct) return;
+			if (!targetAct) {
+				if (initializedOrder) keyboardSceneOrder = null;
+				return;
+			}
 			targetSceneIdx = Math.min(currentSceneIdx, order.get(targetAct.id)?.length ?? 0);
 		}
-		if (targetActIdx === currentActIdx && targetSceneIdx === currentSceneIdx) return;
+		if (targetActIdx === currentActIdx && targetSceneIdx === currentSceneIdx) {
+			if (initializedOrder) keyboardSceneOrder = null;
+			return;
+		}
 		source.splice(currentSceneIdx, 1);
 		const targetActId = acts[targetActIdx].id;
 		(order.get(targetActId) ?? source).splice(targetSceneIdx, 0, scene.id);
