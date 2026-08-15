@@ -60,7 +60,7 @@ function createEntityStore() {
 		rollback?: boolean;
 		replacement?: boolean;
 	} = {}): Promise<void> {
-		if (fresh && !rollback && rollbackPromise) return rollbackPromise.then(() => load({ fresh: true }));
+		if (fresh && !rollback && rollbackPromise) return rollbackPromise.then(() => load({ fresh: true, replacement }));
 		if (fresh && !replacement && replacementPromise) return replacementPromise;
 		if (loadPromise && !fresh) return loadPromise;
 		const generation = ++loadGeneration;
@@ -109,6 +109,16 @@ function createEntityStore() {
 		if (loadPromise) needsFreshSnapshot = true;
 		return needsFreshSnapshot;
 	}
+	function upsertEntities(created: Entity[]) {
+		const byId = new Map(created.map((entity) => [entity.id, entity]));
+		update((all) => {
+			const existing = new Set(all.map((entity) => entity.id));
+			return [
+				...all.map((entity) => byId.get(entity.id) ?? entity),
+				...created.filter((entity) => !existing.has(entity.id))
+			];
+		});
+	}
 
 	/**
 	 * Create an entity. Locked 2026-04-29 in /plan-eng-review (D19/Issue 13A) —
@@ -134,7 +144,7 @@ function createEntityStore() {
 		const created: Entity = await res.json();
 		const needsFreshSnapshot = await settleSnapshotBeforeCreate();
 		markMutationReady();
-		update((all) => [...all, created]);
+		upsertEntities([created]);
 		if (needsFreshSnapshot) {
 			entitySnapshotReady.set(true);
 			await replaceSnapshot().catch(() => {});
@@ -166,7 +176,7 @@ function createEntityStore() {
 		const created: Entity[] = await res.json();
 		const needsFreshSnapshot = await settleSnapshotBeforeCreate();
 		markMutationReady();
-		update((all) => [...all, ...created]);
+		upsertEntities(created);
 		if (needsFreshSnapshot) {
 			entitySnapshotReady.set(true);
 			await replaceSnapshot().catch(() => {});

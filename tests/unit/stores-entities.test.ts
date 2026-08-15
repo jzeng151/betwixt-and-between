@@ -235,7 +235,7 @@ describe('entities.createEntity', () => {
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 		const creating = entities.createEntity('Character', 'Created');
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-		resolveRollback(makeResponse(seeded));
+		resolveRollback(makeResponse([...seeded, created]));
 
 		await creating;
 		expect(await rejection).toBeInstanceOf(Error);
@@ -325,6 +325,29 @@ describe('entities.updateEntity', () => {
 		await Promise.all([refresh, update]);
 
 		expect(get(entities).map((item) => item.name)).toEqual(['A saved', 'B reordered']);
+	});
+
+	it('settles a mutation refresh queued behind an active rollback', async () => {
+		const seeded = [entity({ id: 'a', name: 'A' })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await entities.load();
+		let resolveRollback!: (response: Response) => void;
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(makeResponse('rejected', false, 400))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRollback = resolve; }))
+			.mockResolvedValueOnce(makeResponse(seeded));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const rejected = entities.updateEntity('a', { name: 'A rejected' });
+		const rejection = rejected.catch((error: unknown) => error);
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		const refresh = entities.refreshAfterMutation();
+		resolveRollback(makeResponse(seeded));
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+		await refresh;
+		expect(await rejection).toBeInstanceOf(Error);
+		expect(get(entities)[0].name).toBe('A');
 	});
 
 	it('replaces a rollback load superseded by another successful update', async () => {
