@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { takeNextFocusReturn } from '$lib/actions/focus-trap.js';
-  import { windowStore, PIN_Z_BASE } from '$lib/os/windows-store.js';
+  import { windowStore, PIN_Z_BASE, readTaskbarHeight } from '$lib/os/windows-store.js';
 
   interface Props {
     id: string;
@@ -87,9 +87,10 @@
     if (direction === 0) return;
     e.preventDefault();
     windowStore.focus(id);
+    const taskbarHeight = readTaskbarHeight();
     if (e.shiftKey) {
       const maxWidth = Math.max(MIN_W, window.innerWidth - x);
-      const maxHeight = Math.max(MIN_H, window.innerHeight - y - 52);
+      const maxHeight = Math.max(MIN_H, window.innerHeight - y - taskbarHeight);
       const nextWidth = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
         ? Math.min(maxWidth, Math.max(MIN_W, width + direction * delta))
         : width;
@@ -99,10 +100,10 @@
       windowStore.resize(id, nextWidth, nextHeight);
     } else {
       const nextX = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
-		? Math.max(0, Math.min(window.innerWidth - width, x + direction * delta))
+        ? Math.max(0, Math.min(window.innerWidth - width, x + direction * delta))
         : x;
       const nextY = e.key === 'ArrowUp' || e.key === 'ArrowDown'
-		? Math.max(0, Math.min(window.innerHeight - height - 52, y + direction * delta))
+        ? Math.max(0, Math.min(window.innerHeight - height - taskbarHeight, y + direction * delta))
         : y;
       windowStore.move(id, nextX, nextY);
     }
