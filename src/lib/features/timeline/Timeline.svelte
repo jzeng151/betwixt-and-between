@@ -532,6 +532,7 @@
 			onSelectAct={selectFromTimeline}
 			onSelectScene={selectFromTimeline}
 			onWeightPreview={(updates) => {
+				weightCommitGeneration++;
 				weightOverride = { ...weightOverride, ...updates };
 			}}
 			onWeightCommit={(updates) => commitActWeights(
