@@ -77,6 +77,19 @@ test.describe('Window Manager', () => {
 		expect(newBox!.y).toBeCloseTo(box!.y + deltaY, -1);
 	});
 
+	test('keyboard movement keeps the window in the viewport', async ({ page }) => {
+		await page.click('button[title="Characters"]');
+		const win = page.locator('.window[aria-label="Characters"]');
+		const titlebar = win.locator('.titlebar');
+		await titlebar.focus();
+		for (let i = 0; i < 100; i++) await titlebar.press('Alt+ArrowRight');
+		for (let i = 0; i < 100; i++) await titlebar.press('Alt+ArrowDown');
+		const box = await win.boundingBox();
+
+		expect(box!.x + box!.width).toBeLessThanOrEqual(1280);
+		expect(box!.y + box!.height).toBeLessThanOrEqual(668);
+	});
+
 	test('minimize → window hidden, taskbar button still present', async ({ page }) => {
 		await page.click('button[title="Characters"]');
 		const win = page.locator('.window[aria-label="Characters"]');

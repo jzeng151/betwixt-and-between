@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { preferences } from '$lib/os/preferences-store.js';
   import { applyPreferencePatch } from '$lib/os/preferences-sync.js';
@@ -566,9 +566,14 @@
   }
 
   // ── Focal-set mutation (RULE: reassign, never push) ───────────────────────
-  function removeFromFocalSet(id: string) {
+  async function removeFromFocalSet(id: string, restoreGraphFocus = false) {
+    const focusId = graphNodes.find((node) => node.id !== id)?.id ?? id;
     const next = focalSet.filter((x) => x !== id);
     windowStore.setFocalSet(windowId, next);
+    if (restoreGraphFocus) {
+      await tick();
+      canvas?.focusNode(focusId);
+    }
   }
 
   function setMode(mode: FocusedGraphMode) {
@@ -669,7 +674,7 @@
     if (isFocal) {
       items.push({
         label: 'Remove from focal set',
-        onSelect: () => removeFromFocalSet(id)
+        onSelect: () => void removeFromFocalSet(id, true)
       });
     } else {
       items.push({
@@ -816,9 +821,14 @@
             class="add-focal-btn"
             title="Add to focal set"
             aria-label="Add to focal set"
-            onclick={(e) => {
+            onclick={async (e) => {
               e.stopPropagation();
+			  const node = (e.currentTarget as HTMLElement)
+				  .closest('.node-shell')
+				  ?.querySelector<HTMLElement>('[data-entity-id]');
               addToFocalSet(id);
+			  await tick();
+			  node?.focus();
             }}
           >+</button>
         {/if}

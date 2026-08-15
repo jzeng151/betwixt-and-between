@@ -37,6 +37,23 @@ describe('ContextMenu', () => {
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
+	it('restores its opener when a selection has no focus destination', async () => {
+		const opener = document.body.appendChild(document.createElement('button'));
+		opener.focus();
+		let unmount = () => {};
+		const view = render(ContextMenu, {
+			props: { items: makeItems([{ label: 'Update layout' }]), x: 0, y: 0, onClose: () => unmount() }
+		});
+		unmount = view.unmount;
+		await tick();
+
+		await fireEvent.click(view.getByText('Update layout'));
+		await Promise.resolve();
+
+		expect(opener).toHaveFocus();
+		opener.remove();
+	});
+
 	it('clicking an enabled item fires its onSelect', async () => {
 		const items = makeItems([{ label: 'Pick me' }, { label: 'Other' }]);
 		const { getByText } = render(ContextMenu, {
@@ -66,6 +83,19 @@ describe('ContextMenu', () => {
 		expect(onClose).toHaveBeenCalledTimes(1);
 		expect(items[0].onSelect).not.toHaveBeenCalled();
 		expect(items[1].onSelect).not.toHaveBeenCalled();
+	});
+
+	it('Escape restores focus to the invoking control', async () => {
+		const opener = document.body.appendChild(document.createElement('button'));
+		opener.focus();
+		const view = render(ContextMenu, {
+			props: { items: makeItems([{ label: 'A' }]), x: 0, y: 0, onClose: vi.fn() }
+		});
+		await fireEvent.keyDown(view.getByRole('menu'), { key: 'Escape' });
+		await Promise.resolve();
+
+		expect(opener).toHaveFocus();
+		opener.remove();
 	});
 
 	it('ArrowDown moves focus to next enabled item; wraps from last to first', async () => {
@@ -139,5 +169,21 @@ describe('ContextMenu', () => {
 		// pointerdown on document.body (outside the menu)
 		await fireEvent.pointerDown(document.body);
 		expect(onClose).toHaveBeenCalled();
+	});
+
+	it('does not steal focus from a pointer dismissal target', async () => {
+		const opener = document.body.appendChild(document.createElement('button'));
+		const target = document.body.appendChild(document.createElement('button'));
+		opener.focus();
+		render(ContextMenu, { props: { items: makeItems([{ label: 'A' }]), x: 0, y: 0, onClose: vi.fn() } });
+		await tick();
+
+		await fireEvent.pointerDown(target);
+		target.focus();
+		await Promise.resolve();
+
+		expect(target).toHaveFocus();
+		opener.remove();
+		target.remove();
 	});
 });

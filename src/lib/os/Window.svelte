@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { takeNextFocusReturn } from '$lib/actions/focus-trap.js';
-  import { windowStore, PIN_Z_BASE } from '$lib/os/windows-store.js';
+  import { windowStore, PIN_Z_BASE, readTaskbarHeight } from '$lib/os/windows-store.js';
 
   interface Props {
     id: string;
@@ -78,6 +78,37 @@
     e.preventDefault();
   }
 
+  function onTitlebarKeydown(e: KeyboardEvent) {
+    if (e.target !== e.currentTarget || !e.altKey || e.ctrlKey || e.metaKey || maximized) return;
+    const delta = 16;
+    const direction = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1
+      : e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1
+      : 0;
+    if (direction === 0) return;
+    e.preventDefault();
+    windowStore.focus(id);
+    const taskbarHeight = readTaskbarHeight();
+    if (e.shiftKey) {
+      const maxWidth = Math.max(MIN_W, window.innerWidth - x);
+      const maxHeight = Math.max(MIN_H, window.innerHeight - y - taskbarHeight);
+      const nextWidth = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+        ? Math.min(maxWidth, Math.max(MIN_W, width + direction * delta))
+        : width;
+      const nextHeight = e.key === 'ArrowUp' || e.key === 'ArrowDown'
+        ? Math.min(maxHeight, Math.max(MIN_H, height + direction * delta))
+        : height;
+      windowStore.resize(id, nextWidth, nextHeight);
+    } else {
+      const nextX = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+        ? Math.max(0, Math.min(window.innerWidth - width, x + direction * delta))
+        : x;
+      const nextY = e.key === 'ArrowUp' || e.key === 'ArrowDown'
+        ? Math.max(0, Math.min(window.innerHeight - height - taskbarHeight, y + direction * delta))
+        : y;
+      windowStore.move(id, nextX, nextY);
+    }
+  }
+
   function onResizeMousedown(e: MouseEvent, dir: ResizeDir) {
     if (maximized) return;
     resizeDir = dir;
@@ -147,7 +178,16 @@
     aria-label={title}
     tabindex="-1"
   >
-    <div class="titlebar" onmousedown={onTitlebarMousedown} role="presentation">
+    <div
+      class="titlebar"
+      onmousedown={onTitlebarMousedown}
+      onkeydown={onTitlebarKeydown}
+      role="toolbar"
+      aria-label={maximized
+        ? `${title} window`
+        : `${title} window. Alt plus arrow keys moves; Shift, Alt, and arrow keys resizes.`}
+      tabindex={maximized ? undefined : 0}
+    >
       <div class="win-controls">
         <button
           class="win-control close"
@@ -227,22 +267,32 @@
 
   .win-controls {
     display: flex;
-    gap: 6px;
+    gap: 0;
     flex-shrink: 0;
   }
 
   .win-control {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+    display: grid;
+    place-items: center;
+  }
+
+  .win-control::after {
+    content: '';
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    border: none;
-    cursor: pointer;
-    padding: 0;
+    background: var(--control-color);
   }
 
-  .win-control.close    { background: #ef4444; }
-  .win-control.minimize { background: #c8942a; }
-  .win-control.maximize-btn { background: #28c840; }
+  .win-control.close    { --control-color: #ef4444; }
+  .win-control.minimize { --control-color: #c8942a; }
+  .win-control.maximize-btn { --control-color: #28c840; }
 
   .window.maximized {
     position: fixed;
@@ -272,7 +322,9 @@
     color: var(--color-text-muted);
     font-size: 13px;
     line-height: 1;
-    padding: 2px 4px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
     border-radius: 4px;
     cursor: pointer;
   }

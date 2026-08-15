@@ -88,7 +88,7 @@ test.describe('V2 Act routing (D10-extension / 19A)', () => {
 		await page.click('button[title="Timeline"]');
 		const tl = page.locator('.window[aria-label="Timeline"]');
 		await expect(tl).toBeVisible();
-		await tl.locator(`.act-col-header[data-entity-id="${a.id}"]`).click();
+		await tl.getByRole('button', { name: a.name, exact: true }).click();
 
 		// Side panel must NOT open inside the timeline window — pop-out is focused instead
 		await expect(tl.locator('.entity-detail')).toHaveCount(0);

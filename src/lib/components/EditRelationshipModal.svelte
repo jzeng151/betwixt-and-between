@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { focusTrap } from '$lib/actions/focus-trap.js';
+  import { focusTrap, isActiveFocusTrapTarget } from '$lib/actions/focus-trap.js';
   import type { Relationship } from '$lib/stores/relationships.js';
   import type { RelationshipType } from '$lib/server/db/schema.js';
   import { REL_TYPES } from '$lib/relationship-colors.js';
@@ -93,6 +93,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+	if (!isActiveFocusTrapTarget(e.target)) return;
     if (e.key === 'Escape' && !saving) onClose();
     if (e.key === 'Enter' && !e.shiftKey) handleSave();
   }

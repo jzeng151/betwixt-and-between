@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { preferences } from '$lib/os/preferences-store.js';
   import { applyPreferencePatch } from '$lib/os/preferences-sync.js';
@@ -398,15 +398,24 @@
 
   // ── Connect → rel-form ─────────────────────────────────────────────────────
   let saveError = $state('');
+  let relFormElement = $state<HTMLDivElement>();
 
-  function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
+  async function restoreGraphFocus(id: string) {
+    await tick();
+    canvas.focusNode(id);
+  }
+
+  async function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
     pending = { fromId, toId, sx: screenX, sy: screenY };
     relType = pickDefaultRelType($relationships, fromId, toId);
     relLabel = '';
     saveError = '';
+    await tick();
+    relFormElement?.querySelector<HTMLElement>('select, input, button')?.focus();
   }
 
-  function cancelPending() {
+  async function cancelPending() {
+    const focusId = pending?.toId;
     pending = null;
     relLabel = '';
     relType = 'allied_with';
@@ -414,10 +423,12 @@
     relEndActId = '';
     relRevealedAtPosition = null;
     saveError = '';
+    if (focusId) await restoreGraphFocus(focusId);
   }
 
   async function savePending() {
     if (!pending) return;
+    const focusId = pending.toId;
     if ((relStartActId && !relEndActId) || (!relStartActId && relEndActId)) {
       saveError = 'Set both a start and end act, or neither.';
       return;
@@ -446,6 +457,7 @@
       relStartActId = '';
       relEndActId = '';
       relRevealedAtPosition = null;
+      await restoreGraphFocus(focusId);
     } catch (err) {
       // Surface the failure (was previously silently swallowed). Most
       // common cause: a relationship of this type between this pair
@@ -469,11 +481,18 @@
   }
 
   // ── Delete (second-click confirms) ─────────────────────────────────────────
-  function onDeleteClick(e: MouseEvent, id: string) {
+  function focusAfterDelete(id: string): string {
+    const index = graphNodes.findIndex((node) => node.id === id);
+    return graphNodes[index + 1]?.id ?? graphNodes[index - 1]?.id ?? id;
+  }
+
+  async function onDeleteClick(e: MouseEvent, id: string) {
     e.stopPropagation();
     if (confirmDeleteId === id) {
-      entities.deleteEntity(id);
+      const focusId = focusAfterDelete(id);
+      await entities.deleteEntity(id);
       confirmDeleteId = null;
+      await restoreGraphFocus(focusId);
     } else {
       confirmDeleteId = id;
     }
@@ -523,11 +542,14 @@
 
   async function confirmDelete() {
     if (!deleteConfirm) return;
+    const id = deleteConfirm.id;
+    const focusId = focusAfterDelete(id);
     deleting = true;
     deleteError = '';
     try {
-      await entities.deleteEntity(deleteConfirm.id);
+      await entities.deleteEntity(id);
       deleteConfirm = null;
+      await restoreGraphFocus(focusId);
     } catch {
       deleteError = "Couldn't delete. The server rejected the request.";
     } finally {
@@ -667,6 +689,10 @@
       class="connect-btn gc-no-drag"
       title="Drag to connect"
       onpointerdown={(e) => canvas.startConnect(e, id)}
+	  onclick={(e) => {
+		  e.stopPropagation();
+		  if (e.detail === 0) canvas.startKeyboardConnect(id);
+	  }}
       aria-label="Connect node"
     >◉</button>
     <button
@@ -788,6 +814,7 @@
 {#if pending}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
+	bind:this={relFormElement}
     class="rel-form"
     style="left:{pending.sx}px; top:{pending.sy}px"
     onkeydown={onRelFormKeydown}

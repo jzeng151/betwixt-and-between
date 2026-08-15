@@ -46,7 +46,9 @@
     /** Used by event bars to pick the neutral-gray treatment. */
     isEvent?: boolean;
     /** Click on an internal hairline → split the interval at that fraction. */
-    onSplit?: (fraction: number) => void;
+    onSplit?: (fraction: number, origin: Element) => void;
+    /** Enter or Space on the bar selects it. */
+    onActivate?: () => void;
   }
 
   let {
@@ -58,9 +60,11 @@
     internalBoundaries = [],
     isEvent = false,
     onSplit,
+    onActivate,
   }: Props = $props();
 
   const widthClass: WidthClass = $derived(widthClassForBar(widthPx));
+  const boundaries = $derived([...internalBoundaries].sort((a, b) => a - b));
   const showName = $derived(widthClass !== 'tiny');
   const showNote = $derived(widthClass === 'normal' && note != null && note.trim() !== '');
 
@@ -76,6 +80,12 @@
   const nameBaseline = $derived(showNote ? 'hanging' : 'middle');
 
   let focused = $state(false);
+
+  function activateFromKeyboard(event: KeyboardEvent) {
+    if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    onActivate?.();
+  }
 </script>
 
 <svg
@@ -84,11 +94,8 @@
   width={widthPx}
   height="56"
   style="position: absolute; top: 0; left: 0; overflow: visible;"
-  aria-label={tooltipText}
-  role="button"
-  tabindex="0"
-  onfocus={() => (focused = true)}
-  onblur={() => (focused = false)}
+  aria-label={`${tooltipText} controls`}
+  role="group"
 >
   <!--
     No <title> child — the visible tooltip is rendered by IntervalRow's
@@ -108,56 +115,29 @@
     </clipPath>
   </defs>
 
-  <rect
-    x="0"
-    y={BODY_Y}
-    width={widthPx}
-    height={BODY_H}
-    rx="4"
-    ry="4"
-    fill={color}
-    fill-opacity="0.18"
-    stroke={color}
-    stroke-opacity="0.5"
-    stroke-width="1"
-  />
-
-  <!-- Internal act boundaries — clickable to split the interval (D7/5b A).
-       Hairlines hidden until the bar is hovered to keep the resting state
-       calm. CSS gates visibility via .interval-bar:hover. -->
-  {#each internalBoundaries as fraction (fraction)}
-    <line
-      class="hairline"
-      x1={fraction * widthPx}
-      x2={fraction * widthPx}
-      y1={BODY_Y + 4}
-      y2={BODY_Y + BODY_H - 4}
-      stroke="rgba(255, 255, 255, 0.18)"
+  <g
+    class="bar-activate"
+    role="button"
+    tabindex="0"
+    aria-label={tooltipText}
+    onfocus={() => (focused = true)}
+    onblur={() => (focused = false)}
+    onkeydown={activateFromKeyboard}
+    onclick={(event) => event.detail === 0 && onActivate?.()}
+  >
+    <rect
+      x="0"
+      y={BODY_Y}
+      width={widthPx}
+      height={BODY_H}
+      rx="4"
+      ry="4"
+      fill={color}
+      fill-opacity="0.18"
+      stroke={color}
+      stroke-opacity="0.5"
       stroke-width="1"
-      pointer-events="none"
     />
-    {#if onSplit}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <!-- svelte-ignore a11y_interactive_supports_focus -->
-      <rect
-        class="hairline-hit"
-        role="button"
-        aria-label="Split interval at this act boundary"
-        x={fraction * widthPx - 4}
-        y={BODY_Y}
-        width="8"
-        height={BODY_H}
-        fill="transparent"
-        onclick={(e) => {
-          e.stopPropagation();
-          onSplit?.(fraction);
-        }}
-      >
-        <title>Click to split here</title>
-      </rect>
-    {/if}
-  {/each}
 
   {#if showName}
     <text
@@ -200,6 +180,33 @@
       stroke-width="2"
     />
   {/if}
+  </g>
+
+  <!-- Split controls are siblings of the interval button so accessibility
+       APIs preserve each action instead of flattening nested buttons. -->
+  {#each boundaries as fraction, index (fraction)}
+    {@const center = fraction * widthPx}
+    {@const previousMidpoint = index > 0 ? (boundaries[index - 1] * widthPx + center) / 2 : 0}
+    {@const nextMidpoint = index < boundaries.length - 1 ? (center + boundaries[index + 1] * widthPx) / 2 : widthPx}
+    {@const hitLeft = Math.max(previousMidpoint, center - 12)}
+    {@const hitRight = Math.min(nextMidpoint, center + 12)}
+    <line class="hairline" x1={center} x2={center} y1={BODY_Y + 4} y2={BODY_Y + BODY_H - 4}
+      stroke="rgba(255, 255, 255, 0.18)" stroke-width="1" pointer-events="none" />
+    {#if onSplit}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <rect class="hairline-hit" role="button" tabindex="0"
+        aria-label={`Split interval at ${Math.round(fraction * 100)}% of this interval`}
+        x={hitLeft} y={BODY_Y} width={hitRight - hitLeft} height={BODY_H} fill="transparent"
+        onclick={(e) => { e.stopPropagation(); onSplit?.(fraction, e.currentTarget); }}
+        onkeydown={(e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          e.stopPropagation();
+          onSplit?.(fraction, e.currentTarget);
+        }}
+      ><title>Click to split here</title></rect>
+    {/if}
+  {/each}
 </svg>
 
 <style>
@@ -210,7 +217,7 @@
   .interval-bar:hover {
     filter: brightness(1.15);
   }
-  .interval-bar:focus {
+  .bar-activate:focus {
     outline: none;
   }
   .bar-name {
@@ -225,7 +232,10 @@
     transition: opacity 0.12s ease;
   }
   .interval-bar:hover .hairline,
-  .interval-bar:hover .hairline-hit {
+  .interval-bar:hover .hairline-hit,
+  .interval-bar:focus-within .hairline,
+  .interval-bar:focus-within .hairline-hit,
+  .hairline-hit:focus-visible {
     opacity: 1;
   }
   .hairline-hit {

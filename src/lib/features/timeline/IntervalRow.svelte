@@ -8,6 +8,7 @@
 -->
 
 <script lang="ts">
+	import { tick } from 'svelte';
 	import IntervalBar from '$lib/features/timeline/IntervalBar.svelte';
 	import { tooltip } from '$lib/actions/tooltip.js';
 	import {
@@ -74,6 +75,37 @@
 		previewEnd: number;
 	};
 	let resizing: ResizeState | null = $state(null);
+	const keyboardResizes = new Map<string, {
+		start: number;
+		end: number;
+		writing: boolean;
+		queuedPatch: Parameters<typeof intervalsStore.updateInterval>[1] | null;
+		last: Promise<void>;
+	}>();
+	let keyboardResizeAria = $state<Record<string, { start: number; end: number }>>({});
+	const splittingIntervals = new Set<string>();
+	async function splitInterval(iv: Interval, fraction: number, origin: Element) {
+		if (splittingIntervals.size > 0 || keyboardResizes.size > 0 || resizing || translating) return;
+		splittingIntervals.add(iv.id);
+		const focusOwner = document.activeElement === origin ? origin : null;
+		try {
+			const pending = keyboardResizes.get(iv.id);
+			if (pending) await pending.last;
+			const start = pending?.start ?? iv.startPosition;
+			const end = pending?.end ?? iv.endPosition;
+			const atPosition = fracToPos(posToFrac(start) + fraction * (
+				posToFrac(end) - posToFrac(start)
+			));
+			await intervalsStore.splitIntervalAt(iv.id, atPosition);
+			if (focusOwner && (document.activeElement === focusOwner || document.activeElement === document.body)) {
+				await focusInterval(iv.id);
+			}
+		} catch (err) {
+			onError((err as Error).message);
+		} finally {
+			splittingIntervals.delete(iv.id);
+		}
+	}
 
 	/* Local translate state — drag the bar body to shift it temporally
 	   without changing duration (T5). The `moved` flag (4px threshold)
@@ -96,7 +128,125 @@
 		return scenesByActId.get(act.id)?.length ?? 0;
 	}
 
+	function storyStops(): number[] {
+		const stops = new Set<number>([0]);
+		for (let actIdx = 0; actIdx < actCount; actIdx++) {
+			for (let step = 1; step < 10; step++) stops.add(actIdx + step / 10);
+			const count = sceneCountFor(actIdx);
+			if (count > 1) {
+				for (let sceneIdx = 1; sceneIdx < count; sceneIdx++) {
+					stops.add(actIdx + sceneIdx / count);
+				}
+			}
+			stops.add(actIdx + 1);
+		}
+		return [...stops].sort((a, b) => a - b);
+	}
+
+	function rebaseQueuedPosition(serverPosition: number, sentPosition: number, queuedPosition: number): number {
+		const stops = storyStops();
+		const sentIndex = stops.findIndex((stop) => Math.abs(stop - sentPosition) < 1e-9);
+		const queuedIndex = stops.findIndex((stop) => Math.abs(stop - queuedPosition) < 1e-9);
+		if (sentIndex < 0 || queuedIndex < 0) return serverPosition + queuedPosition - sentPosition;
+		let rebased = serverPosition;
+		for (let i = sentIndex; i < queuedIndex; i++) rebased = nextStoryStop(rebased);
+		for (let i = sentIndex; i > queuedIndex; i--) rebased = previousStoryStop(rebased);
+		return rebased;
+	}
+
+	function resizeWithKeyboard(
+		e: KeyboardEvent,
+		iv: Interval,
+		edge: 'start' | 'end'
+	) {
+		if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+		if (
+			splittingIntervals.size > 0 || resizing || translating ||
+			(keyboardResizes.size > 0 && !keyboardResizes.has(iv.id))
+		) return;
+		e.preventDefault();
+		e.stopPropagation();
+		let state = keyboardResizes.get(iv.id);
+		const isNew = !state;
+		if (!state) {
+			const settled = Promise.resolve();
+			state = { start: iv.startPosition, end: iv.endPosition, writing: false, queuedPatch: null, last: settled };
+		}
+		const current = edge === 'start' ? state.start : state.end;
+		const stops = storyStops();
+		const next = e.key === 'ArrowLeft'
+			? [...stops].reverse().find((stop) => stop < current - 1e-9)
+			: stops.find((stop) => stop > current + 1e-9);
+		if (next == null || (edge === 'start' ? next >= state.end : next <= state.start)) return;
+		const patch = edge === 'start'
+			? positionToStartFKs(next, acts, scenesByActId)
+			: positionToEndFKs(next, acts, scenesByActId);
+		if (!patch) return;
+		if (edge === 'start') state.start = next;
+		else state.end = next;
+		if (isNew) {
+			keyboardResizes.set(iv.id, state);
+			onLockAcquire();
+		}
+		keyboardResizeAria = { ...keyboardResizeAria, [iv.id]: { start: state.start, end: state.end } };
+		state.queuedPatch = { ...state.queuedPatch, ...patch };
+		if (state.writing) return;
+		state.writing = true;
+		const request = (async () => {
+			while (state.queuedPatch) {
+				const nextPatch = state.queuedPatch;
+				state.queuedPatch = null;
+				const sentStart = state.start;
+				const sentEnd = state.end;
+				const updated = await intervalsStore.updateInterval(iv.id, nextPatch);
+				let queuedPatch = state.queuedPatch as Parameters<typeof intervalsStore.updateInterval>[1] | null;
+				if (queuedPatch?.startPosition !== undefined) {
+					state.start = rebaseQueuedPosition(updated.startPosition, sentStart, state.start);
+					queuedPatch = {
+						...queuedPatch,
+						...positionToStartFKs(state.start, acts, scenesByActId)
+					};
+				} else state.start = updated.startPosition;
+				if (queuedPatch?.endPosition !== undefined) {
+					state.end = rebaseQueuedPosition(updated.endPosition, sentEnd, state.end);
+					queuedPatch = {
+						...queuedPatch,
+						...positionToEndFKs(state.end, acts, scenesByActId)
+					};
+				} else state.end = updated.endPosition;
+				state.queuedPatch = queuedPatch;
+				keyboardResizeAria = { ...keyboardResizeAria, [iv.id]: { start: state.start, end: state.end } };
+			}
+		})();
+		state.last = request;
+		void request.catch((err) => onError((err as Error).message)).finally(() => {
+			if (keyboardResizes.get(iv.id)?.last === request) {
+				keyboardResizes.delete(iv.id);
+				onLockRelease();
+				const { [iv.id]: _, ...remaining } = keyboardResizeAria;
+				keyboardResizeAria = remaining;
+			}
+		});
+	}
+
+	function previousStoryStop(position: number): number {
+		return [...storyStops()].reverse().find((stop) => stop < position - 1e-9) ?? position;
+	}
+
+	function nextStoryStop(position: number): number {
+		return storyStops().find((stop) => stop > position + 1e-9) ?? position;
+	}
+
+	async function focusInterval(intervalId: string) {
+		await tick();
+		[...(rowEl?.querySelectorAll<HTMLElement>('[data-interval-id]') ?? [])]
+			.find((element) => element.dataset.intervalId === intervalId)
+			?.querySelector<HTMLElement>('.bar-activate')
+			?.focus();
+	}
+
 	function startResize(e: PointerEvent, iv: Interval, edge: 'start' | 'end') {
+		if (keyboardResizes.size > 0 || splittingIntervals.size > 0 || resizing || translating) return;
 		e.preventDefault();
 		e.stopPropagation();
 
@@ -176,6 +326,7 @@
 		   the click started on a resize or hairline-split target. */
 		if (e.button !== 0) return;
 		if ($playhead != null) return;
+		if (splittingIntervals.size > 0 || keyboardResizes.size > 0 || resizing || translating) return;
 		const target = e.target as HTMLElement;
 		if (target.closest('.resize-handle, .hairline-hit')) return;
 		e.preventDefault();
@@ -262,28 +413,32 @@
 
 <div class="row" data-entity-id={entity.id} bind:this={rowEl}>
 	{#each intervals as iv (iv.id)}
+		{@const keyboardResize = keyboardResizeAria[iv.id]}
 		{@const previewStart =
-			resizing?.intervalId === iv.id
+			keyboardResize?.start ?? (resizing?.intervalId === iv.id
 				? resizing.previewStart
 				: translating?.intervalId === iv.id && translating.moved
 					? translating.previewStart
-					: iv.startPosition}
+					: iv.startPosition)}
 		{@const previewEnd =
-			resizing?.intervalId === iv.id
+			keyboardResize?.end ?? (resizing?.intervalId === iv.id
 				? resizing.previewEnd
 				: translating?.intervalId === iv.id && translating.moved
 					? translating.previewEnd
-					: iv.endPosition}
+					: iv.endPosition)}
 		{@const span = previewEnd - previewStart}
 		{@const leftFrac = posToFrac(previewStart)}
 		{@const rightFrac = posToFrac(previewEnd)}
 		{@const leftPct = leftFrac * 100}
 		{@const widthPct = (rightFrac - leftFrac) * 100}
 		{@const widthPx = pxForRange(previewStart, previewEnd)}
+		{@const ariaStart = keyboardResize?.start ?? iv.startPosition}
+		{@const ariaEnd = keyboardResize?.end ?? iv.endPosition}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="bar-wrapper"
+			data-interval-id={iv.id}
 			class:resizing={resizing?.intervalId === iv.id}
 			class:translating={translating?.intervalId === iv.id && translating.moved}
 			style="left: {leftPct}%; width: {widthPct}%;"
@@ -325,28 +480,34 @@
 					return boundaryPositions.map((p) => (posToFrac(p) - sf) / span);
 				})()}
 				isEvent={entity.type === 'Event'}
-				onSplit={async (fraction) => {
-					const atPosition = iv.startPosition + fraction * (iv.endPosition - iv.startPosition);
-					try {
-						await intervalsStore.splitIntervalAt(iv.id, atPosition);
-					} catch (err) {
-						onError((err as Error).message);
-					}
-				}}
-			/>
+				onSplit={(fraction, origin) => void splitInterval(iv, fraction, origin)}
+					onActivate={() => onSelect?.(entity.id, iv.id)}
+				/>
 			<div
 				class="resize-handle resize-handle--left"
-				role="button"
-				aria-label="Drag to resize interval start"
-				tabindex="-1"
-				onpointerdown={(e) => startResize(e, iv, 'start')}
+				role="slider"
+				aria-label="Interval start. Use Left and Right Arrow keys to resize"
+				aria-orientation="horizontal"
+				aria-valuemin={0}
+				aria-valuemax={Math.max(ariaStart, previousStoryStop(ariaEnd))}
+				aria-valuenow={ariaStart}
+				style:clip-path={`inset(0 ${Math.max(0, (24 - widthPx) / 2)}px 0 0)`}
+					tabindex="0"
+					onpointerdown={(e) => startResize(e, iv, 'start')}
+					onkeydown={(e) => void resizeWithKeyboard(e, iv, 'start')}
 			></div>
 			<div
 				class="resize-handle resize-handle--right"
-				role="button"
-				aria-label="Drag to resize interval end"
-				tabindex="-1"
-				onpointerdown={(e) => startResize(e, iv, 'end')}
+				role="slider"
+				aria-label="Interval end. Use Left and Right Arrow keys to resize"
+				aria-orientation="horizontal"
+				aria-valuemin={Math.min(ariaEnd, nextStoryStop(ariaStart))}
+				aria-valuemax={actCount}
+				aria-valuenow={ariaEnd}
+				style:clip-path={`inset(0 0 0 ${Math.max(0, (24 - widthPx) / 2)}px)`}
+					tabindex="0"
+					onpointerdown={(e) => startResize(e, iv, 'end')}
+					onkeydown={(e) => void resizeWithKeyboard(e, iv, 'end')}
 			></div>
 		</div>
 	{/each}
@@ -410,12 +571,12 @@
 	}
 	/* Resize handles. Mockup spec: 4px wide vertical bar in amber, only
 	   visible on hover/focus or while resizing. We render a wider hit-box
-	   (10px) for ergonomics but the visible mark is 4px via inner gradient. */
+	   for ergonomics but the visible mark stays 4px. */
 	.resize-handle {
 		position: absolute;
 		top: 14px;
 		bottom: 14px;
-		width: 10px;
+		width: 24px;
 		cursor: ew-resize;
 		z-index: 2;
 		opacity: 0;
