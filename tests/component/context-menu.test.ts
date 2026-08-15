@@ -37,6 +37,23 @@ describe('ContextMenu', () => {
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
+	it('restores its opener when a selection has no focus destination', async () => {
+		const opener = document.body.appendChild(document.createElement('button'));
+		opener.focus();
+		let unmount = () => {};
+		const view = render(ContextMenu, {
+			props: { items: makeItems([{ label: 'Update layout' }]), x: 0, y: 0, onClose: () => unmount() }
+		});
+		unmount = view.unmount;
+		await tick();
+
+		await fireEvent.click(view.getByText('Update layout'));
+		await Promise.resolve();
+
+		expect(opener).toHaveFocus();
+		opener.remove();
+	});
+
 	it('clicking an enabled item fires its onSelect', async () => {
 		const items = makeItems([{ label: 'Pick me' }, { label: 'Other' }]);
 		const { getByText } = render(ContextMenu, {

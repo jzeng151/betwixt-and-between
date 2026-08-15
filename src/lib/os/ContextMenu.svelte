@@ -36,7 +36,10 @@
        selection should follow the same shape so callsites don't have to wrap
        every onSelect with an explicit close. */
     onClose();
-    queueMicrotask(clearNextFocusTrapReturn);
+    queueMicrotask(() => {
+      clearNextFocusTrapReturn();
+      if (document.activeElement === document.body && returnFocus?.isConnected) returnFocus.focus();
+    });
   }
 
   function focusItem(i: number) {
