@@ -208,8 +208,10 @@ describe('entities.createEntity', () => {
 		const initial = entities.load();
 		const firstCreate = entities.createEntity('Character', 'First');
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-		await entities.createEntities([{ type: 'Scene', name: 'Second' }]);
+		const secondCreate = entities.createEntities([{ type: 'Scene', name: 'Second' }]);
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
 		resolveFirstReplacement(makeResponse([first]));
+		await secondCreate;
 		resolveInitial(makeResponse([]));
 		await Promise.all([initial, firstCreate]);
 
@@ -327,7 +329,7 @@ describe('entities.updateEntity', () => {
 		expect(get(entities)[0].name).toBe('A');
 	});
 
-	it('replaces a mutation refresh superseded by a successful update', async () => {
+	it('preserves a mutation refresh before applying a successful update', async () => {
 		const seeded = [entity({ id: 'a', name: 'A' }), entity({ id: 'b', name: 'B old' })];
 		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
 		await entities.load();
@@ -337,13 +339,14 @@ describe('entities.updateEntity', () => {
 		const fetchMock = vi.fn()
 			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveMutationRefresh = resolve; }))
 			.mockResolvedValueOnce(makeResponse(updatedA))
-			.mockResolvedValueOnce(makeResponse([updatedA, updatedB]));
+			.mockResolvedValueOnce(makeResponse('replacement unavailable', false, 503));
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 		const refresh = entities.refreshAfterMutation();
 		const update = entities.updateEntity('a', { name: 'A saved' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		resolveMutationRefresh(makeResponse([seeded[0], updatedB]));
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-		resolveMutationRefresh(makeResponse(seeded));
 		await Promise.all([refresh, update]);
 
 		expect(get(entities).map((item) => item.name)).toEqual(['A saved', 'B reordered']);
@@ -418,7 +421,7 @@ describe('entities.updateEntity', () => {
 			.mockResolvedValueOnce(makeResponse(savedB))
 			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRecovery = resolve; }))
 			.mockResolvedValueOnce(makeResponse(savedC))
-			.mockResolvedValueOnce(makeResponse([seeded[0], savedB, savedC]));
+			.mockResolvedValueOnce(makeResponse('replacement unavailable', false, 503));
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 		const rejected = entities.updateEntity('a', { name: 'A rejected' });
@@ -430,8 +433,9 @@ describe('entities.updateEntity', () => {
 		const externalRefresh = entities.load({ fresh: true });
 		expect(fetchMock).toHaveBeenCalledTimes(4);
 		const later = entities.updateEntity('c', { name: 'C saved' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+		resolveRecovery(makeResponse([seeded[0], savedB, seeded[2]]));
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
-		resolveRecovery(makeResponse([entity({ id: 'a', name: 'A rejected' }), savedB, seeded[2]]));
 
 		await Promise.all([saved, later, externalRefresh]);
 		expect(await rejection).toBeInstanceOf(Error);

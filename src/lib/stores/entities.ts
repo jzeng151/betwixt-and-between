@@ -106,7 +106,25 @@ function createEntityStore() {
 		const pendingRollback = rollbackPromise;
 		let needsFreshSnapshot = loadPromise !== null && !pendingRollback;
 		if (pendingRollback) await pendingRollback.catch(() => { needsFreshSnapshot = true; });
+		const pendingReplacement = replacementPromise;
+		if (pendingReplacement) {
+			needsFreshSnapshot = true;
+			await pendingReplacement.catch(() => {});
+		}
 		if (loadPromise) needsFreshSnapshot = true;
+		markMutationReady();
+		return needsFreshSnapshot;
+	}
+	async function settleSnapshotBeforeMutation(): Promise<boolean> {
+		const pendingGeneration = loadGeneration;
+		let needsFreshSnapshot = false;
+		if (rollbackPromise) await rollbackPromise.catch(() => { needsFreshSnapshot = true; });
+		while (replacementPromise) {
+			needsFreshSnapshot = true;
+			await replacementPromise.catch(() => {});
+		}
+		if (pendingGeneration !== loadGeneration) needsFreshSnapshot = true;
+		invalidateLoadAfterMutation();
 		return needsFreshSnapshot;
 	}
 	function upsertEntities(created: Entity[]) {
@@ -143,7 +161,6 @@ function createEntityStore() {
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity = await res.json();
 		const needsFreshSnapshot = await settleSnapshotBeforeCreate();
-		markMutationReady();
 		upsertEntities([created]);
 		if (needsFreshSnapshot) {
 			entitySnapshotReady.set(true);
@@ -175,7 +192,6 @@ function createEntityStore() {
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity[] = await res.json();
 		const needsFreshSnapshot = await settleSnapshotBeforeCreate();
-		markMutationReady();
 		upsertEntities(created);
 		if (needsFreshSnapshot) {
 			entitySnapshotReady.set(true);
@@ -247,12 +263,7 @@ function createEntityStore() {
 			}
 			throw err;
 		}
-		const pendingSnapshot = rollbackPromise;
-		const pendingGeneration = loadGeneration;
-		let needsFreshSnapshot = replacementPromise !== null;
-		if (pendingSnapshot) await pendingSnapshot.catch(() => { needsFreshSnapshot = true; });
-		if (pendingGeneration !== loadGeneration) needsFreshSnapshot = true;
-		invalidateLoadAfterMutation();
+		const needsFreshSnapshot = await settleSnapshotBeforeMutation();
 		// Whether THIS patch was a structural Act/Scene change that the server
 		// recomputes interval bounds for. Captured before the supersede check so a
 		// later non-structural edit (e.g. a rename) can't make us skip the refresh.
@@ -306,12 +317,7 @@ function createEntityStore() {
 			await rollbackSnapshot();
 			throw new Error(await res.text());
 		}
-		const pendingSnapshot = rollbackPromise;
-		const pendingGeneration = loadGeneration;
-		let needsFreshSnapshot = replacementPromise !== null;
-		if (pendingSnapshot) await pendingSnapshot.catch(() => { needsFreshSnapshot = true; });
-		if (pendingGeneration !== loadGeneration) needsFreshSnapshot = true;
-		invalidateLoadAfterMutation();
+		const needsFreshSnapshot = await settleSnapshotBeforeMutation();
 		update((all) => all.filter((e) => e.id !== id));
 		if (needsFreshSnapshot) await replaceSnapshot().catch(() => {});
 		// Server-side delete cascades to intervals (entity_id / start_act_id /
