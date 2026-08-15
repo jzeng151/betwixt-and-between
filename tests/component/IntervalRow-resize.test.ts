@@ -134,28 +134,33 @@ describe('IntervalRow resize handles', () => {
 				onLockAcquire: vi.fn(), onLockRelease: vi.fn(), onError: vi.fn()
 			}
 		});
-		const start = getAllByRole('slider')[0];
+		const [start, end] = getAllByRole('slider');
 
 		await fireEvent.keyDown(start, { key: 'ArrowRight' });
+		await fireEvent.keyDown(end, { key: 'ArrowLeft' });
 		await fireEvent.keyDown(start, { key: 'ArrowRight' });
-		await fireEvent.keyDown(start, { key: 'ArrowRight' });
-		await waitFor(() => expect(start).toHaveAttribute('aria-valuenow', '0.3'));
-		expect(start).toHaveAttribute('aria-valuemax', '0.9');
+		await waitFor(() => expect(start).toHaveAttribute('aria-valuenow', '0.2'));
+		expect(end).toHaveAttribute('aria-valuenow', '0.9');
+		expect(start).toHaveAttribute('aria-valuemax', '0.8');
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 		expect(fetchMock.mock.calls[0][1].body).toContain('"startPosition":0.1');
 		resolveFirst({ ok: true, json: async () => ({ ...interval, startPosition: 0.1 }) } as Response);
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-		expect(fetchMock.mock.calls[1][1].body).toContain('"startPosition":0.3');
+		expect(fetchMock.mock.calls[1][1].body).toContain('"startPosition":0.2');
+		expect(fetchMock.mock.calls[1][1].body).toContain('"endPosition":0.9');
 	});
 
-	it('ignores keyboard resize while the pointer owns the interval', async () => {
+	it('keeps resize and translation pointer writes mutually exclusive', async () => {
 		const act = { id: 'act-1', type: 'Act', name: 'Act One' } as Entity;
 		const interval = {
 			id: 'interval-1', entityId: 'character-1', startActId: act.id, endActId: act.id,
 			startSceneId: null, endSceneId: null, startPosition: 0, endPosition: 1
 		} as Interval;
-		const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => interval });
+		const resolvers: Array<(response: Response) => void> = [];
+		const fetchMock = vi.fn(() => new Promise<Response>((resolve) => resolvers.push(resolve)));
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const onLockAcquire = vi.fn();
+		const onLockRelease = vi.fn();
 		const view = render(IntervalRow, {
 			props: {
 				entity: { id: 'character-1', type: 'Character', name: 'Mara' } as Entity,
@@ -163,16 +168,34 @@ describe('IntervalRow resize handles', () => {
 				scenesByActId: new Map(), colorFor: () => '#c8942a', dataNoteSnippet: () => null,
 				tooltipFor: () => 'Mara interval', posToFrac: (value: number) => value,
 				fracToPos: (value: number) => value, pxForRange: () => 100,
-				onLockAcquire: vi.fn(), onLockRelease: vi.fn(), onError: vi.fn()
+				onLockAcquire, onLockRelease, onError: vi.fn()
 			}
 		});
 		const start = view.getAllByRole('slider')[0];
+		const bar = view.container.querySelector<HTMLElement>('.bar-wrapper')!;
+		bar.setPointerCapture = vi.fn();
+		bar.releasePointerCapture = vi.fn();
 
 		await fireEvent.pointerDown(start, { pointerId: 1, clientX: 0 });
 		await fireEvent.keyDown(start, { key: 'ArrowRight' });
-
 		expect(fetchMock).not.toHaveBeenCalled();
-		await fireEvent.pointerUp(window, { pointerId: 1, clientX: 0 });
+		await fireEvent.pointerMove(window, { pointerId: 1, clientX: 10 });
+		await fireEvent.pointerUp(window, { pointerId: 1, clientX: 10 });
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+		await fireEvent.pointerDown(bar, { pointerId: 2, button: 0, clientX: 10 });
+		expect(onLockAcquire).toHaveBeenCalledOnce();
+		resolvers[0]({ ok: true, json: async () => ({ ...interval, startPosition: 0.1 }) } as Response);
+		await waitFor(() => expect(bar).not.toHaveClass('resizing'));
+
+		await fireEvent.pointerDown(bar, { pointerId: 3, button: 0, clientX: 10 });
+		expect(onLockAcquire).toHaveBeenCalledTimes(2);
+		await fireEvent.pointerMove(bar, { pointerId: 3, button: 0, clientX: 20 });
+		await fireEvent.pointerUp(bar, { pointerId: 3, button: 0, clientX: 20 });
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		await fireEvent.pointerDown(start, { pointerId: 4, clientX: 20 });
+		expect(onLockAcquire).toHaveBeenCalledTimes(2);
+		resolvers[1]({ ok: true, json: async () => interval } as Response);
+		await waitFor(() => expect(onLockRelease).toHaveBeenCalledTimes(2));
 	});
 
 	it('returns focus to the interval after a keyboard split', async () => {

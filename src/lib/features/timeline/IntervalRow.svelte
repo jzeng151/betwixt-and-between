@@ -172,7 +172,7 @@
 		else state.end = next;
 		if (isNew) keyboardResizes.set(iv.id, state);
 		keyboardResizeAria = { ...keyboardResizeAria, [iv.id]: { start: state.start, end: state.end } };
-		state.queuedPatch = patch;
+		state.queuedPatch = { ...state.queuedPatch, ...patch };
 		if (state.writing) return;
 		state.writing = true;
 		const request = (async () => {
@@ -209,7 +209,7 @@
 	}
 
 	function startResize(e: PointerEvent, iv: Interval, edge: 'start' | 'end') {
-		if (keyboardResizes.has(iv.id) || splittingIntervals.has(iv.id)) return;
+		if (keyboardResizes.has(iv.id) || splittingIntervals.has(iv.id) || translating?.intervalId === iv.id) return;
 		e.preventDefault();
 		e.stopPropagation();
 
@@ -289,7 +289,7 @@
 		   the click started on a resize or hairline-split target. */
 		if (e.button !== 0) return;
 		if ($playhead != null) return;
-		if (splittingIntervals.has(iv.id) || keyboardResizes.has(iv.id)) return;
+		if (splittingIntervals.has(iv.id) || keyboardResizes.has(iv.id) || resizing?.intervalId === iv.id) return;
 		const target = e.target as HTMLElement;
 		if (target.closest('.resize-handle, .hairline-hit')) return;
 		e.preventDefault();
