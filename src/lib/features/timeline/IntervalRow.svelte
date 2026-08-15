@@ -78,7 +78,8 @@
 	const keyboardResizes = new Map<string, {
 		start: number;
 		end: number;
-		tail: Promise<void>;
+		writing: boolean;
+		queuedPatch: Parameters<typeof intervalsStore.updateInterval>[1] | null;
 		last: Promise<void>;
 	}>();
 	let keyboardResizeAria = $state<Record<string, { start: number; end: number }>>({});
@@ -148,14 +149,14 @@
 		edge: 'start' | 'end'
 	) {
 		if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
-		if (splittingIntervals.has(iv.id)) return;
+		if (splittingIntervals.has(iv.id) || resizing?.intervalId === iv.id) return;
 		e.preventDefault();
 		e.stopPropagation();
 		let state = keyboardResizes.get(iv.id);
 		const isNew = !state;
 		if (!state) {
 			const settled = Promise.resolve();
-			state = { start: iv.startPosition, end: iv.endPosition, tail: settled, last: settled };
+			state = { start: iv.startPosition, end: iv.endPosition, writing: false, queuedPatch: null, last: settled };
 		}
 		const current = edge === 'start' ? state.start : state.end;
 		const stops = storyStops();
@@ -171,8 +172,16 @@
 		else state.end = next;
 		if (isNew) keyboardResizes.set(iv.id, state);
 		keyboardResizeAria = { ...keyboardResizeAria, [iv.id]: { start: state.start, end: state.end } };
-		const request = state.tail.then(async () => { await intervalsStore.updateInterval(iv.id, patch); });
-		state.tail = request.catch(() => {});
+		state.queuedPatch = patch;
+		if (state.writing) return;
+		state.writing = true;
+		const request = (async () => {
+			while (state.queuedPatch) {
+				const nextPatch = state.queuedPatch;
+				state.queuedPatch = null;
+				await intervalsStore.updateInterval(iv.id, nextPatch);
+			}
+		})();
 		state.last = request;
 		void request.catch((err) => onError((err as Error).message)).finally(() => {
 			if (keyboardResizes.get(iv.id)?.last === request) {
