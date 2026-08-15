@@ -571,6 +571,7 @@
 	}
 
 	function activateEdgeFromKeyboard(edge: GraphEdge & { x1: number; y1: number; x2: number; y2: number }) {
+		connecting = null;
 		if (edge.clickable && onEdgeClick) {
 			onEdgeClick(edge.id);
 			return;
@@ -596,6 +597,7 @@
 	) {
 		if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
 		e.preventDefault();
+		connecting = null;
 		if (!onEdgeContextMenu) return;
 		const rect = viewport.getBoundingClientRect();
 		onEdgeContextMenu(edge.id, rect.left + (edge.x1 + edge.x2) / 2, rect.top + (edge.y1 + edge.y2) / 2);

@@ -294,6 +294,29 @@ describe('GraphCanvas edge click gate', () => {
 		expect(onEdgeClick).toHaveBeenCalledWith('edge-clickable');
 	});
 
+	it('cancels keyboard connections before edge actions', async () => {
+		const onEdgeClick = vi.fn();
+		const onEdgeContextMenu = vi.fn();
+		const onNodeOpen = vi.fn();
+		const onConnect = vi.fn();
+		const view = renderCanvas(onEdgeClick, onNodeOpen, undefined, onEdgeContextMenu, undefined, onConnect);
+		await tick();
+		const action = view.container.querySelector<HTMLButtonElement>('.edge-keyboard-action')!;
+		const target = view.container.querySelector('[data-entity-id="other"]') as HTMLElement;
+
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.keyDown(action, { key: 'ContextMenu' });
+		await fireEvent.keyDown(target, { key: 'Enter' });
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.click(action);
+		await fireEvent.keyDown(target, { key: 'Enter' });
+
+		expect(onEdgeContextMenu).toHaveBeenCalled();
+		expect(onEdgeClick).toHaveBeenCalledWith('edge-clickable');
+		expect(onConnect).not.toHaveBeenCalled();
+		expect(onNodeOpen).toHaveBeenCalledTimes(2);
+	});
+
 	it('pans an off-screen edge action into view on focus', async () => {
 		const { container } = renderCanvas(vi.fn());
 		const viewport = container.querySelector('.viewport') as HTMLElement;
