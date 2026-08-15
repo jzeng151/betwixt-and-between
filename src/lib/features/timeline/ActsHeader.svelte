@@ -222,7 +222,7 @@
 	const SCENE_MIME = 'application/x-betwixt-scene-move';
 
 	let dragActId: string | null = $state(null);
-	let actDropTarget: { idx: number; side: 'left' | 'right' } | null = $state(null);
+	let actDropTarget: { idx: number; actId: string; side: 'left' | 'right' } | null = $state(null);
 	let keyboardActOrder: string[] | null = $state(null);
 	let keyboardActPending = 0;
 	let keyboardActTail: Promise<void> = Promise.resolve();
@@ -249,7 +249,7 @@
 		e.dataTransfer.dropEffect = 'move';
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		const side: 'left' | 'right' = e.clientX - rect.left < rect.width / 2 ? 'left' : 'right';
-		actDropTarget = { idx, side };
+		actDropTarget = { idx, actId: acts[idx].id, side };
 	}
 	async function moveAct(actId: string, targetPos: number) {
 		const movedFromIdx = acts.findIndex((act) => act.id === actId);
@@ -297,7 +297,7 @@
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === ACT_MIME)) return;
 		e.preventDefault();
 		const movedId = e.dataTransfer.getData(ACT_MIME);
-		const target = actDropTarget ?? { idx, side: 'left' as const };
+		const target = actDropTarget ?? { idx, actId: acts[idx].id, side: 'left' as const };
 		actDropTarget = null;
 		dragActId = null;
 		if (!movedId) return;
@@ -306,7 +306,9 @@
 		if (movedFromIdx < 0) return;
 		// Convert (idx, side) into a target position. When moving rightward,
 		// removal of the moved item from the front shifts indices by one.
-		let targetPos = target.side === 'left' ? target.idx : target.idx + 1;
+		const targetIdx = order.indexOf(target.actId);
+		if (targetIdx < 0) return;
+		let targetPos = target.side === 'left' ? targetIdx : targetIdx + 1;
 		if (movedFromIdx < targetPos) targetPos -= 1;
 		if (targetPos === movedFromIdx) {
 			if (keyboardActPending === 0) keyboardActOrder = null;
@@ -325,7 +327,7 @@
 
 	// ── Scene drag-reorder + cross-act move ──────────────────────────────────
 	let dragSceneId: string | null = $state(null);
-	let sceneDropTarget: { actId: string; idx: number } | null = $state(null);
+	let sceneDropTarget: { actId: string; idx: number; beforeSceneId: string | null } | null = $state(null);
 	let keyboardSceneOrder: Map<string, string[]> | null = $state(null);
 	let keyboardScenePending = 0;
 	let keyboardSceneTail: Promise<void> = Promise.resolve();
@@ -351,7 +353,7 @@
 		const relX = e.clientX - rect.left;
 		const cellWidth = list.length > 0 ? rect.width / list.length : rect.width;
 		const idx = Math.max(0, Math.min(Math.floor(relX / cellWidth + 0.5), list.length));
-		sceneDropTarget = { actId, idx };
+		sceneDropTarget = { actId, idx, beforeSceneId: list[idx]?.id ?? null };
 	}
 	async function moveScene(sceneId: string, targetActId: string, targetPos: number, restoreFocus = false) {
 		const focusOwner = restoreFocus && document.activeElement instanceof HTMLElement &&
@@ -441,7 +443,7 @@
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === SCENE_MIME)) return;
 		e.preventDefault();
 		const movedId = e.dataTransfer.getData(SCENE_MIME);
-		const target = sceneDropTarget ?? { actId, idx: scenesByActId.get(actId)?.length ?? 0 };
+		const target = sceneDropTarget ?? { actId, idx: scenesByActId.get(actId)?.length ?? 0, beforeSceneId: null };
 		sceneDropTarget = null;
 		dragSceneId = null;
 		if (!movedId) return;
@@ -451,7 +453,11 @@
 		const sourceEntry = [...order].find(([, ids]) => ids.includes(movedId));
 		if (!sourceEntry) return;
 		const [sourceActId, source] = sourceEntry;
-		let targetPos = target.idx;
+		const targetOrder = order.get(target.actId) ?? [];
+		let targetPos = target.beforeSceneId == null
+			? targetOrder.length
+			: targetOrder.indexOf(target.beforeSceneId);
+		if (targetPos < 0) targetPos = targetOrder.length;
 		if (sourceActId === target.actId) {
 			// Same-act reorder: account for the moved scene being removed
 			// from its current position before reinsertion.

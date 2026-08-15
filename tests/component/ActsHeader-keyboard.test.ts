@@ -357,6 +357,52 @@ describe('ActsHeader keyboard controls', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
+	it('resolves pointer drop targets against the optimistic act order', async () => {
+		const acts = ['One', 'Two', 'Three'].map((name, index) => ({
+			id: `act-${index + 1}`, type: 'Act', name
+		})) as Entity[];
+		let resolveFirst!: (response: Response) => void;
+		const patches: Array<Record<string, unknown>> = [];
+		const fetchMock = vi.fn((url, options) => {
+			if (options?.method === 'PATCH') {
+				patches.push(JSON.parse(String(options.body)));
+				if (patches.length === 1) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+			}
+			return Promise.resolve({ ok: true, json: async () => [] } as Response);
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const view = render(ActsHeader, {
+			props: { acts, scenesByActId: new Map(), weights: [1, 1, 1], trackWidthPx: 600 }
+		});
+		const values = new Map<string, string>();
+		const dataTransfer = {
+			types: ['application/x-betwixt-act-reorder'], effectAllowed: 'move', dropEffect: 'move',
+			setData: (type: string, value: string) => values.set(type, value),
+			getData: (type: string) => values.get(type) ?? ''
+		};
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowRight' });
+		await fireEvent.dragStart(view.getByRole('slider', { name: /Reorder Three/ }), { dataTransfer });
+		const target = view.container.querySelector<HTMLElement>('.act-col-header[data-entity-id="act-2"]')!;
+		target.getBoundingClientRect = () => ({
+			x: 0, y: 0, left: 0, top: 0, right: 100, bottom: 40, width: 100, height: 40,
+			toJSON: () => ({})
+		}) as DOMRect;
+		const dragOver = new Event('dragover', { bubbles: true, cancelable: true });
+		Object.defineProperties(dragOver, {
+			dataTransfer: { value: dataTransfer },
+			clientX: { value: 1 }
+		});
+		target.dispatchEvent(dragOver);
+		const drop = new Event('drop', { bubbles: true, cancelable: true });
+		Object.defineProperty(drop, 'dataTransfer', { value: dataTransfer });
+		target.dispatchEvent(drop);
+		resolveFirst({ ok: true, json: async () => ({}) } as Response);
+
+		await waitFor(() => expect(patches).toHaveLength(2));
+		expect(patches[1]).toEqual({ position: 0 });
+	});
+
 	it('preserves keyboard width updates from adjacent handles', async () => {
 		const acts = [
 			{ id: 'act-1', type: 'Act', name: 'One' },
