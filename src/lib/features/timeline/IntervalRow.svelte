@@ -87,13 +87,14 @@
 		if (splittingIntervals.has(iv.id)) return;
 		splittingIntervals.add(iv.id);
 		const focusOwner = document.activeElement === origin ? origin : null;
-		const pending = keyboardResizeAria[iv.id];
-		const start = pending?.start ?? iv.startPosition;
-		const end = pending?.end ?? iv.endPosition;
-		const atPosition = fracToPos(posToFrac(start) + fraction * (
-			posToFrac(end) - posToFrac(start)
-		));
 		try {
+			const pending = keyboardResizes.get(iv.id);
+			if (pending) await pending.last;
+			const start = pending?.start ?? iv.startPosition;
+			const end = pending?.end ?? iv.endPosition;
+			const atPosition = fracToPos(posToFrac(start) + fraction * (
+				posToFrac(end) - posToFrac(start)
+			));
 			await intervalsStore.splitIntervalAt(iv.id, atPosition);
 			if (focusOwner && (document.activeElement === focusOwner || document.activeElement === document.body)) {
 				await focusInterval(iv.id);
@@ -147,6 +148,7 @@
 		edge: 'start' | 'end'
 	) {
 		if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+		if (splittingIntervals.has(iv.id)) return;
 		e.preventDefault();
 		e.stopPropagation();
 		let state = keyboardResizes.get(iv.id);
@@ -198,6 +200,7 @@
 	}
 
 	function startResize(e: PointerEvent, iv: Interval, edge: 'start' | 'end') {
+		if (keyboardResizes.has(iv.id) || splittingIntervals.has(iv.id)) return;
 		e.preventDefault();
 		e.stopPropagation();
 
