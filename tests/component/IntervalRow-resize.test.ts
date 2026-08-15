@@ -63,7 +63,7 @@ describe('IntervalRow resize handles', () => {
 		} as Interval;
 		globalThis.fetch = vi.fn().mockResolvedValue({
 			ok: true,
-			json: async () => interval
+			json: async () => ({ ...interval, startPosition: 0.1 })
 		}) as unknown as typeof fetch;
 		const { getAllByRole, container } = render(IntervalRow, {
 			props: {
@@ -153,6 +153,37 @@ describe('IntervalRow resize handles', () => {
 		expect(fetchMock.mock.calls[1][1].body).toContain('"startPosition":0.2');
 		expect(fetchMock.mock.calls[1][1].body).toContain('"endPosition":0.9');
 		await waitFor(() => expect(onLockRelease).toHaveBeenCalledOnce());
+	});
+
+	it('rebases a queued resize on an overlap-merged response', async () => {
+		const act = { id: 'act-1', type: 'Act', name: 'Act One' } as Entity;
+		const interval = {
+			id: 'interval-1', entityId: 'character-1', startActId: act.id, endActId: act.id,
+			startSceneId: null, endSceneId: null, startPosition: 0, endPosition: 0.5
+		} as Interval;
+		let resolveFirst!: (response: Response) => void;
+		const fetchMock = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveFirst = resolve; }))
+			.mockResolvedValueOnce({ ok: true, json: async () => ({ ...interval, endPosition: 1 }) });
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const view = render(IntervalRow, {
+			props: {
+				entity: { id: 'character-1', type: 'Character', name: 'Mara' } as Entity,
+				intervals: [interval], idx: 0, trackWidthPx: 100, actCount: 1, acts: [act],
+				scenesByActId: new Map(), colorFor: () => '#c8942a', dataNoteSnippet: () => null,
+				tooltipFor: () => 'Mara interval', posToFrac: (value: number) => value,
+				fracToPos: (value: number) => value, pxForRange: () => 100,
+				onLockAcquire: vi.fn(), onLockRelease: vi.fn(), onError: vi.fn()
+			}
+		});
+		const end = view.getAllByRole('slider')[1];
+
+		await fireEvent.keyDown(end, { key: 'ArrowRight' });
+		await fireEvent.keyDown(end, { key: 'ArrowRight' });
+		resolveFirst({ ok: true, json: async () => ({ ...interval, endPosition: 0.9, absorbed: ['sibling'] }) } as Response);
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+		expect(fetchMock.mock.calls[1][1].body).toContain('"endPosition":1');
 	});
 
 	it('blocks splits across the row while a keyboard resize is pending', async () => {

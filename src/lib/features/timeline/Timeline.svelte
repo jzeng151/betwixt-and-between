@@ -54,7 +54,7 @@
 	});
 
 	// ── Interaction lock — blocks palette drops while edge-resize is active ──
-	let interactionLock = $state(false);
+	let interactionLockCount = $state(0);
 
 	// ── Error toast ───────────────────────────────────────────────────────────
 	let errorMsg: string | null = $state(null);
@@ -231,7 +231,7 @@
 	const V2_MIME = 'application/x-betwixt-v2-entity';
 
 	function handleDragover(e: DragEvent) {
-		if (interactionLock || N === 0) return;
+		if (interactionLockCount > 0 || N === 0) return;
 		// Only react to drags that carry our marker. dataTransfer.types is
 		// the only field readable during dragover (the actual data is hidden
 		// until drop). Match case-insensitively per the spec.
@@ -247,7 +247,7 @@
 	async function handleDrop(e: DragEvent) {
 		e.preventDefault();
 		dragOver = false;
-		if (interactionLock || N === 0 || !trackEl) return;
+		if (interactionLockCount > 0 || N === 0 || !trackEl) return;
 
 		// Read from the V2-specific MIME first; fall back to text/plain only
 		// if the custom type is present (defensive — should always be set).
@@ -590,8 +590,8 @@
 							{posToFrac}
 							{fracToPos}
 							{pxForRange}
-							onLockAcquire={() => { interactionLock = true; }}
-							onLockRelease={() => { interactionLock = false; }}
+							onLockAcquire={() => { interactionLockCount++; }}
+							onLockRelease={() => { interactionLockCount = Math.max(0, interactionLockCount - 1); }}
 							onError={showError}
 							onSelect={(id) => selectFromTimeline(id)}
 						/>

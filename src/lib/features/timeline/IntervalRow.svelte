@@ -143,6 +143,17 @@
 		return [...stops].sort((a, b) => a - b);
 	}
 
+	function rebaseQueuedPosition(serverPosition: number, sentPosition: number, queuedPosition: number): number {
+		const stops = storyStops();
+		const sentIndex = stops.findIndex((stop) => Math.abs(stop - sentPosition) < 1e-9);
+		const queuedIndex = stops.findIndex((stop) => Math.abs(stop - queuedPosition) < 1e-9);
+		if (sentIndex < 0 || queuedIndex < 0) return serverPosition + queuedPosition - sentPosition;
+		let rebased = serverPosition;
+		for (let i = sentIndex; i < queuedIndex; i++) rebased = nextStoryStop(rebased);
+		for (let i = sentIndex; i > queuedIndex; i--) rebased = previousStoryStop(rebased);
+		return rebased;
+	}
+
 	function resizeWithKeyboard(
 		e: KeyboardEvent,
 		iv: Interval,
@@ -185,7 +196,26 @@
 			while (state.queuedPatch) {
 				const nextPatch = state.queuedPatch;
 				state.queuedPatch = null;
-				await intervalsStore.updateInterval(iv.id, nextPatch);
+				const sentStart = state.start;
+				const sentEnd = state.end;
+				const updated = await intervalsStore.updateInterval(iv.id, nextPatch);
+				let queuedPatch = state.queuedPatch as Parameters<typeof intervalsStore.updateInterval>[1] | null;
+				if (queuedPatch?.startPosition !== undefined) {
+					state.start = rebaseQueuedPosition(updated.startPosition, sentStart, state.start);
+					queuedPatch = {
+						...queuedPatch,
+						...positionToStartFKs(state.start, acts, scenesByActId)
+					};
+				} else state.start = updated.startPosition;
+				if (queuedPatch?.endPosition !== undefined) {
+					state.end = rebaseQueuedPosition(updated.endPosition, sentEnd, state.end);
+					queuedPatch = {
+						...queuedPatch,
+						...positionToEndFKs(state.end, acts, scenesByActId)
+					};
+				} else state.end = updated.endPosition;
+				state.queuedPatch = queuedPatch;
+				keyboardResizeAria = { ...keyboardResizeAria, [iv.id]: { start: state.start, end: state.end } };
 			}
 		})();
 		state.last = request;
