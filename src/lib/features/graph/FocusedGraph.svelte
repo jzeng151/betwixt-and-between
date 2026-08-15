@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { preferences } from '$lib/os/preferences-store.js';
   import { applyPreferencePatch } from '$lib/os/preferences-sync.js';
@@ -816,9 +816,14 @@
             class="add-focal-btn"
             title="Add to focal set"
             aria-label="Add to focal set"
-            onclick={(e) => {
+            onclick={async (e) => {
               e.stopPropagation();
+			  const node = (e.currentTarget as HTMLElement)
+				  .closest('.node-shell')
+				  ?.querySelector<HTMLElement>('[data-entity-id]');
               addToFocalSet(id);
+			  await tick();
+			  node?.focus();
             }}
           >+</button>
         {/if}

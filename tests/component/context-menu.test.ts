@@ -68,6 +68,19 @@ describe('ContextMenu', () => {
 		expect(items[1].onSelect).not.toHaveBeenCalled();
 	});
 
+	it('Escape restores focus to the invoking control', async () => {
+		const opener = document.body.appendChild(document.createElement('button'));
+		opener.focus();
+		const view = render(ContextMenu, {
+			props: { items: makeItems([{ label: 'A' }]), x: 0, y: 0, onClose: vi.fn() }
+		});
+		await fireEvent.keyDown(view.getByRole('menu'), { key: 'Escape' });
+		await Promise.resolve();
+
+		expect(opener).toHaveFocus();
+		opener.remove();
+	});
+
 	it('ArrowDown moves focus to next enabled item; wraps from last to first', async () => {
 		const items = makeItems([{ label: 'A' }, { label: 'B' }, { label: 'C' }]);
 		const { getByRole, getByText } = render(ContextMenu, {

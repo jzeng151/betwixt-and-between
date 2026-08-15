@@ -44,6 +44,11 @@
     buttonEls[i]?.focus();
   }
 
+	function closeAndRestoreFocus() {
+		onClose();
+		queueMicrotask(() => returnFocus?.isConnected && returnFocus.focus());
+	}
+
   function moveFocus(delta: 1 | -1) {
     if (items.length === 0) return;
     const enabledIdxs = items
@@ -64,7 +69,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      onClose();
+	  closeAndRestoreFocus();
       return;
     }
     if (e.key === 'ArrowDown') {
@@ -109,7 +114,7 @@
       if (!menuEl) return;
       const target = e.target as Node | null;
       if (target && menuEl.contains(target)) return;
-      onClose();
+	  closeAndRestoreFocus();
     }
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
