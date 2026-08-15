@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/svelte';
-import { tick } from 'svelte';
+import { createRawSnippet, tick, type Snippet } from 'svelte';
 import GraphCanvas from '$lib/features/graph/GraphCanvas.svelte';
 
 // WM3 Slice 5 — Codex P1. The edge hit-area <line> is rendered for EVERY edge
@@ -37,7 +37,8 @@ function renderCanvas(
 	onEdgeClick: (id: string) => void,
 	onNodeOpen?: (id: string) => void,
 	onNodePositionChange?: (id: string, position: { x: number; y: number }) => void,
-	onEdgeContextMenu?: (id: string, x: number, y: number) => void
+	onEdgeContextMenu?: (id: string, x: number, y: number) => void,
+	nodeOverlay?: Snippet<[{ id: string; hovered: boolean; dragging: boolean }]>
 ) {
 	return render(GraphCanvas, {
 		props: {
@@ -56,7 +57,8 @@ function renderCanvas(
 			onEdgeClick,
 			onEdgeContextMenu,
 			onNodeOpen,
-			onNodePositionChange
+			onNodePositionChange,
+			nodeOverlay
 		}
 	});
 }
@@ -172,6 +174,19 @@ describe('GraphCanvas edge click gate', () => {
 		await tick();
 
 		expect(canvas.style.transform).not.toBe(before);
+	});
+
+	it('renders node actions while the node owns keyboard focus', async () => {
+		const nodeOverlay = createRawSnippet<[{ id: string; hovered: boolean; dragging: boolean }]>(() => ({
+			render: () => '<button aria-label="Node action">Action</button>'
+		}));
+		const view = renderCanvas(vi.fn(), undefined, undefined, undefined, nodeOverlay);
+		await tick();
+
+		(view.container.querySelector('[data-entity-id="cause"]') as HTMLElement).focus();
+		await tick();
+
+		expect(view.getByRole('button', { name: 'Node action' })).toBeInTheDocument();
 	});
 
 	it('leaves reserved modified Arrow shortcuts to the browser', async () => {

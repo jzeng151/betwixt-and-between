@@ -206,6 +206,7 @@
 		startPY: number;
 	} | null>(null);
 	let hoveredNodeId = $state<string | null>(null);
+	let focusedNodeId = $state<string | null>(null);
 
 	let viewport: HTMLDivElement = $state(null!);
 
@@ -775,7 +776,7 @@
 				<div
 					class="node"
 					data-entity-id={node.id}
-					class:node-active={hoveredNodeId === node.id || draggingNode?.id === node.id}
+					class:node-active={hoveredNodeId === node.id || focusedNodeId === node.id || draggingNode?.id === node.id}
 					class:node-out-of-scope={dimmedNodes.has(node.id)}
 					class:node-alias-member={node.aliasMember}
 					style="left:{p.x}px; top:{p.y}px; --nc:{nc}"
@@ -784,7 +785,13 @@
 					oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
 					onclick={(e) => { if (e.target === e.currentTarget && e.detail === 0) onNodeOpen?.(node.id); }}
 					onkeydown={(e) => onNodeKeydown(e, node.id)}
-					onfocus={() => revealNode(p)}
+					onfocusin={() => {
+						focusedNodeId = node.id;
+						revealNode(p);
+					}}
+					onfocusout={(e) => {
+						if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) focusedNodeId = null;
+					}}
 					onpointerenter={() => (hoveredNodeId = node.id)}
 					onpointerleave={() => {
 						if (draggingNode?.id !== node.id) hoveredNodeId = null;
@@ -805,7 +812,7 @@
 							})}
 						</span>
 					{/if}
-					{#if nodeOverlay && hoveredNodeId === node.id && !draggingNode && !panning}
+					{#if nodeOverlay && (hoveredNodeId === node.id || focusedNodeId === node.id) && !draggingNode && !panning}
 						<div class="gc-overlay-host gc-no-drag">
 							{@render nodeOverlay({
 								id: node.id,
