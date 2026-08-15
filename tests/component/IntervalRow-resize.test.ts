@@ -223,6 +223,20 @@ describe('IntervalRow resize handles', () => {
 		expect(fetchMock).toHaveBeenCalledOnce();
 		resolveResize({ ok: true, json: async () => intervals[0] } as Response);
 		await waitFor(() => expect(view.getAllByRole('slider')[0]).toHaveAttribute('aria-valuenow', '0'));
+
+		let resolveSplit!: (response: Response) => void;
+		const splitFetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveSplit = resolve; }))
+			.mockResolvedValueOnce({ ok: true, json: async () => intervals });
+		globalThis.fetch = splitFetch as unknown as typeof fetch;
+		await fireEvent.click(
+			view.container.querySelectorAll<HTMLElement>('[data-interval-id]')[1]
+				.querySelector<HTMLButtonElement>('.hairline-hit')!
+		);
+		await fireEvent.keyDown(view.getAllByRole('slider')[0], { key: 'ArrowRight' });
+		expect(splitFetch).toHaveBeenCalledOnce();
+		resolveSplit({ ok: true } as Response);
+		await waitFor(() => expect(splitFetch).toHaveBeenCalledTimes(2));
 	});
 
 	it('keeps resize and translation pointer writes mutually exclusive', async () => {

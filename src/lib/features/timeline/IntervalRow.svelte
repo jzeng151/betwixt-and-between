@@ -161,7 +161,7 @@
 	) {
 		if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
 		if (
-			splittingIntervals.has(iv.id) || resizing || translating ||
+			splittingIntervals.size > 0 || resizing || translating ||
 			(keyboardResizes.size > 0 && !keyboardResizes.has(iv.id))
 		) return;
 		e.preventDefault();
@@ -246,7 +246,7 @@
 	}
 
 	function startResize(e: PointerEvent, iv: Interval, edge: 'start' | 'end') {
-		if (keyboardResizes.size > 0 || splittingIntervals.has(iv.id) || resizing || translating) return;
+		if (keyboardResizes.size > 0 || splittingIntervals.size > 0 || resizing || translating) return;
 		e.preventDefault();
 		e.stopPropagation();
 
@@ -326,7 +326,7 @@
 		   the click started on a resize or hairline-split target. */
 		if (e.button !== 0) return;
 		if ($playhead != null) return;
-		if (splittingIntervals.has(iv.id) || keyboardResizes.size > 0 || resizing || translating) return;
+		if (splittingIntervals.size > 0 || keyboardResizes.size > 0 || resizing || translating) return;
 		const target = e.target as HTMLElement;
 		if (target.closest('.resize-handle, .hairline-hit')) return;
 		e.preventDefault();
