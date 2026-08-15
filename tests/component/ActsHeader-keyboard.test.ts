@@ -268,6 +268,28 @@ describe('ActsHeader keyboard controls', () => {
 		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
 	});
 
+	it('cancels a pending keyboard commit when pointer resizing starts', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' }
+		] as Entity[];
+		const onWeightCommit = vi.fn();
+		const view = render(ActsHeader, {
+			props: {
+				acts, scenesByActId: new Map(), weights: [1, 1], trackWidthPx: 600,
+				onWeightCommit
+			}
+		});
+		const slider = view.getByRole('slider', { name: /Width of One/ });
+		slider.setPointerCapture = vi.fn();
+
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+		await fireEvent.pointerDown(slider, { pointerId: 1, clientX: 0 });
+
+		await new Promise((resolve) => setTimeout(resolve, 175));
+		expect(onWeightCommit).not.toHaveBeenCalled();
+	});
+
 	it('preserves keyboard width updates from adjacent handles', async () => {
 		const acts = [
 			{ id: 'act-1', type: 'Act', name: 'One' },

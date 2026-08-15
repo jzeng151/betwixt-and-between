@@ -458,6 +458,9 @@
 
 	function startWidthDrag(e: PointerEvent, idx: number) {
 		if (!weights || idx >= weights.length - 1) return;
+		if (keyboardWeightCommitTimer) clearTimeout(keyboardWeightCommitTimer);
+		keyboardWeightCommitTimer = null;
+		pendingKeyboardWeightCommit = null;
 		e.preventDefault();
 		e.stopPropagation();
 		widthDrag = {
