@@ -38,7 +38,8 @@ function renderCanvas(
 	onNodeOpen?: (id: string) => void,
 	onNodePositionChange?: (id: string, position: { x: number; y: number }) => void,
 	onEdgeContextMenu?: (id: string, x: number, y: number) => void,
-	nodeOverlay?: Snippet<[{ id: string; hovered: boolean; dragging: boolean }]>
+	nodeOverlay?: Snippet<[{ id: string; hovered: boolean; dragging: boolean }]>,
+	onConnect?: (fromId: string, toId: string, screenX: number, screenY: number) => void
 ) {
 	return render(GraphCanvas, {
 		props: {
@@ -58,7 +59,8 @@ function renderCanvas(
 			onEdgeContextMenu,
 			onNodeOpen,
 			onNodePositionChange,
-			nodeOverlay
+			nodeOverlay,
+			onConnect
 		}
 	});
 }
@@ -186,7 +188,23 @@ describe('GraphCanvas edge click gate', () => {
 		(view.container.querySelector('[data-entity-id="cause"]') as HTMLElement).focus();
 		await tick();
 
-		expect(view.getByRole('button', { name: 'Node action' })).toBeInTheDocument();
+		const action = view.getByRole('button', { name: 'Node action' });
+		expect(action).toBeInTheDocument();
+		expect(view.container.querySelector('[data-entity-id="cause"]')).not.toContainElement(action);
+	});
+
+	it('completes keyboard-started connections on node activation', async () => {
+		const onConnect = vi.fn();
+		const view = renderCanvas(vi.fn(), undefined, undefined, undefined, undefined, onConnect);
+		await tick();
+
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.keyDown(
+			view.container.querySelector('[data-entity-id="effect"]') as HTMLElement,
+			{ key: 'Enter' }
+		);
+
+		expect(onConnect).toHaveBeenCalledWith('cause', 'effect', expect.any(Number), expect.any(Number));
 	});
 
 	it('leaves reserved modified Arrow shortcuts to the browser', async () => {

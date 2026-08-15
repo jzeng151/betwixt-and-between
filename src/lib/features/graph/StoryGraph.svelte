@@ -667,6 +667,10 @@
       class="connect-btn gc-no-drag"
       title="Drag to connect"
       onpointerdown={(e) => canvas.startConnect(e, id)}
+	  onclick={(e) => {
+		  e.stopPropagation();
+		  if (e.detail === 0) canvas.startKeyboardConnect(id);
+	  }}
       aria-label="Connect node"
     >◉</button>
     <button

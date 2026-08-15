@@ -489,11 +489,25 @@
 		else if (bottom > rect.height) panY -= bottom - rect.height;
 	}
 
+	function completeKeyboardConnect(id: string): boolean {
+		if (!connecting || connecting.fromId === id || !onConnect) return false;
+		const p = nodePos[id];
+		if (!p) return false;
+		onConnect(
+			connecting.fromId,
+			id,
+			panX + (p.x + (p.w || NODE_W) / 2) * zoom,
+			panY + (p.y + (p.h || NODE_H) / 2) * zoom
+		);
+		connecting = null;
+		return true;
+	}
+
 	function onNodeKeydown(e: KeyboardEvent, id: string) {
 		if (e.target !== e.currentTarget) return;
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
-			onNodeOpen?.(id);
+			if (!completeKeyboardConnect(id)) onNodeOpen?.(id);
 			return;
 		}
 		if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && onContextMenu) {
@@ -627,6 +641,16 @@
 		const vp = viewportXY(e.clientX, e.clientY);
 		connecting = { fromId, screenX: vp.x, screenY: vp.y };
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+	}
+
+	export function startKeyboardConnect(fromId: string) {
+		const p = nodePos[fromId];
+		if (!p) return;
+		connecting = {
+			fromId,
+			screenX: panX + (p.x + (p.w || NODE_W) / 2) * zoom,
+			screenY: panY + (p.y + (p.h || NODE_H) / 2) * zoom
+		};
 	}
 </script>
 
@@ -772,19 +796,10 @@
 			{@const p = nodePos[node.id]}
 			{#if p}
 				{@const nc = node.color ?? NODE_COLOR[node.type as keyof typeof NODE_COLOR] ?? 'var(--color-accent)'}
-				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
-					class="node"
-					data-entity-id={node.id}
-					class:node-active={hoveredNodeId === node.id || focusedNodeId === node.id || draggingNode?.id === node.id}
-					class:node-out-of-scope={dimmedNodes.has(node.id)}
-					class:node-alias-member={node.aliasMember}
+					class="node-shell"
 					style="left:{p.x}px; top:{p.y}px; --nc:{nc}"
-					onpointerdown={(e) => onNodePointerDown(e, node.id)}
-					ondblclick={(e) => onNodeDblClick(e, node.id)}
-					oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
-					onclick={(e) => { if (e.target === e.currentTarget && e.detail === 0) onNodeOpen?.(node.id); }}
-					onkeydown={(e) => onNodeKeydown(e, node.id)}
 					onfocusin={() => {
 						focusedNodeId = node.id;
 						revealNode(p);
@@ -796,22 +811,39 @@
 					onpointerleave={() => {
 						if (draggingNode?.id !== node.id) hoveredNodeId = null;
 					}}
-					role="button"
-					tabindex="0"
-					aria-label="Open {node.name}"
-					aria-describedby={nodeMovementHelpId}
 				>
-					<span class="node-name">{node.name}</span>
-					<span class="node-type">{node.type}</span>
-					{#if nodeBadge}
-						<span class="gc-badge-host">
-							{@render nodeBadge({
-								id: node.id,
-								hovered: hoveredNodeId === node.id,
-								dragging: draggingNode?.id === node.id
-							})}
-						</span>
-					{/if}
+					<div
+						class="node"
+						data-entity-id={node.id}
+						class:node-active={hoveredNodeId === node.id || focusedNodeId === node.id || draggingNode?.id === node.id}
+						class:node-out-of-scope={dimmedNodes.has(node.id)}
+						class:node-alias-member={node.aliasMember}
+						onpointerdown={(e) => onNodePointerDown(e, node.id)}
+						ondblclick={(e) => onNodeDblClick(e, node.id)}
+						oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
+						onclick={(e) => {
+							if (e.target === e.currentTarget && e.detail === 0 && !completeKeyboardConnect(node.id)) {
+								onNodeOpen?.(node.id);
+							}
+						}}
+						onkeydown={(e) => onNodeKeydown(e, node.id)}
+						role="button"
+						tabindex="0"
+						aria-label="Open {node.name}"
+						aria-describedby={nodeMovementHelpId}
+					>
+						<span class="node-name">{node.name}</span>
+						<span class="node-type">{node.type}</span>
+						{#if nodeBadge}
+							<span class="gc-badge-host">
+								{@render nodeBadge({
+									id: node.id,
+									hovered: hoveredNodeId === node.id,
+									dragging: draggingNode?.id === node.id
+								})}
+							</span>
+						{/if}
+					</div>
 					{#if nodeOverlay && (hoveredNodeId === node.id || focusedNodeId === node.id) && !draggingNode && !panning}
 						<div class="gc-overlay-host gc-no-drag">
 							{@render nodeOverlay({
@@ -895,7 +927,7 @@
 	   name text in the full entity color. Same entity now reads as
 	   the same color across Timeline + StoryGraph + FocusedGraph. */
 	.node {
-		position: absolute;
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: 6px;
@@ -910,6 +942,10 @@
 		color: var(--nc);
 		white-space: nowrap;
 		transition: opacity 200ms ease;
+	}
+
+	.node-shell {
+		position: absolute;
 	}
 
 	.node-active {
