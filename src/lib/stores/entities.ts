@@ -55,8 +55,13 @@ function createEntityStore() {
 		entityLoadStatus.set('ready');
 	}
 
-	function load({ fresh = false, rollback = false }: { fresh?: boolean; rollback?: boolean } = {}): Promise<void> {
+	function load({ fresh = false, rollback = false, replacement = false }: {
+		fresh?: boolean;
+		rollback?: boolean;
+		replacement?: boolean;
+	} = {}): Promise<void> {
 		if (fresh && !rollback && rollbackPromise) return rollbackPromise.then(() => load({ fresh: true }));
+		if (fresh && !replacement && replacementPromise) return replacementPromise;
 		if (loadPromise && !fresh) return loadPromise;
 		const generation = ++loadGeneration;
 		entityLoadStatus.set('loading');
@@ -87,12 +92,19 @@ function createEntityStore() {
 		return pending;
 	}
 	function replaceSnapshot(): Promise<void> {
-		const request = load({ fresh: true });
+		const request = load({ fresh: true, replacement: true });
 		const pending = request.finally(() => {
 			if (replacementPromise === pending) replacementPromise = null;
 		});
 		replacementPromise = pending;
 		return pending;
+	}
+	async function settleSnapshotBeforeCreate(): Promise<boolean> {
+		const pendingRollback = rollbackPromise;
+		let needsFreshSnapshot = loadPromise !== null && !pendingRollback;
+		if (pendingRollback) await pendingRollback.catch(() => { needsFreshSnapshot = true; });
+		if (loadPromise) needsFreshSnapshot = true;
+		return needsFreshSnapshot;
 	}
 
 	/**
@@ -117,9 +129,8 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity = await res.json();
-		const needsFreshSnapshot = loadPromise !== null;
-		if (needsFreshSnapshot && !rollbackPromise) invalidateLoadAfterMutation();
-		else markMutationReady();
+		const needsFreshSnapshot = await settleSnapshotBeforeCreate();
+		markMutationReady();
 		update((all) => [...all, created]);
 		if (needsFreshSnapshot) {
 			entitySnapshotReady.set(true);
@@ -150,9 +161,8 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity[] = await res.json();
-		const needsFreshSnapshot = loadPromise !== null;
-		if (needsFreshSnapshot && !rollbackPromise) invalidateLoadAfterMutation();
-		else markMutationReady();
+		const needsFreshSnapshot = await settleSnapshotBeforeCreate();
+		markMutationReady();
 		update((all) => [...all, ...created]);
 		if (needsFreshSnapshot) {
 			entitySnapshotReady.set(true);

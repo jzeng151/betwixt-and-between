@@ -217,6 +217,32 @@ describe('entities.createEntity', () => {
 		expect(get(entityLoadStatus)).toBe('ready');
 	});
 
+	it('lets an active rollback settle before applying a concurrent create', async () => {
+		const seeded = [entity({ id: 'a', name: 'A' })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await entities.load();
+		let resolveRollback!: (response: Response) => void;
+		const created = entity({ id: 'created', name: 'Created' });
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(makeResponse('rejected', false, 400))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRollback = resolve; }))
+			.mockResolvedValueOnce(makeResponse(created))
+			.mockResolvedValueOnce(makeResponse('replacement unavailable', false, 503));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const rejected = entities.updateEntity('a', { name: 'A rejected' });
+		const rejection = rejected.catch((error: unknown) => error);
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		const creating = entities.createEntity('Character', 'Created');
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		resolveRollback(makeResponse(seeded));
+
+		await creating;
+		expect(await rejection).toBeInstanceOf(Error);
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+		expect(get(entities).map((item) => item.name)).toEqual(['A', 'Created']);
+	});
+
 	it('serializes data=undefined as undefined in the body', async () => {
 		const created = entity({ id: 'x', name: 'Plain' });
 		const fetchMock = vi.fn().mockResolvedValue(makeResponse(created));
@@ -334,11 +360,13 @@ describe('entities.updateEntity', () => {
 		const saved = entities.updateEntity('b', { name: 'B saved' });
 		resolveRollback(makeResponse('rollback unavailable', false, 503));
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+		const externalRefresh = entities.load({ fresh: true });
+		expect(fetchMock).toHaveBeenCalledTimes(4);
 		const later = entities.updateEntity('c', { name: 'C saved' });
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
 		resolveRecovery(makeResponse([entity({ id: 'a', name: 'A rejected' }), savedB, seeded[2]]));
 
-		await Promise.all([saved, later]);
+		await Promise.all([saved, later, externalRefresh]);
 		expect(await rejection).toBeInstanceOf(Error);
 		expect(get(entities).map((item) => item.name)).toEqual(['A', 'B saved', 'C saved']);
 	});
