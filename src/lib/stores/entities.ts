@@ -99,6 +99,9 @@ function createEntityStore() {
 		replacementPromise = pending;
 		return pending;
 	}
+	function refreshAfterMutation(): Promise<void> {
+		return replacementPromise ?? replaceSnapshot();
+	}
 	async function settleSnapshotBeforeCreate(): Promise<boolean> {
 		const pendingRollback = rollbackPromise;
 		let needsFreshSnapshot = loadPromise !== null && !pendingRollback;
@@ -311,7 +314,7 @@ function createEntityStore() {
 		await Promise.all([intervalsStore.load(), relationships.load()]);
 	}
 
-	return { subscribe, load, createEntity, createEntities, updateEntity, deleteEntity };
+	return { subscribe, load, refreshAfterMutation, createEntity, createEntities, updateEntity, deleteEntity };
 }
 
 export const entities = createEntityStore();

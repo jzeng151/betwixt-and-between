@@ -305,6 +305,28 @@ describe('entities.updateEntity', () => {
 		expect(get(entities)[0].name).toBe('New');
 	});
 
+	it('replaces a mutation refresh superseded by a successful update', async () => {
+		const seeded = [entity({ id: 'a', name: 'A' }), entity({ id: 'b', name: 'B old' })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await entities.load();
+		let resolveMutationRefresh!: (response: Response) => void;
+		const updatedA = entity({ id: 'a', name: 'A saved' });
+		const updatedB = entity({ id: 'b', name: 'B reordered' });
+		const fetchMock = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveMutationRefresh = resolve; }))
+			.mockResolvedValueOnce(makeResponse(updatedA))
+			.mockResolvedValueOnce(makeResponse([updatedA, updatedB]));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const refresh = entities.refreshAfterMutation();
+		const update = entities.updateEntity('a', { name: 'A saved' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		resolveMutationRefresh(makeResponse(seeded));
+		await Promise.all([refresh, update]);
+
+		expect(get(entities).map((item) => item.name)).toEqual(['A saved', 'B reordered']);
+	});
+
 	it('replaces a rollback load superseded by another successful update', async () => {
 		const seeded = [
 			entity({ id: 'a', name: 'A' }),

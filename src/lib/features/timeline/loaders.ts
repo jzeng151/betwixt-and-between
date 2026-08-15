@@ -17,7 +17,7 @@ let refreshTail: Promise<void> = Promise.resolve();
 /** Reload entities + intervals in mutation order. */
 export function refreshTimelineStores(): Promise<void> {
 	const request = refreshTail.then(async () => {
-		const results = await Promise.allSettled([entities.load({ fresh: true }), intervalsStore.load()]);
+		const results = await Promise.allSettled([entities.refreshAfterMutation(), intervalsStore.load()]);
 		const failure = results.find((result) => result.status === 'rejected');
 		if (failure?.status === 'rejected') throw failure.reason;
 	});

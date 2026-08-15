@@ -3,7 +3,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('$lib/stores/entities.js', () => ({
-	entities: { load: vi.fn() }
+	entities: { refreshAfterMutation: vi.fn() }
 }));
 vi.mock('$lib/features/timeline/intervals-store.js', () => ({
 	intervals: { load: vi.fn() }
@@ -17,7 +17,7 @@ describe('refreshTimelineStores', () => {
 	it('runs each load pair in parallel and serializes overlapping refreshes', async () => {
 		let resolveEntities!: () => void;
 		let resolveIntervals!: () => void;
-		(entities.load as ReturnType<typeof vi.fn>).mockReturnValue(
+		(entities.refreshAfterMutation as ReturnType<typeof vi.fn>).mockReturnValue(
 			new Promise<void>((r) => {
 				resolveEntities = r;
 			})
@@ -32,7 +32,7 @@ describe('refreshTimelineStores', () => {
 		const second = refreshTimelineStores();
 		await Promise.resolve();
 
-		expect(entities.load).toHaveBeenCalledTimes(1);
+		expect(entities.refreshAfterMutation).toHaveBeenCalledTimes(1);
 		expect(intervals.load).toHaveBeenCalledTimes(1);
 
 		// Resolving only one is not enough.
@@ -40,7 +40,7 @@ describe('refreshTimelineStores', () => {
 		resolveIntervals();
 		await first;
 		await Promise.resolve();
-		expect(entities.load).toHaveBeenCalledTimes(2);
+		expect(entities.refreshAfterMutation).toHaveBeenCalledTimes(2);
 		expect(intervals.load).toHaveBeenCalledTimes(2);
 
 		resolveEntities();
