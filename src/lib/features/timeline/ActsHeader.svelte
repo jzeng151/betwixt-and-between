@@ -291,14 +291,20 @@
 		actDropTarget = null;
 		dragActId = null;
 		if (!movedId) return;
-		const movedFromIdx = acts.findIndex((a) => a.id === movedId);
+		const order = keyboardActOrder ??= acts.map((act) => act.id);
+		const movedFromIdx = order.indexOf(movedId);
 		if (movedFromIdx < 0) return;
 		// Convert (idx, side) into a target position. When moving rightward,
 		// removal of the moved item from the front shifts indices by one.
 		let targetPos = target.side === 'left' ? target.idx : target.idx + 1;
 		if (movedFromIdx < targetPos) targetPos -= 1;
 		if (targetPos === movedFromIdx) return; // no-op
-		await moveAct(movedId, targetPos);
+		order.splice(targetPos, 0, order.splice(movedFromIdx, 1)[0]);
+		keyboardActPending++;
+		const request = keyboardActTail.then(() => moveAct(movedId, targetPos));
+		keyboardActTail = request.catch(() => {});
+		await request.catch(() => {});
+		if (--keyboardActPending === 0) keyboardActOrder = null;
 	}
 
 	// ── Scene drag-reorder + cross-act move ──────────────────────────────────
@@ -410,19 +416,28 @@
 		sceneDropTarget = null;
 		dragSceneId = null;
 		if (!movedId) return;
-		const moved = $entities.find((x) => x.id === movedId);
-		if (!moved) return;
+		const order = keyboardSceneOrder ??= new Map(
+			acts.map((act) => [act.id, (scenesByActId.get(act.id) ?? []).map((item) => item.id)])
+		);
+		const sourceEntry = [...order].find(([, ids]) => ids.includes(movedId));
+		if (!sourceEntry) return;
+		const [sourceActId, source] = sourceEntry;
 		let targetPos = target.idx;
-		if (moved.parentId === target.actId) {
+		if (sourceActId === target.actId) {
 			// Same-act reorder: account for the moved scene being removed
 			// from its current position before reinsertion.
-			const fromIdx = (scenesByActId.get(target.actId) ?? []).findIndex(
-				(s) => s.id === movedId
-			);
+			const fromIdx = source.indexOf(movedId);
 			if (fromIdx >= 0 && fromIdx < targetPos) targetPos -= 1;
 			if (targetPos === fromIdx) return;
 		}
-		await moveScene(movedId, target.actId, targetPos);
+		source.splice(source.indexOf(movedId), 1);
+		(order.get(target.actId) ?? source).splice(targetPos, 0, movedId);
+		keyboardSceneOrder = new Map(order);
+		keyboardScenePending++;
+		const request = keyboardSceneTail.then(() => moveScene(movedId, target.actId, targetPos));
+		keyboardSceneTail = request.catch(() => {});
+		await request.catch(() => {});
+		if (--keyboardScenePending === 0) keyboardSceneOrder = null;
 	}
 
 	// ── Act-width resize ─────────────────────────────────────────────────────
