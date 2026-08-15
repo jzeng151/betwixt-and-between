@@ -12,7 +12,13 @@
 import { entities } from '$lib/stores/entities.js';
 import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 
-/** Reload entities + intervals in parallel. Resolves once both have settled. */
-export async function refreshTimelineStores(): Promise<void> {
-	await Promise.all([entities.load({ fresh: true }), intervalsStore.load()]);
+let refreshTail: Promise<void> = Promise.resolve();
+
+/** Reload entities + intervals in mutation order. */
+export function refreshTimelineStores(): Promise<void> {
+	const request = refreshTail.then(async () => {
+		await Promise.all([entities.load({ fresh: true }), intervalsStore.load()]);
+	});
+	refreshTail = request.catch(() => {});
+	return request;
 }
