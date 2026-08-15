@@ -15,6 +15,7 @@
 
   async function retryEntities() {
     if (retrying) return;
+    const focusOwner = retryButton;
     retrying = true;
     try {
       await entities.load();
@@ -23,7 +24,7 @@
     } finally {
       retrying = false;
       await tick();
-      if (!hasVisibleWindows) {
+      if (!hasVisibleWindows && (document.activeElement === focusOwner || document.activeElement === document.body)) {
         (retryButton?.isConnected ? retryButton : overviewElement)?.focus();
       }
     }

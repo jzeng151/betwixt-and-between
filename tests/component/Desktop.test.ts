@@ -85,4 +85,22 @@ describe('Desktop workspace overview', () => {
 		expect(windowControl).toHaveFocus();
 		windowControl.remove();
 	});
+
+	it('does not steal focus when the user leaves a pending retry', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue(response('offline', false, 503)) as unknown as typeof fetch;
+		await expect(entities.load()).rejects.toThrow();
+		const view = render(Desktop);
+		let resolveRetry!: (response: Response) => void;
+		globalThis.fetch = vi.fn().mockReturnValue(new Promise<Response>((resolve) => {
+			resolveRetry = resolve;
+		})) as unknown as typeof fetch;
+		await fireEvent.click(view.getByRole('button', { name: 'Retry' }));
+		const taskbarControl = document.body.appendChild(document.createElement('button'));
+		taskbarControl.focus();
+		resolveRetry(response('offline', false, 503));
+
+		await waitFor(() => expect(view.getByRole('button', { name: 'Retry' })).not.toBeDisabled());
+		expect(taskbarControl).toHaveFocus();
+		taskbarControl.remove();
+	});
 });
