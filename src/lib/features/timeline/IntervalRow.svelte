@@ -280,6 +280,7 @@
 		   the click started on a resize or hairline-split target. */
 		if (e.button !== 0) return;
 		if ($playhead != null) return;
+		if (splittingIntervals.has(iv.id) || keyboardResizes.has(iv.id)) return;
 		const target = e.target as HTMLElement;
 		if (target.closest('.resize-handle, .hairline-hit')) return;
 		e.preventDefault();
