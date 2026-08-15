@@ -205,8 +205,10 @@ function createEntityStore() {
 			throw err;
 		}
 		const pendingSnapshot = loadPromise;
+		const pendingGeneration = loadGeneration;
 		let needsFreshSnapshot = false;
 		if (pendingSnapshot) await pendingSnapshot.catch(() => { needsFreshSnapshot = true; });
+		if (pendingGeneration !== loadGeneration) needsFreshSnapshot = true;
 		invalidateLoadAfterMutation();
 		// Whether THIS patch was a structural Act/Scene change that the server
 		// recomputes interval bounds for. Captured before the supersede check so a
@@ -262,8 +264,10 @@ function createEntityStore() {
 			throw new Error(await res.text());
 		}
 		const pendingSnapshot = loadPromise;
+		const pendingGeneration = loadGeneration;
 		let needsFreshSnapshot = false;
 		if (pendingSnapshot) await pendingSnapshot.catch(() => { needsFreshSnapshot = true; });
+		if (pendingGeneration !== loadGeneration) needsFreshSnapshot = true;
 		invalidateLoadAfterMutation();
 		update((all) => all.filter((e) => e.id !== id));
 		if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
