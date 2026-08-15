@@ -271,9 +271,10 @@ describe('entities.updateEntity', () => {
 			.mockResolvedValueOnce(makeResponse(entity({ id: 'e1', name: 'New' }))) as unknown as typeof fetch;
 
 		const refresh = entities.load();
-		await entities.updateEntity('e1', { name: 'New' });
+		const update = entities.updateEntity('e1', { name: 'New' });
+		await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
 		resolveRefresh(makeResponse([entity({ id: 'e1', name: 'Old' })]));
-		await refresh;
+		await Promise.all([refresh, update]);
 
 		expect(get(entities)[0].name).toBe('New');
 	});
@@ -290,16 +291,18 @@ describe('entities.updateEntity', () => {
 		const fetchMock = vi.fn()
 			.mockResolvedValueOnce(makeResponse('rejected', false, 400))
 			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRollback = resolve; }))
-			.mockResolvedValueOnce(makeResponse(updatedB))
-			.mockResolvedValueOnce(makeResponse([seeded[0], updatedB]));
+			.mockResolvedValueOnce(makeResponse(updatedB));
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 		const rejected = entities.updateEntity('a', { name: 'A rejected' });
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-		await entities.updateEntity('b', { name: 'B saved' });
+		const saved = entities.updateEntity('b', { name: 'B saved' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 		resolveRollback(makeResponse(seeded));
+		await saved;
 		await expect(rejected).rejects.toThrow(/rejected/);
 
+		expect(fetchMock).toHaveBeenCalledTimes(3);
 		expect(get(entities).map((item) => item.name)).toEqual(['A', 'B saved']);
 		expect(get(entityLoadStatus)).toBe('ready');
 	});
