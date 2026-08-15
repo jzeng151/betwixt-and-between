@@ -155,6 +155,45 @@ describe('IntervalRow resize handles', () => {
 		await waitFor(() => expect(onLockRelease).toHaveBeenCalledOnce());
 	});
 
+	it('blocks splits across the row while a keyboard resize is pending', async () => {
+		const act = { id: 'act-1', type: 'Act', name: 'Act One' } as Entity;
+		const scenes = [
+			{ id: 'scene-1', type: 'Scene', name: 'Opening', parentId: act.id },
+			{ id: 'scene-2', type: 'Scene', name: 'Turn', parentId: act.id }
+		] as Entity[];
+		const intervals = [
+			{ id: 'interval-1', entityId: 'character-1', startActId: act.id, endActId: act.id,
+				startSceneId: null, endSceneId: null, startPosition: 0, endPosition: 0.3 },
+			{ id: 'interval-2', entityId: 'character-1', startActId: act.id, endActId: act.id,
+				startSceneId: null, endSceneId: null, startPosition: 0.4, endPosition: 1 }
+		] as Interval[];
+		let resolveResize!: (response: Response) => void;
+		const fetchMock = vi.fn().mockReturnValueOnce(
+			new Promise<Response>((resolve) => { resolveResize = resolve; })
+		);
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const view = render(IntervalRow, {
+			props: {
+				entity: { id: 'character-1', type: 'Character', name: 'Mara' } as Entity,
+				intervals, idx: 0, trackWidthPx: 100, actCount: 1, acts: [act],
+				scenesByActId: new Map([[act.id, scenes]]), colorFor: () => '#c8942a', dataNoteSnippet: () => null,
+				tooltipFor: () => 'Mara interval', posToFrac: (value: number) => value,
+				fracToPos: (value: number) => value, pxForRange: () => 40,
+				onLockAcquire: vi.fn(), onLockRelease: vi.fn(), onError: vi.fn()
+			}
+		});
+
+		await fireEvent.keyDown(view.getAllByRole('slider')[0], { key: 'ArrowRight' });
+		await fireEvent.click(
+			view.container.querySelectorAll<HTMLElement>('[data-interval-id]')[1]
+				.querySelector<HTMLButtonElement>('.hairline-hit')!
+		);
+
+		expect(fetchMock).toHaveBeenCalledOnce();
+		resolveResize({ ok: true, json: async () => intervals[0] } as Response);
+		await waitFor(() => expect(view.getAllByRole('slider')[0]).toHaveAttribute('aria-valuenow', '0'));
+	});
+
 	it('keeps resize and translation pointer writes mutually exclusive', async () => {
 		const act = { id: 'act-1', type: 'Act', name: 'Act One' } as Entity;
 		const scenes = [

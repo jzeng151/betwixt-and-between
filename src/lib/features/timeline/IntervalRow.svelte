@@ -85,7 +85,7 @@
 	let keyboardResizeAria = $state<Record<string, { start: number; end: number }>>({});
 	const splittingIntervals = new Set<string>();
 	async function splitInterval(iv: Interval, fraction: number, origin: Element) {
-		if (splittingIntervals.has(iv.id) || resizing?.intervalId === iv.id || translating?.intervalId === iv.id) return;
+		if (splittingIntervals.size > 0 || keyboardResizes.size > 0 || resizing || translating) return;
 		splittingIntervals.add(iv.id);
 		const focusOwner = document.activeElement === origin ? origin : null;
 		try {
