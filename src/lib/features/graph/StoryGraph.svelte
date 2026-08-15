@@ -481,11 +481,15 @@
   }
 
   // ── Delete (second-click confirms) ─────────────────────────────────────────
+  function focusAfterDelete(id: string): string {
+    const index = graphNodes.findIndex((node) => node.id === id);
+    return graphNodes[index + 1]?.id ?? graphNodes[index - 1]?.id ?? id;
+  }
+
   async function onDeleteClick(e: MouseEvent, id: string) {
     e.stopPropagation();
     if (confirmDeleteId === id) {
-      const index = graphNodes.findIndex((node) => node.id === id);
-      const focusId = graphNodes[index + 1]?.id ?? graphNodes[index - 1]?.id ?? id;
+      const focusId = focusAfterDelete(id);
       await entities.deleteEntity(id);
       confirmDeleteId = null;
       await restoreGraphFocus(focusId);
@@ -538,11 +542,14 @@
 
   async function confirmDelete() {
     if (!deleteConfirm) return;
+    const id = deleteConfirm.id;
+    const focusId = focusAfterDelete(id);
     deleting = true;
     deleteError = '';
     try {
-      await entities.deleteEntity(deleteConfirm.id);
+      await entities.deleteEntity(id);
       deleteConfirm = null;
+      await restoreGraphFocus(focusId);
     } catch {
       deleteError = "Couldn't delete. The server rejected the request.";
     } finally {
