@@ -25,6 +25,7 @@ function createEntityStore() {
 	const { subscribe, set, update } = writable<Entity[]>([]);
 	let loadPromise: Promise<void> | null = null;
 	let rollbackPromise: Promise<void> | null = null;
+	let replacementPromise: Promise<void> | null = null;
 	let loadGeneration = 0;
 	// Per-entity update sequence. updateEntity applies an optimistic merge then
 	// installs the PATCH response; without sequencing, two edits to the same row
@@ -85,6 +86,14 @@ function createEntityStore() {
 		rollbackPromise = pending;
 		return pending;
 	}
+	function replaceSnapshot(): Promise<void> {
+		const request = load({ fresh: true });
+		const pending = request.finally(() => {
+			if (replacementPromise === pending) replacementPromise = null;
+		});
+		replacementPromise = pending;
+		return pending;
+	}
 
 	/**
 	 * Create an entity. Locked 2026-04-29 in /plan-eng-review (D19/Issue 13A) —
@@ -114,7 +123,7 @@ function createEntityStore() {
 		update((all) => [...all, created]);
 		if (needsFreshSnapshot) {
 			entitySnapshotReady.set(true);
-			await load({ fresh: true }).catch(() => {});
+			await replaceSnapshot().catch(() => {});
 		}
 		return created;
 	}
@@ -147,7 +156,7 @@ function createEntityStore() {
 		update((all) => [...all, ...created]);
 		if (needsFreshSnapshot) {
 			entitySnapshotReady.set(true);
-			await load({ fresh: true }).catch(() => {});
+			await replaceSnapshot().catch(() => {});
 		}
 		return created;
 	}
@@ -217,7 +226,7 @@ function createEntityStore() {
 		}
 		const pendingSnapshot = rollbackPromise;
 		const pendingGeneration = loadGeneration;
-		let needsFreshSnapshot = false;
+		let needsFreshSnapshot = replacementPromise !== null;
 		if (pendingSnapshot) await pendingSnapshot.catch(() => { needsFreshSnapshot = true; });
 		if (pendingGeneration !== loadGeneration) needsFreshSnapshot = true;
 		invalidateLoadAfterMutation();
@@ -243,13 +252,13 @@ function createEntityStore() {
 			// (Slice 5 PR-D), and the graph click-to-jump reads $relationships,
 			// so a stale store would jump to the old scene fraction (Codex P2).
 			if (wasStructural) await Promise.all([intervalsStore.load(), relationships.load()]);
-			if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
+			if (needsFreshSnapshot) await replaceSnapshot().catch(() => {});
 			return updated;
 		}
 		latestUpdate.delete(id);
 		updateChains.delete(id);
 		update((all) => all.map((e) => (e.id === id ? updated : e)));
-		if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
+		if (needsFreshSnapshot) await replaceSnapshot().catch(() => {});
 		// Position/parentId changes on Act/Scene cascade to intervals on the
 		// server (sibling reorder + recompute, or scene cross-act move) AND to
 		// scene-anchored relationship positions (Slice 5 PR-D). Keep both stores
@@ -276,12 +285,12 @@ function createEntityStore() {
 		}
 		const pendingSnapshot = rollbackPromise;
 		const pendingGeneration = loadGeneration;
-		let needsFreshSnapshot = false;
+		let needsFreshSnapshot = replacementPromise !== null;
 		if (pendingSnapshot) await pendingSnapshot.catch(() => { needsFreshSnapshot = true; });
 		if (pendingGeneration !== loadGeneration) needsFreshSnapshot = true;
 		invalidateLoadAfterMutation();
 		update((all) => all.filter((e) => e.id !== id));
-		if (needsFreshSnapshot) await load({ fresh: true }).catch(() => {});
+		if (needsFreshSnapshot) await replaceSnapshot().catch(() => {});
 		// Server-side delete cascades to intervals (entity_id / start_act_id /
 		// end_act_id are all CASCADE) and recomputes survivor positions for
 		// Act/Scene deletes. It also cascade-deletes relationships on an endpoint

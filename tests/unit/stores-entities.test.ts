@@ -307,6 +307,42 @@ describe('entities.updateEntity', () => {
 		expect(get(entityLoadStatus)).toBe('ready');
 	});
 
+	it('replaces a recovery refresh superseded by a later update', async () => {
+		const seeded = [
+			entity({ id: 'a', name: 'A' }),
+			entity({ id: 'b', name: 'B' }),
+			entity({ id: 'c', name: 'C' })
+		];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seeded)) as unknown as typeof fetch;
+		await entities.load();
+		let resolveRollback!: (response: Response) => void;
+		let resolveRecovery!: (response: Response) => void;
+		const savedB = entity({ id: 'b', name: 'B saved' });
+		const savedC = entity({ id: 'c', name: 'C saved' });
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(makeResponse('A rejected', false, 400))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRollback = resolve; }))
+			.mockResolvedValueOnce(makeResponse(savedB))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRecovery = resolve; }))
+			.mockResolvedValueOnce(makeResponse(savedC))
+			.mockResolvedValueOnce(makeResponse([seeded[0], savedB, savedC]));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const rejected = entities.updateEntity('a', { name: 'A rejected' });
+		const rejection = rejected.catch((error: unknown) => error);
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		const saved = entities.updateEntity('b', { name: 'B saved' });
+		resolveRollback(makeResponse('rollback unavailable', false, 503));
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+		const later = entities.updateEntity('c', { name: 'C saved' });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
+		resolveRecovery(makeResponse([entity({ id: 'a', name: 'A rejected' }), savedB, seeded[2]]));
+
+		await Promise.all([saved, later]);
+		expect(await rejection).toBeInstanceOf(Error);
+		expect(get(entities).map((item) => item.name)).toEqual(['A', 'B saved', 'C saved']);
+	});
+
 	it('shares rollback loads across overlapping failed updates', async () => {
 		const seeded = [
 			entity({ id: 'a', name: 'A' }),
