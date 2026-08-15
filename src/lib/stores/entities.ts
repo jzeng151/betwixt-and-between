@@ -60,7 +60,9 @@ function createEntityStore() {
 		rollback?: boolean;
 		replacement?: boolean;
 	} = {}): Promise<void> {
-		if (fresh && !rollback && rollbackPromise) return rollbackPromise.then(() => load({ fresh: true, replacement }));
+		if (fresh && !rollback && rollbackPromise) {
+			return rollbackPromise.catch(() => {}).then(() => load({ fresh: true, replacement }));
+		}
 		if (fresh && !replacement && replacementPromise) return replacementPromise;
 		if (loadPromise && !fresh) return loadPromise;
 		const generation = ++loadGeneration;
