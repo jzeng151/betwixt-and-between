@@ -118,7 +118,13 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 			const wasActive = isActive();
 			const index = trapStack.lastIndexOf(node);
 			if (index >= 0) trapStack.splice(index, 1);
-			if (wasActive && returnFocus?.isConnected) returnFocus.focus();
+			if (wasActive) {
+				if (returnFocus?.isConnected) returnFocus.focus();
+				if (document.activeElement !== returnFocus) {
+					const next = trapStack.at(-1);
+					if (next) focusableChildren(next)[0]?.focus() ?? next.focus();
+				}
+			}
 		}
 	};
 }
