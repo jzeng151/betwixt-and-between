@@ -505,6 +505,11 @@
 
 	function onNodeKeydown(e: KeyboardEvent, id: string) {
 		if (e.target !== e.currentTarget) return;
+		if (e.key === 'Escape' && connecting) {
+			e.preventDefault();
+			connecting = null;
+			return;
+		}
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
 			if (!completeKeyboardConnect(id)) onNodeOpen?.(id);

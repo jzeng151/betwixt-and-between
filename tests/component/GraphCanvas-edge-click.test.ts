@@ -207,6 +207,21 @@ describe('GraphCanvas edge click gate', () => {
 		expect(onConnect).toHaveBeenCalledWith('cause', 'effect', expect.any(Number), expect.any(Number));
 	});
 
+	it('cancels keyboard connection mode with Escape', async () => {
+		const onConnect = vi.fn();
+		const onNodeOpen = vi.fn();
+		const view = renderCanvas(vi.fn(), onNodeOpen, undefined, undefined, undefined, onConnect);
+		await tick();
+		const target = view.container.querySelector('[data-entity-id="effect"]') as HTMLElement;
+
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.keyDown(target, { key: 'Escape' });
+		await fireEvent.keyDown(target, { key: 'Enter' });
+
+		expect(onConnect).not.toHaveBeenCalled();
+		expect(onNodeOpen).toHaveBeenCalledWith('effect');
+	});
+
 	it('leaves reserved modified Arrow shortcuts to the browser', async () => {
 		const onNodePositionChange = vi.fn();
 		const { container } = renderCanvas(vi.fn(), undefined, onNodePositionChange);

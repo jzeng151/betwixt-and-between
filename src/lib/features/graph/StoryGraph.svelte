@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { preferences } from '$lib/os/preferences-store.js';
   import { applyPreferencePatch } from '$lib/os/preferences-sync.js';
@@ -398,12 +398,15 @@
 
   // ── Connect → rel-form ─────────────────────────────────────────────────────
   let saveError = $state('');
+	let relFormElement = $state<HTMLDivElement>();
 
-  function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
+  async function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
     pending = { fromId, toId, sx: screenX, sy: screenY };
     relType = pickDefaultRelType($relationships, fromId, toId);
     relLabel = '';
     saveError = '';
+	await tick();
+	relFormElement?.querySelector<HTMLElement>('select, input, button')?.focus();
   }
 
   function cancelPending() {
@@ -792,6 +795,7 @@
 {#if pending}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
+	bind:this={relFormElement}
     class="rel-form"
     style="left:{pending.sx}px; top:{pending.sy}px"
     onkeydown={onRelFormKeydown}
