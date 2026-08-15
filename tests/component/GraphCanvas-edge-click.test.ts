@@ -210,14 +210,15 @@ describe('GraphCanvas edge click gate', () => {
 		expect(action.style.left).not.toBe(before);
 	});
 
-	it('keeps mystery and synthetic alias edges out of keyboard actions', async () => {
+	it('exposes mystery context actions without revealing details', async () => {
 		const onEdgeContextMenu = vi.fn();
 		const { container } = renderCanvas(vi.fn(), undefined, undefined, onEdgeContextMenu);
 		await tick();
 		const actions = [...container.querySelectorAll<HTMLButtonElement>('.edge-keyboard-action')];
 
-		expect(actions).toHaveLength(2);
+		expect(actions).toHaveLength(3);
 		expect(actions.map((action) => action.getAttribute('aria-label')).join(' ')).not.toMatch(/Secret|Alias/);
+		expect(actions.some((action) => action.getAttribute('aria-label') === 'Edit hidden relationship')).toBe(true);
 		await fireEvent.click(actions.find((action) => action.getAttribute('aria-label')?.startsWith('Blocked'))!);
 		expect(onEdgeContextMenu).toHaveBeenCalledWith('edge-blocked', expect.any(Number), expect.any(Number));
 	});

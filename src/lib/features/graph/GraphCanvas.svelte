@@ -295,7 +295,7 @@
 	});
 	const keyboardEdges = $derived(
 		screenEdges.filter(
-			(edge) => !edge.mysteryMode && !edge.id.startsWith('alias-') && (edge.clickable || onEdgeContextMenu)
+			(edge) => !edge.id.startsWith('alias-') && (edge.clickable || onEdgeContextMenu)
 		)
 	);
 
@@ -754,7 +754,7 @@
 				type="button"
 				class="edge-keyboard-action"
 				style="left:{(edge.x1 + edge.x2) / 2 - 12}px; top:{(edge.y1 + edge.y2) / 2 - 12}px"
-				aria-label={edgeLabel(edge)}
+				aria-label={edge.mysteryMode ? 'Edit hidden relationship' : edgeLabel(edge)}
 				onfocus={() => revealEdge(edge)}
 				onclick={() => activateEdgeFromKeyboard(edge)}
 				onkeydown={(e) => onEdgeKeyboardMenu(e, edge)}
