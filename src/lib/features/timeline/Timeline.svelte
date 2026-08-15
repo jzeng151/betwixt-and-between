@@ -534,11 +534,9 @@
 			onWeightPreview={(updates) => {
 				weightOverride = { ...weightOverride, ...updates };
 			}}
-			onWeightCommit={(updates) => {
-				commitActWeights(
-					Object.entries(updates).map(([id, weight]) => ({ id, weight }))
-				);
-			}}
+			onWeightCommit={(updates) => commitActWeights(
+				Object.entries(updates).map(([id, weight]) => ({ id, weight }))
+			)}
 		/>
 
 		<!-- Rows of intervals — also the palette drop target -->
