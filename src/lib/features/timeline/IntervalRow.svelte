@@ -149,7 +149,10 @@
 		edge: 'start' | 'end'
 	) {
 		if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
-		if (splittingIntervals.has(iv.id) || resizing?.intervalId === iv.id || translating?.intervalId === iv.id) return;
+		if (
+			splittingIntervals.has(iv.id) || resizing || translating ||
+			(keyboardResizes.size > 0 && !keyboardResizes.has(iv.id))
+		) return;
 		e.preventDefault();
 		e.stopPropagation();
 		let state = keyboardResizes.get(iv.id);
@@ -170,7 +173,10 @@
 		if (!patch) return;
 		if (edge === 'start') state.start = next;
 		else state.end = next;
-		if (isNew) keyboardResizes.set(iv.id, state);
+		if (isNew) {
+			keyboardResizes.set(iv.id, state);
+			onLockAcquire();
+		}
 		keyboardResizeAria = { ...keyboardResizeAria, [iv.id]: { start: state.start, end: state.end } };
 		state.queuedPatch = { ...state.queuedPatch, ...patch };
 		if (state.writing) return;
@@ -186,6 +192,7 @@
 		void request.catch((err) => onError((err as Error).message)).finally(() => {
 			if (keyboardResizes.get(iv.id)?.last === request) {
 				keyboardResizes.delete(iv.id);
+				onLockRelease();
 				const { [iv.id]: _, ...remaining } = keyboardResizeAria;
 				keyboardResizeAria = remaining;
 			}
@@ -209,7 +216,7 @@
 	}
 
 	function startResize(e: PointerEvent, iv: Interval, edge: 'start' | 'end') {
-		if (keyboardResizes.has(iv.id) || splittingIntervals.has(iv.id) || resizing?.intervalId === iv.id || translating?.intervalId === iv.id) return;
+		if (keyboardResizes.size > 0 || splittingIntervals.has(iv.id) || resizing || translating) return;
 		e.preventDefault();
 		e.stopPropagation();
 
@@ -289,7 +296,7 @@
 		   the click started on a resize or hairline-split target. */
 		if (e.button !== 0) return;
 		if ($playhead != null) return;
-		if (splittingIntervals.has(iv.id) || keyboardResizes.has(iv.id) || resizing?.intervalId === iv.id || translating?.intervalId === iv.id) return;
+		if (splittingIntervals.has(iv.id) || keyboardResizes.size > 0 || resizing || translating) return;
 		const target = e.target as HTMLElement;
 		if (target.closest('.resize-handle, .hairline-hit')) return;
 		e.preventDefault();

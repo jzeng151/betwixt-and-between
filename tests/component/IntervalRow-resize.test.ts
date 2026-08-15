@@ -124,6 +124,8 @@ describe('IntervalRow resize handles', () => {
 			.mockReturnValueOnce(first)
 			.mockResolvedValue({ ok: true, json: async () => ({ ...interval, startPosition: 0.2 }) });
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const onLockAcquire = vi.fn();
+		const onLockRelease = vi.fn();
 		const { getAllByRole } = render(IntervalRow, {
 			props: {
 				entity: { id: 'character-1', type: 'Character', name: 'Mara' } as Entity,
@@ -131,7 +133,7 @@ describe('IntervalRow resize handles', () => {
 				scenesByActId: new Map(), colorFor: () => '#c8942a', dataNoteSnippet: () => null,
 				tooltipFor: () => 'Mara interval', posToFrac: (value: number) => value,
 				fracToPos: (value: number) => value, pxForRange: () => 100,
-				onLockAcquire: vi.fn(), onLockRelease: vi.fn(), onError: vi.fn()
+				onLockAcquire, onLockRelease, onError: vi.fn()
 			}
 		});
 		const [start, end] = getAllByRole('slider');
@@ -143,11 +145,14 @@ describe('IntervalRow resize handles', () => {
 		expect(end).toHaveAttribute('aria-valuenow', '0.9');
 		expect(start).toHaveAttribute('aria-valuemax', '0.8');
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+		expect(onLockAcquire).toHaveBeenCalledOnce();
+		expect(onLockRelease).not.toHaveBeenCalled();
 		expect(fetchMock.mock.calls[0][1].body).toContain('"startPosition":0.1');
 		resolveFirst({ ok: true, json: async () => ({ ...interval, startPosition: 0.1 }) } as Response);
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 		expect(fetchMock.mock.calls[1][1].body).toContain('"startPosition":0.2');
 		expect(fetchMock.mock.calls[1][1].body).toContain('"endPosition":0.9');
+		await waitFor(() => expect(onLockRelease).toHaveBeenCalledOnce());
 	});
 
 	it('keeps resize and translation pointer writes mutually exclusive', async () => {
