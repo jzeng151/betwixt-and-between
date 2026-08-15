@@ -566,9 +566,14 @@
   }
 
   // ── Focal-set mutation (RULE: reassign, never push) ───────────────────────
-  function removeFromFocalSet(id: string) {
+  async function removeFromFocalSet(id: string, restoreGraphFocus = false) {
+    const focusId = graphNodes.find((node) => node.id !== id)?.id ?? id;
     const next = focalSet.filter((x) => x !== id);
     windowStore.setFocalSet(windowId, next);
+    if (restoreGraphFocus) {
+      await tick();
+      canvas?.focusNode(focusId);
+    }
   }
 
   function setMode(mode: FocusedGraphMode) {
@@ -669,7 +674,7 @@
     if (isFocal) {
       items.push({
         label: 'Remove from focal set',
-        onSelect: () => removeFromFocalSet(id)
+        onSelect: () => void removeFromFocalSet(id, true)
       });
     } else {
       items.push({
