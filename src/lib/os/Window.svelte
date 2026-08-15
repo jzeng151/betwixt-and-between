@@ -46,6 +46,8 @@
   function restoreFocus() {
     queueMicrotask(() => {
       if (returnFocus?.isConnected && !returnFocus.closest('[aria-hidden="true"]')) {
+        const owner = returnFocus.closest<HTMLElement>('.window');
+        if (owner?.dataset.windowId) windowStore.focus(owner.dataset.windowId);
         returnFocus.focus();
         return;
       }

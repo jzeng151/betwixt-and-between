@@ -56,4 +56,26 @@ describe('Window keyboard movement', () => {
 		fallback.remove();
 		hiddenOverview.remove();
 	});
+
+	it('promotes the window owning a valid return-focus target', async () => {
+		const parent = document.body.appendChild(document.createElement('div'));
+		parent.className = 'window';
+		parent.dataset.windowId = 'window-parent';
+		const opener = parent.appendChild(document.createElement('button'));
+		opener.focus();
+		const focus = vi.spyOn(windowStore, 'focus').mockImplementation(() => {});
+		const view = render(Window, {
+			props: {
+				id: 'window-child', title: 'Child', x: 0, y: 0, width: 300, height: 200,
+				zIndex: 2, minimized: false, maximized: false
+			}
+		});
+
+		await fireEvent.click(view.getByRole('button', { name: 'Minimize' }));
+		await Promise.resolve();
+
+		expect(focus).toHaveBeenCalledWith('window-parent');
+		expect(opener).toHaveFocus();
+		parent.remove();
+	});
 });
