@@ -518,6 +518,7 @@
 		}
 		if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && onContextMenu) {
 			e.preventDefault();
+			connecting = null;
 			const p = nodePos[id];
 			if (!p) return;
 			const rect = viewport.getBoundingClientRect();

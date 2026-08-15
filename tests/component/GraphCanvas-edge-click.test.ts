@@ -39,7 +39,8 @@ function renderCanvas(
 	onNodePositionChange?: (id: string, position: { x: number; y: number }) => void,
 	onEdgeContextMenu?: (id: string, x: number, y: number) => void,
 	nodeOverlay?: Snippet<[{ id: string; hovered: boolean; dragging: boolean }]>,
-	onConnect?: (fromId: string, toId: string, screenX: number, screenY: number) => void
+	onConnect?: (fromId: string, toId: string, screenX: number, screenY: number) => void,
+	onContextMenu?: (id: string, x: number, y: number) => void
 ) {
 	return render(GraphCanvas, {
 		props: {
@@ -57,6 +58,7 @@ function renderCanvas(
 			initialPositions,
 			onEdgeClick,
 			onEdgeContextMenu,
+			onContextMenu,
 			onNodeOpen,
 			onNodePositionChange,
 			nodeOverlay,
@@ -232,6 +234,23 @@ describe('GraphCanvas edge click gate', () => {
 		await fireEvent.keyDown(source, { key: 'Escape' });
 		await fireEvent.keyDown(target, { key: 'Enter' });
 
+		expect(onConnect).not.toHaveBeenCalled();
+		expect(onNodeOpen).toHaveBeenCalledWith('effect');
+	});
+
+	it('cancels keyboard connection mode before opening a node menu', async () => {
+		const onConnect = vi.fn();
+		const onNodeOpen = vi.fn();
+		const onContextMenu = vi.fn();
+		const view = renderCanvas(vi.fn(), onNodeOpen, undefined, undefined, undefined, onConnect, onContextMenu);
+		await tick();
+		const target = view.container.querySelector('[data-entity-id="effect"]') as HTMLElement;
+
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.keyDown(target, { key: 'ContextMenu' });
+		await fireEvent.keyDown(target, { key: 'Enter' });
+
+		expect(onContextMenu).toHaveBeenCalledWith('effect', expect.any(Number), expect.any(Number));
 		expect(onConnect).not.toHaveBeenCalled();
 		expect(onNodeOpen).toHaveBeenCalledWith('effect');
 	});
