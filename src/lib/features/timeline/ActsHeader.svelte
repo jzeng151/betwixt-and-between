@@ -298,7 +298,10 @@
 		// removal of the moved item from the front shifts indices by one.
 		let targetPos = target.side === 'left' ? target.idx : target.idx + 1;
 		if (movedFromIdx < targetPos) targetPos -= 1;
-		if (targetPos === movedFromIdx) return; // no-op
+		if (targetPos === movedFromIdx) {
+			if (keyboardActPending === 0) keyboardActOrder = null;
+			return;
+		}
 		order.splice(targetPos, 0, order.splice(movedFromIdx, 1)[0]);
 		keyboardActPending++;
 		const request = keyboardActTail.then(() => moveAct(movedId, targetPos));
@@ -428,7 +431,10 @@
 			// from its current position before reinsertion.
 			const fromIdx = source.indexOf(movedId);
 			if (fromIdx >= 0 && fromIdx < targetPos) targetPos -= 1;
-			if (targetPos === fromIdx) return;
+			if (targetPos === fromIdx) {
+				if (keyboardScenePending === 0) keyboardSceneOrder = null;
+				return;
+			}
 		}
 		source.splice(source.indexOf(movedId), 1);
 		(order.get(target.actId) ?? source).splice(targetPos, 0, movedId);
