@@ -512,7 +512,8 @@
 		}
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
-			if (!completeKeyboardConnect(id)) onNodeOpen?.(id);
+			if (connecting) completeKeyboardConnect(id);
+			else onNodeOpen?.(id);
 			return;
 		}
 		if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && onContextMenu) {
@@ -611,6 +612,10 @@
 	 */
 	export function getPosition(id: string): NodePosition | undefined {
 		return nodePos[id];
+	}
+
+	export function focusNode(id: string) {
+		viewport.querySelector<HTMLElement>(`[data-entity-id="${CSS.escape(id)}"]`)?.focus();
 	}
 
 	export function reseed(positions: Record<string, NodePosition>, { fit = true }: { fit?: boolean } = {}) {
@@ -827,8 +832,9 @@
 						ondblclick={(e) => onNodeDblClick(e, node.id)}
 						oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
 						onclick={(e) => {
-							if (e.target === e.currentTarget && e.detail === 0 && !completeKeyboardConnect(node.id)) {
-								onNodeOpen?.(node.id);
+							if (e.target === e.currentTarget && e.detail === 0) {
+								if (connecting) completeKeyboardConnect(node.id);
+								else onNodeOpen?.(node.id);
 							}
 						}}
 						onkeydown={(e) => onNodeKeydown(e, node.id)}

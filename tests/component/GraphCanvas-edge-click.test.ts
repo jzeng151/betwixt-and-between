@@ -178,6 +178,15 @@ describe('GraphCanvas edge click gate', () => {
 		expect(canvas.style.transform).not.toBe(before);
 	});
 
+	it('restores focus to a node by id', async () => {
+		const view = renderCanvas(vi.fn());
+		await tick();
+
+		view.component.focusNode('effect');
+
+		expect(view.container.querySelector('[data-entity-id="effect"]')).toHaveFocus();
+	});
+
 	it('renders node actions while the node owns keyboard focus', async () => {
 		const nodeOverlay = createRawSnippet<[{ id: string; hovered: boolean; dragging: boolean }]>(() => ({
 			render: () => '<button aria-label="Node action">Action</button>'
@@ -220,6 +229,20 @@ describe('GraphCanvas edge click gate', () => {
 
 		expect(onConnect).not.toHaveBeenCalled();
 		expect(onNodeOpen).toHaveBeenCalledWith('effect');
+	});
+
+	it('keeps source activation inside keyboard connection mode', async () => {
+		const onConnect = vi.fn();
+		const onNodeOpen = vi.fn();
+		const view = renderCanvas(vi.fn(), onNodeOpen, undefined, undefined, undefined, onConnect);
+		await tick();
+		const source = view.container.querySelector('[data-entity-id="cause"]') as HTMLElement;
+
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.keyDown(source, { key: 'Enter' });
+
+		expect(onConnect).not.toHaveBeenCalled();
+		expect(onNodeOpen).not.toHaveBeenCalled();
 	});
 
 	it('leaves reserved modified Arrow shortcuts to the browser', async () => {

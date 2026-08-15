@@ -398,18 +398,24 @@
 
   // ── Connect → rel-form ─────────────────────────────────────────────────────
   let saveError = $state('');
-	let relFormElement = $state<HTMLDivElement>();
+  let relFormElement = $state<HTMLDivElement>();
+
+  async function restoreGraphFocus(id: string) {
+    await tick();
+    canvas.focusNode(id);
+  }
 
   async function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
     pending = { fromId, toId, sx: screenX, sy: screenY };
     relType = pickDefaultRelType($relationships, fromId, toId);
     relLabel = '';
     saveError = '';
-	await tick();
-	relFormElement?.querySelector<HTMLElement>('select, input, button')?.focus();
+    await tick();
+    relFormElement?.querySelector<HTMLElement>('select, input, button')?.focus();
   }
 
-  function cancelPending() {
+  async function cancelPending() {
+    const focusId = pending?.toId;
     pending = null;
     relLabel = '';
     relType = 'allied_with';
@@ -417,10 +423,12 @@
     relEndActId = '';
     relRevealedAtPosition = null;
     saveError = '';
+    if (focusId) await restoreGraphFocus(focusId);
   }
 
   async function savePending() {
     if (!pending) return;
+    const focusId = pending.toId;
     if ((relStartActId && !relEndActId) || (!relStartActId && relEndActId)) {
       saveError = 'Set both a start and end act, or neither.';
       return;
@@ -449,6 +457,7 @@
       relStartActId = '';
       relEndActId = '';
       relRevealedAtPosition = null;
+      await restoreGraphFocus(focusId);
     } catch (err) {
       // Surface the failure (was previously silently swallowed). Most
       // common cause: a relationship of this type between this pair
