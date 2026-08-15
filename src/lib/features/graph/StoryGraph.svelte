@@ -481,11 +481,14 @@
   }
 
   // ── Delete (second-click confirms) ─────────────────────────────────────────
-  function onDeleteClick(e: MouseEvent, id: string) {
+  async function onDeleteClick(e: MouseEvent, id: string) {
     e.stopPropagation();
     if (confirmDeleteId === id) {
-      entities.deleteEntity(id);
+      const index = graphNodes.findIndex((node) => node.id === id);
+      const focusId = graphNodes[index + 1]?.id ?? graphNodes[index - 1]?.id ?? id;
+      await entities.deleteEntity(id);
       confirmDeleteId = null;
+      await restoreGraphFocus(focusId);
     } else {
       confirmDeleteId = id;
     }

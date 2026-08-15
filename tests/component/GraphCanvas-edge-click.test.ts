@@ -185,6 +185,9 @@ describe('GraphCanvas edge click gate', () => {
 		view.component.focusNode('effect');
 
 		expect(view.container.querySelector('[data-entity-id="effect"]')).toHaveFocus();
+
+		view.component.focusNode('removed');
+		expect(view.getByRole('application')).toHaveFocus();
 	});
 
 	it('renders node actions while the node owns keyboard focus', async () => {
@@ -221,10 +224,12 @@ describe('GraphCanvas edge click gate', () => {
 		const onNodeOpen = vi.fn();
 		const view = renderCanvas(vi.fn(), onNodeOpen, undefined, undefined, undefined, onConnect);
 		await tick();
+		const source = view.container.querySelector('[data-entity-id="cause"]') as HTMLElement;
 		const target = view.container.querySelector('[data-entity-id="effect"]') as HTMLElement;
 
 		view.component.startKeyboardConnect('cause');
-		await fireEvent.keyDown(target, { key: 'Escape' });
+		expect(source).toHaveFocus();
+		await fireEvent.keyDown(source, { key: 'Escape' });
 		await fireEvent.keyDown(target, { key: 'Enter' });
 
 		expect(onConnect).not.toHaveBeenCalled();

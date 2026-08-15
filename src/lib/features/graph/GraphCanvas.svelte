@@ -615,7 +615,7 @@
 	}
 
 	export function focusNode(id: string) {
-		viewport.querySelector<HTMLElement>(`[data-entity-id="${CSS.escape(id)}"]`)?.focus();
+		(viewport.querySelector<HTMLElement>(`[data-entity-id="${CSS.escape(id)}"]`) ?? viewport).focus();
 	}
 
 	export function reseed(positions: Record<string, NodePosition>, { fit = true }: { fit?: boolean } = {}) {
@@ -661,6 +661,7 @@
 			screenX: panX + (p.x + (p.w || NODE_W) / 2) * zoom,
 			screenY: panY + (p.y + (p.h || NODE_H) / 2) * zoom
 		};
+		focusNode(fromId);
 	}
 </script>
 
@@ -668,6 +669,7 @@
 	class="viewport"
 	role="application"
 	aria-label="Graph canvas"
+	tabindex="-1"
 	bind:this={viewport}
 	onpointerdown={onViewportPointerDown}
 	onpointermove={onPointerMove}
