@@ -36,7 +36,7 @@
 		/** Live weight preview during act-resize drag. */
 		onWeightPreview?: (updates: Record<string, number>) => void;
 		/** Weight commit on mouseup (only changed acts). */
-		onWeightCommit?: (updates: Record<string, number>) => void;
+		onWeightCommit?: (updates: Record<string, number>) => void | Promise<void>;
 	}
 	let {
 		acts,
@@ -543,7 +543,7 @@
 		widthDrag = null;
 		(e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
 		if (Object.keys(updates).length > 0) {
-			onWeightCommit?.(updates);
+			commitWeights(updates);
 		}
 	}
 
@@ -568,10 +568,15 @@
 	}
 	let keyboardWeightCommitTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingKeyboardWeightCommit: Record<string, number> | null = null;
+	let weightCommitTail = Promise.resolve();
+	function commitWeights(updates: Record<string, number>) {
+		const request = weightCommitTail.then(() => onWeightCommit?.(updates));
+		weightCommitTail = request.catch(() => {});
+	}
 	function flushKeyboardWeightCommit() {
 		if (keyboardWeightCommitTimer) clearTimeout(keyboardWeightCommitTimer);
 		keyboardWeightCommitTimer = null;
-		if (pendingKeyboardWeightCommit) onWeightCommit?.(pendingKeyboardWeightCommit);
+		if (pendingKeyboardWeightCommit) commitWeights(pendingKeyboardWeightCommit);
 		pendingKeyboardWeightCommit = null;
 	}
 	onDestroy(flushKeyboardWeightCommit);

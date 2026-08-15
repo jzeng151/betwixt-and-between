@@ -303,21 +303,33 @@ describe('ActsHeader keyboard controls', () => {
 			{ id: 'act-1', type: 'Act', name: 'One' },
 			{ id: 'act-2', type: 'Act', name: 'Two' }
 		] as Entity[];
-		const onWeightCommit = vi.fn();
+		let resolveKeyboard!: () => void;
+		const onWeightCommit = vi.fn()
+			.mockReturnValueOnce(new Promise<void>((resolve) => { resolveKeyboard = resolve; }))
+			.mockResolvedValue(undefined);
+		const props = {
+			acts, scenesByActId: new Map<string, Entity[]>(), weights: [1, 1], trackWidthPx: 600,
+			onWeightCommit
+		};
 		const view = render(ActsHeader, {
-			props: {
-				acts, scenesByActId: new Map(), weights: [1, 1], trackWidthPx: 600,
-				onWeightCommit
-			}
+			props
 		});
 		const slider = view.getByRole('slider', { name: /Width of One/ });
 		slider.setPointerCapture = vi.fn();
+		slider.releasePointerCapture = vi.fn();
 
 		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
 		await fireEvent.pointerDown(slider, { pointerId: 1, clientX: 0 });
-
-		expect(onWeightCommit).toHaveBeenCalledOnce();
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
 		expect(onWeightCommit).toHaveBeenCalledWith({ 'act-1': 1.05, 'act-2': 0.95 });
+
+		await fireEvent.pointerMove(slider, { pointerId: 1, clientX: 60 });
+		await view.rerender({ ...props, weights: [1.2, 0.8] });
+		await fireEvent.pointerUp(slider, { pointerId: 1, clientX: 60 });
+		expect(onWeightCommit).toHaveBeenCalledOnce();
+		resolveKeyboard();
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledTimes(2));
+		expect(onWeightCommit).toHaveBeenLastCalledWith({ 'act-1': 1.2, 'act-2': 0.8 });
 	});
 
 	it('cancels queued act and scene moves after a failed request', async () => {
