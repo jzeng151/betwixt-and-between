@@ -268,7 +268,7 @@ describe('ActsHeader keyboard controls', () => {
 		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
 	});
 
-	it('cancels a pending keyboard commit when pointer resizing starts', async () => {
+	it('flushes a pending keyboard commit when pointer resizing starts', async () => {
 		const acts = [
 			{ id: 'act-1', type: 'Act', name: 'One' },
 			{ id: 'act-2', type: 'Act', name: 'Two' }
@@ -286,8 +286,45 @@ describe('ActsHeader keyboard controls', () => {
 		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
 		await fireEvent.pointerDown(slider, { pointerId: 1, clientX: 0 });
 
-		await new Promise((resolve) => setTimeout(resolve, 175));
-		expect(onWeightCommit).not.toHaveBeenCalled();
+		expect(onWeightCommit).toHaveBeenCalledOnce();
+		expect(onWeightCommit).toHaveBeenCalledWith({ 'act-1': 1.05, 'act-2': 0.95 });
+	});
+
+	it('cancels queued act and scene moves after a failed request', async () => {
+		const acts = ['One', 'Two', 'Three'].map((name, index) => ({
+			id: `act-${index + 1}`, type: 'Act', name
+		})) as Entity[];
+		const scene = { id: 'scene-1', type: 'Scene', name: 'Opening', parentId: 'act-1' } as Entity;
+		let resolveAct!: (response: Response) => void;
+		let resolveScene!: (response: Response) => void;
+		const fetchMock = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveAct = resolve; }))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveScene = resolve; }))
+			.mockResolvedValue({ ok: false, text: async () => 'rejected' });
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const view = render(ActsHeader, {
+			props: {
+				acts,
+				scenesByActId: new Map([['act-1', [scene]], ['act-2', []], ['act-3', []]]),
+				weights: [1, 1, 1],
+				trackWidthPx: 600
+			}
+		});
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowRight' });
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder Three/ }), { key: 'ArrowLeft' });
+		expect(fetchMock).toHaveBeenCalledOnce();
+		resolveAct({ ok: false, text: async () => 'act rejected' } as Response);
+		await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('act rejected'));
+		expect(fetchMock).toHaveBeenCalledOnce();
+
+		const sceneCell = view.getByRole('button', { name: /Select Opening/ });
+		await fireEvent.keyDown(sceneCell, { key: 'ArrowDown', altKey: true });
+		await fireEvent.keyDown(sceneCell, { key: 'ArrowUp', altKey: true });
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		resolveScene({ ok: false, text: async () => 'scene rejected' } as Response);
+		await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('scene rejected'));
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
 	it('preserves keyboard width updates from adjacent handles', async () => {

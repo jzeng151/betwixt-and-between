@@ -264,6 +264,7 @@
 			await refreshTimelineStores();
 		} catch (err) {
 			reorderErrorToast.show((err as Error).message);
+			throw err;
 		}
 	}
 	function moveActWithKeyboard(e: KeyboardEvent, actId: string) {
@@ -277,10 +278,12 @@
 		order.splice(target, 0, order.splice(from, 1)[0]);
 		keyboardActPending++;
 		const request = keyboardActTail.then(() => moveAct(actId, target));
-		const tail = request.catch(() => {});
-		keyboardActTail = tail;
-		void tail.finally(() => {
-			if (--keyboardActPending === 0) keyboardActOrder = null;
+		keyboardActTail = request;
+		void request.catch(() => {}).finally(() => {
+			if (--keyboardActPending === 0) {
+				keyboardActOrder = null;
+				keyboardActTail = Promise.resolve();
+			}
 		});
 	}
 	async function actDrop(e: DragEvent, idx: number) {
@@ -305,9 +308,12 @@
 		order.splice(targetPos, 0, order.splice(movedFromIdx, 1)[0]);
 		keyboardActPending++;
 		const request = keyboardActTail.then(() => moveAct(movedId, targetPos));
-		keyboardActTail = request.catch(() => {});
+		keyboardActTail = request;
 		await request.catch(() => {});
-		if (--keyboardActPending === 0) keyboardActOrder = null;
+		if (--keyboardActPending === 0) {
+			keyboardActOrder = null;
+			keyboardActTail = Promise.resolve();
+		}
 	}
 
 	// ── Scene drag-reorder + cross-act move ──────────────────────────────────
@@ -363,6 +369,7 @@
 			}
 		} catch (err) {
 			reorderErrorToast.show((err as Error).message);
+			throw err;
 		}
 	}
 	function onSceneKeydown(e: KeyboardEvent, scene: Entity) {
@@ -397,10 +404,12 @@
 		keyboardSceneOrder = new Map(order);
 		keyboardScenePending++;
 		const request = keyboardSceneTail.then(() => moveScene(scene.id, targetActId, targetSceneIdx, true));
-		const tail = request.catch(() => {});
-		keyboardSceneTail = tail;
-		void tail.finally(() => {
-			if (--keyboardScenePending === 0) keyboardSceneOrder = null;
+		keyboardSceneTail = request;
+		void request.catch(() => {}).finally(() => {
+			if (--keyboardScenePending === 0) {
+				keyboardSceneOrder = null;
+				keyboardSceneTail = Promise.resolve();
+			}
 		});
 	}
 	function scenePositionLabel(scene: Entity): string {
@@ -441,9 +450,12 @@
 		keyboardSceneOrder = new Map(order);
 		keyboardScenePending++;
 		const request = keyboardSceneTail.then(() => moveScene(movedId, target.actId, targetPos));
-		keyboardSceneTail = request.catch(() => {});
+		keyboardSceneTail = request;
 		await request.catch(() => {});
-		if (--keyboardScenePending === 0) keyboardSceneOrder = null;
+		if (--keyboardScenePending === 0) {
+			keyboardSceneOrder = null;
+			keyboardSceneTail = Promise.resolve();
+		}
 	}
 
 	// ── Act-width resize ─────────────────────────────────────────────────────
@@ -458,9 +470,7 @@
 
 	function startWidthDrag(e: PointerEvent, idx: number) {
 		if (!weights || idx >= weights.length - 1) return;
-		if (keyboardWeightCommitTimer) clearTimeout(keyboardWeightCommitTimer);
-		keyboardWeightCommitTimer = null;
-		pendingKeyboardWeightCommit = null;
+		flushKeyboardWeightCommit();
 		e.preventDefault();
 		e.stopPropagation();
 		widthDrag = {
