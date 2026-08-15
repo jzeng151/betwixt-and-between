@@ -114,7 +114,7 @@
       if (!menuEl) return;
       const target = e.target as Node | null;
       if (target && menuEl.contains(target)) return;
-	  closeAndRestoreFocus();
+	  onClose();
     }
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);

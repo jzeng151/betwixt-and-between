@@ -153,4 +153,20 @@ describe('ContextMenu', () => {
 		await fireEvent.pointerDown(document.body);
 		expect(onClose).toHaveBeenCalled();
 	});
+
+	it('does not steal focus from a pointer dismissal target', async () => {
+		const opener = document.body.appendChild(document.createElement('button'));
+		const target = document.body.appendChild(document.createElement('button'));
+		opener.focus();
+		render(ContextMenu, { props: { items: makeItems([{ label: 'A' }]), x: 0, y: 0, onClose: vi.fn() } });
+		await tick();
+
+		await fireEvent.pointerDown(target);
+		target.focus();
+		await Promise.resolve();
+
+		expect(target).toHaveFocus();
+		opener.remove();
+		target.remove();
+	});
 });
