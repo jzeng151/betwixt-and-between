@@ -85,7 +85,7 @@
 	let keyboardResizeAria = $state<Record<string, { start: number; end: number }>>({});
 	const splittingIntervals = new Set<string>();
 	async function splitInterval(iv: Interval, fraction: number, origin: Element) {
-		if (splittingIntervals.has(iv.id)) return;
+		if (splittingIntervals.has(iv.id) || resizing?.intervalId === iv.id || translating?.intervalId === iv.id) return;
 		splittingIntervals.add(iv.id);
 		const focusOwner = document.activeElement === origin ? origin : null;
 		try {
@@ -149,7 +149,7 @@
 		edge: 'start' | 'end'
 	) {
 		if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
-		if (splittingIntervals.has(iv.id) || resizing?.intervalId === iv.id) return;
+		if (splittingIntervals.has(iv.id) || resizing?.intervalId === iv.id || translating?.intervalId === iv.id) return;
 		e.preventDefault();
 		e.stopPropagation();
 		let state = keyboardResizes.get(iv.id);
@@ -209,7 +209,7 @@
 	}
 
 	function startResize(e: PointerEvent, iv: Interval, edge: 'start' | 'end') {
-		if (keyboardResizes.has(iv.id) || splittingIntervals.has(iv.id) || translating?.intervalId === iv.id) return;
+		if (keyboardResizes.has(iv.id) || splittingIntervals.has(iv.id) || resizing?.intervalId === iv.id || translating?.intervalId === iv.id) return;
 		e.preventDefault();
 		e.stopPropagation();
 
@@ -289,7 +289,7 @@
 		   the click started on a resize or hairline-split target. */
 		if (e.button !== 0) return;
 		if ($playhead != null) return;
-		if (splittingIntervals.has(iv.id) || keyboardResizes.has(iv.id) || resizing?.intervalId === iv.id) return;
+		if (splittingIntervals.has(iv.id) || keyboardResizes.has(iv.id) || resizing?.intervalId === iv.id || translating?.intervalId === iv.id) return;
 		const target = e.target as HTMLElement;
 		if (target.closest('.resize-handle, .hairline-hit')) return;
 		e.preventDefault();

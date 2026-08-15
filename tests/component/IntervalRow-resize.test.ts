@@ -152,6 +152,10 @@ describe('IntervalRow resize handles', () => {
 
 	it('keeps resize and translation pointer writes mutually exclusive', async () => {
 		const act = { id: 'act-1', type: 'Act', name: 'Act One' } as Entity;
+		const scenes = [
+			{ id: 'scene-1', type: 'Scene', name: 'Opening', parentId: act.id },
+			{ id: 'scene-2', type: 'Scene', name: 'Turn', parentId: act.id }
+		] as Entity[];
 		const interval = {
 			id: 'interval-1', entityId: 'character-1', startActId: act.id, endActId: act.id,
 			startSceneId: null, endSceneId: null, startPosition: 0, endPosition: 1
@@ -165,13 +169,14 @@ describe('IntervalRow resize handles', () => {
 			props: {
 				entity: { id: 'character-1', type: 'Character', name: 'Mara' } as Entity,
 				intervals: [interval], idx: 0, trackWidthPx: 100, actCount: 1, acts: [act],
-				scenesByActId: new Map(), colorFor: () => '#c8942a', dataNoteSnippet: () => null,
+				scenesByActId: new Map([[act.id, scenes]]), colorFor: () => '#c8942a', dataNoteSnippet: () => null,
 				tooltipFor: () => 'Mara interval', posToFrac: (value: number) => value,
 				fracToPos: (value: number) => value, pxForRange: () => 100,
 				onLockAcquire, onLockRelease, onError: vi.fn()
 			}
 		});
 		const start = view.getAllByRole('slider')[0];
+		const split = view.getByRole('button', { name: /Split interval at 50%/ });
 		const bar = view.container.querySelector<HTMLElement>('.bar-wrapper')!;
 		bar.setPointerCapture = vi.fn();
 		bar.releasePointerCapture = vi.fn();
@@ -182,8 +187,11 @@ describe('IntervalRow resize handles', () => {
 		await fireEvent.pointerMove(window, { pointerId: 1, clientX: 10 });
 		await fireEvent.pointerUp(window, { pointerId: 1, clientX: 10 });
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+		await fireEvent.pointerDown(start, { pointerId: 2, clientX: 10 });
 		await fireEvent.pointerDown(bar, { pointerId: 2, button: 0, clientX: 10 });
+		await fireEvent.click(split);
 		expect(onLockAcquire).toHaveBeenCalledOnce();
+		expect(fetchMock).toHaveBeenCalledOnce();
 		resolvers[0]({ ok: true, json: async () => ({ ...interval, startPosition: 0.1 }) } as Response);
 		await waitFor(() => expect(bar).not.toHaveClass('resizing'));
 
@@ -193,7 +201,11 @@ describe('IntervalRow resize handles', () => {
 		await fireEvent.pointerUp(bar, { pointerId: 3, button: 0, clientX: 20 });
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 		await fireEvent.pointerDown(start, { pointerId: 4, clientX: 20 });
+		await fireEvent.keyDown(start, { key: 'ArrowRight' });
+		await fireEvent.pointerDown(bar, { pointerId: 5, button: 0, clientX: 20 });
+		await fireEvent.click(split);
 		expect(onLockAcquire).toHaveBeenCalledTimes(2);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 		resolvers[1]({ ok: true, json: async () => interval } as Response);
 		await waitFor(() => expect(onLockRelease).toHaveBeenCalledTimes(2));
 	});
