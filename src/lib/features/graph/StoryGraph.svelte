@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { preferences } from '$lib/os/preferences-store.js';
   import { applyPreferencePatch } from '$lib/os/preferences-sync.js';
@@ -9,7 +9,7 @@
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
   import { jumpToCause, isCausalEdgeClickable } from '$lib/features/timeline/jump-to-cause.js';
   import { windowStore } from '$lib/os/windows-store.js';
-  import { worldMapStore, worldMaps, worldMapsLoadStatus } from '$lib/features/map/store.js';
+  import { worldMapStore, worldMaps } from '$lib/features/map/store.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
@@ -24,11 +24,7 @@
   import ContextMenu from '$lib/os/ContextMenu.svelte';
   import EntityColorPopover from '$lib/components/EntityColorPopover.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
-  import {
-    entityAliases,
-    entityAliasesLoadStatus,
-    entityAliasesSnapshotReady
-  } from '$lib/stores/entity-aliases.js';
+  import { entityAliases } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
   import Legend from '$lib/features/graph/Legend.svelte';
   import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
@@ -49,13 +45,7 @@
     buildScenesForReveal
   } from '$lib/features/graph/view-builders.js';
 
-  function loadAliases() {
-    void entityAliases.load().catch(() => {});
-  }
-  function loadMaps() {
-    void worldMapStore.loadMaps().catch(() => {});
-  }
-  onMount(() => { intervalsStore.load(); loadAliases(); loadMaps(); });
+  onMount(() => { intervalsStore.load(); entityAliases.load(); worldMapStore.loadMaps(); });
 
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
@@ -83,7 +73,7 @@
   let aliasModal = $state<{ entity: { id: string; type: string; name: string } } | null>(null);
 
   // Reference to the canvas so the per-node overlay UI can trigger connect drags.
-  let canvas = $state<GraphCanvas>();
+  let canvas: GraphCanvas;
 
   // ── Store-derived data ─────────────────────────────────────────────────────
   const displayEntities = $derived($entities.filter((e) => e.type !== 'Note'));
@@ -408,15 +398,24 @@
 
   // ── Connect → rel-form ─────────────────────────────────────────────────────
   let saveError = $state('');
+  let relFormElement = $state<HTMLDivElement>();
 
-  function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
+  async function restoreGraphFocus(id: string) {
+    await tick();
+    canvas.focusNode(id);
+  }
+
+  async function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
     pending = { fromId, toId, sx: screenX, sy: screenY };
     relType = pickDefaultRelType($relationships, fromId, toId);
     relLabel = '';
     saveError = '';
+    await tick();
+    relFormElement?.querySelector<HTMLElement>('select, input, button')?.focus();
   }
 
-  function cancelPending() {
+  async function cancelPending() {
+    const focusId = pending?.toId;
     pending = null;
     relLabel = '';
     relType = 'allied_with';
@@ -424,10 +423,12 @@
     relEndActId = '';
     relRevealedAtPosition = null;
     saveError = '';
+    if (focusId) await restoreGraphFocus(focusId);
   }
 
   async function savePending() {
     if (!pending) return;
+    const focusId = pending.toId;
     if ((relStartActId && !relEndActId) || (!relStartActId && relEndActId)) {
       saveError = 'Set both a start and end act, or neither.';
       return;
@@ -456,6 +457,7 @@
       relStartActId = '';
       relEndActId = '';
       relRevealedAtPosition = null;
+      await restoreGraphFocus(focusId);
     } catch (err) {
       // Surface the failure (was previously silently swallowed). Most
       // common cause: a relationship of this type between this pair
@@ -479,11 +481,18 @@
   }
 
   // ── Delete (second-click confirms) ─────────────────────────────────────────
-  function onDeleteClick(e: MouseEvent, id: string) {
+  function focusAfterDelete(id: string): string {
+    const index = graphNodes.findIndex((node) => node.id === id);
+    return graphNodes[index + 1]?.id ?? graphNodes[index - 1]?.id ?? id;
+  }
+
+  async function onDeleteClick(e: MouseEvent, id: string) {
     e.stopPropagation();
     if (confirmDeleteId === id) {
-      entities.deleteEntity(id);
+      const focusId = focusAfterDelete(id);
+      await entities.deleteEntity(id);
       confirmDeleteId = null;
+      await restoreGraphFocus(focusId);
     } else {
       confirmDeleteId = id;
     }
@@ -533,11 +542,14 @@
 
   async function confirmDelete() {
     if (!deleteConfirm) return;
+    const id = deleteConfirm.id;
+    const focusId = focusAfterDelete(id);
     deleting = true;
     deleteError = '';
     try {
-      await entities.deleteEntity(deleteConfirm.id);
+      await entities.deleteEntity(id);
       deleteConfirm = null;
+      await restoreGraphFocus(focusId);
     } catch {
       deleteError = "Couldn't delete. The server rejected the request.";
     } finally {
@@ -645,29 +657,6 @@
   });
 </script>
 
-<svelte:window
-  onclick={(e) => {
-    if (!settingsOpen) return;
-    const t = e.target as HTMLElement | null;
-    if (t?.closest('.sg-settings') || t?.closest('.sg-settings-btn')) return;
-    settingsOpen = false;
-  }}
-/>
-
-{#if !$entityAliasesSnapshotReady && ($entityAliasesLoadStatus === 'idle' || $entityAliasesLoadStatus === 'loading')}
-  <div class="graph-load" role="status">Loading aliases…</div>
-{:else if !$entityAliasesSnapshotReady && $entityAliasesLoadStatus === 'error'}
-  <div class="graph-load" role="alert">
-    <span>Couldn't load aliases.</span>
-    <button onclick={loadAliases}>Retry</button>
-  </div>
-{:else}
-{#if $entityAliasesLoadStatus === 'error' || $worldMapsLoadStatus === 'error'}
-  <div class="graph-refresh" role="alert">
-    {#if $entityAliasesLoadStatus === 'error'}<span>Couldn't refresh aliases. <button onclick={loadAliases}>Retry</button></span>{/if}
-    {#if $worldMapsLoadStatus === 'error'}<span>Couldn't load maps. <button onclick={loadMaps}>Retry</button></span>{/if}
-  </div>
-{/if}
 <GraphCanvas
   bind:this={canvas}
   nodes={graphNodes}
@@ -700,6 +689,10 @@
       class="connect-btn gc-no-drag"
       title="Drag to connect"
       onpointerdown={(e) => canvas?.startConnect(e, id)}
+	  onclick={(e) => {
+		  e.stopPropagation();
+		  if (e.detail === 0) canvas?.startKeyboardConnect(id);
+	  }}
       aria-label="Connect node"
     >◉</button>
     <button
@@ -716,6 +709,14 @@
      it. Click-outside dismisses (svelte:window handler). Mirrors the
      FG settings flow but the panel hangs from the toggle instead of
      anchoring at the bottom corner. -->
+<svelte:window
+  onclick={(e) => {
+    if (!settingsOpen) return;
+    const t = e.target as HTMLElement | null;
+    if (t?.closest('.sg-settings') || t?.closest('.sg-settings-btn')) return;
+    settingsOpen = false;
+  }}
+/>
 <div class="sg-controls">
   <div class="sg-controls-row">
     <button
@@ -813,6 +814,7 @@
 {#if pending}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
+	bind:this={relFormElement}
     class="rel-form"
     style="left:{pending.sx}px; top:{pending.sy}px"
     onkeydown={onRelFormKeydown}
@@ -962,11 +964,7 @@
   />
 {/if}
 
-{/if}
-
 <style>
-	.graph-load { min-height: 100%; display: grid; place-content: center; gap: 10px; color: var(--color-text-muted); }
-	.graph-refresh { position: absolute; z-index: 8; margin: 10px; padding: 8px; background: var(--color-surface-2); color: var(--color-text); }
   /* ── Per-node overlay buttons ───────────────────────────────────────────── */
   .connect-btn,
   .delete-btn {

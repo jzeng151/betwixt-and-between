@@ -206,6 +206,7 @@
 		startPY: number;
 	} | null>(null);
 	let hoveredNodeId = $state<string | null>(null);
+	let focusedNodeId = $state<string | null>(null);
 
 	let viewport: HTMLDivElement = $state(null!);
 
@@ -295,7 +296,7 @@
 	});
 	const keyboardEdges = $derived(
 		screenEdges.filter(
-			(edge) => !edge.mysteryMode && !edge.id.startsWith('alias-') && (edge.clickable || onEdgeContextMenu)
+			(edge) => !edge.id.startsWith('alias-') && (edge.clickable || onEdgeContextMenu)
 		)
 	);
 
@@ -475,15 +476,49 @@
 		onContextMenu?.(id, e.clientX, e.clientY);
 	}
 
+	function revealNode(position: NodePosition) {
+		const rect = viewport.getBoundingClientRect();
+		if (rect.width <= 0 || rect.height <= 0) return;
+		const left = panX + position.x * zoom;
+		const top = panY + position.y * zoom;
+		const right = left + (position.w || NODE_W) * zoom;
+		const bottom = top + (position.h || NODE_H) * zoom;
+		if (left < 0) panX -= left;
+		else if (right > rect.width) panX -= right - rect.width;
+		if (top < 0) panY -= top;
+		else if (bottom > rect.height) panY -= bottom - rect.height;
+	}
+
+	function completeKeyboardConnect(id: string): boolean {
+		if (!connecting || connecting.fromId === id || !onConnect) return false;
+		const p = nodePos[id];
+		if (!p) return false;
+		onConnect(
+			connecting.fromId,
+			id,
+			panX + (p.x + (p.w || NODE_W) / 2) * zoom,
+			panY + (p.y + (p.h || NODE_H) / 2) * zoom
+		);
+		connecting = null;
+		return true;
+	}
+
 	function onNodeKeydown(e: KeyboardEvent, id: string) {
 		if (e.target !== e.currentTarget) return;
+		if (e.key === 'Escape' && connecting) {
+			e.preventDefault();
+			connecting = null;
+			return;
+		}
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
-			onNodeOpen?.(id);
+			if (connecting) completeKeyboardConnect(id);
+			else onNodeOpen?.(id);
 			return;
 		}
 		if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && onContextMenu) {
 			e.preventDefault();
+			connecting = null;
 			const p = nodePos[id];
 			if (!p) return;
 			const rect = viewport.getBoundingClientRect();
@@ -505,17 +540,7 @@
 			y: p.y + (e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0)
 		};
 		nodePos = { ...nodePos, [id]: next };
-		const rect = viewport.getBoundingClientRect();
-		if (rect.width > 0 && rect.height > 0) {
-			const left = panX + next.x * zoom;
-			const top = panY + next.y * zoom;
-			const right = left + (next.w || NODE_W) * zoom;
-			const bottom = top + (next.h || NODE_H) * zoom;
-			if (left < 0) panX -= left;
-			else if (right > rect.width) panX -= right - rect.width;
-			if (top < 0) panY -= top;
-			else if (bottom > rect.height) panY -= bottom - rect.height;
-		}
+		revealNode(next);
 		onNodePositionChange?.(id, next);
 	}
 
@@ -546,6 +571,7 @@
 	}
 
 	function activateEdgeFromKeyboard(edge: GraphEdge & { x1: number; y1: number; x2: number; y2: number }) {
+		connecting = null;
 		if (edge.clickable && onEdgeClick) {
 			onEdgeClick(edge.id);
 			return;
@@ -571,6 +597,7 @@
 	) {
 		if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
 		e.preventDefault();
+		connecting = null;
 		if (!onEdgeContextMenu) return;
 		const rect = viewport.getBoundingClientRect();
 		onEdgeContextMenu(edge.id, rect.left + (edge.x1 + edge.x2) / 2, rect.top + (edge.y1 + edge.y2) / 2);
@@ -588,6 +615,10 @@
 	 */
 	export function getPosition(id: string): NodePosition | undefined {
 		return nodePos[id];
+	}
+
+	export function focusNode(id: string) {
+		(viewport.querySelector<HTMLElement>(`[data-entity-id="${CSS.escape(id)}"]`) ?? viewport).focus();
 	}
 
 	export function reseed(positions: Record<string, NodePosition>, { fit = true }: { fit?: boolean } = {}) {
@@ -624,12 +655,24 @@
 		connecting = { fromId, screenX: vp.x, screenY: vp.y };
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 	}
+
+	export function startKeyboardConnect(fromId: string) {
+		const p = nodePos[fromId];
+		if (!p) return;
+		connecting = {
+			fromId,
+			screenX: panX + (p.x + (p.w || NODE_W) / 2) * zoom,
+			screenY: panY + (p.y + (p.h || NODE_H) / 2) * zoom
+		};
+		focusNode(fromId);
+	}
 </script>
 
 <div
 	class="viewport"
 	role="application"
 	aria-label="Graph canvas"
+	tabindex="-1"
 	bind:this={viewport}
 	onpointerdown={onViewportPointerDown}
 	onpointermove={onPointerMove}
@@ -751,7 +794,7 @@
 				type="button"
 				class="edge-keyboard-action"
 				style="left:{(edge.x1 + edge.x2) / 2 - 12}px; top:{(edge.y1 + edge.y2) / 2 - 12}px"
-				aria-label={edgeLabel(edge)}
+				aria-label={edge.mysteryMode ? 'Edit hidden relationship' : edgeLabel(edge)}
 				onfocus={() => revealEdge(edge)}
 				onclick={() => activateEdgeFromKeyboard(edge)}
 				onkeydown={(e) => onEdgeKeyboardMenu(e, edge)}
@@ -768,39 +811,56 @@
 			{@const p = nodePos[node.id]}
 			{#if p}
 				{@const nc = node.color ?? NODE_COLOR[node.type as keyof typeof NODE_COLOR] ?? 'var(--color-accent)'}
-				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
-					class="node"
-					data-entity-id={node.id}
-					class:node-active={hoveredNodeId === node.id || draggingNode?.id === node.id}
-					class:node-out-of-scope={dimmedNodes.has(node.id)}
-					class:node-alias-member={node.aliasMember}
+					class="node-shell"
 					style="left:{p.x}px; top:{p.y}px; --nc:{nc}"
-					onpointerdown={(e) => onNodePointerDown(e, node.id)}
-					ondblclick={(e) => onNodeDblClick(e, node.id)}
-					oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
-					onkeydown={(e) => onNodeKeydown(e, node.id)}
+					onfocusin={() => {
+						focusedNodeId = node.id;
+						revealNode(p);
+					}}
+					onfocusout={(e) => {
+						if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) focusedNodeId = null;
+					}}
 					onpointerenter={() => (hoveredNodeId = node.id)}
 					onpointerleave={() => {
 						if (draggingNode?.id !== node.id) hoveredNodeId = null;
 					}}
-					role="button"
-					tabindex="0"
-					aria-label="Open {node.name}"
-					aria-describedby={nodeMovementHelpId}
 				>
-					<span class="node-name">{node.name}</span>
-					<span class="node-type">{node.type}</span>
-					{#if nodeBadge}
-						<span class="gc-badge-host">
-							{@render nodeBadge({
-								id: node.id,
-								hovered: hoveredNodeId === node.id,
-								dragging: draggingNode?.id === node.id
-							})}
-						</span>
-					{/if}
-					{#if nodeOverlay && hoveredNodeId === node.id && !draggingNode && !panning}
+					<div
+						class="node"
+						data-entity-id={node.id}
+						class:node-active={hoveredNodeId === node.id || focusedNodeId === node.id || draggingNode?.id === node.id}
+						class:node-out-of-scope={dimmedNodes.has(node.id)}
+						class:node-alias-member={node.aliasMember}
+						onpointerdown={(e) => onNodePointerDown(e, node.id)}
+						ondblclick={(e) => onNodeDblClick(e, node.id)}
+						oncontextmenu={(e) => onNodeContextMenu(e, node.id)}
+						onclick={(e) => {
+							if (e.target === e.currentTarget && e.detail === 0) {
+								if (connecting) completeKeyboardConnect(node.id);
+								else onNodeOpen?.(node.id);
+							}
+						}}
+						onkeydown={(e) => onNodeKeydown(e, node.id)}
+						role="button"
+						tabindex="0"
+						aria-label="Open {node.name}"
+						aria-describedby={nodeMovementHelpId}
+					>
+						<span class="node-name">{node.name}</span>
+						<span class="node-type">{node.type}</span>
+						{#if nodeBadge}
+							<span class="gc-badge-host">
+								{@render nodeBadge({
+									id: node.id,
+									hovered: hoveredNodeId === node.id,
+									dragging: draggingNode?.id === node.id
+								})}
+							</span>
+						{/if}
+					</div>
+					{#if nodeOverlay && (hoveredNodeId === node.id || focusedNodeId === node.id) && !draggingNode && !panning}
 						<div class="gc-overlay-host gc-no-drag">
 							{@render nodeOverlay({
 								id: node.id,
@@ -856,6 +916,7 @@
 
 	.edge-keyboard-action {
 		position: absolute;
+		z-index: 1;
 		width: 24px;
 		height: 24px;
 		padding: 0;
@@ -882,7 +943,7 @@
 	   name text in the full entity color. Same entity now reads as
 	   the same color across Timeline + StoryGraph + FocusedGraph. */
 	.node {
-		position: absolute;
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: 6px;
@@ -897,6 +958,10 @@
 		color: var(--nc);
 		white-space: nowrap;
 		transition: opacity 200ms ease;
+	}
+
+	.node-shell {
+		position: absolute;
 	}
 
 	.node-active {

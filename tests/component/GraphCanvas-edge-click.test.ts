@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/svelte';
-import { tick } from 'svelte';
+import { createRawSnippet, tick, type Snippet } from 'svelte';
 import GraphCanvas from '$lib/features/graph/GraphCanvas.svelte';
 
 // WM3 Slice 5 — Codex P1. The edge hit-area <line> is rendered for EVERY edge
@@ -37,7 +37,10 @@ function renderCanvas(
 	onEdgeClick: (id: string) => void,
 	onNodeOpen?: (id: string) => void,
 	onNodePositionChange?: (id: string, position: { x: number; y: number }) => void,
-	onEdgeContextMenu?: (id: string, x: number, y: number) => void
+	onEdgeContextMenu?: (id: string, x: number, y: number) => void,
+	nodeOverlay?: Snippet<[{ id: string; hovered: boolean; dragging: boolean }]>,
+	onConnect?: (fromId: string, toId: string, screenX: number, screenY: number) => void,
+	onContextMenu?: (id: string, x: number, y: number) => void
 ) {
 	return render(GraphCanvas, {
 		props: {
@@ -55,8 +58,11 @@ function renderCanvas(
 			initialPositions,
 			onEdgeClick,
 			onEdgeContextMenu,
+			onContextMenu,
 			onNodeOpen,
-			onNodePositionChange
+			onNodePositionChange,
+			nodeOverlay,
+			onConnect
 		}
 	});
 }
@@ -109,6 +115,30 @@ describe('GraphCanvas edge click gate', () => {
 		expect(description).toHaveTextContent(/Arrow keys to move.*Hold Shift/i);
 	});
 
+	it('opens graph nodes from synthesized accessibility clicks only', async () => {
+		const onNodeOpen = vi.fn();
+		const { container } = renderCanvas(vi.fn(), onNodeOpen);
+		await tick();
+		const node = container.querySelector('[data-entity-id="cause"]') as HTMLElement;
+
+		node.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+		node.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+
+		expect(onNodeOpen).toHaveBeenCalledOnce();
+	});
+
+	it('ignores synthesized clicks bubbled from node controls', async () => {
+		const onNodeOpen = vi.fn();
+		const { container } = renderCanvas(vi.fn(), onNodeOpen);
+		await tick();
+		const node = container.querySelector('[data-entity-id="cause"]') as HTMLElement;
+		const control = node.appendChild(document.createElement('button'));
+
+		control.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+
+		expect(onNodeOpen).not.toHaveBeenCalled();
+	});
+
 	it('pans to keep a keyboard-moved node visible', async () => {
 		const { container } = renderCanvas(vi.fn(), undefined, vi.fn());
 		const viewport = container.querySelector('.viewport') as HTMLElement;
@@ -131,6 +161,112 @@ describe('GraphCanvas edge click gate', () => {
 		await tick();
 
 		expect(canvas.style.transform).not.toBe(before);
+	});
+
+	it('pans an off-screen node into view on focus', async () => {
+		const { container } = renderCanvas(vi.fn());
+		const viewport = container.querySelector('.viewport') as HTMLElement;
+		viewport.getBoundingClientRect = () => ({
+			x: 0, y: 0, left: 0, top: 0, right: 40, bottom: 40, width: 40, height: 40,
+			toJSON: () => ({})
+		}) as DOMRect;
+		await tick();
+		const canvas = container.querySelector('.canvas') as HTMLElement;
+		const before = canvas.style.transform;
+
+		(container.querySelector('[data-entity-id="other"]') as HTMLElement).focus();
+		await tick();
+
+		expect(canvas.style.transform).not.toBe(before);
+	});
+
+	it('restores focus to a node by id', async () => {
+		const view = renderCanvas(vi.fn());
+		await tick();
+
+		view.component.focusNode('effect');
+
+		expect(view.container.querySelector('[data-entity-id="effect"]')).toHaveFocus();
+
+		view.component.focusNode('removed');
+		expect(view.getByRole('application')).toHaveFocus();
+	});
+
+	it('renders node actions while the node owns keyboard focus', async () => {
+		const nodeOverlay = createRawSnippet<[{ id: string; hovered: boolean; dragging: boolean }]>(() => ({
+			render: () => '<button aria-label="Node action">Action</button>'
+		}));
+		const view = renderCanvas(vi.fn(), undefined, undefined, undefined, nodeOverlay);
+		await tick();
+
+		(view.container.querySelector('[data-entity-id="cause"]') as HTMLElement).focus();
+		await tick();
+
+		const action = view.getByRole('button', { name: 'Node action' });
+		expect(action).toBeInTheDocument();
+		expect(view.container.querySelector('[data-entity-id="cause"]')).not.toContainElement(action);
+	});
+
+	it('completes keyboard-started connections on node activation', async () => {
+		const onConnect = vi.fn();
+		const view = renderCanvas(vi.fn(), undefined, undefined, undefined, undefined, onConnect);
+		await tick();
+
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.keyDown(
+			view.container.querySelector('[data-entity-id="effect"]') as HTMLElement,
+			{ key: 'Enter' }
+		);
+
+		expect(onConnect).toHaveBeenCalledWith('cause', 'effect', expect.any(Number), expect.any(Number));
+	});
+
+	it('cancels keyboard connection mode with Escape', async () => {
+		const onConnect = vi.fn();
+		const onNodeOpen = vi.fn();
+		const view = renderCanvas(vi.fn(), onNodeOpen, undefined, undefined, undefined, onConnect);
+		await tick();
+		const source = view.container.querySelector('[data-entity-id="cause"]') as HTMLElement;
+		const target = view.container.querySelector('[data-entity-id="effect"]') as HTMLElement;
+
+		view.component.startKeyboardConnect('cause');
+		expect(source).toHaveFocus();
+		await fireEvent.keyDown(source, { key: 'Escape' });
+		await fireEvent.keyDown(target, { key: 'Enter' });
+
+		expect(onConnect).not.toHaveBeenCalled();
+		expect(onNodeOpen).toHaveBeenCalledWith('effect');
+	});
+
+	it('cancels keyboard connection mode before opening a node menu', async () => {
+		const onConnect = vi.fn();
+		const onNodeOpen = vi.fn();
+		const onContextMenu = vi.fn();
+		const view = renderCanvas(vi.fn(), onNodeOpen, undefined, undefined, undefined, onConnect, onContextMenu);
+		await tick();
+		const target = view.container.querySelector('[data-entity-id="effect"]') as HTMLElement;
+
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.keyDown(target, { key: 'ContextMenu' });
+		await fireEvent.keyDown(target, { key: 'Enter' });
+
+		expect(onContextMenu).toHaveBeenCalledWith('effect', expect.any(Number), expect.any(Number));
+		expect(onConnect).not.toHaveBeenCalled();
+		expect(onNodeOpen).toHaveBeenCalledWith('effect');
+	});
+
+	it('keeps source activation inside keyboard connection mode', async () => {
+		const onConnect = vi.fn();
+		const onNodeOpen = vi.fn();
+		const view = renderCanvas(vi.fn(), onNodeOpen, undefined, undefined, undefined, onConnect);
+		await tick();
+		const source = view.container.querySelector('[data-entity-id="cause"]') as HTMLElement;
+
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.keyDown(source, { key: 'Enter' });
+
+		expect(onConnect).not.toHaveBeenCalled();
+		expect(onNodeOpen).not.toHaveBeenCalled();
 	});
 
 	it('leaves reserved modified Arrow shortcuts to the browser', async () => {
@@ -158,6 +294,29 @@ describe('GraphCanvas edge click gate', () => {
 		expect(onEdgeClick).toHaveBeenCalledWith('edge-clickable');
 	});
 
+	it('cancels keyboard connections before edge actions', async () => {
+		const onEdgeClick = vi.fn();
+		const onEdgeContextMenu = vi.fn();
+		const onNodeOpen = vi.fn();
+		const onConnect = vi.fn();
+		const view = renderCanvas(onEdgeClick, onNodeOpen, undefined, onEdgeContextMenu, undefined, onConnect);
+		await tick();
+		const action = view.container.querySelector<HTMLButtonElement>('.edge-keyboard-action')!;
+		const target = view.container.querySelector('[data-entity-id="other"]') as HTMLElement;
+
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.keyDown(action, { key: 'ContextMenu' });
+		await fireEvent.keyDown(target, { key: 'Enter' });
+		view.component.startKeyboardConnect('cause');
+		await fireEvent.click(action);
+		await fireEvent.keyDown(target, { key: 'Enter' });
+
+		expect(onEdgeContextMenu).toHaveBeenCalled();
+		expect(onEdgeClick).toHaveBeenCalledWith('edge-clickable');
+		expect(onConnect).not.toHaveBeenCalled();
+		expect(onNodeOpen).toHaveBeenCalledTimes(2);
+	});
+
 	it('pans an off-screen edge action into view on focus', async () => {
 		const { container } = renderCanvas(vi.fn());
 		const viewport = container.querySelector('.viewport') as HTMLElement;
@@ -181,14 +340,15 @@ describe('GraphCanvas edge click gate', () => {
 		expect(action.style.left).not.toBe(before);
 	});
 
-	it('keeps mystery and synthetic alias edges out of keyboard actions', async () => {
+	it('exposes mystery context actions without revealing details', async () => {
 		const onEdgeContextMenu = vi.fn();
 		const { container } = renderCanvas(vi.fn(), undefined, undefined, onEdgeContextMenu);
 		await tick();
 		const actions = [...container.querySelectorAll<HTMLButtonElement>('.edge-keyboard-action')];
 
-		expect(actions).toHaveLength(2);
+		expect(actions).toHaveLength(3);
 		expect(actions.map((action) => action.getAttribute('aria-label')).join(' ')).not.toMatch(/Secret|Alias/);
+		expect(actions.some((action) => action.getAttribute('aria-label') === 'Edit hidden relationship')).toBe(true);
 		await fireEvent.click(actions.find((action) => action.getAttribute('aria-label')?.startsWith('Blocked'))!);
 		expect(onEdgeContextMenu).toHaveBeenCalledWith('edge-blocked', expect.any(Number), expect.any(Number));
 	});

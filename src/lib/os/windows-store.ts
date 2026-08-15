@@ -97,10 +97,9 @@ let zCounter = 100;
 
 /**
  * Read --taskbar-height from :root. Falls back to 52 in SSR / before the
- * stylesheet attaches. Kept inline (not exported) because this is shell
- * layout math, not a public API.
+ * stylesheet attaches. Shared by the store and Window keyboard geometry.
  */
-function readTaskbarHeight(): number {
+export function readTaskbarHeight(): number {
 	if (typeof window === 'undefined') return 52;
 	const raw = getComputedStyle(document.documentElement)
 		.getPropertyValue('--taskbar-height')
