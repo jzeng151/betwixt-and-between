@@ -9,7 +9,7 @@
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
   import { jumpToCause, isCausalEdgeClickable } from '$lib/features/timeline/jump-to-cause.js';
   import { windowStore } from '$lib/os/windows-store.js';
-  import { worldMapStore, worldMaps } from '$lib/features/map/store.js';
+  import { worldMapStore, worldMaps, worldMapsLoadStatus } from '$lib/features/map/store.js';
   import { openEntity } from '$lib/navigation.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
@@ -24,7 +24,11 @@
   import ContextMenu from '$lib/os/ContextMenu.svelte';
   import EntityColorPopover from '$lib/components/EntityColorPopover.svelte';
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
-  import { entityAliases } from '$lib/stores/entity-aliases.js';
+  import {
+    entityAliases,
+    entityAliasesLoadStatus,
+    entityAliasesSnapshotReady
+  } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
   import Legend from '$lib/features/graph/Legend.svelte';
   import DeleteConfirmDialog, { type DeleteImpact } from '$lib/components/DeleteConfirmDialog.svelte';
@@ -45,7 +49,13 @@
     buildScenesForReveal
   } from '$lib/features/graph/view-builders.js';
 
-  onMount(() => { intervalsStore.load(); entityAliases.load(); worldMapStore.loadMaps(); });
+  function loadAliases() {
+    void entityAliases.load().catch(() => {});
+  }
+  function loadMaps() {
+    void worldMapStore.loadMaps().catch(() => {});
+  }
+  onMount(() => { intervalsStore.load(); loadAliases(); loadMaps(); });
 
   // ── Relationship form ──────────────────────────────────────────────────────
   let relType: RelationshipType = $state('allied_with');
@@ -73,7 +83,7 @@
   let aliasModal = $state<{ entity: { id: string; type: string; name: string } } | null>(null);
 
   // Reference to the canvas so the per-node overlay UI can trigger connect drags.
-  let canvas: GraphCanvas;
+  let canvas = $state<GraphCanvas>();
 
   // ── Store-derived data ─────────────────────────────────────────────────────
   const displayEntities = $derived($entities.filter((e) => e.type !== 'Note'));
@@ -402,7 +412,7 @@
 
   async function restoreGraphFocus(id: string) {
     await tick();
-    canvas.focusNode(id);
+    canvas?.focusNode(id);
   }
 
   async function onConnect(fromId: string, toId: string, screenX: number, screenY: number) {
@@ -657,6 +667,29 @@
   });
 </script>
 
+<svelte:window
+  onclick={(e) => {
+    if (!settingsOpen) return;
+    const t = e.target as HTMLElement | null;
+    if (t?.closest('.sg-settings') || t?.closest('.sg-settings-btn')) return;
+    settingsOpen = false;
+  }}
+/>
+
+{#if !$entityAliasesSnapshotReady && ($entityAliasesLoadStatus === 'idle' || $entityAliasesLoadStatus === 'loading')}
+  <div class="graph-load" role="status">Loading aliases…</div>
+{:else if !$entityAliasesSnapshotReady && $entityAliasesLoadStatus === 'error'}
+  <div class="graph-load" role="alert">
+    <span>Couldn't load aliases.</span>
+    <button onclick={loadAliases}>Retry</button>
+  </div>
+{:else}
+{#if $entityAliasesLoadStatus === 'error' || $worldMapsLoadStatus === 'error'}
+  <div class="graph-refresh" role="alert">
+    {#if $entityAliasesLoadStatus === 'error'}<span>Couldn't refresh aliases. <button onclick={loadAliases}>Retry</button></span>{/if}
+    {#if $worldMapsLoadStatus === 'error'}<span>Couldn't load maps. <button onclick={loadMaps}>Retry</button></span>{/if}
+  </div>
+{/if}
 <GraphCanvas
   bind:this={canvas}
   nodes={graphNodes}
@@ -709,14 +742,6 @@
      it. Click-outside dismisses (svelte:window handler). Mirrors the
      FG settings flow but the panel hangs from the toggle instead of
      anchoring at the bottom corner. -->
-<svelte:window
-  onclick={(e) => {
-    if (!settingsOpen) return;
-    const t = e.target as HTMLElement | null;
-    if (t?.closest('.sg-settings') || t?.closest('.sg-settings-btn')) return;
-    settingsOpen = false;
-  }}
-/>
 <div class="sg-controls">
   <div class="sg-controls-row">
     <button
@@ -964,7 +989,11 @@
   />
 {/if}
 
+{/if}
+
 <style>
+  .graph-load { min-height: 100%; display: grid; place-content: center; gap: 10px; color: var(--color-text-muted); }
+  .graph-refresh { position: absolute; z-index: 8; margin: 10px; padding: 8px; background: var(--color-surface-2); color: var(--color-text); }
   /* ── Per-node overlay buttons ───────────────────────────────────────────── */
   .connect-btn,
   .delete-btn {

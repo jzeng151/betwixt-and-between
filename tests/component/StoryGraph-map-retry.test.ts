@@ -23,6 +23,27 @@ beforeEach(() => {
 });
 
 describe('StoryGraph map loading', () => {
+	it('waits for aliases and offers recovery after the initial load fails', async () => {
+		entityAliasesSnapshotReady.set(false);
+		entityAliasesLoadStatus.set('idle');
+		let aliasLoads = 0;
+		globalThis.fetch = vi.fn((input) => {
+			if (String(input) === '/api/entity-aliases') {
+				aliasLoads++;
+				return Promise.resolve(aliasLoads === 1 ? response('offline', false) : response([]));
+			}
+			return Promise.resolve(response([]));
+		}) as unknown as typeof fetch;
+		const view = render(StoryGraph);
+
+		const alert = await waitFor(() => view.getByRole('alert'));
+		expect(alert).toHaveTextContent("Couldn't load aliases");
+		await fireEvent.click(view.getByRole('button', { name: 'Retry' }));
+
+		await waitFor(() => expect(get(entityAliasesSnapshotReady)).toBe(true));
+		expect(aliasLoads).toBe(2);
+	});
+
 	it('offers recovery after a deferred map load fails', async () => {
 		let mapLoads = 0;
 		globalThis.fetch = vi.fn((input) => {
