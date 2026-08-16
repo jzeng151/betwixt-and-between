@@ -255,7 +255,7 @@
 		font-style: italic;
 	}
 	.palette-error {
-		color: #ef4444;
+		color: var(--color-danger);
 		font-size: 11px;
 	}
 </style>

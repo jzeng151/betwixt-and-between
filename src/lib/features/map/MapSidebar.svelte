@@ -949,7 +949,7 @@
 		margin: 0;
 	}
 	.error-msg {
-		color: var(--color-rel-rival, #ef4444);
+		color: var(--color-danger);
 		font-size: 11px;
 		margin: 0;
 	}

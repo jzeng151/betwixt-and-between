@@ -3,6 +3,8 @@ import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } fr
 import type { MapArtLayer } from './projection.js';
 import { errorMessage } from '$lib/util/api-error-message.js';
 
+export const worldMapsLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
+
 // Result of loadMapRegions. `superseded` is distinct from `not-found` so the
 // caller does NOT flip its region-readiness gate on a stale A→B→A load that
 // resolved after a newer load became authoritative (Codex PR #72): only a
@@ -39,12 +41,38 @@ function createWorldMapStore() {
 	// store): every commit — load OR cached apply — bumps it, so any older
 	// in-flight load is dropped regardless of which map it was for.
 	let loadSeq = 0;
+	let mapListLoadPromise: Promise<void> | null = null;
+	let mapListGeneration = 0;
+	const upsertMap = (all: WorldMap[], map: WorldMap) =>
+		all.some((item) => item.id === map.id)
+			? all.map((item) => (item.id === map.id ? map : item))
+			: [...all, map];
 
-	async function loadMaps(): Promise<void> {
-		const res = await fetch('/api/maps');
-		if (!res.ok) throw new Error('Failed to load maps');
-		const data: WorldMap[] = await res.json();
-		maps.set(data);
+	function commitMapMutation() {
+		mapListGeneration++;
+		mapListLoadPromise = null;
+		worldMapsLoadStatus.set('ready');
+	}
+
+	function loadMaps(): Promise<void> {
+		if (mapListLoadPromise) return mapListLoadPromise;
+		const generation = ++mapListGeneration;
+		worldMapsLoadStatus.set('loading');
+		const request = (async () => {
+			const res = await fetch('/api/maps');
+			if (!res.ok) throw new Error('Failed to load maps');
+			const data: WorldMap[] = await res.json();
+			if (generation !== mapListGeneration) return;
+			maps.set(data);
+			worldMapsLoadStatus.set('ready');
+		})().catch((error) => {
+			if (generation === mapListGeneration) worldMapsLoadStatus.set('error');
+			throw error;
+		});
+		mapListLoadPromise = request;
+		return request.finally(() => {
+			if (mapListLoadPromise === request) mapListLoadPromise = null;
+		});
 	}
 
 	async function loadMapRegions(mapId: string): Promise<LoadRegionsResult> {
@@ -105,7 +133,8 @@ function createWorldMapStore() {
 		});
 		if (!res.ok) throw new Error(await errorMessage(res));
 		const created: WorldMap = await res.json();
-		maps.update((all) => [...all, created]);
+		commitMapMutation();
+		maps.update((all) => upsertMap(all, created));
 		return created;
 	}
 
@@ -131,6 +160,7 @@ function createWorldMapStore() {
 		});
 		if (!res.ok) throw new Error(await errorMessage(res));
 		const updated: WorldMap = await res.json();
+		commitMapMutation();
 		// codex P2: write back ONLY the fields THIS PATCH changed, taken from the
 		// authoritative response; keep every other field from the current store
 		// row. A concurrent PATCH (e.g. a toolbar rename) returns a full row whose
@@ -153,12 +183,19 @@ function createWorldMapStore() {
 	}
 
 	async function deleteMap(id: string): Promise<void> {
-		maps.update((all) => all.filter((m) => m.id !== id));
+		let removed: WorldMap | undefined;
+		maps.update((all) => {
+			removed = all.find((m) => m.id === id);
+			return all.filter((m) => m.id !== id);
+		});
 		const res = await fetch(`/api/maps/${id}`, { method: 'DELETE' });
 		if (!res.ok) {
+			if (removed) maps.update((all) => upsertMap(all, removed!));
 			await loadMaps();
 			throw new Error('Failed to delete map');
 		}
+		commitMapMutation();
+		maps.update((all) => all.filter((m) => m.id !== id));
 		regions.update((all) => all.filter((r) => r.mapId !== id));
 	}
 
@@ -204,7 +241,8 @@ function createWorldMapStore() {
 		if (!res.ok) throw new Error(await errorMessage(res));
 		const data = await res.json();
 		const { regions: cloneRegions, ...clone } = data;
-		maps.update((all) => [...all, clone as WorldMap]);
+		commitMapMutation();
+		maps.update((all) => upsertMap(all, clone as WorldMap));
 		// New regions belong to a different mapId, so they won't collide with the
 		// currently-loaded set. Append rather than replace — caller switches to
 		// the clone via the picker, which triggers loadMapRegions if needed.
@@ -221,6 +259,7 @@ function createWorldMapStore() {
 		});
 		if (!res.ok) throw new Error(await errorMessage(res));
 		const updated: WorldMap = await res.json();
+		commitMapMutation();
 		maps.update((all) => all.map((m) => (m.id === mapId ? updated : m)));
 		return updated;
 	}

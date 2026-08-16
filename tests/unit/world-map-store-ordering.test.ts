@@ -15,7 +15,12 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { worldMapStore, mapRegions } from '../../src/lib/features/map/store.js';
+import {
+	worldMapStore,
+	worldMaps,
+	worldMapsLoadStatus,
+	mapRegions
+} from '../../src/lib/features/map/store.js';
 import type { MapRegion } from '../../src/lib/features/map/types.js';
 
 function makeResponse(body: unknown, ok = true, status = 200): Response {
@@ -38,7 +43,130 @@ function mapPayload(id: string) {
 
 beforeEach(() => {
 	mapRegions.set([]);
+	worldMaps.set([]);
 	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([])) as unknown as typeof fetch;
+});
+
+describe('loadMaps status', () => {
+	it('deduplicates overlapping map-list loads', async () => {
+		let resolveLoad!: (response: Response) => void;
+		const fetchMock = vi.fn().mockReturnValue(new Promise<Response>((resolve) => {
+			resolveLoad = resolve;
+		}));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const first = worldMapStore.loadMaps();
+		const second = worldMapStore.loadMaps();
+		resolveLoad(makeResponse([{ id: 'A', name: 'A' }]));
+		await Promise.all([first, second]);
+
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(get(worldMaps)).toHaveLength(1);
+		expect(get(worldMapsLoadStatus)).toBe('ready');
+	});
+
+	it('clears a cached refresh error after a successful delete', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([{ id: 'A', name: 'A' }])) as unknown as typeof fetch;
+		await worldMapStore.loadMaps();
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse('offline', false, 503)) as unknown as typeof fetch;
+		await expect(worldMapStore.loadMaps()).rejects.toThrow('Failed to load maps');
+		expect(get(worldMapsLoadStatus)).toBe('error');
+		expect(get(worldMaps)).toHaveLength(1);
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(null)) as unknown as typeof fetch;
+
+		await worldMapStore.deleteMap('A');
+
+		expect(get(worldMaps)).toHaveLength(0);
+		expect(get(worldMapsLoadStatus)).toBe('ready');
+	});
+
+	it('ignores a stale refresh failure after deleting the last cached map', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([{ id: 'A', name: 'A' }])) as unknown as typeof fetch;
+		await worldMapStore.loadMaps();
+		let rejectRefresh!: (error: Error) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((_resolve, reject) => { rejectRefresh = reject; }))
+			.mockResolvedValueOnce(makeResponse(null)) as unknown as typeof fetch;
+		const refresh = worldMapStore.loadMaps();
+
+		await worldMapStore.deleteMap('A');
+		rejectRefresh(new Error('offline'));
+		await expect(refresh).rejects.toThrow('offline');
+
+		expect(get(worldMaps)).toHaveLength(0);
+		expect(get(worldMapsLoadStatus)).toBe('ready');
+	});
+
+	it('removes a deleted map restored by an overlapping refresh', async () => {
+		worldMaps.set([{ id: 'A', name: 'A' } as never]);
+		let resolveRefresh!: (response: Response) => void;
+		let resolveDelete!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRefresh = resolve; }))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveDelete = resolve; })) as unknown as typeof fetch;
+
+		const refresh = worldMapStore.loadMaps();
+		const deletion = worldMapStore.deleteMap('A');
+		resolveRefresh(makeResponse([{ id: 'A', name: 'A' }]));
+		await refresh;
+		resolveDelete(makeResponse(null));
+		await deletion;
+
+		expect(get(worldMaps)).toHaveLength(0);
+	});
+
+	it('upserts a create already returned by an overlapping refresh', async () => {
+		const created = { id: 'new', name: 'New' };
+		let resolveRefresh!: (response: Response) => void;
+		let resolveCreate!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRefresh = resolve; }))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveCreate = resolve; })) as unknown as typeof fetch;
+
+		const refresh = worldMapStore.loadMaps();
+		const creation = worldMapStore.createMap('New');
+		resolveRefresh(makeResponse([created]));
+		await refresh;
+		resolveCreate(makeResponse(created));
+		await creation;
+
+		expect(get(worldMaps).filter((map) => map.id === 'new')).toHaveLength(1);
+	});
+
+	it('upserts a duplicate already returned by an overlapping refresh', async () => {
+		const clone = { id: 'clone', name: 'Clone', regions: [] };
+		let resolveRefresh!: (response: Response) => void;
+		let resolveDuplicate!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRefresh = resolve; }))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveDuplicate = resolve; })) as unknown as typeof fetch;
+
+		const refresh = worldMapStore.loadMaps();
+		const duplication = worldMapStore.duplicateMap('source');
+		resolveRefresh(makeResponse([{ id: 'clone', name: 'Clone' }]));
+		await refresh;
+		resolveDuplicate(makeResponse(clone));
+		await duplication;
+
+		expect(get(worldMaps).filter((map) => map.id === 'clone')).toHaveLength(1);
+	});
+
+	it('restores a failed deletion even when another mutation invalidates its refresh', async () => {
+		worldMaps.set([{ id: 'A', name: 'A' } as never]);
+		let resolveRecovery!: (response: Response) => void;
+		globalThis.fetch = vi.fn()
+			.mockResolvedValueOnce(makeResponse('nope', false, 500))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveRecovery = resolve; }))
+			.mockResolvedValueOnce(makeResponse({ id: 'B', name: 'B' })) as unknown as typeof fetch;
+
+		const deletion = worldMapStore.deleteMap('A');
+		await vi.waitFor(() => expect(get(worldMaps).some((map) => map.id === 'A')).toBe(true));
+		await worldMapStore.createMap('B');
+		resolveRecovery(makeResponse([{ id: 'A', name: 'A' }]));
+
+		await expect(deletion).rejects.toThrow('Failed to delete map');
+		expect(get(worldMaps).some((map) => map.id === 'A')).toBe(true);
+	});
 });
 
 describe('prefetchMapRegions', () => {

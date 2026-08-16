@@ -834,8 +834,8 @@
 		bottom: 12px;
 		left: 50%;
 		transform: translateX(-50%);
-		background: #ef4444;
-		color: #fff;
+		background: var(--color-danger-solid);
+		color: var(--color-on-danger);
 		font-size: 13px;
 		padding: 8px 16px;
 		border-radius: 6px;

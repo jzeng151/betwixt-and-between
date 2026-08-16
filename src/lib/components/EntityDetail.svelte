@@ -579,14 +579,14 @@
 	.btn-delete {
 		background: transparent;
 		border: 1px solid var(--color-border, #2a2d35);
-		color: #ef4444;
+		color: var(--color-danger);
 		border-radius: 4px;
 		padding: 6px 10px;
 		font-size: 12px;
 		cursor: pointer;
 	}
 	.btn-delete:hover {
-		border-color: #ef4444;
+		border-color: var(--color-danger);
 	}
 	.save-status {
 		font-size: 11px;
@@ -608,8 +608,8 @@
 		justify-content: flex-end;
 	}
 	.btn-danger {
-		background: #ef4444;
-		color: #fff;
+		background: var(--color-danger-solid);
+		color: var(--color-on-danger);
 		border: none;
 		border-radius: 4px;
 		padding: 6px 12px;
@@ -640,7 +640,7 @@
 		cursor: pointer;
 	}
 	.delete-error {
-		color: #ef4444;
+		color: var(--color-danger);
 		font-size: 11px;
 	}
 </style>

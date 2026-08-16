@@ -9,7 +9,7 @@
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
   import { jumpToCause, isCausalEdgeClickable } from '$lib/features/timeline/jump-to-cause.js';
   import { windowStore, type FocusedGraphMode } from '$lib/os/windows-store.js';
-  import { worldMapStore, worldMaps } from '$lib/features/map/store.js';
+  import { worldMapStore, worldMaps, worldMapsLoadStatus } from '$lib/features/map/store.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
@@ -27,7 +27,11 @@
   import EditRelationshipModal from '$lib/components/EditRelationshipModal.svelte';
   import TypeOrderPanel from '$lib/components/TypeOrderPanel.svelte';
   import Legend from '$lib/features/graph/Legend.svelte';
-  import { entityAliases } from '$lib/stores/entity-aliases.js';
+  import {
+    entityAliases,
+    entityAliasesLoadStatus,
+    entityAliasesSnapshotReady
+  } from '$lib/stores/entity-aliases.js';
   import AliasModal from '$lib/components/AliasModal.svelte';
   import {
     buildEntityIntervalMap,
@@ -301,10 +305,14 @@
   let winMapLoaded = $state(false);
   let radialSeeded = $state(false);
 
+  function loadMaps() {
+    void worldMapStore.loadMaps().catch(() => {});
+  }
+
   onMount(() => {
     intervalsStore.load();
-    entityAliases.load();
-    worldMapStore.loadMaps();
+    void entityAliases.load().catch(() => {});
+    loadMaps();
     void (async () => {
       // FG canvas is independent of StoryGraph: each FG window has
       // its own per-window state (Lane A). We don't inherit the
@@ -724,6 +732,20 @@
   }}
 />
 
+{#if !$entityAliasesSnapshotReady && ($entityAliasesLoadStatus === 'idle' || $entityAliasesLoadStatus === 'loading')}
+  <div class="graph-load" role="status">Loading aliases…</div>
+{:else if !$entityAliasesSnapshotReady && $entityAliasesLoadStatus === 'error'}
+  <div class="graph-load" role="alert">
+    <span>Couldn't load aliases.</span>
+    <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button>
+  </div>
+{:else}
+{#if $entityAliasesLoadStatus === 'error' || $worldMapsLoadStatus === 'error'}
+  <div class="graph-refresh" role="alert">
+    {#if $entityAliasesLoadStatus === 'error'}<span>Couldn't refresh aliases. <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button></span>{/if}
+    {#if $worldMapsLoadStatus === 'error'}<span>Couldn't load maps. <button onclick={loadMaps}>Retry</button></span>{/if}
+  </div>
+{/if}
 <div class="fg">
   <header class="fg-header">
     <label class="fg-mode">
@@ -950,7 +972,11 @@
   />
 {/if}
 
+{/if}
+
 <style>
+	.graph-load { min-height: 100%; display: grid; place-content: center; gap: 10px; color: var(--color-text-muted); }
+	.graph-refresh { position: absolute; z-index: 8; margin: 10px; padding: 8px; background: var(--color-surface-2); color: var(--color-text); }
   .fg {
     position: absolute;
     inset: 0;

@@ -634,15 +634,15 @@
 		border-color: var(--color-text, #e8e0d0);
 	}
 	.field-error {
-		color: #ef4444;
+		color: var(--color-danger);
 		font-size: 12px;
 		margin-top: 4px;
 	}
 	.retry {
 		margin-left: 6px;
 		background: transparent;
-		border: 1px solid #ef4444;
-		color: #ef4444;
+		border: 1px solid var(--color-danger);
+		color: var(--color-danger);
 		border-radius: 3px;
 		padding: 2px 6px;
 		font-size: 11px;

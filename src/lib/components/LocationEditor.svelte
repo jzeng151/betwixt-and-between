@@ -20,7 +20,11 @@
 	import EntityLink from './EntityLink.svelte';
 	import { entities } from '$lib/stores/entities.js';
 	import { relationships } from '$lib/stores/relationships.js';
-	import { worldMapStore, worldMaps } from '$lib/features/map/store.js';
+	import {
+		worldMapStore,
+		worldMaps,
+		worldMapsLoadStatus
+	} from '$lib/features/map/store.js';
 	import { windowStore } from '$lib/os/windows-store.js';
 	import { CHARACTER_COLORS } from '$lib/features/timeline/timeline-helpers.js';
 	import {
@@ -36,8 +40,7 @@
 	const { entityId, readOnly = false }: Props = $props();
 
 	onMount(() => {
-		// Idempotent — store guards against duplicate loads via its writable.
-		worldMapStore.loadMaps();
+		void worldMapStore.loadMaps().catch(() => {});
 	});
 
 	const entity = $derived($entities.find((e) => e.id === entityId));
@@ -130,7 +133,7 @@
 	}
 
 	async function createMapForLocation() {
-		if (!entity) return;
+		if (!entity || $worldMapsLoadStatus !== 'ready' || linkedMaps.length > 0) return;
 		await worldMapStore.createMap(`${entity.name} map`, entityId);
 		windowStore.open('world-map', entityId);
 	}
@@ -215,7 +218,11 @@
 
 	<section class="maps-section" aria-label="Maps">
 		<p class="section-label">Maps</p>
-		{#if linkedMaps.length === 0}
+		{#if linkedMaps.length > 0}
+			<button type="button" class="maps-cta" onclick={openMap}>
+				Open map{linkedMaps.length > 1 ? `s (${linkedMaps.length})` : ''}
+			</button>
+		{:else if $worldMapsLoadStatus === 'ready'}
 			<button
 				type="button"
 				class="maps-cta"
@@ -225,10 +232,12 @@
 			>
 				+ Create a map for this Location
 			</button>
-		{:else}
-			<button type="button" class="maps-cta" onclick={openMap}>
-				Open map{linkedMaps.length > 1 ? `s (${linkedMaps.length})` : ''}
+		{:else if $worldMapsLoadStatus === 'error'}
+			<button type="button" class="maps-cta" onclick={() => void worldMapStore.loadMaps().catch(() => {})}>
+				Retry loading maps
 			</button>
+		{:else}
+			<p class="linked-empty" role="status">Checking for maps…</p>
 		{/if}
 	</section>
 

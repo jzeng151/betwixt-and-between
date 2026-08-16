@@ -68,7 +68,12 @@ describe('T5b paletteCookieToCss', () => {
 		expect(paletteCookieToCss({ theme: 'dark', vars: {}, owner: null })).toBe('');
 		expect(
 			paletteCookieToCss({ theme: 'dark', vars: { '--color-accent': '#111111' }, owner: null })
-		).toBe(':root{--color-accent:#111111}');
+		).toBe(':root{--color-accent:#111111;--color-on-accent:#ffffff}');
+	});
+
+	it('derives contrast for legacy accent-only cookies', () => {
+		expect(paletteCookieToCss({ theme: 'dark', vars: { '--color-accent': '#fff' }, owner: null }))
+			.toContain('--color-on-accent:#000000');
 	});
 });
 

@@ -19,7 +19,7 @@
     deletePresetRequest,
     applyPreset
   } from '$lib/os/preferences-presets-client.js';
-  import { applyPaletteVars } from '$lib/palette-vars.js';
+  import { accentForeground, applyPaletteVars } from '$lib/palette-vars.js';
   import { PREFERENCES_DEFAULTS, type Editor, type ProfileSummary } from '$lib/types/preferences.js';
   import type { PresetSummary } from '$lib/appearance-presets.js';
   import {
@@ -68,6 +68,9 @@
     if (typeof document === 'undefined') return;
     const name = cssVarToken.replace(/^var\((--[a-z0-9-]+)\)$/, '$1');
     document.documentElement.style.setProperty(name, hex);
+    if (name === '--color-accent') {
+      document.documentElement.style.setProperty('--color-on-accent', accentForeground(hex));
+    }
   }
   // On blur, drop any uncommitted preview by reconciling EVERY managed var back
   // to the store (applyPaletteVars sets overridden vars + REMOVES non-overridden
@@ -903,7 +906,7 @@
     color: var(--color-text);
   }
   .link-btn.danger:not(:disabled):hover {
-    color: #ef4444;
+    color: var(--color-danger);
   }
   .link-btn:disabled {
     opacity: 0.4;
@@ -978,8 +981,8 @@
     padding: 3px 10px;
   }
   .confirm-btn.danger {
-    border-color: #ef4444;
-    color: #ef4444;
+    border-color: var(--color-danger);
+    color: var(--color-danger);
   }
   .confirm-btn:focus-visible,
   .cancel-btn:focus-visible {
@@ -989,6 +992,6 @@
   .inline-error {
     margin: 8px 0 0 0;
     font-size: 11px;
-    color: #ef4444;
+    color: var(--color-danger);
   }
 </style>

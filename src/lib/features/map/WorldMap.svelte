@@ -3,6 +3,7 @@
 	import {
 		worldMapStore,
 		worldMaps,
+		worldMapsLoadStatus,
 		mapRegions,
 		type LoadRegionsResult
 	} from '$lib/features/map/store.js';
@@ -543,9 +544,12 @@
 	let factionsSettled = $state(false);
 	let anchorsEventsSettled = $state(false);
 	let regionsSettled = $state(false);
+	function retryMapList() {
+		void worldMapStore.loadMaps().catch((err) => console.error('Failed to load maps:', err));
+	}
 
 	onMount(() => {
-		worldMapStore.loadMaps();
+		retryMapList();
 		intervalsStore.load();
 		relationships.load();
 		// Factions are user-scoped (not map-scoped) — load once per session.
@@ -2361,7 +2365,14 @@
 
 <svelte:window onkeydown={handleMapKeydown} />
 
-{#if !hasMaps}
+{#if ($worldMapsLoadStatus === 'idle' || $worldMapsLoadStatus === 'loading') && !hasMaps}
+	<div class="empty-state" role="status">Loading maps…</div>
+{:else if $worldMapsLoadStatus === 'error' && !hasMaps}
+	<div class="empty-state" role="alert">
+		<p>Couldn't load maps.</p>
+		<button class="btn-primary" onclick={retryMapList}>Retry</button>
+	</div>
+{:else if !hasMaps}
 	<!-- Empty state: no maps -->
 	<div class="empty-state">
 		<p class="empty-title">No maps yet</p>
@@ -3054,7 +3065,7 @@
 
 	:global(.variant-error) {
 		margin: 10px 0 0 0;
-		color: var(--color-rel-rival, #ef4444);
+		color: var(--color-danger);
 		font-size: 12px;
 	}
 
@@ -3083,7 +3094,7 @@
 		padding: 0;
 	}
 	:global(.btn-icon:hover) { background: var(--color-border); }
-	:global(.btn-danger:hover) { background: #c0392b; color: #fff; }
+	:global(.btn-danger:hover) { background: var(--color-danger-hover); color: var(--color-on-danger); }
 
 	.empty-state {
 		display: flex;
@@ -3137,7 +3148,7 @@
 
 	:global(.btn-primary) {
 		background: var(--color-accent);
-		color: #000;
+		color: var(--color-on-accent);
 		border: none;
 		border-radius: 6px;
 		padding: 8px 16px;
@@ -3278,7 +3289,7 @@
 	}
 	:global(.region-new-loc-error) {
 		font-size: 11px;
-		color: var(--color-rel-rival, #ef4444);
+		color: var(--color-danger);
 	}
 
 	:global(.color-palette) {
@@ -3380,11 +3391,11 @@
 		background: var(--color-border, #eee);
 	}
 	:global(.region-popup-btn-danger) {
-		color: #c0392b;
+		color: var(--color-danger);
 	}
 	:global(.region-popup-btn-danger:hover) {
-		background: #c0392b;
-		color: #fff;
+		background: var(--color-danger-hover);
+		color: var(--color-on-danger);
 	}
 	:global(.region-popup-btn-drill) {
 		align-self: stretch;
@@ -3393,7 +3404,7 @@
 	}
 	:global(.region-popup-btn-drill:hover) {
 		background: var(--color-accent, #e8a838);
-		color: #1a1a1a;
+		color: var(--color-on-accent);
 	}
 	:global(.region-popup-hint) {
 		font-size: 11px;

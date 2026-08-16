@@ -27,6 +27,9 @@ import type { Appearance } from './types/preferences.js';
 import { ENTITY_TYPE_COLOR_VAR } from './entity-type-colors.js';
 import { REL_COLOR } from './relationship-colors.js';
 import { CHARACTER_ROLES } from './character-roles.js';
+import { accentForeground } from './palette-cookie.js';
+
+export { accentForeground } from './palette-cookie.js';
 
 /** Extract `--x` from a `var(--x)` token; null if not that shape. */
 function varName(token: string): string | null {
@@ -40,7 +43,7 @@ function varName(token: string): string | null {
  * falls back to the app.css default.
  */
 export function managedPaletteVars(): string[] {
-	const set = new Set<string>(['--color-accent']);
+	const set = new Set<string>(['--color-accent', '--color-on-accent']);
 	for (const token of Object.values(ENTITY_TYPE_COLOR_VAR)) {
 		const v = varName(token);
 		if (v) set.add(v);
@@ -57,7 +60,10 @@ export function managedPaletteVars(): string[] {
 export function resolvePaletteVars(appearance: Appearance | undefined): Record<string, string> {
 	const out: Record<string, string> = {};
 	if (!appearance) return out;
-	if (appearance.accentColor) out['--color-accent'] = appearance.accentColor;
+	if (appearance.accentColor) {
+		out['--color-accent'] = appearance.accentColor;
+		out['--color-on-accent'] = accentForeground(appearance.accentColor);
+	}
 	for (const [type, hex] of Object.entries(appearance.entityTypeColors ?? {})) {
 		const token = ENTITY_TYPE_COLOR_VAR[type as keyof typeof ENTITY_TYPE_COLOR_VAR];
 		const v = token ? varName(token) : null;

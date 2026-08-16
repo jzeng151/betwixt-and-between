@@ -19,6 +19,14 @@
   --color-accent:     #c8942a;
   --color-focus:      #f2b84b;
 
+  /* Semantic states stay independent from relationship and user palette colors. */
+  --color-danger:       #ff6b6b;
+  --color-danger-solid: #d92d20;
+  --color-danger-hover: #b42318;
+  --color-on-danger:    #ffffff;
+  --color-success:      #28c840;
+  --color-on-accent:    #171008;
+
   /* Relationship type colors */
   --color-rel-arc:    #c8942a;
   --color-rel-ally:   #2dd4bf;
@@ -81,6 +89,7 @@
   --color-text:       #1a1a1a;
   --color-text-muted: #606773;
   --color-focus:      #775700;
+  --color-danger:     #b42318;
   --window-shadow:    0 20px 60px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.08);
 }
 

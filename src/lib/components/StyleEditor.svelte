@@ -353,6 +353,6 @@
 	}
 	.err {
 		font-size: 11px;
-		color: #ef4444;
+		color: var(--color-danger);
 	}
 </style>

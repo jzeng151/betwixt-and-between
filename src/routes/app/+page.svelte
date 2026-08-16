@@ -6,11 +6,18 @@
   import TooSmall from '$lib/os/TooSmall.svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
-  import { entityAliases } from '$lib/stores/entity-aliases.js';
-  import { worldMapStore } from '$lib/features/map/store.js';
 
-  onMount(async () => {
-    await Promise.all([entities.load(), relationships.load(), entityAliases.load(), worldMapStore.loadMaps()]);
+  onMount(() => {
+    const supported = window.matchMedia('(min-width: 1280px)');
+    let loaded = false;
+    function loadCoreStores() {
+      if (loaded || !supported.matches) return;
+      loaded = true;
+      void Promise.all([entities.load(), relationships.load()]);
+    }
+    loadCoreStores();
+    supported.addEventListener('change', loadCoreStores);
+    return () => supported.removeEventListener('change', loadCoreStores);
   });
 </script>
 

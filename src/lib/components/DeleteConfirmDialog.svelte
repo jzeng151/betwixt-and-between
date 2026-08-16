@@ -125,7 +125,7 @@
 		line-height: 1.5;
 	}
 	.delete-lead strong {
-		color: #ef4444;
+		color: var(--color-danger);
 		font-weight: 600;
 	}
 	.delete-impact {
@@ -149,7 +149,7 @@
 	}
 	.delete-impact .impact-icon {
 		font-size: 11px;
-		color: #ef4444;
+		color: var(--color-danger);
 		line-height: 1.4;
 		flex-shrink: 0;
 		width: 14px;
@@ -164,11 +164,11 @@
 	.delete-error {
 		margin: 0 0 12px;
 		padding: 8px 10px;
-		background: color-mix(in srgb, #ef4444 12%, transparent);
-		border: 1px solid color-mix(in srgb, #ef4444 40%, transparent);
+		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
 		border-radius: 4px;
 		font-size: 12px;
-		color: #ef4444;
+		color: var(--color-danger);
 	}
 	.delete-actions {
 		display: flex;
@@ -194,8 +194,8 @@
 		cursor: not-allowed;
 	}
 	.delete-confirm-btn {
-		background: #ef4444;
-		color: #fff;
+		background: var(--color-danger-solid);
+		color: var(--color-on-danger);
 		border: none;
 		border-radius: 4px;
 		padding: 7px 14px;
