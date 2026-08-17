@@ -40,7 +40,7 @@ test('story-graph node right-click recolor writes data.color and persists', asyn
 	await expect(node).toBeVisible();
 	await node.click({ button: 'right' });
 
-	await page.locator('button', { hasText: 'Recolor' }).click();
+	await page.getByRole('menuitem', { name: 'Recolor…' }).click();
 	const popover = page.locator('.entity-color-popover[role="dialog"]');
 	await expect(popover).toBeVisible({ timeout: 5000 });
 	await popover.locator(`.entity-color .swatch[title="${PICK}"]`).click();

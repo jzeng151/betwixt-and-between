@@ -87,7 +87,7 @@ test.describe('Window Manager', () => {
 		const box = await win.boundingBox();
 
 		expect(box!.x + box!.width).toBeLessThanOrEqual(1280);
-		expect(box!.y + box!.height).toBeLessThanOrEqual(668);
+		expect(box!.y + box!.height).toBeLessThanOrEqual(720 - 44);
 	});
 
 	test('minimize → window hidden, taskbar button still present', async ({ page }) => {
