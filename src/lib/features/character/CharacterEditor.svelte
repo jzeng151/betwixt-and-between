@@ -664,8 +664,6 @@
     font-size: 11px;
     font-weight: 600;
     font-family: var(--font-ui);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
     cursor: pointer;
   }
   .mode-toggle:hover { filter: brightness(1.1); }
@@ -679,8 +677,6 @@
     font-size: 11px;
     font-weight: 600;
     font-family: var(--font-ui);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
     cursor: pointer;
   }
   .mode-cancel:hover { color: var(--color-text); border-color: var(--color-text); }

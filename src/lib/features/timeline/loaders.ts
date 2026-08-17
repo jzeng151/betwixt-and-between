@@ -12,7 +12,15 @@
 import { entities } from '$lib/stores/entities.js';
 import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 
-/** Reload entities + intervals in parallel. Resolves once both have settled. */
-export async function refreshTimelineStores(): Promise<void> {
-	await Promise.all([entities.load(), intervalsStore.load()]);
+let refreshTail: Promise<void> = Promise.resolve();
+
+/** Reload entities + intervals in mutation order. */
+export function refreshTimelineStores(): Promise<void> {
+	const request = refreshTail.then(async () => {
+		const results = await Promise.allSettled([entities.refreshAfterMutation(), intervalsStore.load()]);
+		const failure = results.find((result) => result.status === 'rejected');
+		if (failure?.status === 'rejected') throw failure.reason;
+	});
+	refreshTail = request.catch(() => {});
+	return request;
 }

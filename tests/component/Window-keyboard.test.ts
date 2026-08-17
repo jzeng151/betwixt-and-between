@@ -47,7 +47,7 @@ describe('Window keyboard resizing', () => {
 		await fireEvent.keyDown(titlebar, { key: 'ArrowDown', altKey: true, shiftKey: true });
 
 		expect(resize).toHaveBeenNthCalledWith(1, 'window-1', 300, 248);
-		expect(resize).toHaveBeenNthCalledWith(2, 'window-1', 300, 248);
+		expect(resize).toHaveBeenNthCalledWith(2, 'window-1', 300, 256);
 	});
 
 	it('uses the configured taskbar height for keyboard bounds', async () => {

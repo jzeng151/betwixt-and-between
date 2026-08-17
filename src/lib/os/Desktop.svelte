@@ -1,53 +1,142 @@
 <script lang="ts">
-  import { entities } from '$lib/stores/entities.js';
-  import { onMount } from 'svelte';
+  import { tick } from 'svelte';
+  import { windowStore } from '$lib/os/windows-store.js';
+  import {
+    entities,
+    entityLoadStatus,
+    entitySnapshotReady
+  } from '$lib/stores/entities.js';
 
-  let tutorialDismissed = $state(false);
-  let showTutorial = $state(false);
+  const hasVisibleWindows = $derived($windowStore.some((window) => !window.minimized));
+  let returnFocusKey = $state<string | null>(null);
+  let overviewElement: HTMLElement;
+  let retryButton = $state<HTMLButtonElement>();
+  let retrying = $state(false);
 
-  onMount(() => {
-    tutorialDismissed = localStorage.getItem('tutorial-dismissed') === 'true';
-    showTutorial = !tutorialDismissed;
-  });
-
-  function dismissTutorial() {
-    tutorialDismissed = true;
-    showTutorial = false;
-    localStorage.setItem('tutorial-dismissed', 'true');
+  async function retryEntities() {
+    if (retrying) return;
+    const focusOwner = retryButton;
+    retrying = true;
+    try {
+      await entities.load();
+    } catch {
+      // The load status renders the error; keep the click handler settled.
+    } finally {
+      retrying = false;
+      await tick();
+      if (!hasVisibleWindows && (document.activeElement === focusOwner || document.activeElement === document.body)) {
+        (retryButton?.isConnected ? retryButton : overviewElement)?.focus();
+      }
+    }
   }
 
-  const hasEntities = $derived($entities.length > 0);
+  function openEntity(entity: (typeof $entities)[number]) {
+    returnFocusKey = entity.id;
+    windowStore.openForEntity(entity.id, entity.type);
+  }
 
-  const TUTORIAL_ITEMS = [
-    { icon: '👤', name: 'Characters', desc: 'manage your cast' },
-    { icon: '🕸', name: 'Story Graph', desc: 'see how they connect' },
-    { icon: '📅', name: 'Timeline', desc: 'track events and arcs' },
-    { icon: '🗺', name: 'World Map', desc: 'build your world' },
-    { icon: '📝', name: 'Wiki', desc: 'capture your notes' },
-  ];
+  function openApp(appId: 'character-editor' | 'wiki') {
+    returnFocusKey = appId;
+    windowStore.open(appId);
+  }
+
+  $effect(() => {
+    if (hasVisibleWindows || !returnFocusKey) return;
+    const key = returnFocusKey;
+    returnFocusKey = null;
+    queueMicrotask(() => {
+      const target = [...document.querySelectorAll<HTMLElement>('[data-workspace-return]')]
+        .find((element) => element.dataset.workspaceReturn === key);
+      (target ?? overviewElement)?.focus();
+    });
+  });
+
+  const sections = $derived([
+    {
+      title: 'Cast',
+      entries: $entities.filter((entity) => entity.type === 'Character')
+    },
+    {
+      title: 'Story',
+      entries: $entities
+        .filter((entity) => entity.type === 'Act' || entity.type === 'Scene' || entity.type === 'Event')
+    },
+    {
+      title: 'World and notes',
+      entries: $entities
+        .filter((entity) => !['Character', 'Act', 'Scene', 'Event'].includes(entity.type))
+    }
+  ]);
 </script>
 
-<div class="desktop">
-  {#if !hasEntities}
-    <p class="empty-tagline">Your story starts here.</p>
-  {/if}
+<div class="desktop" class:locked={hasVisibleWindows}>
+    <main
+      class="story-index"
+      class:hidden={hasVisibleWindows}
+      bind:this={overviewElement}
+      aria-hidden={hasVisibleWindows}
+      aria-label="Story workspace overview"
+      tabindex="-1"
+    >
+      {#if $entitySnapshotReady}
+		{#if $entityLoadStatus === 'error' || retrying}
+          <div class="refresh-error" role="alert">
+            <span>Couldn't refresh your story. Showing the saved entries.</span>
+            <button bind:this={retryButton} disabled={retrying} onclick={retryEntities}>
+              {retrying ? 'Retrying…' : 'Retry'}
+            </button>
+          </div>
+        {/if}
+		{#if $entities.length > 0}
+		<header class="index-heading">
+          <h1>The story so far</h1>
+          <p>{$entities.length} {$entities.length === 1 ? 'entry' : 'entries'} across your cast, structure, and world.</p>
+        </header>
 
-  {#if showTutorial}
-    <div class="tutorial-overlay" role="dialog" aria-label="Tutorial">
-      <div class="tutorial-card">
-        <p class="tutorial-heading">Welcome to betwixt-and-between</p>
-        <ul class="tutorial-list">
-          {#each TUTORIAL_ITEMS as item}
-            <li>
-              <span class="t-icon">{item.icon}</span>
-              <span><strong>{item.name}</strong> — {item.desc}</span>
-            </li>
+        <div class="index-grid">
+          {#each sections as section}
+            <section>
+              <h2>{section.title}</h2>
+              {#if section.entries.length > 0}
+                <ul>
+                  {#each section.entries as entity}
+                    <li>
+                      <button data-workspace-return={entity.id} onclick={() => openEntity(entity)}>
+                        <span class="entry-name">{entity.name}</span>
+                        <span class="entry-type">{entity.type}</span>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {:else}
+                <p class="section-empty">Nothing here yet.</p>
+              {/if}
+            </section>
           {/each}
-        </ul>
-        <button class="dismiss-btn" onclick={dismissTutorial}>Got it</button>
-      </div>
-    </div>
-  {/if}
+		</div>
+		{:else}
+		<div class="empty-state">
+		  <h1>Start with one true thing.</h1>
+		  <p>Give the story a person, a place, or a piece of the world. The shape can come later.</p>
+		  <div class="empty-actions">
+			<button data-workspace-return="character-editor" class="primary-action" onclick={() => openApp('character-editor')}>Create a character</button>
+			<button data-workspace-return="wiki" class="secondary-action" onclick={() => openApp('wiki')}>Open the wiki</button>
+		  </div>
+		</div>
+		{/if}
+	  {:else if $entityLoadStatus === 'error' || retrying}
+        <div class="empty-state" role="alert">
+          <p>Couldn't load your story.</p>
+          <div class="empty-actions">
+            <button bind:this={retryButton} class="secondary-action" disabled={retrying} onclick={retryEntities}>
+              {retrying ? 'Retrying…' : 'Retry'}
+            </button>
+          </div>
+        </div>
+      {:else if $entityLoadStatus === 'idle' || $entityLoadStatus === 'loading'}
+        <div class="empty-state" role="status"><p>Loading your story…</p></div>
+	  {/if}
+    </main>
 </div>
 
 <style>
@@ -55,94 +144,169 @@
     position: fixed;
     inset: 0;
     bottom: var(--taskbar-height);
+    overflow: auto;
     background: var(--color-desktop);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    pointer-events: auto;
+  }
+
+  .desktop.locked {
+    overflow: hidden;
+  }
+
+  .story-index {
+    width: min(960px, calc(100% - 64px));
+    margin: 0 auto;
+    padding: clamp(56px, 10vh, 104px) 0 56px;
+    pointer-events: auto;
+  }
+
+  .story-index.hidden {
+    visibility: hidden;
     pointer-events: none;
   }
 
-  .empty-tagline {
-    font-family: var(--font-ui);
-    font-size: 14px;
-    color: var(--color-text-muted);
-    letter-spacing: 0.04em;
-    pointer-events: none;
+  .index-heading,
+  .empty-state {
+    max-width: 620px;
   }
 
-  .tutorial-overlay {
-    position: fixed;
-    inset: 0;
-    bottom: var(--taskbar-height);
-    background: rgba(0,0,0,0.6);
+  .refresh-error {
     display: flex;
     align-items: center;
-    justify-content: center;
-    z-index: 8000;
-    pointer-events: all;
-  }
-
-  .tutorial-card {
-    background: var(--color-surface-2);
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
-    padding: 28px 32px;
-    max-width: 380px;
-    width: 100%;
-    box-shadow: var(--window-shadow);
-    display: flex;
-    flex-direction: column;
+    justify-content: space-between;
     gap: 16px;
+    margin-bottom: 24px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-danger);
+    color: var(--color-text);
+    font-size: 12px;
   }
 
-  .tutorial-heading {
+  .refresh-error button {
+    border: 0;
+    background: transparent;
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+
+  h1 {
     font-family: var(--font-display);
-    font-size: 21px;
+    font-size: clamp(30px, 4vw, 42px);
+    font-weight: 600;
+    line-height: 1.08;
     color: var(--color-text);
   }
 
-  .tutorial-list {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .tutorial-list li {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 13px;
+  .index-heading p,
+  .empty-state > p {
+    margin-top: 12px;
     color: var(--color-text-muted);
+    font-size: 15px;
+    line-height: 1.6;
   }
 
-  .tutorial-list strong {
-    color: var(--color-text);
-    font-weight: 500;
+  .index-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 40px;
+    margin-top: 52px;
   }
 
-  .t-icon {
-    font-size: 17px;
-    width: 24px;
-    text-align: center;
-    flex-shrink: 0;
-  }
-
-  .dismiss-btn {
-    align-self: flex-end;
-    background: var(--color-accent);
-    color: var(--color-surface);
-    border: none;
-    border-radius: 6px;
-    padding: 8px 20px;
-    font-family: var(--font-ui);
+  section h2 {
+    margin-bottom: 12px;
     font-size: 13px;
     font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.15s;
+    color: var(--color-text);
   }
 
-  .dismiss-btn:hover {
-    opacity: 0.85;
+  ul {
+    list-style: none;
+    border-top: 1px solid var(--color-border);
+  }
+
+  li {
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  li button {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 0;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    border: 0;
+    background: transparent;
+    color: var(--color-text);
+    text-align: left;
+  }
+
+  li button:hover .entry-name {
+    color: var(--color-accent);
+  }
+
+  .entry-name {
+    min-width: 0;
+    overflow: hidden;
+    font-family: var(--font-display);
+    font-size: 16px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .entry-type,
+  .section-empty {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+
+  .section-empty {
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .empty-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 24px;
+  }
+
+  .empty-actions button {
+    min-height: 40px;
+    padding: 0 16px;
+    border-radius: 5px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .primary-action {
+    border: 1px solid var(--color-accent);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+  }
+
+  .secondary-action {
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--color-text);
+  }
+
+  .secondary-action:hover {
+    background: var(--color-surface);
+  }
+
+  @media (max-width: 760px) {
+    .story-index {
+      width: min(100% - 32px, 560px);
+      padding-top: 40px;
+    }
+
+    .index-grid {
+      grid-template-columns: 1fr;
+      gap: 28px;
+      margin-top: 36px;
+    }
   }
 </style>

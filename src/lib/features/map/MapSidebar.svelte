@@ -712,8 +712,6 @@
 		font-size: 11px;
 		font-weight: 600;
 		color: var(--color-text-muted, #aaa);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 	}
 	.art-layer-row {
 		display: flex;
@@ -815,8 +813,6 @@
 	.sidebar-header h3 {
 		margin: 0;
 		font-size: 12px;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		color: var(--color-text-muted);
 	}
 

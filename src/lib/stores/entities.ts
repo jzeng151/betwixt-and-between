@@ -1,7 +1,10 @@
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
 import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 import { relationships } from '$lib/stores/relationships.js';
+
+export const entityLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
+export const entitySnapshotReady = writable(false);
 
 export type Entity = {
 	id: string;
@@ -20,6 +23,11 @@ export type Entity = {
 
 function createEntityStore() {
 	const { subscribe, set, update } = writable<Entity[]>([]);
+	let loadPromise: Promise<void> | null = null;
+	let rollbackPromise: Promise<void> | null = null;
+	let replacementPromise: Promise<void> | null = null;
+	let mutationRefreshPromise: Promise<void> | null = null;
+	let loadGeneration = 0;
 	// Per-entity update sequence. updateEntity applies an optimistic merge then
 	// installs the PATCH response; without sequencing, two edits to the same row
 	// racing on the wire can land out of order — e.g. a style save and an
@@ -37,12 +45,107 @@ function createEntityStore() {
 	// disappears on reload (Codex P2). Chain each PATCH behind the prior in-flight
 	// one for the same id so requests reach the API in call order.
 	const updateChains = new Map<string, Promise<unknown>>();
+	function invalidateLoadAfterMutation() {
+		loadGeneration++;
+		loadPromise = null;
+		entityLoadStatus.set(get(entitySnapshotReady) ? 'ready' : 'idle');
+	}
+	function markMutationReady() {
+		invalidateLoadAfterMutation();
+		entitySnapshotReady.set(true);
+		entityLoadStatus.set('ready');
+	}
 
-	async function load() {
-		const res = await fetch('/api/entities');
-		if (!res.ok) throw new Error(`entities.load failed: ${res.status} ${await res.text()}`);
-		const data: Entity[] = await res.json();
-		set(data);
+	function load({ fresh = false, rollback = false, replacement = false }: {
+		fresh?: boolean;
+		rollback?: boolean;
+		replacement?: boolean;
+	} = {}): Promise<void> {
+		if (fresh && !rollback && rollbackPromise) {
+			return rollbackPromise.catch(() => {}).then(() => load({ fresh: true, replacement }));
+		}
+		if (fresh && !replacement && replacementPromise) return replacementPromise;
+		if (loadPromise && !fresh) return loadPromise;
+		const generation = ++loadGeneration;
+		entityLoadStatus.set('loading');
+		const request = (async () => {
+			const res = await fetch('/api/entities');
+			if (!res.ok) throw new Error(`entities.load failed: ${res.status} ${await res.text()}`);
+			const data: Entity[] = await res.json();
+			if (generation !== loadGeneration) return;
+			set(data);
+			entitySnapshotReady.set(true);
+			entityLoadStatus.set('ready');
+		})().catch((error) => {
+			if (generation === loadGeneration) entityLoadStatus.set('error');
+			throw error;
+		});
+		loadPromise = request;
+		return request.finally(() => {
+			if (loadPromise === request) loadPromise = null;
+		});
+	}
+	function rollbackSnapshot(): Promise<void> {
+		if (rollbackPromise) return rollbackPromise;
+		const request = loadPromise ?? load({ fresh: true, rollback: true });
+		const pending = request.finally(() => {
+			if (rollbackPromise === pending) rollbackPromise = null;
+		});
+		rollbackPromise = pending;
+		return pending;
+	}
+	function replaceSnapshot(): Promise<void> {
+		const request = load({ fresh: true, replacement: true });
+		const pending = request.finally(() => {
+			if (replacementPromise === pending) replacementPromise = null;
+		});
+		replacementPromise = pending;
+		return pending;
+	}
+	function refreshAfterMutation(): Promise<void> {
+		if (!replacementPromise) return replaceSnapshot();
+		if (mutationRefreshPromise) return mutationRefreshPromise;
+		const request = replacementPromise.catch(() => {}).then(replaceSnapshot);
+		const pending = request.finally(() => {
+			if (mutationRefreshPromise === pending) mutationRefreshPromise = null;
+		});
+		mutationRefreshPromise = pending;
+		return pending;
+	}
+	async function settleSnapshotBeforeCreate(): Promise<boolean> {
+		const pendingRollback = rollbackPromise;
+		let needsFreshSnapshot = loadPromise !== null && !pendingRollback;
+		if (pendingRollback) await pendingRollback.catch(() => { needsFreshSnapshot = true; });
+		const pendingReplacement = replacementPromise;
+		if (pendingReplacement) {
+			needsFreshSnapshot = true;
+			await pendingReplacement.catch(() => {});
+		}
+		if (loadPromise) needsFreshSnapshot = true;
+		markMutationReady();
+		return needsFreshSnapshot;
+	}
+	async function settleSnapshotBeforeMutation(): Promise<boolean> {
+		const pendingGeneration = loadGeneration;
+		let needsFreshSnapshot = false;
+		if (rollbackPromise) await rollbackPromise.catch(() => { needsFreshSnapshot = true; });
+		while (replacementPromise) {
+			needsFreshSnapshot = true;
+			await replacementPromise.catch(() => {});
+		}
+		if (pendingGeneration !== loadGeneration) needsFreshSnapshot = true;
+		invalidateLoadAfterMutation();
+		return needsFreshSnapshot;
+	}
+	function upsertEntities(created: Entity[]) {
+		const byId = new Map(created.map((entity) => [entity.id, entity]));
+		update((all) => {
+			const existing = new Set(all.map((entity) => entity.id));
+			return [
+				...all.map((entity) => byId.get(entity.id) ?? entity),
+				...created.filter((entity) => !existing.has(entity.id))
+			];
+		});
 	}
 
 	/**
@@ -67,7 +170,12 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity = await res.json();
-		update((all) => [...all, created]);
+		const needsFreshSnapshot = await settleSnapshotBeforeCreate();
+		upsertEntities([created]);
+		if (needsFreshSnapshot) {
+			entitySnapshotReady.set(true);
+			await replaceSnapshot().catch(() => {});
+		}
 		return created;
 	}
 
@@ -93,7 +201,12 @@ function createEntityStore() {
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity[] = await res.json();
-		update((all) => [...all, ...created]);
+		const needsFreshSnapshot = await settleSnapshotBeforeCreate();
+		upsertEntities(created);
+		if (needsFreshSnapshot) {
+			entitySnapshotReady.set(true);
+			await replaceSnapshot().catch(() => {});
+		}
 		return created;
 	}
 
@@ -156,10 +269,11 @@ function createEntityStore() {
 			if (latestUpdate.get(id) === seq) {
 				latestUpdate.delete(id);
 				updateChains.delete(id);
-				await load();
+				await rollbackSnapshot();
 			}
 			throw err;
 		}
+		const needsFreshSnapshot = await settleSnapshotBeforeMutation();
 		// Whether THIS patch was a structural Act/Scene change that the server
 		// recomputes interval bounds for. Captured before the supersede check so a
 		// later non-structural edit (e.g. a rename) can't make us skip the refresh.
@@ -181,12 +295,15 @@ function createEntityStore() {
 			// caused_by start/end positions on a scene-within-act mutation too
 			// (Slice 5 PR-D), and the graph click-to-jump reads $relationships,
 			// so a stale store would jump to the old scene fraction (Codex P2).
+			const replacement = needsFreshSnapshot ? replaceSnapshot().catch(() => {}) : null;
 			if (wasStructural) await Promise.all([intervalsStore.load(), relationships.load()]);
+			if (replacement) await replacement;
 			return updated;
 		}
 		latestUpdate.delete(id);
 		updateChains.delete(id);
 		update((all) => all.map((e) => (e.id === id ? updated : e)));
+		if (needsFreshSnapshot) await replaceSnapshot().catch(() => {});
 		// Position/parentId changes on Act/Scene cascade to intervals on the
 		// server (sibling reorder + recompute, or scene cross-act move) AND to
 		// scene-anchored relationship positions (Slice 5 PR-D). Keep both stores
@@ -204,13 +321,16 @@ function createEntityStore() {
 			res = await fetch(`/api/entities/${id}`, { method: 'DELETE' });
 		} catch (err) {
 			// Network error before any response — recover the optimistic remove.
-			await load();
+			await rollbackSnapshot();
 			throw err;
 		}
 		if (!res.ok) {
-			await load();
+			await rollbackSnapshot();
 			throw new Error(await res.text());
 		}
+		const needsFreshSnapshot = await settleSnapshotBeforeMutation();
+		update((all) => all.filter((e) => e.id !== id));
+		if (needsFreshSnapshot) await replaceSnapshot().catch(() => {});
 		// Server-side delete cascades to intervals (entity_id / start_act_id /
 		// end_act_id are all CASCADE) and recomputes survivor positions for
 		// Act/Scene deletes. It also cascade-deletes relationships on an endpoint
@@ -221,7 +341,7 @@ function createEntityStore() {
 		await Promise.all([intervalsStore.load(), relationships.load()]);
 	}
 
-	return { subscribe, load, createEntity, createEntities, updateEntity, deleteEntity };
+	return { subscribe, load, refreshAfterMutation, createEntity, createEntities, updateEntity, deleteEntity };
 }
 
 export const entities = createEntityStore();

@@ -9,9 +9,8 @@ import type { AppId } from './windows-store.js';
  * Field meanings:
  *  - `title`       — shown in the window titlebar; also the default dock label
  *                    for dockable apps. Identical for both today.
- *  - `icon`        — single-glyph icon shown in dock buttons. Required for
- *                    dockable apps (those in DOCK_ORDER); omitted for child
- *                    apps that hoist under a parent's dock group.
+ *  - `icon`        — compact text mark used in window-picker rows. Required
+ *                    for dockable apps; omitted for hoisted child apps.
  *  - `bare`        — when true, the window renders with no padded content
  *                    area (edge-to-edge). Map / graph / story-player.
  *  - `parent`      — non-dockable child apps hoist under this AppId's dock
@@ -30,16 +29,16 @@ export type AppMeta = {
 };
 
 export const APP_CATALOG: Record<AppId, AppMeta> = {
-	'character-editor': { title: 'Characters', icon: '👤' },
-	'story-graph':      { title: 'Story Graph', icon: '🕸', bare: true },
-	'timeline':         { title: 'Timeline', icon: '📅' },
-	'world-map':        { title: 'World Map', icon: '🗺', bare: true },
-	'wiki':             { title: 'Wiki', icon: '📝' },
-	'notes':            { title: 'Notes', icon: '📒' },
-	'settings':         { title: 'Settings', icon: '⚙' },
+	'character-editor': { title: 'Characters', icon: 'CH' },
+	'story-graph':      { title: 'Story Graph', icon: 'GR', bare: true },
+	'timeline':         { title: 'Timeline', icon: 'TL' },
+	'world-map':        { title: 'World Map', icon: 'MP', bare: true },
+	'wiki':             { title: 'Wiki', icon: 'WK' },
+	'notes':            { title: 'Notes', icon: 'NT' },
+	'settings':         { title: 'Settings', icon: 'ST' },
 	'entity-detail':    { title: 'Entity' },
-	'focused-graph':    { title: 'Focused Graph', bare: true, parent: 'story-graph', pickerIcon: '🎯' },
-	'story-player':     { title: 'Story Player', bare: true, parent: 'timeline', pickerIcon: '▶' }
+	'focused-graph':    { title: 'Focused Graph', bare: true, parent: 'story-graph', pickerIcon: 'FG' },
+	'story-player':     { title: 'Story Player', bare: true, parent: 'timeline', pickerIcon: 'SP' }
 };
 
 /**

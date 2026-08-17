@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { entities, type Entity } from '../../src/lib/stores/entities.js';
+import {
+	entities,
+	entityLoadStatus,
+	entitySnapshotReady,
+	type Entity
+} from '../../src/lib/stores/entities.js';
 
 // =============================================================================
 // Tests for the D19 / Issue 13A extension to the entities store:
@@ -251,6 +256,26 @@ describe('entities.createEntities (D21 — batch)', () => {
 		const ids = get(entities).map((e) => e.id);
 		expect(ids).toContain('s1');
 		expect(ids).toContain('s2');
+	});
+
+	it('keeps batch-created entities usable when their replacement load fails', async () => {
+		entitySnapshotReady.set(false);
+		entityLoadStatus.set('idle');
+		let resolveInitial!: (response: Response) => void;
+		const created = [entity({ id: 's1', name: 'S1', type: 'Scene' })];
+		globalThis.fetch = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveInitial = resolve; }))
+			.mockResolvedValueOnce(makeResponse(created))
+			.mockResolvedValueOnce(makeResponse('offline', false, 503)) as unknown as typeof fetch;
+
+		const initial = entities.load();
+		await entities.createEntities([{ type: 'Scene', name: 'S1' }]);
+		resolveInitial(makeResponse([]));
+		await initial;
+
+		expect(get(entitySnapshotReady)).toBe(true);
+		expect(get(entityLoadStatus)).toBe('error');
+		expect(get(entities).map((item) => item.id)).toEqual(['s1']);
 	});
 
 	it('throws on !res.ok and does not partial-append', async () => {

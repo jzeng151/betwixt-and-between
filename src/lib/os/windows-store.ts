@@ -96,16 +96,16 @@ let lastOpenY = 80;
 let zCounter = 100;
 
 /**
- * Read --taskbar-height from :root. Falls back to 52 in SSR / before the
- * stylesheet attaches. Shared by the store and Window keyboard geometry.
+ * Read --taskbar-height from :root. Falls back to the default theme height in
+ * SSR / before the stylesheet attaches.
  */
 export function readTaskbarHeight(): number {
-	if (typeof window === 'undefined') return 52;
+	if (typeof window === 'undefined') return 44;
 	const raw = getComputedStyle(document.documentElement)
 		.getPropertyValue('--taskbar-height')
 		.trim();
 	const parsed = parseInt(raw, 10);
-	return Number.isFinite(parsed) ? parsed : 52;
+	return Number.isFinite(parsed) ? parsed : 44;
 }
 
 /**

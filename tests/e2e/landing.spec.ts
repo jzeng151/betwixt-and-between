@@ -39,10 +39,19 @@ test.describe('Landing page', () => {
 });
 
 test.describe('App route migration', () => {
-  test('/app loads the desktop', async ({ page }) => {
+  test('/app offers a useful empty workspace', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
     await page.goto('/app');
     await expect(page.locator('.app-shell')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Start with one true thing.' })).toBeVisible();
+
+    const createCharacter = page.getByRole('button', { name: 'Create a character' });
+    await createCharacter.click();
+    const characters = page.getByRole('dialog', { name: 'Characters' });
+    await expect(characters).toBeVisible();
+
+    await characters.getByRole('button', { name: 'Close' }).click();
+    await expect(createCharacter).toBeFocused();
   });
 
   test('/app loads project data after the viewport expands', async ({ page }) => {
@@ -60,4 +69,5 @@ test.describe('App route migration', () => {
     await expect.poll(() => entityRequests).toBe(1);
     await expect(page.locator('.app-shell')).toBeVisible();
   });
+
 });

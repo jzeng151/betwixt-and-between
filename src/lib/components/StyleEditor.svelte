@@ -250,10 +250,8 @@
 		display: flex;
 		align-items: baseline;
 		justify-content: space-between;
-		font-size: 9px;
+		font-size: 11px;
 		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.12em;
 		color: var(--color-text-muted, #6b7280);
 	}
 	.val {

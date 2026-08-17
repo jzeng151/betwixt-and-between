@@ -101,8 +101,6 @@
 		margin: 0;
 		color: var(--color-text-muted);
 		font-size: 12px;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 	}
 
 	.type-order-list {
