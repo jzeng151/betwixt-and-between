@@ -10,6 +10,7 @@
 -->
 <script lang="ts">
 	import { clampToViewport } from '$lib/os/context-menu-clamp.js';
+	import { takeNextFocusReturn } from '$lib/actions/focus-trap.js';
 	import EntityColorField from '$lib/components/EntityColorField.svelte';
 	import type { Entity } from '$lib/stores/entities.js';
 
@@ -23,11 +24,15 @@
 
 	let panelEl: HTMLDivElement | undefined = $state();
 	let pos = $state({ x: 0, y: 0 });
+	const returnFocus = takeNextFocusReturn(
+		document.activeElement instanceof HTMLElement ? document.activeElement : null
+	);
 
 	$effect(() => {
 		if (!panelEl) return;
 		const rect = panelEl.getBoundingClientRect();
 		pos = clampToViewport(x, y, rect.width, rect.height, window.innerWidth, window.innerHeight);
+		queueMicrotask(() => (panelEl?.querySelector<HTMLElement>('button, input') ?? panelEl)?.focus());
 	});
 
 	$effect(() => {
@@ -45,6 +50,7 @@
 		if (e.key === 'Escape') {
 			e.preventDefault();
 			onClose();
+			queueMicrotask(() => returnFocus?.isConnected && returnFocus.focus());
 		}
 	}
 </script>

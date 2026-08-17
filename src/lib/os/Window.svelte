@@ -93,7 +93,7 @@
   }
 
   function onTitlebarKeydown(e: KeyboardEvent) {
-    if (e.target !== e.currentTarget || !e.altKey || maximized) return;
+    if (e.target !== e.currentTarget || !e.altKey || e.ctrlKey || e.metaKey || maximized) return;
     const delta = 16;
     const direction = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1
       : e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1
@@ -101,12 +101,15 @@
     if (direction === 0) return;
     e.preventDefault();
     windowStore.focus(id);
+    const taskbarHeight = readTaskbarHeight();
     if (e.shiftKey) {
+      const maxWidth = Math.max(MIN_W, window.innerWidth - x);
+      const maxHeight = Math.max(MIN_H, window.innerHeight - y - taskbarHeight);
       const nextWidth = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
-        ? Math.max(MIN_W, width + direction * delta)
+        ? Math.min(maxWidth, Math.max(MIN_W, width + direction * delta))
         : width;
       const nextHeight = e.key === 'ArrowUp' || e.key === 'ArrowDown'
-        ? Math.max(MIN_H, height + direction * delta)
+        ? Math.min(maxHeight, Math.max(MIN_H, height + direction * delta))
         : height;
       windowStore.resize(id, nextWidth, nextHeight);
     } else {
@@ -114,7 +117,7 @@
 		? Math.max(0, Math.min(window.innerWidth - width, x + direction * delta))
         : x;
       const nextY = e.key === 'ArrowUp' || e.key === 'ArrowDown'
-		? Math.max(0, Math.min(window.innerHeight - height - readTaskbarHeight(), y + direction * delta))
+		? Math.max(0, Math.min(window.innerHeight - height - taskbarHeight, y + direction * delta))
         : y;
       windowStore.move(id, nextX, nextY);
     }

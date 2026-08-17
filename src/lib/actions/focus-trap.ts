@@ -19,6 +19,11 @@ export function takeNextFocusReturn(fallback: HTMLElement | null): HTMLElement |
 	return returnFocus;
 }
 
+export function isActiveFocusTrapTarget(target: EventTarget | null): boolean {
+	const active = trapStack.at(-1);
+	return !!active && target instanceof Node && active.contains(target);
+}
+
 const FOCUSABLE = [
 	'a[href]',
 	'button:not([disabled])',
@@ -81,7 +86,12 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 	}
 
 	function onFocusIn(event: FocusEvent) {
-		if (isActive() && !node.contains(event.target as Node)) queueMicrotask(focusFirst);
+		if (node.contains(event.target as Node)) {
+			const index = trapStack.lastIndexOf(node);
+			if (index >= 0 && !isActive()) trapStack.push(trapStack.splice(index, 1)[0]);
+			return;
+		}
+		if (isActive()) queueMicrotask(focusFirst);
 	}
 
 	const observer = new MutationObserver(() => {
@@ -105,9 +115,16 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 			node.removeEventListener('keydown', onKeydown);
 			document.removeEventListener('focusin', onFocusIn);
 			observer.disconnect();
+			const wasActive = isActive();
 			const index = trapStack.lastIndexOf(node);
 			if (index >= 0) trapStack.splice(index, 1);
-			if (returnFocus?.isConnected) returnFocus.focus();
+			if (wasActive) {
+				if (returnFocus?.isConnected) returnFocus.focus();
+				if (document.activeElement !== returnFocus) {
+					const next = trapStack.at(-1);
+					if (next) focusableChildren(next)[0]?.focus() ?? next.focus();
+				}
+			}
 		}
 	};
 }

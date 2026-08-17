@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { focusTrap } from '$lib/actions/focus-trap.js';
+  import { focusTrap, isActiveFocusTrapTarget } from '$lib/actions/focus-trap.js';
 
   interface Entity {
     id: string;
@@ -66,6 +66,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+	if (!isActiveFocusTrapTarget(e.target)) return;
     if (e.key === 'Escape' && !saving) onClose();
     if (e.key === 'Enter' && !e.shiftKey) handleSave();
   }

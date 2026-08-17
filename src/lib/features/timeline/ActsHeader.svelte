@@ -36,7 +36,7 @@
 		/** Live weight preview during act-resize drag. */
 		onWeightPreview?: (updates: Record<string, number>) => void;
 		/** Weight commit on mouseup (only changed acts). */
-		onWeightCommit?: (updates: Record<string, number>) => void;
+		onWeightCommit?: (updates: Record<string, number>) => void | Promise<void>;
 	}
 	let {
 		acts,
@@ -222,9 +222,9 @@
 	const SCENE_MIME = 'application/x-betwixt-scene-move';
 
 	let dragActId: string | null = $state(null);
-	let actDropTarget: { idx: number; side: 'left' | 'right' } | null = $state(null);
-	const keyboardActPositions = new Map<string, number>();
-	const keyboardActTails = new Map<string, Promise<void>>();
+	let actDropTarget: { idx: number; actId: string; side: 'left' | 'right' } | null = $state(null);
+	let keyboardActOrder: string[] | null = $state(null);
+	let keyboardActPending = 0;
 	let keyboardActTail: Promise<void> = Promise.resolve();
 	let reorderError: string | null = $state(null);
 	const reorderErrorToast = createAutoDismiss((msg) => {
@@ -249,7 +249,7 @@
 		e.dataTransfer.dropEffect = 'move';
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		const side: 'left' | 'right' = e.clientX - rect.left < rect.width / 2 ? 'left' : 'right';
-		actDropTarget = { idx, side };
+		actDropTarget = { idx, actId: acts[idx].id, side };
 	}
 	async function moveAct(actId: string, targetPos: number) {
 		const movedFromIdx = acts.findIndex((act) => act.id === actId);
@@ -264,23 +264,32 @@
 			await refreshTimelineStores();
 		} catch (err) {
 			reorderErrorToast.show((err as Error).message);
+			throw err;
 		}
 	}
 	function moveActWithKeyboard(e: KeyboardEvent, actId: string) {
-		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+		if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
 		e.preventDefault();
-		const from = keyboardActPositions.get(actId) ?? acts.findIndex((act) => act.id === actId);
+		const initializedOrder = keyboardActOrder === null;
+		const order = keyboardActOrder ??= acts.map((act) => act.id);
+		const from = order.indexOf(actId);
+		if (from < 0) {
+			if (initializedOrder) keyboardActOrder = null;
+			return;
+		}
 		const target = Math.max(0, Math.min(acts.length - 1, from + (e.key === 'ArrowLeft' ? -1 : 1)));
-		if (target === from) return;
-		keyboardActPositions.set(actId, target);
+		if (target === from) {
+			if (initializedOrder) keyboardActOrder = null;
+			return;
+		}
+		order.splice(target, 0, order.splice(from, 1)[0]);
+		keyboardActPending++;
 		const request = keyboardActTail.then(() => moveAct(actId, target));
-		const tail = request.catch(() => {});
-		keyboardActTail = tail;
-		keyboardActTails.set(actId, tail);
-		void tail.finally(() => {
-			if (keyboardActTails.get(actId) === tail) {
-				keyboardActTails.delete(actId);
-				keyboardActPositions.delete(actId);
+		keyboardActTail = request;
+		void request.catch(() => {}).finally(() => {
+			if (--keyboardActPending === 0) {
+				keyboardActOrder = null;
+				keyboardActTail = Promise.resolve();
 			}
 		});
 	}
@@ -288,25 +297,40 @@
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === ACT_MIME)) return;
 		e.preventDefault();
 		const movedId = e.dataTransfer.getData(ACT_MIME);
-		const target = actDropTarget ?? { idx, side: 'left' as const };
+		const target = actDropTarget ?? { idx, actId: acts[idx].id, side: 'left' as const };
 		actDropTarget = null;
 		dragActId = null;
 		if (!movedId) return;
-		const movedFromIdx = acts.findIndex((a) => a.id === movedId);
+		const order = keyboardActOrder ??= acts.map((act) => act.id);
+		const movedFromIdx = order.indexOf(movedId);
 		if (movedFromIdx < 0) return;
 		// Convert (idx, side) into a target position. When moving rightward,
 		// removal of the moved item from the front shifts indices by one.
-		let targetPos = target.side === 'left' ? target.idx : target.idx + 1;
+		const targetIdx = order.indexOf(target.actId);
+		if (targetIdx < 0) return;
+		let targetPos = target.side === 'left' ? targetIdx : targetIdx + 1;
 		if (movedFromIdx < targetPos) targetPos -= 1;
-		if (targetPos === movedFromIdx) return; // no-op
-		await moveAct(movedId, targetPos);
+		if (targetPos === movedFromIdx) {
+			if (keyboardActPending === 0) keyboardActOrder = null;
+			return;
+		}
+		order.splice(targetPos, 0, order.splice(movedFromIdx, 1)[0]);
+		keyboardActPending++;
+		const request = keyboardActTail.then(() => moveAct(movedId, targetPos));
+		keyboardActTail = request;
+		await request.catch(() => {});
+		if (--keyboardActPending === 0) {
+			keyboardActOrder = null;
+			keyboardActTail = Promise.resolve();
+		}
 	}
 
 	// ── Scene drag-reorder + cross-act move ──────────────────────────────────
 	let dragSceneId: string | null = $state(null);
-	let sceneDropTarget: { actId: string; idx: number } | null = $state(null);
-	const keyboardScenePositions = new Map<string, { actIdx: number; sceneIdx: number }>();
-	const keyboardSceneTails = new Map<string, Promise<void>>();
+	let sceneDropTarget: { actId: string; idx: number; beforeSceneId: string | null } | null = $state(null);
+	let keyboardSceneOrder: Map<string, string[]> | null = $state(null);
+	let keyboardScenePending = 0;
+	let keyboardSceneTail: Promise<void> = Promise.resolve();
 
 	function sceneDragStart(e: DragEvent, sceneId: string) {
 		if (!e.dataTransfer) return;
@@ -329,7 +353,7 @@
 		const relX = e.clientX - rect.left;
 		const cellWidth = list.length > 0 ? rect.width / list.length : rect.width;
 		const idx = Math.max(0, Math.min(Math.floor(relX / cellWidth + 0.5), list.length));
-		sceneDropTarget = { actId, idx };
+		sceneDropTarget = { actId, idx, beforeSceneId: list[idx]?.id ?? null };
 	}
 	async function moveScene(sceneId: string, targetActId: string, targetPos: number, restoreFocus = false) {
 		const focusOwner = restoreFocus && document.activeElement instanceof HTMLElement &&
@@ -354,63 +378,107 @@
 			}
 		} catch (err) {
 			reorderErrorToast.show((err as Error).message);
+			throw err;
 		}
 	}
-	function onSceneKeydown(e: KeyboardEvent, scene: Entity, actIdx: number, sceneIdx: number) {
+	function onSceneKeydown(e: KeyboardEvent, scene: Entity) {
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
 			onSelectScene?.(scene.id);
 			return;
 		}
-		if (!e.altKey || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+		if (!e.altKey || e.ctrlKey || e.metaKey || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
 		e.preventDefault();
-		const current = keyboardScenePositions.get(scene.id) ?? { actIdx, sceneIdx };
-		let targetActIdx = current.actIdx;
-		let targetSceneIdx = current.sceneIdx;
-		if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-			const scenes = scenesByActId.get(acts[current.actIdx].id) ?? [];
-			const count = scenes.some((item) => item.id === scene.id) ? scenes.length : scenes.length + 1;
-			targetSceneIdx = Math.max(0, Math.min(count - 1, current.sceneIdx + (e.key === 'ArrowLeft' ? -1 : 1)));
-		} else {
-			targetActIdx = current.actIdx + (e.key === 'ArrowUp' ? -1 : 1);
-			const targetAct = acts[targetActIdx];
-			if (!targetAct) return;
-			targetSceneIdx = Math.min(current.sceneIdx, (scenesByActId.get(targetAct.id) ?? []).length);
+		const initializedOrder = keyboardSceneOrder === null;
+		const order = keyboardSceneOrder ??= new Map(
+			acts.map((act) => [act.id, (scenesByActId.get(act.id) ?? []).map((item) => item.id)])
+		);
+		const currentActIdx = acts.findIndex((act) => order.get(act.id)?.includes(scene.id));
+		const source = order.get(acts[currentActIdx]?.id) ?? [];
+		const currentSceneIdx = source.indexOf(scene.id);
+		if (currentActIdx < 0 || currentSceneIdx < 0) {
+			if (initializedOrder) keyboardSceneOrder = null;
+			return;
 		}
-		if (targetActIdx === current.actIdx && targetSceneIdx === current.sceneIdx) return;
-		keyboardScenePositions.set(scene.id, { actIdx: targetActIdx, sceneIdx: targetSceneIdx });
-		const request = (keyboardSceneTails.get(scene.id) ?? Promise.resolve())
-			.then(() => moveScene(scene.id, acts[targetActIdx].id, targetSceneIdx, true));
-		const tail = request.catch(() => {});
-		keyboardSceneTails.set(scene.id, tail);
-		void tail.finally(() => {
-			if (keyboardSceneTails.get(scene.id) === tail) {
-				keyboardSceneTails.delete(scene.id);
-				keyboardScenePositions.delete(scene.id);
+		let targetActIdx = currentActIdx;
+		let targetSceneIdx = currentSceneIdx;
+		if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+			targetSceneIdx = Math.max(0, Math.min(source.length - 1, currentSceneIdx + (e.key === 'ArrowLeft' ? -1 : 1)));
+		} else {
+			targetActIdx = currentActIdx + (e.key === 'ArrowUp' ? -1 : 1);
+			const targetAct = acts[targetActIdx];
+			if (!targetAct) {
+				if (initializedOrder) keyboardSceneOrder = null;
+				return;
+			}
+			targetSceneIdx = Math.min(currentSceneIdx, order.get(targetAct.id)?.length ?? 0);
+		}
+		if (targetActIdx === currentActIdx && targetSceneIdx === currentSceneIdx) {
+			if (initializedOrder) keyboardSceneOrder = null;
+			return;
+		}
+		source.splice(currentSceneIdx, 1);
+		const targetActId = acts[targetActIdx].id;
+		(order.get(targetActId) ?? source).splice(targetSceneIdx, 0, scene.id);
+		keyboardSceneOrder = new Map(order);
+		keyboardScenePending++;
+		const request = keyboardSceneTail.then(() => moveScene(scene.id, targetActId, targetSceneIdx, true));
+		keyboardSceneTail = request;
+		void request.catch(() => {}).finally(() => {
+			if (--keyboardScenePending === 0) {
+				keyboardSceneOrder = null;
+				keyboardSceneTail = Promise.resolve();
 			}
 		});
+	}
+	function scenePositionLabel(scene: Entity): string {
+		const order = keyboardSceneOrder;
+		const actIdx = acts.findIndex((act) => (order?.get(act.id) ?? scenesByActId.get(act.id) ?? []).some((item) =>
+			typeof item === 'string' ? item === scene.id : item.id === scene.id
+		));
+		const siblings = order?.get(acts[actIdx]?.id) ?? (scenesByActId.get(acts[actIdx]?.id) ?? []).map((item) => item.id);
+		return `${acts[actIdx]?.name ?? 'Unknown act'}, scene ${siblings.indexOf(scene.id) + 1} of ${siblings.length}`;
 	}
 	async function sceneActDrop(e: DragEvent, actId: string) {
 		if (!e.dataTransfer?.types.some((t) => t.toLowerCase() === SCENE_MIME)) return;
 		e.preventDefault();
 		const movedId = e.dataTransfer.getData(SCENE_MIME);
-		const target = sceneDropTarget ?? { actId, idx: scenesByActId.get(actId)?.length ?? 0 };
+		const target = sceneDropTarget ?? { actId, idx: scenesByActId.get(actId)?.length ?? 0, beforeSceneId: null };
 		sceneDropTarget = null;
 		dragSceneId = null;
 		if (!movedId) return;
-		const moved = $entities.find((x) => x.id === movedId);
-		if (!moved) return;
-		let targetPos = target.idx;
-		if (moved.parentId === target.actId) {
+		const order = keyboardSceneOrder ??= new Map(
+			acts.map((act) => [act.id, (scenesByActId.get(act.id) ?? []).map((item) => item.id)])
+		);
+		const sourceEntry = [...order].find(([, ids]) => ids.includes(movedId));
+		if (!sourceEntry) return;
+		const [sourceActId, source] = sourceEntry;
+		const targetOrder = order.get(target.actId) ?? [];
+		let targetPos = target.beforeSceneId == null
+			? targetOrder.length
+			: targetOrder.indexOf(target.beforeSceneId);
+		if (targetPos < 0) targetPos = targetOrder.length;
+		if (sourceActId === target.actId) {
 			// Same-act reorder: account for the moved scene being removed
 			// from its current position before reinsertion.
-			const fromIdx = (scenesByActId.get(target.actId) ?? []).findIndex(
-				(s) => s.id === movedId
-			);
+			const fromIdx = source.indexOf(movedId);
 			if (fromIdx >= 0 && fromIdx < targetPos) targetPos -= 1;
-			if (targetPos === fromIdx) return;
+			if (targetPos === fromIdx) {
+				if (keyboardScenePending === 0) keyboardSceneOrder = null;
+				return;
+			}
 		}
-		await moveScene(movedId, target.actId, targetPos);
+		source.splice(source.indexOf(movedId), 1);
+		(order.get(target.actId) ?? source).splice(targetPos, 0, movedId);
+		keyboardSceneOrder = new Map(order);
+		keyboardScenePending++;
+		const request = keyboardSceneTail.then(() => moveScene(movedId, target.actId, targetPos));
+		keyboardSceneTail = request;
+		await request.catch(() => {});
+		if (--keyboardScenePending === 0) {
+			keyboardSceneOrder = null;
+			keyboardSceneTail = Promise.resolve();
+		}
 	}
 
 	// ── Act-width resize ─────────────────────────────────────────────────────
@@ -425,6 +493,7 @@
 
 	function startWidthDrag(e: PointerEvent, idx: number) {
 		if (!weights || idx >= weights.length - 1) return;
+		flushKeyboardWeightCommit();
 		e.preventDefault();
 		e.stopPropagation();
 		widthDrag = {
@@ -474,23 +543,43 @@
 		widthDrag = null;
 		(e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
 		if (Object.keys(updates).length > 0) {
-			onWeightCommit?.(updates);
+			commitWeights(updates);
 		}
 	}
 
 	function resizeActWithKeyboard(e: KeyboardEvent, idx: number) {
-		if (!weights || trackWidthPx === 0 || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+		if (e.altKey || e.ctrlKey || e.metaKey || widthDrag || !weights || trackWidthPx === 0 || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
 		e.preventDefault();
 		const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
 		const minWeight = (MIN_ACT_PX / trackWidthPx) * totalWeight;
 		const delta = totalWeight * 0.025 * (e.key === 'ArrowLeft' ? -1 : 1);
-		const left = weights[idx] + delta;
-		const right = weights[idx + 1] - delta;
-		if (left < minWeight || right < minWeight) return;
+		const pairWeight = weights[idx] + weights[idx + 1];
+		if (
+			(weights[idx] < minWeight && delta < 0) ||
+			(weights[idx] > pairWeight - minWeight && delta > 0)
+		) return;
+		const left = Math.max(minWeight, Math.min(pairWeight - minWeight, weights[idx] + delta));
+		const right = pairWeight - left;
 		const updates = { [acts[idx].id]: left, [acts[idx + 1].id]: right };
 		onWeightPreview?.(updates);
-		onWeightCommit?.(updates);
+		pendingKeyboardWeightCommit = { ...pendingKeyboardWeightCommit, ...updates };
+		if (keyboardWeightCommitTimer) clearTimeout(keyboardWeightCommitTimer);
+		keyboardWeightCommitTimer = setTimeout(flushKeyboardWeightCommit, 150);
 	}
+	let keyboardWeightCommitTimer: ReturnType<typeof setTimeout> | null = null;
+	let pendingKeyboardWeightCommit: Record<string, number> | null = null;
+	let weightCommitTail = Promise.resolve();
+	function commitWeights(updates: Record<string, number>) {
+		const request = weightCommitTail.then(() => onWeightCommit?.(updates));
+		weightCommitTail = request.catch(() => {});
+	}
+	function flushKeyboardWeightCommit() {
+		if (keyboardWeightCommitTimer) clearTimeout(keyboardWeightCommitTimer);
+		keyboardWeightCommitTimer = null;
+		if (pendingKeyboardWeightCommit) commitWeights(pendingKeyboardWeightCommit);
+		pendingKeyboardWeightCommit = null;
+	}
+	onDestroy(flushKeyboardWeightCommit);
 </script>
 
 <div class="acts-header">
@@ -501,6 +590,10 @@
 		{@const minWidthPercent = weights && trackWidthPx > 0 && pairWeight > 0
 			? Math.ceil(MIN_ACT_PX / trackWidthPx * totalWeight / pairWeight * 100)
 			: 0}
+		{@const currentWidthPercent = Math.max(minWidthPercent, Math.min(
+			100 - minWidthPercent,
+			Math.round(weights && pairWeight > 0 ? weights[actIdx] / pairWeight * 100 : 50)
+		))}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
@@ -534,7 +627,7 @@
 						aria-label="Width of {act.name} relative to {acts[actIdx + 1].name}"
 						aria-valuemin={minWidthPercent}
 						aria-valuemax={100 - minWidthPercent}
-						aria-valuenow={Math.round(weights ? weights[actIdx] / (weights[actIdx] + weights[actIdx + 1]) * 100 : 50)}
+						aria-valuenow={currentWidthPercent}
 						tabindex="0"
 						onpointerdown={(e) => startWidthDrag(e, actIdx)}
 						onpointermove={moveWidthDrag}
@@ -579,7 +672,7 @@
 						aria-orientation="horizontal"
 						aria-valuemin={1}
 						aria-valuemax={acts.length}
-						aria-valuenow={actIdx + 1}
+						aria-valuenow={(keyboardActOrder?.indexOf(act.id) ?? actIdx) + 1}
 						title="Drag or use arrow keys to reorder"
 						draggable="true"
 						ondragstart={(e) => actDragStart(e, act.id)}
@@ -701,7 +794,7 @@
 							class="scene-cell"
 							role="button"
 							tabindex="0"
-							aria-label="Select {scene.name}. Alt plus left and right reorders; Alt plus up and down moves between acts."
+							aria-label="Select {scene.name}. {scenePositionLabel(scene)}. Alt plus left and right reorders; Alt plus up and down moves between acts."
 							data-entity-id={scene.id}
 							class:scene-cell--selected={selectedEntityId === scene.id}
 							class:scene-cell--dragging={dragSceneId === scene.id}
@@ -710,7 +803,7 @@
 							ondragstart={(e) => sceneDragStart(e, scene.id)}
 							ondragend={sceneDragEnd}
 							onclick={() => onSelectScene?.(scene.id)}
-							onkeydown={(e) => onSceneKeydown(e, scene, sceneActIdx, k)}
+							onkeydown={(e) => onSceneKeydown(e, scene)}
 						>s{k + 1}</div>
 					{/each}
 				{:else}
@@ -799,7 +892,7 @@
 		left: 0;
 		right: 0;
 		font-size: 10px;
-		color: var(--color-danger);
+		color: #ef4444;
 		text-align: center;
 	}
 	.act-col-header {
@@ -955,7 +1048,7 @@
 		opacity: 1;
 	}
 	.act-delete-btn:hover {
-		color: var(--color-danger);
+		color: #ef4444;
 	}
 
 	.act-meta {
@@ -1013,7 +1106,7 @@
 	}
 	.scene-error {
 		font-size: 11px;
-		color: var(--color-danger);
+		color: #ef4444;
 	}
 	.scene-form-btns {
 		display: flex;
@@ -1058,7 +1151,7 @@
 		accent-color: var(--color-accent, #c8942a);
 	}
 	.reparent-opt--danger {
-		color: var(--color-danger);
+		color: #ef4444;
 	}
 
 	/* Shared button styles */
@@ -1067,7 +1160,7 @@
 		background: var(--color-accent, #c8942a);
 		border: none;
 		border-radius: 4px;
-		color: var(--color-on-accent);
+		color: #0d0f14;
 		cursor: pointer;
 		font-size: 11px;
 		font-family: inherit;
@@ -1076,8 +1169,8 @@
 		transition: opacity 0.15s;
 	}
 	.btn-danger {
-		background: var(--color-danger-solid);
-		color: var(--color-on-danger);
+		background: #ef4444;
+		color: #fff;
 	}
 	.btn-save:disabled,
 	.btn-danger:disabled {
@@ -1133,6 +1226,8 @@
 		border-right: 1px dashed rgba(42, 45, 53, 0.6);
 		font-size: 10px;
 		color: var(--color-text-muted, #6b7280);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -1172,8 +1267,8 @@
 		bottom: 16px;
 		left: 50%;
 		transform: translateX(-50%);
-		background: var(--color-danger-solid);
-		color: var(--color-on-danger);
+		background: #ef4444;
+		color: #fff;
 		font-size: 12px;
 		padding: 6px 12px;
 		border-radius: 4px;

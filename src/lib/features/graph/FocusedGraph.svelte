@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { preferences } from '$lib/os/preferences-store.js';
   import { applyPreferencePatch } from '$lib/os/preferences-sync.js';
@@ -9,7 +9,7 @@
   import { playhead, isEdgeVisibleAtT, isMysteryEdgeAtT, hideOutOfScope } from '$lib/features/timeline/playhead-store.js';
   import { jumpToCause, isCausalEdgeClickable } from '$lib/features/timeline/jump-to-cause.js';
   import { windowStore, type FocusedGraphMode } from '$lib/os/windows-store.js';
-  import { worldMapStore, worldMaps } from '$lib/features/map/store.js';
+  import { worldMapStore, worldMaps, worldMapsLoadStatus } from '$lib/features/map/store.js';
   import { openEntity } from '$lib/navigation.js';
   import { REL_COLOR, REL_EDGE_STYLE, REL_TYPES, nodeColorFor } from '$lib/relationship-colors.js';
   import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
@@ -305,10 +305,14 @@
   let winMapLoaded = $state(false);
   let radialSeeded = $state(false);
 
+  function loadMaps() {
+    void worldMapStore.loadMaps().catch(() => {});
+  }
+
   onMount(() => {
     intervalsStore.load();
     void entityAliases.load().catch(() => {});
-    worldMapStore.loadMaps();
+    loadMaps();
     void (async () => {
       // FG canvas is independent of StoryGraph: each FG window has
       // its own per-window state (Lane A). We don't inherit the
@@ -570,9 +574,14 @@
   }
 
   // ── Focal-set mutation (RULE: reassign, never push) ───────────────────────
-  function removeFromFocalSet(id: string) {
+  async function removeFromFocalSet(id: string, restoreGraphFocus = false) {
+    const focusId = graphNodes.find((node) => node.id !== id)?.id ?? id;
     const next = focalSet.filter((x) => x !== id);
     windowStore.setFocalSet(windowId, next);
+    if (restoreGraphFocus) {
+      await tick();
+      canvas?.focusNode(focusId);
+    }
   }
 
   function setMode(mode: FocusedGraphMode) {
@@ -673,7 +682,7 @@
     if (isFocal) {
       items.push({
         label: 'Remove from focal set',
-        onSelect: () => removeFromFocalSet(id)
+        onSelect: () => void removeFromFocalSet(id, true)
       });
     } else {
       items.push({
@@ -731,8 +740,11 @@
     <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button>
   </div>
 {:else}
-{#if $entityAliasesLoadStatus === 'error'}
-  <div class="graph-refresh" role="alert">Couldn't refresh aliases. <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button></div>
+{#if $entityAliasesLoadStatus === 'error' || $worldMapsLoadStatus === 'error'}
+  <div class="graph-refresh" role="alert">
+    {#if $entityAliasesLoadStatus === 'error'}<span>Couldn't refresh aliases. <button onclick={() => void entityAliases.load().catch(() => {})}>Retry</button></span>{/if}
+    {#if $worldMapsLoadStatus === 'error'}<span>Couldn't load maps. <button onclick={loadMaps}>Retry</button></span>{/if}
+  </div>
 {/if}
 <div class="fg">
   <header class="fg-header">
@@ -831,9 +843,14 @@
             class="add-focal-btn"
             title="Add to focal set"
             aria-label="Add to focal set"
-            onclick={(e) => {
+            onclick={async (e) => {
               e.stopPropagation();
+			  const node = (e.currentTarget as HTMLElement)
+				  .closest('.node-shell')
+				  ?.querySelector<HTMLElement>('[data-entity-id]');
               addToFocalSet(id);
+			  await tick();
+			  node?.focus();
             }}
           >+</button>
         {/if}
@@ -988,6 +1005,8 @@
     font-family: var(--font-ui);
     font-size: 12px;
     color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
   .fg-mode select {

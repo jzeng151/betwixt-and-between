@@ -37,7 +37,7 @@ describe('ActsHeader keyboard controls', () => {
 		expect(onSelectAct).toHaveBeenCalledWith('act-1');
 		expect(onSelectScene).toHaveBeenCalledWith('scene-1');
 		expect(onWeightPreview).toHaveBeenCalledOnce();
-		expect(onWeightCommit).toHaveBeenCalledOnce();
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
 		expect(slider).toHaveAttribute('aria-valuemin', '10');
 		expect(slider).toHaveAttribute('aria-valuemax', '90');
 	});
@@ -67,6 +67,7 @@ describe('ActsHeader keyboard controls', () => {
 		const sceneCell = view.getByRole('button', { name: /Select Opening/ });
 		await fireEvent.keyDown(sceneCell, { key: 'ArrowDown', altKey: true });
 		await fireEvent.keyDown(sceneCell, { key: 'ArrowDown', altKey: true });
+		expect(sceneCell).toHaveAccessibleName(/Three, scene 1 of 1/);
 
 		await waitFor(() => expect(patches).toHaveLength(4));
 		expect(patches.filter((patch) => !('parentId' in patch))).toEqual([
@@ -77,15 +78,92 @@ describe('ActsHeader keyboard controls', () => {
 		]);
 	});
 
-	it('serializes keyboard moves across the whole act list', async () => {
+	it('leaves modified slider arrows to the browser', () => {
+		const acts = ['One', 'Two'].map((name, index) => ({
+			id: `act-${index + 1}`, type: 'Act', name
+		})) as Entity[];
+		const onWeightPreview = vi.fn();
+		globalThis.fetch = vi.fn();
+		const view = render(ActsHeader, {
+			props: { acts, scenesByActId: new Map(), weights: [1, 1], trackWidthPx: 600, onWeightPreview }
+		});
+
+		for (const slider of [
+			view.getByRole('slider', { name: /Reorder One/ }),
+			view.getByRole('slider', { name: /Width of One/ })
+		]) {
+			for (const modifier of [{ altKey: true }, { ctrlKey: true }, { metaKey: true }]) {
+				const event = new KeyboardEvent('keydown', {
+					key: 'ArrowRight', bubbles: true, cancelable: true, ...modifier
+				});
+				slider.dispatchEvent(event);
+				expect(event.defaultPrevented).toBe(false);
+			}
+		}
+		expect(globalThis.fetch).not.toHaveBeenCalled();
+		expect(onWeightPreview).not.toHaveBeenCalled();
+	});
+
+	it('clears newly initialized orders after boundary key presses', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' }
+		] as Entity[];
+		const opening = { id: 'scene-1', type: 'Scene', name: 'Opening', parentId: 'act-1' } as Entity;
+		const props = {
+			acts,
+			scenesByActId: new Map([['act-1', [opening]], ['act-2', []]]),
+			weights: [1, 1],
+			trackWidthPx: 600
+		};
+		const view = render(ActsHeader, { props });
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowLeft' });
+		await fireEvent.keyDown(view.getByRole('button', { name: /Select Opening/ }), {
+			key: 'ArrowLeft', altKey: true
+		});
+		const closing = { id: 'scene-2', type: 'Scene', name: 'Closing', parentId: 'act-1' } as Entity;
+		await view.rerender({
+			...props,
+			acts: [...acts, { id: 'act-3', type: 'Act', name: 'Three' } as Entity],
+			scenesByActId: new Map([['act-1', [opening, closing]], ['act-2', []], ['act-3', []]]),
+			weights: [1, 1, 1]
+		});
+
+		expect(view.getByRole('slider', { name: /Reorder Three/ })).toHaveAttribute('aria-valuenow', '3');
+		expect(view.getByRole('button', { name: /Select Closing/ })).toHaveAccessibleName(/scene 2 of 2/);
+	});
+
+	it('leaves scene movement chords with extra modifiers to the browser', () => {
+		const acts = [{ id: 'act-1', type: 'Act', name: 'One' }] as Entity[];
+		const scene = { id: 'scene-1', type: 'Scene', name: 'Opening', parentId: 'act-1' } as Entity;
+		globalThis.fetch = vi.fn();
+		const view = render(ActsHeader, {
+			props: { acts, scenesByActId: new Map([['act-1', [scene]]]), weights: [1], trackWidthPx: 600 }
+		});
+		const control = view.getByRole('button', { name: /Select Opening/ });
+
+		for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+			const event = new KeyboardEvent('keydown', {
+				key: 'ArrowRight', altKey: true, bubbles: true, cancelable: true, ...modifier
+			});
+			control.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(false);
+		}
+		expect(globalThis.fetch).not.toHaveBeenCalled();
+	});
+
+	it('derives queued keyboard moves from the optimistic act order', async () => {
 		const acts = ['One', 'Two', 'Three'].map((name, index) => ({
 			id: `act-${index + 1}`, type: 'Act', name
 		})) as Entity[];
 		const patchResolvers: Array<(response: Response) => void> = [];
-		const fetchMock = vi.fn((_url, options) => options?.method === 'PATCH'
-			? new Promise<Response>((resolve) => patchResolvers.push(resolve))
-			: Promise.resolve({ ok: true, json: async () => [] } as Response)
-		);
+		const patches: Array<Record<string, unknown>> = [];
+		const fetchMock = vi.fn((_url, options) => {
+			if (options?.method !== 'PATCH') return Promise.resolve({ ok: true, json: async () => [] } as Response);
+			patches.push(JSON.parse(String(options.body)));
+			return new Promise<Response>((resolve) => patchResolvers.push(resolve));
+		});
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 		const view = render(ActsHeader, {
 			props: {
@@ -97,11 +175,269 @@ describe('ActsHeader keyboard controls', () => {
 		});
 
 		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowRight' });
-		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder Three/ }), { key: 'ArrowLeft' });
+		expect(view.getByRole('slider', { name: /Reorder One/ })).toHaveAttribute('aria-valuenow', '2');
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder Two/ }), { key: 'ArrowRight' });
 		await waitFor(() => expect(patchResolvers).toHaveLength(1));
 		patchResolvers[0]({ ok: true, json: async () => ({}) } as Response);
 		await waitFor(() => expect(patchResolvers).toHaveLength(2));
+		expect(patches).toEqual([{ position: 1 }, { position: 1 }]);
 		patchResolvers[1]({ ok: true, json: async () => ({}) } as Response);
+	});
+
+	it('captures a queued scene move destination before act order changes', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' }
+		] as Entity[];
+		const scene = { id: 'scene-1', type: 'Scene', name: 'Opening', parentId: 'act-1' } as Entity;
+		let resolveFirst!: (response: Response) => void;
+		const patches: Array<{ url: string; body: Record<string, unknown> }> = [];
+		globalThis.fetch = vi.fn((url, options) => {
+			if (options?.method !== 'PATCH') return Promise.resolve({ ok: true, json: async () => [] } as Response);
+			patches.push({ url: String(url), body: JSON.parse(String(options.body)) });
+			if (patches.length === 1) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+			return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+		}) as unknown as typeof fetch;
+		const view = render(ActsHeader, {
+			props: {
+				acts,
+				scenesByActId: new Map([['act-1', [scene]], ['act-2', []]]),
+				weights: [1, 1],
+				trackWidthPx: 600
+			}
+		});
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowRight' });
+		await fireEvent.keyDown(view.getByRole('button', { name: /Select Opening/ }), { key: 'ArrowDown', altKey: true });
+		resolveFirst({ ok: true, json: async () => ({}) } as Response);
+		await waitFor(() => expect(patches).toHaveLength(2));
+
+		expect(patches[1].body).toEqual({ parentId: 'act-2', position: 0 });
+	});
+
+	it('serializes sibling scene moves from one optimistic order', async () => {
+		const acts = [{ id: 'act-1', type: 'Act', name: 'One' }] as Entity[];
+		const scenes = ['A', 'B', 'C'].map((name, index) => ({
+			id: `scene-${index + 1}`, type: 'Scene', name, parentId: 'act-1'
+		})) as Entity[];
+		const patchResolvers: Array<(response: Response) => void> = [];
+		const patches: Array<Record<string, unknown>> = [];
+		globalThis.fetch = vi.fn((_url, options) => {
+			if (options?.method !== 'PATCH') return Promise.resolve({ ok: true, json: async () => [] } as Response);
+			patches.push(JSON.parse(String(options.body)));
+			return new Promise<Response>((resolve) => patchResolvers.push(resolve));
+		}) as unknown as typeof fetch;
+		const view = render(ActsHeader, {
+			props: { acts, scenesByActId: new Map([['act-1', scenes]]), weights: [1], trackWidthPx: 600 }
+		});
+
+		await fireEvent.keyDown(view.getByRole('button', { name: /Select A/ }), { key: 'ArrowRight', altKey: true });
+		await fireEvent.keyDown(view.getByRole('button', { name: /Select B/ }), { key: 'ArrowRight', altKey: true });
+		await waitFor(() => expect(patchResolvers).toHaveLength(1));
+		patchResolvers[0]({ ok: true, json: async () => ({}) } as Response);
+		await waitFor(() => expect(patchResolvers).toHaveLength(2));
+		expect(patches).toEqual([
+			{ parentId: 'act-1', position: 1 },
+			{ parentId: 'act-1', position: 1 }
+		]);
+		patchResolvers[1]({ ok: true, json: async () => ({}) } as Response);
+	});
+
+	it('lets an undersized act recover and keeps its ARIA value in range', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' },
+			{ id: 'act-3', type: 'Act', name: 'Three' }
+		] as Entity[];
+		const onWeightCommit = vi.fn();
+		const view = render(ActsHeader, {
+			props: {
+				acts,
+				scenesByActId: new Map(),
+				weights: [0.1, 1.9, 1],
+				trackWidthPx: 600,
+				onWeightCommit
+			}
+		});
+		const slider = view.getByRole('slider', { name: /Width of One/ });
+
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
+		const committed = onWeightCommit.mock.calls[0][0];
+		expect(committed['act-1']).toBeCloseTo(0.3);
+		expect(committed['act-2']).toBeCloseTo(1.7);
+		expect(Number(slider.getAttribute('aria-valuenow'))).toBeGreaterThanOrEqual(
+			Number(slider.getAttribute('aria-valuemin'))
+		);
+		expect(Number(slider.getAttribute('aria-valuenow'))).toBeLessThanOrEqual(
+			Number(slider.getAttribute('aria-valuemax'))
+		);
+	});
+
+	it('coalesces repeated keyboard width persistence', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' }
+		] as Entity[];
+		const onWeightPreview = vi.fn();
+		const onWeightCommit = vi.fn();
+		const view = render(ActsHeader, {
+			props: {
+				acts, scenesByActId: new Map(), weights: [1, 1], trackWidthPx: 600,
+				onWeightPreview, onWeightCommit
+			}
+		});
+		const slider = view.getByRole('slider', { name: /Width of One/ });
+
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+
+		expect(onWeightPreview).toHaveBeenCalledTimes(3);
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
+	});
+
+	it('flushes a pending keyboard commit when pointer resizing starts', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' }
+		] as Entity[];
+		let resolveKeyboard!: () => void;
+		const onWeightCommit = vi.fn()
+			.mockReturnValueOnce(new Promise<void>((resolve) => { resolveKeyboard = resolve; }))
+			.mockResolvedValue(undefined);
+		const props = {
+			acts, scenesByActId: new Map<string, Entity[]>(), weights: [1, 1], trackWidthPx: 600,
+			onWeightCommit
+		};
+		const view = render(ActsHeader, {
+			props
+		});
+		const slider = view.getByRole('slider', { name: /Width of One/ });
+		slider.setPointerCapture = vi.fn();
+		slider.releasePointerCapture = vi.fn();
+
+		await fireEvent.keyDown(slider, { key: 'ArrowRight' });
+		await fireEvent.pointerDown(slider, { pointerId: 1, clientX: 0 });
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
+		expect(onWeightCommit).toHaveBeenCalledWith({ 'act-1': 1.05, 'act-2': 0.95 });
+
+		await fireEvent.pointerMove(slider, { pointerId: 1, clientX: 60 });
+		await view.rerender({ ...props, weights: [1.2, 0.8] });
+		await fireEvent.pointerUp(slider, { pointerId: 1, clientX: 60 });
+		expect(onWeightCommit).toHaveBeenCalledOnce();
+		resolveKeyboard();
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledTimes(2));
+		expect(onWeightCommit).toHaveBeenLastCalledWith({ 'act-1': 1.2, 'act-2': 0.8 });
+	});
+
+	it('cancels queued act and scene moves after a failed request', async () => {
+		const acts = ['One', 'Two', 'Three'].map((name, index) => ({
+			id: `act-${index + 1}`, type: 'Act', name
+		})) as Entity[];
+		const scene = { id: 'scene-1', type: 'Scene', name: 'Opening', parentId: 'act-1' } as Entity;
+		let resolveAct!: (response: Response) => void;
+		let resolveScene!: (response: Response) => void;
+		const fetchMock = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveAct = resolve; }))
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveScene = resolve; }))
+			.mockResolvedValue({ ok: false, text: async () => 'rejected' });
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const view = render(ActsHeader, {
+			props: {
+				acts,
+				scenesByActId: new Map([['act-1', [scene]], ['act-2', []], ['act-3', []]]),
+				weights: [1, 1, 1],
+				trackWidthPx: 600
+			}
+		});
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowRight' });
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder Three/ }), { key: 'ArrowLeft' });
+		expect(fetchMock).toHaveBeenCalledOnce();
+		resolveAct({ ok: false, text: async () => 'act rejected' } as Response);
+		await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('act rejected'));
+		expect(fetchMock).toHaveBeenCalledOnce();
+
+		const sceneCell = view.getByRole('button', { name: /Select Opening/ });
+		await fireEvent.keyDown(sceneCell, { key: 'ArrowDown', altKey: true });
+		await fireEvent.keyDown(sceneCell, { key: 'ArrowUp', altKey: true });
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		resolveScene({ ok: false, text: async () => 'scene rejected' } as Response);
+		await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('scene rejected'));
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('resolves pointer drop targets against the optimistic act order', async () => {
+		const acts = ['One', 'Two', 'Three'].map((name, index) => ({
+			id: `act-${index + 1}`, type: 'Act', name
+		})) as Entity[];
+		let resolveFirst!: (response: Response) => void;
+		const patches: Array<Record<string, unknown>> = [];
+		const fetchMock = vi.fn((url, options) => {
+			if (options?.method === 'PATCH') {
+				patches.push(JSON.parse(String(options.body)));
+				if (patches.length === 1) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+			}
+			return Promise.resolve({ ok: true, json: async () => [] } as Response);
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const view = render(ActsHeader, {
+			props: { acts, scenesByActId: new Map(), weights: [1, 1, 1], trackWidthPx: 600 }
+		});
+		const values = new Map<string, string>();
+		const dataTransfer = {
+			types: ['application/x-betwixt-act-reorder'], effectAllowed: 'move', dropEffect: 'move',
+			setData: (type: string, value: string) => values.set(type, value),
+			getData: (type: string) => values.get(type) ?? ''
+		};
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Reorder One/ }), { key: 'ArrowRight' });
+		await fireEvent.dragStart(view.getByRole('slider', { name: /Reorder Three/ }), { dataTransfer });
+		const target = view.container.querySelector<HTMLElement>('.act-col-header[data-entity-id="act-2"]')!;
+		target.getBoundingClientRect = () => ({
+			x: 0, y: 0, left: 0, top: 0, right: 100, bottom: 40, width: 100, height: 40,
+			toJSON: () => ({})
+		}) as DOMRect;
+		const dragOver = new Event('dragover', { bubbles: true, cancelable: true });
+		Object.defineProperties(dragOver, {
+			dataTransfer: { value: dataTransfer },
+			clientX: { value: 1 }
+		});
+		target.dispatchEvent(dragOver);
+		const drop = new Event('drop', { bubbles: true, cancelable: true });
+		Object.defineProperty(drop, 'dataTransfer', { value: dataTransfer });
+		target.dispatchEvent(drop);
+		resolveFirst({ ok: true, json: async () => ({}) } as Response);
+
+		await waitFor(() => expect(patches).toHaveLength(2));
+		expect(patches[1]).toEqual({ position: 0 });
+	});
+
+	it('preserves keyboard width updates from adjacent handles', async () => {
+		const acts = [
+			{ id: 'act-1', type: 'Act', name: 'One' },
+			{ id: 'act-2', type: 'Act', name: 'Two' },
+			{ id: 'act-3', type: 'Act', name: 'Three' }
+		] as Entity[];
+		const onWeightCommit = vi.fn();
+		const view = render(ActsHeader, {
+			props: {
+				acts, scenesByActId: new Map(), weights: [1, 1, 1], trackWidthPx: 600,
+				onWeightCommit
+			}
+		});
+
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Width of One/ }), { key: 'ArrowRight' });
+		await fireEvent.keyDown(view.getByRole('slider', { name: /Width of Two/ }), { key: 'ArrowRight' });
+
+		await waitFor(() => expect(onWeightCommit).toHaveBeenCalledOnce());
+		expect(onWeightCommit).toHaveBeenCalledWith({
+			'act-1': 1.075,
+			'act-2': 1.075,
+			'act-3': 0.925
+		});
 	});
 
 	it('hides width sliders when the minimum widths cannot fit', () => {
