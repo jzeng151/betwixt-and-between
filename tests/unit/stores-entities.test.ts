@@ -103,6 +103,26 @@ describe('entities.load', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		expect(get(entities)[0].id).toBe('new');
 	});
+
+	it('queues one post-mutation refresh behind an active replacement', async () => {
+		let resolveActive!: (response: Response) => void;
+		const fetchMock = vi.fn()
+			.mockReturnValueOnce(new Promise<Response>((resolve) => { resolveActive = resolve; }))
+			.mockResolvedValueOnce(makeResponse([entity({ id: 'new', name: 'New' })]));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const active = entities.refreshAfterMutation();
+		const queued = entities.refreshAfterMutation();
+		const coalesced = entities.refreshAfterMutation();
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(coalesced).toBe(queued);
+
+		resolveActive(makeResponse([entity({ id: 'old', name: 'Old' })]));
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		await Promise.all([active, queued, coalesced]);
+
+		expect(get(entities)[0].id).toBe('new');
+	});
 });
 
 // =============================================================================
@@ -653,6 +673,47 @@ describe('entities.updateEntity', () => {
 		// The superseded reorder still triggered an interval refresh.
 		expect(intervalsLoad).toHaveBeenCalled();
 		intervalsLoad.mockRestore();
+	});
+
+	it('starts snapshot recovery before a superseded structural refresh can fail', async () => {
+		const seed = [entity({ id: 'a1', name: 'Act', type: 'Act', data: {} })];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seed)) as unknown as typeof fetch;
+		await entities.load();
+
+		let resolveActive!: (response: Response) => void;
+		let resolveRecovery!: (response: Response) => void;
+		let entityLoads = 0;
+		let patches = 0;
+		const reorderServer = entity({ id: 'a1', name: 'Act', type: 'Act', position: 2, data: {} });
+		const renameServer = entity({ id: 'a1', name: 'Renamed', type: 'Act', position: 2, data: {} });
+		globalThis.fetch = vi.fn((url: string) => {
+			if (url === '/api/entities') {
+				entityLoads++;
+				if (entityLoads === 1) return new Promise<Response>((resolve) => { resolveActive = resolve; });
+				if (entityLoads === 2) return new Promise<Response>((resolve) => { resolveRecovery = resolve; });
+				return Promise.resolve(makeResponse([renameServer]));
+			}
+			return Promise.resolve(makeResponse(patches++ === 0 ? reorderServer : renameServer));
+		}) as unknown as typeof fetch;
+		const intervalsLoad = vi.spyOn(intervalsStore, 'load')
+			.mockRejectedValueOnce(new Error('interval refresh failed'))
+			.mockResolvedValue(undefined);
+		const relationshipsLoad = vi.spyOn(relationships, 'load').mockResolvedValue(undefined);
+
+		const active = entities.refreshAfterMutation();
+		const reorder = entities.updateEntity('a1', { position: 2 });
+		const rename = entities.updateEntity('a1', { name: 'Renamed' });
+		await vi.waitFor(() => expect(patches).toBe(2));
+		resolveActive(makeResponse('recovery unavailable', false, 503));
+
+		await expect(active).rejects.toThrow();
+		await expect(reorder).rejects.toThrow('interval refresh failed');
+		expect(entityLoads).toBeGreaterThanOrEqual(2);
+		resolveRecovery(makeResponse([renameServer]));
+		await rename;
+
+		intervalsLoad.mockRestore();
+		relationshipsLoad.mockRestore();
 	});
 
 	it('refreshes relationships after a structural Scene PATCH (so click-to-jump reads fresh positions)', async () => {

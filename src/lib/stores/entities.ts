@@ -26,6 +26,7 @@ function createEntityStore() {
 	let loadPromise: Promise<void> | null = null;
 	let rollbackPromise: Promise<void> | null = null;
 	let replacementPromise: Promise<void> | null = null;
+	let mutationRefreshPromise: Promise<void> | null = null;
 	let loadGeneration = 0;
 	// Per-entity update sequence. updateEntity applies an optimistic merge then
 	// installs the PATCH response; without sequencing, two edits to the same row
@@ -102,7 +103,14 @@ function createEntityStore() {
 		return pending;
 	}
 	function refreshAfterMutation(): Promise<void> {
-		return replacementPromise ?? replaceSnapshot();
+		if (!replacementPromise) return replaceSnapshot();
+		if (mutationRefreshPromise) return mutationRefreshPromise;
+		const request = replacementPromise.catch(() => {}).then(replaceSnapshot);
+		const pending = request.finally(() => {
+			if (mutationRefreshPromise === pending) mutationRefreshPromise = null;
+		});
+		mutationRefreshPromise = pending;
+		return pending;
 	}
 	async function settleSnapshotBeforeCreate(): Promise<boolean> {
 		const pendingRollback = rollbackPromise;
@@ -287,8 +295,9 @@ function createEntityStore() {
 			// caused_by start/end positions on a scene-within-act mutation too
 			// (Slice 5 PR-D), and the graph click-to-jump reads $relationships,
 			// so a stale store would jump to the old scene fraction (Codex P2).
+			const replacement = needsFreshSnapshot ? replaceSnapshot().catch(() => {}) : null;
 			if (wasStructural) await Promise.all([intervalsStore.load(), relationships.load()]);
-			if (needsFreshSnapshot) await replaceSnapshot().catch(() => {});
+			if (replacement) await replacement;
 			return updated;
 		}
 		latestUpdate.delete(id);
