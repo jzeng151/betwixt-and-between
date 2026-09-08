@@ -70,6 +70,7 @@ describe('Notes editing', () => {
     expect(ui.getByPlaceholderText('Start writing...')).toHaveValue('Keep this');
     cleanup();
     await notesStore.flushDrafts();
+    expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(false);
     ui = render(Notes);
     await ui.findByText('Retry saving');
     await fireEvent.click(ui.getByText('Drafts'));
@@ -78,6 +79,7 @@ describe('Notes editing', () => {
     failSave = false;
     await fireEvent.click(ui.getByText('Retry saving'));
     await waitFor(() => expect(saved.data.body).toBe('Keep this'));
+    expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(true);
     await fireEvent.click(ui.getByText('Drafts'));
     await fireEvent.click(await ui.findByText('Opening'));
     expect(ui.getByPlaceholderText('Start writing...')).toHaveValue('Keep this');

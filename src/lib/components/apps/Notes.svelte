@@ -195,13 +195,6 @@
   onDestroy(() => { void notesStore.flushDrafts(); });
 </script>
 
-<svelte:window onbeforeunload={(event) => {
-  if (notesStore.drafts.size) {
-    event.preventDefault();
-    event.returnValue = '';
-  }
-}} />
-
 <div class="notes-app">
   <!-- Sidebar: folders only -->
   <div class="sidebar">

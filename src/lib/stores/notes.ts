@@ -27,7 +27,17 @@ function createNotesStore() {
 	const entryVersions = new Map<string, number>();
 	let version = 0;
 
+	function warnAboutDrafts(event: BeforeUnloadEvent) {
+		if (!drafts.size) return;
+		event.preventDefault();
+		event.returnValue = '';
+	}
+
 	function updateSaveState() {
+		if (typeof window !== 'undefined') {
+			if (drafts.size) window.addEventListener('beforeunload', warnAboutDrafts);
+			else window.removeEventListener('beforeunload', warnAboutDrafts);
+		}
 		saveState.set(saving.size ? 'saving' : saveErrors.size ? 'error' : drafts.size ? 'unsaved' : 'saved');
 	}
 
