@@ -108,10 +108,10 @@ function createNotesStore() {
 			folderId: r.parentId as string | null,
 			position: r.position as number | null
 		}));
-		// A response started before a local write must not overwrite that write.
-		mapped = mapped.filter((entry) => (entryVersions.get(entry.id) ?? 0) <= startedVersion);
+		// Keep unsaved drafts reachable, and preserve writes newer than this response.
+		mapped = mapped.filter((entry) => !drafts.has(entry.id) && (entryVersions.get(entry.id) ?? 0) <= startedVersion);
 		mapped.push(...get(entries).filter((entry) =>
-			(entryVersions.get(entry.id) ?? 0) > startedVersion && (!folderId || entry.folderId === folderId)
+			(drafts.has(entry.id) || (entryVersions.get(entry.id) ?? 0) > startedVersion) && (!folderId || entry.folderId === folderId)
 		));
 
 		if (folderId) {

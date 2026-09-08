@@ -199,3 +199,61 @@ it('keeps the current folder error when an older folder request succeeds later',
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(ui.getByText('Retry loading')).toBeInTheDocument();
 });
+
+
+it('keeps a remotely deleted note selectable after reopening so its unsaved text can be recovered', async () => {
+  let ui = await openNote();
+  const normalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((url, init) => {
+    if (init?.method === 'PATCH') return Promise.resolve(new Response('', { status: 404 }));
+    if (String(url).includes('/entries')) return Promise.resolve(Response.json([]));
+    return normalFetch(url, init);
+  });
+  await fireEvent.input(ui.getByPlaceholderText('Start writing...'), { target: { value: 'Recover this text' } });
+  await notesStore.flushDrafts();
+  cleanup();
+  ui = render(Notes);
+  await ui.findByText('Retry saving');
+  await fireEvent.click(ui.getByText('Drafts'));
+  await fireEvent.click(await ui.findByText('Opening'));
+  expect(ui.getByPlaceholderText('Start writing...')).toHaveValue('Recover this text');
+  vi.mocked(fetch).mockImplementation(normalFetch);
+});
+
+it('does not create a context-menu note after its folder navigation is superseded', async () => {
+  const ui = await openNote();
+  const normalFetch = vi.mocked(fetch).getMockImplementation()!;
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementation((url, init) => {
+    if (String(url).includes('folderId=drafts')) return new Promise<Response>((resolve) => { finish = resolve; });
+    return normalFetch(url, init);
+  });
+  await fireEvent.contextMenu(ui.getByRole('button', { name: 'Drafts' }));
+  await fireEvent.click(ui.getByRole('menuitem', { name: 'New Note...' }));
+  await waitFor(() => expect(finish).toBeDefined());
+  await fireEvent.click(ui.getByRole('button', { name: 'Research' }));
+  finish(Response.json([saved]));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  expect(ui.getByTitle('New note')).toBeInTheDocument();
+  expect(ui.queryByPlaceholderText('Start writing...')).not.toBeInTheDocument();
+});
+
+
+it('keeps the current folder visible when creating a note in the previous folder finishes later', async () => {
+  const ui = await openNote();
+  await fireEvent.click(ui.getByText('Back to notes'));
+  const normalFetch = vi.mocked(fetch).getMockImplementation()!;
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementation((url, init) => {
+    if (init?.method === 'POST') return new Promise<Response>((resolve) => { finish = resolve; });
+    return normalFetch(url, init);
+  });
+  await fireEvent.click(await ui.findByTitle('New note'));
+  await waitFor(() => expect(finish).toBeDefined());
+  await fireEvent.click(ui.getByRole('button', { name: 'Research' }));
+  finish(Response.json({ ...saved, id: 'created', name: 'Untitled' }));
+  await waitFor(() => expect(get(notesStore.entries).some((entry) => entry.id === 'created')).toBe(true));
+  expect(ui.queryByPlaceholderText('Start writing...')).not.toBeInTheDocument();
+  expect(ui.getByTitle('New note')).toBeInTheDocument();
+});

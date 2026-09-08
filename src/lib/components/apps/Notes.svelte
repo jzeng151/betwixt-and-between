@@ -50,9 +50,7 @@
       {
         label: 'New Note...',
         onSelect: async () => {
-          if (selectedEntryId && !await notesStore.flushDrafts(selectedEntryId)) return;
-          await selectFolder(id);
-          await addEntryInFolder(id);
+          if (await selectFolder(id)) await addEntryInFolder(id);
         }
       },
       {
@@ -77,10 +75,10 @@
     if (selectedEntryId) notesStore.editDraft(selectedEntryId, { name: editName, body: editBody });
   }
 
-  async function selectFolder(id: string) {
+  async function selectFolder(id: string): Promise<boolean> {
     const request = ++loadRequest;
-    if (selectedEntryId && !await notesStore.flushDrafts(selectedEntryId)) return;
-    if (request !== loadRequest) return;
+    if (selectedEntryId && !await notesStore.flushDrafts(selectedEntryId)) return false;
+    if (request !== loadRequest) return false;
     selectedFolderId = id;
     selectedEntryId = null;
     editName = '';
@@ -88,9 +86,12 @@
     renamingFolderId = null;
     try {
       await notesStore.loadEntries(id);
-      if (request === loadRequest) loadError = false;
+      if (request !== loadRequest) return false;
+      loadError = false;
+      return true;
     } catch {
       if (request === loadRequest) loadError = true;
+      return false;
     }
   }
 
@@ -128,17 +129,11 @@
   }
 
   // Entries
-  async function addEntry() {
-    if (!selectedFolderId) return;
-    const entry = await notesStore.createEntry('Untitled', selectedFolderId);
-    selectedEntryId = entry.id;
-    editName = entry.name;
-    editBody = '';
-  }
-
   async function addEntryInFolder(folderId: string) {
+    if (folderId !== selectedFolderId) return;
+    const request = loadRequest;
     const entry = await notesStore.createEntry('Untitled', folderId);
-    if (folderId === selectedFolderId) {
+    if (request === loadRequest && folderId === selectedFolderId) {
       selectedEntryId = entry.id;
       editName = entry.name;
       editBody = '';
@@ -192,7 +187,7 @@
   }
 
   onMount(() => { void loadNotes(); });
-  onDestroy(() => { void notesStore.flushDrafts(); });
+  onDestroy(() => { ++loadRequest; void notesStore.flushDrafts(); });
 </script>
 
 <div class="notes-app">
@@ -269,7 +264,7 @@
     {:else if viewMode === 'entries-list'}
       <div class="entries-list-header">
         <span class="entries-list-title">{selectedFolderName}</span>
-        <button class="icon-btn" onclick={addEntry} title="New note">+</button>
+        <button class="icon-btn" onclick={() => selectedFolderId && addEntryInFolder(selectedFolderId)} title="New note">+</button>
       </div>
       <div class="content-entry-list">
         {#each folderEntries as entry (entry.id)}
