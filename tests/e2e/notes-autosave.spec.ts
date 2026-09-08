@@ -20,6 +20,9 @@ test('Notes keeps the latest edit when immediately returning to the folder list'
     await expect(notes.getByTitle('New note')).toBeVisible();
     await notes.getByText('Opening scene', { exact: true }).click();
     await expect(notes.getByPlaceholder('Start writing...')).toHaveValue('Mara arrives at the harbor.');
+    await notes.getByRole('button', { name: 'Back to notes' }).click();
+    await notes.getByTitle('New note').click();
+    await expect(notes.getByPlaceholder('Entry title')).toHaveValue('Untitled');
     const rows = await (await request.get(`/api/notes/entries?folderId=${folder.id}`)).json();
     expect(rows.find((row: { id: string }) => row.id === entry.id).data.body).toBe('Mara arrives at the harbor.');
   } finally {

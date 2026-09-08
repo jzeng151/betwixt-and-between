@@ -341,8 +341,10 @@
   /* ── Sidebar ─────────────────────────────────────────────────────────── */
 
   .sidebar {
-    width: 200px;
-    min-width: 200px;
+    width: 35%;
+    min-width: 100px;
+    max-width: 200px;
+    flex-shrink: 0;
     border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
@@ -492,6 +494,10 @@
   }
 
   .entries-list-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-weight: 600;
     font-size: 14px;
   }
