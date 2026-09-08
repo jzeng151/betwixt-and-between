@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 
 type NoteFolder = {
 	id: string;
@@ -18,6 +18,43 @@ export type NoteEntry = {
 function createNotesStore() {
 	const folders = writable<NoteFolder[]>([]);
 	const entries = writable<NoteEntry[]>([]);
+	// Drafts survive closing Notes; only a successful write removes one.
+	const drafts = new Map<string, { name: string; body: string }>();
+	const saveState = writable<'saved' | 'unsaved' | 'saving' | 'error'>('saved');
+	let saveTimer: ReturnType<typeof setTimeout> | undefined;
+	let saving: Promise<boolean> | undefined;
+
+	function editDraft(id: string, draft: { name: string; body: string }) {
+		drafts.set(id, draft);
+		if (get(saveState) !== 'saving') saveState.set('unsaved');
+		clearTimeout(saveTimer);
+		saveTimer = setTimeout(() => void flushDrafts(), 300);
+	}
+
+	function flushDrafts(): Promise<boolean> {
+		clearTimeout(saveTimer);
+		if (saving) return saving;
+		if (!drafts.size) return Promise.resolve(true);
+		saveState.set('saving');
+		saving = (async () => {
+			try {
+				while (drafts.size) {
+					const [id, draft] = drafts.entries().next().value!;
+					await updateEntry(id, draft);
+					// A newer edit made while this request was running still needs saving.
+					if (drafts.get(id) === draft) drafts.delete(id);
+				}
+				saveState.set('saved');
+				return true;
+			} catch {
+				saveState.set('error');
+				return false;
+			} finally {
+				saving = undefined;
+			}
+		})();
+		return saving;
+	}
 
 	async function loadFolders(): Promise<void> {
 		const res = await fetch('/api/notes/folders');
@@ -147,6 +184,10 @@ function createNotesStore() {
 	return {
 		folders,
 		entries,
+		drafts,
+		saveState,
+		editDraft,
+		flushDrafts,
 		loadFolders,
 		loadEntries,
 		createFolder,
