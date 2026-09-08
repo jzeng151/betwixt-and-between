@@ -22,38 +22,52 @@ function createNotesStore() {
 	const drafts = new Map<string, { name: string; body: string }>();
 	const saveState = writable<'saved' | 'unsaved' | 'saving' | 'error'>('saved');
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
-	let saving: Promise<boolean> | undefined;
+	const saving = new Map<string, Promise<boolean>>();
+	const saveErrors = new Set<string>();
+	const entryVersions = new Map<string, number>();
+	let version = 0;
+
+	function updateSaveState() {
+		saveState.set(saving.size ? 'saving' : saveErrors.size ? 'error' : drafts.size ? 'unsaved' : 'saved');
+	}
 
 	function editDraft(id: string, draft: { name: string; body: string }) {
 		drafts.set(id, draft);
-		if (get(saveState) !== 'saving') saveState.set('unsaved');
+		saveErrors.delete(id);
+		updateSaveState();
 		clearTimeout(saveTimer);
 		saveTimer = setTimeout(() => void flushDrafts(), 300);
 	}
 
-	function flushDrafts(): Promise<boolean> {
-		clearTimeout(saveTimer);
-		if (saving) return saving;
-		if (!drafts.size) return Promise.resolve(true);
-		saveState.set('saving');
-		saving = (async () => {
-			try {
-				while (drafts.size) {
-					const [id, draft] = drafts.entries().next().value!;
-					await updateEntry(id, draft);
-					// A newer edit made while this request was running still needs saving.
-					if (drafts.get(id) === draft) drafts.delete(id);
+	async function flushDrafts(id?: string): Promise<boolean> {
+		if (!id) clearTimeout(saveTimer);
+		const ids = id ? [id] : [...drafts.keys()];
+		const results = await Promise.all(ids.map((noteId) => {
+			const active = saving.get(noteId);
+			if (active) return active;
+			if (!drafts.has(noteId)) return true;
+			const task = (async () => {
+				try {
+					while (drafts.has(noteId)) {
+						const draft = drafts.get(noteId)!;
+						await updateEntry(noteId, draft);
+						if (drafts.get(noteId) === draft) drafts.delete(noteId);
+					}
+					saveErrors.delete(noteId);
+					return true;
+				} catch {
+					saveErrors.add(noteId);
+					return false;
+				} finally {
+					saving.delete(noteId);
+					updateSaveState();
 				}
-				saveState.set('saved');
-				return true;
-			} catch {
-				saveState.set('error');
-				return false;
-			} finally {
-				saving = undefined;
-			}
-		})();
-		return saving;
+			})();
+			saving.set(noteId, task);
+			updateSaveState();
+			return task;
+		}));
+		return results.every(Boolean);
 	}
 
 	async function loadFolders(): Promise<void> {
@@ -71,17 +85,25 @@ function createNotesStore() {
 	}
 
 	async function loadEntries(folderId?: string): Promise<void> {
+		await Promise.all(saving.values());
+		const startedVersion = version;
 		const url = folderId ? `/api/notes/entries?folderId=${folderId}` : '/api/notes/entries';
 		const res = await fetch(url);
 		if (!res.ok) throw new Error('Failed to load entries');
 		const data = await res.json();
-		const mapped: NoteEntry[] = data.map((r: Record<string, unknown>) => ({
+		let mapped: NoteEntry[] = data.map((r: Record<string, unknown>) => ({
 			id: r.id as string,
 			name: r.name as string,
 			body: ((r.data as Record<string, unknown>)?.body as string) ?? '',
 			folderId: r.parentId as string | null,
 			position: r.position as number | null
 		}));
+		// A response started before a local write must not overwrite that write.
+		mapped = mapped.filter((entry) => (entryVersions.get(entry.id) ?? 0) <= startedVersion);
+		mapped.push(...get(entries).filter((entry) =>
+			(entryVersions.get(entry.id) ?? 0) > startedVersion && (!folderId || entry.folderId === folderId)
+		));
+
 		if (folderId) {
 			// Merge: replace entries for this folder, keep others
 			entries.update((all) => {
@@ -123,8 +145,16 @@ function createNotesStore() {
 	}
 
 	async function deleteFolder(id: string): Promise<void> {
+		const entryIds = get(entries).filter((entry) => entry.folderId === id).map((entry) => entry.id);
+		await Promise.all(entryIds.map((entryId) => flushDrafts(entryId)));
 		const res = await fetch(`/api/notes/folders/${id}`, { method: 'DELETE' });
 		if (!res.ok) throw new Error('Failed to delete folder');
+		for (const entryId of entryIds) {
+			drafts.delete(entryId);
+			saveErrors.delete(entryId);
+			entryVersions.set(entryId, ++version);
+		}
+		updateSaveState();
 		folders.update((all) => all.filter((f) => f.id !== id));
 		entries.update((all) => all.filter((e) => e.folderId !== id));
 	}
@@ -144,6 +174,7 @@ function createNotesStore() {
 			folderId: data.parentId,
 			position: data.position
 		};
+		entryVersions.set(entry.id, ++version);
 		entries.update((all) => [...all, entry]);
 		return entry;
 	}
@@ -161,6 +192,7 @@ function createNotesStore() {
 		});
 		if (!res.ok) throw new Error('Failed to update entry');
 		const data = await res.json();
+		entryVersions.set(id, ++version);
 		entries.update((all) =>
 			all.map((e) =>
 				e.id === id
@@ -176,8 +208,13 @@ function createNotesStore() {
 	}
 
 	async function deleteEntry(id: string): Promise<void> {
+		await flushDrafts(id);
 		const res = await fetch(`/api/notes/entries/${id}`, { method: 'DELETE' });
 		if (!res.ok) throw new Error('Failed to delete entry');
+		drafts.delete(id);
+		saveErrors.delete(id);
+		entryVersions.set(id, ++version);
+		updateSaveState();
 		entries.update((all) => all.filter((e) => e.id !== id));
 	}
 

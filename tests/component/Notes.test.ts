@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { get } from 'svelte/store';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/svelte';
 import Notes from '$lib/components/apps/Notes.svelte';
 import { notesStore } from '$lib/stores/notes.js';
@@ -116,4 +117,83 @@ describe('Notes editing', () => {
     await waitFor(() => expect(ui.queryByText('Retry loading')).not.toBeInTheDocument());
     expect(ui.getByText('Drafts')).toBeInTheDocument();
   });
+});
+
+it('saves an unrelated note even when a retained draft fails, and clears a locally deleted draft', async () => {
+  const normalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    if (String(url).endsWith('/missing')) {
+      return new Response('', { status: init?.method === 'DELETE' ? 200 : 404 });
+    }
+    return normalFetch(url, init);
+  });
+  notesStore.editDraft('missing', { name: 'Gone', body: 'Retain for recovery' });
+  expect(await notesStore.flushDrafts('missing')).toBe(false);
+  const ui = await openNote();
+  await fireEvent.input(ui.getByPlaceholderText('Start writing...'), { target: { value: 'Independent save' } });
+  await fireEvent.click(ui.getByText('Research'));
+  expect(await ui.findByTitle('New note')).toBeInTheDocument();
+  expect(saved.data.body).toBe('Independent save');
+  expect(notesStore.drafts.has('missing')).toBe(true);
+  await notesStore.deleteEntry('missing');
+  expect(notesStore.drafts.size).toBe(0);
+  await waitFor(() => expect(ui.queryByText('Retry saving')).not.toBeInTheDocument());
+});
+
+it('waits for the unmount save before loading entries on immediate reopen', async () => {
+  const ui = await openNote();
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => { finish = resolve; });
+  const normalFetch = vi.mocked(fetch).getMockImplementation()!;
+  let entryReads = 0;
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    if (init?.method === 'PATCH') await pending;
+    else if (String(url).includes('/entries')) entryReads++;
+    return normalFetch(url, init);
+  });
+  await fireEvent.input(ui.getByPlaceholderText('Start writing...'), { target: { value: 'Final character!' } });
+  cleanup();
+  const reopened = render(Notes);
+  await reopened.findByText('Drafts');
+  expect(entryReads).toBe(0);
+  finish();
+  await fireEvent.click(reopened.getByText('Drafts'));
+  await fireEvent.click(await reopened.findByText('Opening'));
+  expect(reopened.getByPlaceholderText('Start writing...')).toHaveValue('Final character!');
+});
+
+it('does not let a stale GET overwrite a write completed while that GET was pending', async () => {
+  await notesStore.loadEntries();
+  let finish!: (response: Response) => void;
+  const oldRow = structuredClone(saved);
+  vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }));
+  const loading = notesStore.loadEntries();
+  await waitFor(() => expect(finish).toBeDefined());
+  notesStore.editDraft('note', { name: 'Opening', body: 'Newer than GET' });
+  await notesStore.flushDrafts('note');
+  finish(Response.json([oldRow]));
+  await loading;
+  expect(get(notesStore.entries).find((entry) => entry.id === 'note')?.body).toBe('Newer than GET');
+  const ui = await openNote();
+  expect(ui.getByPlaceholderText('Start writing...')).toHaveValue('Newer than GET');
+});
+
+it('keeps the current folder error when an older folder request succeeds later', async () => {
+  const ui = await openNote();
+  await fireEvent.click(ui.getByText('Back to notes'));
+  await ui.findByTitle('New note');
+  const normalFetch = vi.mocked(fetch).getMockImplementation()!;
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementation((url, init) => {
+    if (String(url).includes('folderId=drafts')) return new Promise<Response>((resolve) => { finish = resolve; });
+    if (String(url).includes('folderId=research')) return Promise.resolve(new Response('', { status: 500 }));
+    return normalFetch(url, init);
+  });
+  await fireEvent.click(ui.getByRole('button', { name: 'Drafts' }));
+  await waitFor(() => expect(finish).toBeDefined());
+  await fireEvent.click(ui.getByText('Research'));
+  await ui.findByText('Retry loading');
+  finish(Response.json([saved]));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(ui.getByText('Retry loading')).toBeInTheDocument();
 });

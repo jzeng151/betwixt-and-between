@@ -9,6 +9,7 @@
   let editBody = $state('');
   const saveState = notesStore.saveState;
   let loadError = $state(false);
+  let loadRequest = 0;
 
   // Tweak 1: New folder dialog
   let showNewFolderDialog = $state(false);
@@ -49,7 +50,7 @@
       {
         label: 'New Note...',
         onSelect: async () => {
-          if (!await notesStore.flushDrafts()) return;
+          if (selectedEntryId && !await notesStore.flushDrafts(selectedEntryId)) return;
           await selectFolder(id);
           await addEntryInFolder(id);
         }
@@ -70,12 +71,16 @@
 
   // ── Helpers ─────────────────────────────────────────────────────────────
 
-  function debouncedSave() {
+  function editField(field: 'name' | 'body', value: string) {
+    if (field === 'name') editName = value;
+    else editBody = value;
     if (selectedEntryId) notesStore.editDraft(selectedEntryId, { name: editName, body: editBody });
   }
 
   async function selectFolder(id: string) {
-    if (!await notesStore.flushDrafts() && selectedEntryId) return;
+    const request = ++loadRequest;
+    if (selectedEntryId && !await notesStore.flushDrafts(selectedEntryId)) return;
+    if (request !== loadRequest) return;
     selectedFolderId = id;
     selectedEntryId = null;
     editName = '';
@@ -83,9 +88,9 @@
     renamingFolderId = null;
     try {
       await notesStore.loadEntries(id);
-      loadError = false;
+      if (request === loadRequest) loadError = false;
     } catch {
-      loadError = true;
+      if (request === loadRequest) loadError = true;
     }
   }
 
@@ -105,7 +110,7 @@
   async function confirmNewFolder() {
     const name = newFolderName.trim();
     if (!name) return;
-    if (!await notesStore.flushDrafts()) return;
+    if (selectedEntryId && !await notesStore.flushDrafts(selectedEntryId)) return;
     const folder = await notesStore.createFolder(name);
     showNewFolderDialog = false;
     newFolderName = '';
@@ -146,7 +151,6 @@
   }
 
   async function removeFolder(id: string) {
-    if (!await notesStore.flushDrafts()) return;
     await notesStore.deleteFolder(id);
     confirmDeleteFolderId = null;
     if (selectedFolderId === id) {
@@ -178,11 +182,12 @@
   }
 
   async function loadNotes() {
+    const request = ++loadRequest;
     try {
       await Promise.all([notesStore.loadFolders(), notesStore.loadEntries()]);
-      loadError = false;
+      if (request === loadRequest) loadError = false;
     } catch {
-      loadError = true;
+      if (request === loadRequest) loadError = true;
     }
   }
 
@@ -258,14 +263,14 @@
       <input
         class="entry-title"
         type="text"
-        bind:value={editName}
-        oninput={debouncedSave}
+        value={editName}
+        oninput={(event) => editField('name', event.currentTarget.value)}
         placeholder="Entry title"
       />
       <textarea
         class="entry-body"
-        bind:value={editBody}
-        oninput={debouncedSave}
+        value={editBody}
+        oninput={(event) => editField('body', event.currentTarget.value)}
         placeholder="Start writing..."
       ></textarea>
     {:else if viewMode === 'entries-list'}
