@@ -26,6 +26,7 @@ function createNotesStore() {
 	const saveErrors = new Set<string>();
 	const entryVersions = new Map<string, number>();
 	let version = 0;
+	let entryLoadRequest = 0;
 
 	function warnAboutDrafts(event: BeforeUnloadEvent) {
 		if (!drafts.size) return;
@@ -66,7 +67,7 @@ function createNotesStore() {
 					saveErrors.delete(noteId);
 					return true;
 				} catch {
-					saveErrors.add(noteId);
+					if (drafts.has(noteId)) saveErrors.add(noteId);
 					return false;
 				} finally {
 					saving.delete(noteId);
@@ -84,23 +85,27 @@ function createNotesStore() {
 		const res = await fetch('/api/notes/folders');
 		if (!res.ok) throw new Error('Failed to load folders');
 		const data = await res.json();
-		folders.set(
-			data.map((r: Record<string, unknown>) => ({
-				id: r.id as string,
-				name: r.name as string,
-				position: r.position as number | null,
-				parentId: r.parentId as string | null
-			}))
-		);
+		const mapped: NoteFolder[] = data.map((r: Record<string, unknown>) => ({
+			id: r.id as string,
+			name: r.name as string,
+			position: r.position as number | null,
+			parentId: r.parentId as string | null
+		}));
+		const draftFolders = new Set(get(entries).filter((entry) => drafts.has(entry.id)).map((entry) => entry.folderId));
+		mapped.push(...get(folders).filter((folder) => draftFolders.has(folder.id) && !mapped.some((row) => row.id === folder.id)));
+		folders.set(mapped);
 	}
 
 	async function loadEntries(folderId?: string): Promise<void> {
+		const request = ++entryLoadRequest;
 		await Promise.all(saving.values());
+		if (request !== entryLoadRequest) return;
 		const startedVersion = version;
 		const url = folderId ? `/api/notes/entries?folderId=${folderId}` : '/api/notes/entries';
 		const res = await fetch(url);
 		if (!res.ok) throw new Error('Failed to load entries');
 		const data = await res.json();
+		if (request !== entryLoadRequest) return;
 		let mapped: NoteEntry[] = data.map((r: Record<string, unknown>) => ({
 			id: r.id as string,
 			name: r.name as string,
@@ -158,7 +163,7 @@ function createNotesStore() {
 		const entryIds = get(entries).filter((entry) => entry.folderId === id).map((entry) => entry.id);
 		await Promise.all(entryIds.map((entryId) => flushDrafts(entryId)));
 		const res = await fetch(`/api/notes/folders/${id}`, { method: 'DELETE' });
-		if (!res.ok) throw new Error('Failed to delete folder');
+		if (!res.ok && res.status !== 404) throw new Error('Failed to delete folder');
 		for (const entryId of entryIds) {
 			drafts.delete(entryId);
 			saveErrors.delete(entryId);
@@ -220,7 +225,7 @@ function createNotesStore() {
 	async function deleteEntry(id: string): Promise<void> {
 		await flushDrafts(id);
 		const res = await fetch(`/api/notes/entries/${id}`, { method: 'DELETE' });
-		if (!res.ok) throw new Error('Failed to delete entry');
+		if (!res.ok && res.status !== 404) throw new Error('Failed to delete entry');
 		drafts.delete(id);
 		saveErrors.delete(id);
 		entryVersions.set(id, ++version);

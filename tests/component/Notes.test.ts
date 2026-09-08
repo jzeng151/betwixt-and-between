@@ -201,11 +201,12 @@ it('keeps the current folder error when an older folder request succeeds later',
 });
 
 
-it('keeps a remotely deleted note selectable after reopening so its unsaved text can be recovered', async () => {
+it.each(['note', 'folder'])('keeps a remotely deleted %s accessible after reopening so its draft can be recovered', async (deleted) => {
   let ui = await openNote();
   const normalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((url, init) => {
-    if (init?.method === 'PATCH') return Promise.resolve(new Response('', { status: 404 }));
+    if (init?.method === 'PATCH' || init?.method === 'DELETE') return Promise.resolve(new Response('', { status: 404 }));
+    if (deleted === 'folder' && String(url).includes('/folders')) return Promise.resolve(Response.json([]));
     if (String(url).includes('/entries')) return Promise.resolve(Response.json([]));
     return normalFetch(url, init);
   });
@@ -217,6 +218,10 @@ it('keeps a remotely deleted note selectable after reopening so its unsaved text
   await fireEvent.click(ui.getByText('Drafts'));
   await fireEvent.click(await ui.findByText('Opening'));
   expect(ui.getByPlaceholderText('Start writing...')).toHaveValue('Recover this text');
+  if (deleted === 'folder') await notesStore.deleteFolder('drafts');
+  else await notesStore.deleteEntry('note');
+  expect(notesStore.drafts.size).toBe(0);
+  expect(get(notesStore.saveState)).toBe('saved');
   vi.mocked(fetch).mockImplementation(normalFetch);
 });
 
@@ -256,4 +261,45 @@ it('keeps the current folder visible when creating a note in the previous folder
   await waitFor(() => expect(get(notesStore.entries).some((entry) => entry.id === 'created')).toBe(true));
   expect(ui.queryByPlaceholderText('Start writing...')).not.toBeInTheDocument();
   expect(ui.getByTitle('New note')).toBeInTheDocument();
+});
+
+
+it.each([
+  [undefined, 'drafts'],
+  ['drafts', undefined],
+  ['drafts', 'drafts']
+])('ignores an older %s load after a newer %s load completes', async (olderFolder, newerFolder) => {
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }));
+  const older = notesStore.loadEntries(olderFolder);
+  await waitFor(() => expect(finish).toBeDefined());
+  saved = { ...saved, name: 'New server title' };
+  await notesStore.loadEntries(newerFolder);
+  finish(Response.json([{ ...saved, name: 'Stale server title' }]));
+  await older;
+  expect(get(notesStore.entries).find((entry) => entry.id === 'note')?.name).toBe('New server title');
+});
+
+it.each(['entry', 'folder'])('does not restore an error when a save retry fails after %s deletion', async (target) => {
+  await notesStore.loadFolders();
+  await notesStore.loadEntries();
+  notesStore.editDraft('note', { name: 'Opening', body: 'Pending deletion' });
+  let finishDelete!: (response: Response) => void;
+  let finishRetry!: (response: Response) => void;
+  let patches = 0;
+  vi.mocked(fetch).mockImplementation((_url, init) => {
+    if (init?.method === 'DELETE') return new Promise<Response>((resolve) => { finishDelete = resolve; });
+    if (++patches === 1) return Promise.resolve(new Response('', { status: 500 }));
+    return new Promise<Response>((resolve) => { finishRetry = resolve; });
+  });
+  const deleting = target === 'entry' ? notesStore.deleteEntry('note') : notesStore.deleteFolder('drafts');
+  await waitFor(() => expect(finishDelete).toBeDefined());
+  const retry = notesStore.flushDrafts();
+  await waitFor(() => expect(finishRetry).toBeDefined());
+  finishDelete(new Response('', { status: 200 }));
+  await deleting;
+  finishRetry(new Response('', { status: 404 }));
+  await retry;
+  expect(notesStore.drafts.size).toBe(0);
+  expect(get(notesStore.saveState)).toBe('saved');
 });
