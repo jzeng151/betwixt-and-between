@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveActiveVariant, variantsForLocation } from '../../src/lib/features/map/variants.js';
+import { resolveActiveVariant } from '../../src/lib/features/map/variants.js';
 import type { WorldMap } from '../../src/lib/features/map/types.js';
 
 function mkMap(overrides: Partial<WorldMap> & { id: string }): WorldMap {
@@ -113,49 +113,5 @@ describe('resolveActiveVariant', () => {
 		const aMap = mkMap({ id: 'a', locationId: LOC_A });
 		const bMap = mkMap({ id: 'b', locationId: LOC_B, startPosition: 0, endPosition: 100 });
 		expect(resolveActiveVariant([aMap, bMap], LOC_A, 50)?.id).toBe('a');
-	});
-});
-
-describe('variantsForLocation', () => {
-	const LOC_A = 'loc-a';
-	const LOC_B = 'loc-b';
-
-	it('returns empty array when locationId is null', () => {
-		const maps = [mkMap({ id: '1', locationId: LOC_A })];
-		expect(variantsForLocation(maps, null)).toEqual([]);
-	});
-
-	it('returns empty array when no maps match', () => {
-		const maps = [mkMap({ id: '1', locationId: LOC_B })];
-		expect(variantsForLocation(maps, LOC_A)).toEqual([]);
-	});
-
-	it('places default variant first', () => {
-		const scoped = mkMap({ id: 'scoped', locationId: LOC_A, startPosition: 2, endPosition: 5 });
-		const def = mkMap({ id: 'def', locationId: LOC_A });
-		const result = variantsForLocation([scoped, def], LOC_A);
-		expect(result.map((m) => m.id)).toEqual(['def', 'scoped']);
-	});
-
-	it('sorts scoped variants by startPosition ascending', () => {
-		const v1 = mkMap({ id: 'v1', locationId: LOC_A, startPosition: 10, endPosition: 20 });
-		const v2 = mkMap({ id: 'v2', locationId: LOC_A, startPosition: 3, endPosition: 5 });
-		const v3 = mkMap({ id: 'v3', locationId: LOC_A, startPosition: 7, endPosition: 9 });
-		const result = variantsForLocation([v1, v2, v3], LOC_A);
-		expect(result.map((m) => m.id)).toEqual(['v2', 'v3', 'v1']);
-	});
-
-	it('default first then scoped sorted', () => {
-		const v1 = mkMap({ id: 'v1', locationId: LOC_A, startPosition: 10, endPosition: 20 });
-		const def = mkMap({ id: 'def', locationId: LOC_A });
-		const v2 = mkMap({ id: 'v2', locationId: LOC_A, startPosition: 3, endPosition: 5 });
-		const result = variantsForLocation([v1, def, v2], LOC_A);
-		expect(result.map((m) => m.id)).toEqual(['def', 'v2', 'v1']);
-	});
-
-	it('filters by locationId', () => {
-		const a = mkMap({ id: 'a', locationId: LOC_A });
-		const b = mkMap({ id: 'b', locationId: LOC_B });
-		expect(variantsForLocation([a, b], LOC_A).map((m) => m.id)).toEqual(['a']);
 	});
 });

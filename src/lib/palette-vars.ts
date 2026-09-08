@@ -80,14 +80,6 @@ export function resolvePaletteVars(appearance: Appearance | undefined): Record<s
 	return out;
 }
 
-/** Build a `:root{…}` stylesheet body for SSR inlining (T5b 3C). Empty when no overrides. */
-export function paletteVarsToCss(vars: Record<string, string>): string {
-	const decls = Object.entries(vars)
-		.map(([k, v]) => `${k}:${v}`)
-		.join(';');
-	return decls ? `:root{${decls}}` : '';
-}
-
 /**
  * Serialize an Appearance to the palette-cookie value (T5b): `{t, v}` where
  * t = theme short-code and v = resolved overrides. The server hook

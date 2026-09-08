@@ -25,11 +25,6 @@
   D10). Footer has a Delete button with the inline-confirmation pattern
   matching ActsHeader's delete-confirm.
 
-  External-deletion handling (D16/Issue 14A): when the entity disappears
-  from $entities (e.g., act header `×` deletion fires elsewhere), the
-  component captures any in-flight EditableField drafts and emits a toast
-  via the host's onDraftLost callback. Production wires that to a
-  draft-preview Toast with Copy-to-clipboard.
 -->
 
 <script module lang="ts">
@@ -61,17 +56,10 @@
 
 	interface Props {
 		entityId: string | null;
-		/** Called when the user clicks "↗ Move to window". */
-		onMoveToWindow?: () => void;
 		/** Called when the user clicks Close on the side-panel chrome. */
 		onClose?: () => void;
-		/** Called when the entity is deleted from the store while this
-		 *  surface is mounted. Host shows the draft-preview toast. The
-		 *  callback receives the last-known name so the toast can include
-		 *  it (the store row is already gone by the time we fire). */
-		onEntityVanished?: (lastName: string) => void;
-		/** True when hosted inside a popout Window (hides the move-button +
-		 *  close-button chrome since the Window itself provides them). */
+		/** True when hosted inside a popout Window (hides the
+		 *  close-button chrome since the Window itself provides it). */
 		isPopout?: boolean;
 		/** Initial mode when (re)mounting for a new entityId. Defaults to
 		 *  'view'; the Timeline passes 'edit' right after creating an Act
@@ -82,9 +70,7 @@
 
 	const {
 		entityId,
-		onMoveToWindow,
 		onClose,
-		onEntityVanished,
 		isPopout = false,
 		initialMode = 'view'
 	}: Props = $props();
@@ -92,20 +78,6 @@
 	const entity = $derived(
 		entityId ? ($entities as Entity[]).find((e) => e.id === entityId) : null
 	);
-
-	// Track entity disappearance for the draft-preview toast (D16/14A).
-	let lastSeenId = $state<string | null>(null);
-	let lastSeenName = $state<string>('Entity');
-	$effect(() => {
-		if (entity) {
-			lastSeenId = entity.id;
-			lastSeenName = entity.name;
-		} else if (lastSeenId === entityId && entityId != null && onEntityVanished) {
-			// Entity vanished from store (deleted elsewhere or via act-header ×).
-			onEntityVanished(lastSeenName);
-			lastSeenId = null;
-		}
-	});
 
 	// View/edit mode (Block 5). Default 'view'; resets to initialMode on entityId change.
 	// Freshly-created entities flagged in `pendingEditMode` land in 'edit' so
@@ -147,8 +119,6 @@
 		mode = 'view';
 	}
 
-	// Move-to-window confirmation (2B-i inline confirm pattern).
-	let confirmingMove = $state(false);
 
 	// Body textarea row count: shrink on small viewports so NotesSection
 	// stays in reach on phones (Pass 6 design decision). resize:vertical
@@ -269,34 +239,6 @@
 					>
 						{mode === 'view' ? 'Edit' : 'Done'}
 					</button>
-					{#if !isPopout && onMoveToWindow}
-						{#if confirmingMove}
-							<span class="popout-confirm">
-								Move to standalone window?
-								<button
-									type="button"
-									class="btn-cancel"
-									onclick={() => (confirmingMove = false)}
-								>Cancel</button>
-								<button
-									type="button"
-									class="btn-primary popout-confirm-go"
-									onclick={() => {
-										confirmingMove = false;
-										onMoveToWindow();
-									}}
-								>Move</button>
-							</span>
-						{:else}
-							<button
-								type="button"
-								class="popout-btn"
-								aria-label="Move to standalone window"
-								title="Move to standalone window"
-								onclick={() => (confirmingMove = true)}
-							>↗</button>
-						{/if}
-					{/if}
 					{#if !isPopout && onClose}
 						<button
 							type="button"
@@ -481,7 +423,6 @@
 		display: inline-block;
 		padding: 2px 0;
 	}
-	.popout-btn,
 	.entity-detail-close {
 		background: transparent;
 		border: 1px solid var(--color-border, #2a2d35);
@@ -496,17 +437,9 @@
 		align-items: center;
 		justify-content: center;
 	}
-	.popout-btn:hover,
 	.entity-detail-close:hover {
 		color: var(--color-text, #e8e0d0);
 		border-color: var(--color-text-muted, #6b7280);
-	}
-	.popout-confirm {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 12px;
-		color: var(--color-text, #e8e0d0);
 	}
 	.entity-detail-title {
 		font-family: var(--font-display, 'Fraunces', Georgia, serif);
@@ -619,16 +552,6 @@
 		border-radius: 4px;
 		padding: 6px 12px;
 		font-size: 12px;
-		cursor: pointer;
-	}
-	.btn-primary {
-		background: var(--color-accent, #c8942a);
-		color: var(--color-surface, #161920);
-		border: none;
-		border-radius: 4px;
-		padding: 4px 10px;
-		font-size: 12px;
-		font-weight: 600;
 		cursor: pointer;
 	}
 	.delete-error {

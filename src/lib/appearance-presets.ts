@@ -21,13 +21,6 @@ export interface PresetSummary {
 	builtin: boolean;
 }
 
-/** Built-in preset ids carry this prefix so they can never be a real uuid row. */
-export const BUILTIN_PRESET_ID_PREFIX = 'builtin:';
-
-export function isBuiltinPresetId(id: string): boolean {
-	return id.startsWith(BUILTIN_PRESET_ID_PREFIX);
-}
-
 /**
  * Built-in appearance presets. Each is a full, valid `Appearance` (theme +
  * accent + per-entity-type colors) so applying one fully replaces the active

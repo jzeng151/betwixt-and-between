@@ -2,15 +2,13 @@
  * Settings customization Phase 1 — T5 palette resolution + 4A merge.
  *
  * resolvePaletteVars maps Appearance overrides → CSS var overrides (var names
- * derived from the existing color maps), paletteVarsToCss builds the SSR
- * stylesheet, and R1 pins the 4A merge: NODE_COLOR is now the SAME object as
+ * derived from the existing color maps), and R1 pins the 4A merge: NODE_COLOR is now the SAME object as
  * ENTITY_TYPE_COLOR_VAR and graph node colors are unchanged.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
 	resolvePaletteVars,
-	paletteVarsToCss,
 	managedPaletteVars,
 	accentForeground
 } from '../../src/lib/palette-vars.js';
@@ -50,13 +48,6 @@ describe('T5 resolvePaletteVars', () => {
 		const vars = resolvePaletteVars(app);
 		expect(vars['--color-rel-rival']).toBe('#ff0000');
 		expect(vars['--color-rel-loc']).toBe('#0000ff');
-	});
-
-	it('paletteVarsToCss builds a :root block (empty string when no vars)', () => {
-		expect(paletteVarsToCss({})).toBe('');
-		expect(paletteVarsToCss({ '--color-accent': '#111111', '--color-type-character': '#222222' })).toBe(
-			':root{--color-accent:#111111;--color-type-character:#222222}'
-		);
 	});
 
 	it('managedPaletteVars covers accent, all type vars, and all role vars', () => {

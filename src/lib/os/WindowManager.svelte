@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Component } from 'svelte';
   import { windowStore, type AppId } from '$lib/os/windows-store.js';
-  import { APP_CATALOG, isBare } from '$lib/os/app-catalog.js';
+  import { APP_CATALOG } from '$lib/os/app-catalog.js';
   import { entities } from '$lib/stores/entities.js';
   import Window from './Window.svelte';
 
@@ -89,7 +89,7 @@
     zIndex={win.zIndex}
     minimized={win.minimized}
     maximized={win.maximized}
-    bare={isBare(win.appId)}
+    bare={APP_CATALOG[win.appId].bare === true}
     compact={win.appId === 'story-player'}
     alwaysOnTop={win.alwaysOnTop ?? false}
   >

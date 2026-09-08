@@ -8,7 +8,6 @@ import { describe, it, expect } from 'vitest';
 import { BIOMES } from '../../src/lib/features/map/projection.js';
 import {
 	BIOME_STYLES,
-	biomeStyle,
 	terrainFlatStyle
 } from '../../src/lib/features/map/biome-textures.js';
 
@@ -33,20 +32,8 @@ describe('BIOME_STYLES coverage', () => {
 	});
 });
 
-describe('biomeStyle()', () => {
-	it('returns the matching style for a known biome', () => {
-		expect(biomeStyle('forest')).toBe(BIOME_STYLES.forest);
-	});
-
-	it("falls back to 'unset' for an unknown biome string (lazy GC)", () => {
-		const style = biomeStyle('magma');
-		expect(style).toBe(BIOME_STYLES.unset);
-		expect(style.alpha).toBe(0);
-	});
-});
-
 describe('terrainFlatStyle() — asset-key flat fallback (Codex #70)', () => {
-	it('resolves legacy biomes via biomeStyle', () => {
+	it('resolves legacy biome styles', () => {
 		expect(terrainFlatStyle('forest')).toBe(BIOME_STYLES.forest);
 		expect(terrainFlatStyle('unset')).toBe(BIOME_STYLES.unset);
 	});

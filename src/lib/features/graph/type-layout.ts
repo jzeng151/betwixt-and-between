@@ -1,27 +1,3 @@
-/**
- * "Layout by type" — dagre-driven layered layout (Phase 1B C5).
- *
- * Algorithm (locked T2A in CONSIDERATIONS):
- *   1. unpinned ← visibleSet − pinnedSet (per the calling window)
- *   2. for each n in unpinned: dagreNode.rank = typeOrder.indexOf(n.type)
- *   3. dagre.layout(unpinned, edges_among_unpinned) → positions
- *   4. shift = centroid(pinnedSet current positions) − centroid(positions)
- *               if pinnedSet empty: shift to viewport center via existing fitView
- *   5. apply shift to all unpinned positions
- *   6. write unpinned to window_canvas_state via A3 batch endpoint (caller does this)
- *
- * Pinned-stays-put is the sacred invariant. Edges crossing pinned ↔ unpinned
- * may render visually ugly post-layout — the locked plan accepts that cost
- * rather than re-layouting pinned nodes.
- *
- * Bundle cost: dagre is ~80 KB minified. The host should dynamic-import this
- * module on first call so the cost is paid once on demand, not on every
- * page load. Caller pattern:
- *
- *   const { layoutByType } = await import('$lib/features/graph/dagre-layout.js');
- *   const positions = await layoutByType({ ... });
- */
-
 import type { EntityType } from '$lib/server/db/schema.js';
 
 interface LayoutNode {
@@ -29,11 +5,6 @@ interface LayoutNode {
 	type: EntityType;
 	width: number;
 	height: number;
-}
-
-interface LayoutEdge {
-	fromId: string;
-	toId: string;
 }
 
 interface CurrentPosition {
@@ -45,8 +16,6 @@ interface CurrentPosition {
 export interface LayoutByTypeInput {
 	/** Visible set (post-traversal). All nodes that should be considered. */
 	nodes: LayoutNode[];
-	/** Edges among the nodes. Edges whose endpoints aren't in `nodes` are dropped. */
-	edges: LayoutEdge[];
 	/** Set of node ids that are pinned (must NOT move during layout). */
 	pinnedIds: Set<string>;
 	/** Current positions for ALL nodes (used to compute the shift; pinned values
@@ -67,26 +36,18 @@ export interface LayoutResult {
 }
 
 /**
- * Run dagre on the unpinned subset and return their NEW positions. Pinned
+ * Pack unpinned nodes into rows by type and return their NEW positions. Pinned
  * nodes are NOT included in the result (their existing positions are
  * authoritative; the caller need not write them).
  *
  * Returns an empty array if every node is pinned (nothing to lay out).
  */
-export async function layoutByType(input: LayoutByTypeInput): Promise<LayoutResult[]> {
-	const { nodes, edges, pinnedIds, currentPositions, typeOrder, viewportCenter } = input;
+export function layoutByType(input: LayoutByTypeInput): LayoutResult[] {
+	const { nodes, pinnedIds, currentPositions, typeOrder, viewportCenter } = input;
 
 	const unpinned = nodes.filter((n) => !pinnedIds.has(n.id));
 	if (unpinned.length === 0) return [];
 
-	// Group unpinned nodes by entity type. Dagre 0.8.5's `setNode({rank: n})`
-	// is silently IGNORED — rank is computed from edge direction, not
-	// settable as input. Forcing type-rank ordering through dagre requires
-	// either phantom anchor nodes or a layered post-process. We pick the
-	// post-process: assign Y per rank manually (typeOrder.indexOf wins),
-	// run dagre per-rank to get smart X positions (intra-rank edge-
-	// crossing minimization). This keeps dagre's value (per-rank X layout)
-	// without fighting its API for cross-rank ranking.
 	const nodesByType = new Map<EntityType, LayoutNode[]>();
 	for (const n of unpinned) {
 		const list = nodesByType.get(n.type) ?? [];
@@ -100,20 +61,6 @@ export async function layoutByType(input: LayoutByTypeInput): Promise<LayoutResu
 	const extraTypes = [...nodesByType.keys()].filter((t) => !typeOrder.includes(t));
 	const orderedTypes = [...presentInOrder, ...extraTypes];
 
-	// Per-type horizontal pack. Earlier rounds tried `dagre per-type` to
-	// get smart intra-type X ordering, but that required clamping all
-	// same-type nodes to a single Y line — and dagre's LR layout
-	// frequently puts unrelated nodes at the SAME rank (X), which after
-	// the Y-clamp produced perfect overlap at one coordinate. The
-	// cascade complaint was real: rank-sharing nodes ended up stacked
-	// at one X.
-	//
-	// We trade dagre's edge-crossing minimization for a deterministic
-	// left-to-right pack: each node gets its own X slot at
-	// `xCursor += width + NODE_GAP`. No overlap is possible because
-	// every node lives at a distinct X. Iteration order = entity store
-	// order; if a smarter intra-type ordering becomes a feature ask, it
-	// belongs upstream of this layout.
 	const NODE_GAP = 60; // horizontal gap between adjacent nodes within a type
 	const TYPE_BAND_GAP = 140; // vertical gap between type bands
 
@@ -135,11 +82,6 @@ export async function layoutByType(input: LayoutByTypeInput): Promise<LayoutResu
 		}
 		rankYCursor += rankHeight + TYPE_BAND_GAP;
 	}
-
-	// Note: cross-rank edges are visualized in the canvas but don't
-	// constrain layout. This is a deliberate simplification vs. a global
-	// dagre layout — the locked T2A algorithm prioritizes type-rank
-	// ordering as the dominant signal.
 
 	// Shift step: align the new layout's centroid with either (a) the pinned
 	// set's centroid (when there is a pinnedSet) or (b) the viewport center

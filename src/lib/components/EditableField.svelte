@@ -29,7 +29,6 @@
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { RelationshipType, EntityType } from '$lib/server/db/schema.js';
 	import WikiLinkText from './WikiLinkText.svelte';
-	import { setDraft, clearDraft } from '$lib/stores/editable-drafts.js';
 	import {
 		registerDirtyField,
 		unregisterDirtyField,
@@ -117,18 +116,6 @@
 
 	$effect(() => {
 		if (!focused) draft = currentValue;
-	});
-
-	/* Track in-flight drafts so the EntityDetail draft-preview toast (D16/14A)
-	   can recover the user's last-typed text if the entity is deleted
-	   from another window mid-edit. */
-	$effect(() => {
-		if (focused && draft && draft !== currentValue) {
-			setDraft(entityId, field, draft);
-		} else {
-			clearDraft(entityId, field);
-		}
-		return () => clearDraft(entityId, field);
 	});
 
 	/* Pending-commit handle: lets EntityLink chip clicks (slice 7) drain

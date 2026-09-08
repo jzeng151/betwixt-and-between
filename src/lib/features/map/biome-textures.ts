@@ -36,18 +36,12 @@ export const BIOME_STYLES: Record<BiomeKind, BiomeStyle> = {
 	unset: { color: 0x000000, alpha: 0 } // fully transparent
 };
 
-/** Returns the style for a biome, defaulting to transparent for unknown
- * strings. Used by PixiTerrainLayer for tile fills. */
-export function biomeStyle(biome: string): BiomeStyle {
-	return BIOME_STYLES[biome as BiomeKind] ?? BIOME_STYLES.unset;
-}
-
 // Slice 6 D15 — flat colors for the asset terrain categories, so the flat
 // PixiTerrainLayer can still show land where the sprite tile isn't drawn: hex
 // maps (sprite tiling is square-only) and square cells whose tile failed to
 // load (missing R2 object / dev checkout without the gitignored pack). Without
 // this, asset-vocabulary cells (e.g. 'Grass', 'grass_01_tile_256_05') fall
-// through biomeStyle() to transparent and the painted terrain is invisible
+// through the legacy style table to transparent and the painted terrain is invisible
 // while still being stored (Codex #70). One color per category; specific tile
 // keys match by category prefix.
 const CATEGORY_STYLES: Record<string, BiomeStyle> = {
@@ -63,7 +57,7 @@ const CATEGORY_PREFIXES = Object.keys(CATEGORY_STYLES);
 
 /**
  * Flat style for ANY terrain key — the visible fallback under the sprite tiles.
- * Legacy biomes + 'unset' resolve via biomeStyle; an asset key (a manifest
+ * Legacy biomes + 'unset' resolve via BIOME_STYLES; an asset key (a manifest
  * category like 'Grass' or a specific tile like 'grass_01_tile_256_05') matches
  * its category by prefix. Water keys stay transparent here (PixiWaterLayer draws
  * water); a genuinely unknown key stays transparent (lazy-GC posture).
