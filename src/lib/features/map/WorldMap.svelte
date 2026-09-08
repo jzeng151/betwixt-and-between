@@ -1576,13 +1576,13 @@
 		showRegionForm = true;
 	}
 
-	function startPixiDraw(stageX: number, stageY: number) {
+	function startPixiDraw(stageX?: number, stageY?: number) {
 		// Beginning a polygon draw is region authoring: pin so PR2 cycling can't
 		// switch maps before the user saves, which would create the new region on
 		// the wrong map (the save handler runs against the live activeMapId).
 		// (Codex PR #72)
 		pinView();
-		pixiDrawSeed = { x: stageX, y: stageY };
+		pixiDrawSeed = stageX === undefined || stageY === undefined ? null : { x: stageX, y: stageY };
 		pixiDrawingActive = true;
 	}
 	function handlePixiPolygonCommit(polygon: number[][]) {
@@ -2673,7 +2673,10 @@
 			     Location-scoped placements so they're disabled without a Location. -->
 			<MapToolSelector
 				tool={activeTool}
-				onSelect={(t) => (activeTool = t)}
+				onSelect={(t) => { cancelPixiDraw(); activeTool = t; }}
+				onDraw={() => { if (pixiDrawingActive) cancelPixiDraw(); else { activeTool = 'select'; startPixiDraw(); } }}
+				drawing={pixiDrawingActive}
+				drawEnabled={!dataLoading && !mapLoading && !mapTransitionActive && !showRegionForm}
 				placeEnabled={!!activeMap?.locationId}
 				moveEnabled={!!activeMap?.locationId}
 				canUndo={canUndo && !mapLoading && !mapTransitionActive}
@@ -2801,8 +2804,8 @@
 					<p class="upload-error">{uploadError} <button onclick={() => uploadError = null}>✕</button></p>
 				{/if}
 			</div>
-		{:else if $mapRegions.length === 0 && !showRegionForm}
-			<div class="hint-overlay">Use the draw tool to create regions linked to locations.</div>
+		{:else if scopedRegions.length === 0 && !showRegionForm && !pixiDrawingActive && activeTool === 'select'}
+			<div class="hint-overlay">Choose Draw region, then click the map to outline a location.</div>
 		{/if}
 	</div>
 {/if}

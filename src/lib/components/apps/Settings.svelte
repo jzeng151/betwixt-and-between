@@ -489,8 +489,8 @@
     {:else if activeSection === 'profiles'}
       <h2>Profiles</h2>
       <p class="setting-helper">
-        A profile is a saved workspace — its own colors, graph and window defaults.
-        Switch between them anytime; only one is active.
+        Profiles save colors, graph preferences, and window defaults.
+        All profiles share the same story data.
       </p>
 
       <div class="setting-group">

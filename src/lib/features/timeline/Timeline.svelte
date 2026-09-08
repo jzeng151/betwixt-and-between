@@ -216,7 +216,10 @@
 
 	// ── Per-bar render state ─────────────────────────────────────────────────
 	function tooltipFor(entity: Entity, interval: Interval): string {
-		const range = presenceLabel(interval.startPosition, interval.endPosition);
+		const range = presenceLabel(interval.startPosition, interval.endPosition, {
+			actNames: acts.map((act) => act.name),
+			sceneCounts: Object.fromEntries(acts.map((act, index) => [index, (scenesByActId.get(act.id) ?? []).length]))
+		});
 		const note = dataNoteSnippet(entity);
 		return note ? `${entity.name} · ${range}\n${note}` : `${entity.name} · ${range}`;
 	}

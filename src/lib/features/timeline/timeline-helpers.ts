@@ -90,26 +90,9 @@ export function widthClassForBar(widthPx: number): WidthClass {
 	return 'normal';
 }
 
-/**
- * Compute the human-readable presence range for an interval, given the
- * computed start and end positions on the global story-time axis.
- *
- * Positions follow the half-open convention [start, end) per
- * docs/adr/0003-premise-4-position-math.md → "Half-open convention".
- *
- * Examples:
- *   (1.0, 2.0)         → "Act 1"                         (full-act presence)
- *   (1.0, 1.25)        → "first 25% of Act 1"
- *   (1.5, 2.0)         → "last 50% of Act 1"
- *   (0.5, 3.0)         → "middle of Act 0 → end of Act 2" (multi-act span)
- *   (1.2, 1.8)         → "Act 1, scenes 1–3 of 5"        (scene-anchored, ctx)
- *
- * Caller passes optional `actCount` and `sceneCounts` for richer phrasing
- * when scene context is available; falls back to fraction phrasing when not.
- */
+/** User-facing labels for half-open presence ranges. Numeric positions are zero-based. */
 export interface PresenceLabelContext {
-	/** Number of root-level Acts in the story; used for "of N" phrasing if desired. */
-	actCount?: number;
+	actNames?: string[];
 	/** Map from act_index → scene count; used for scene-anchored ranges. */
 	sceneCounts?: Record<number, number>;
 }
@@ -124,6 +107,8 @@ export function presenceLabel(
 	const startFrac = startPosition - startActIdx;
 	const endFrac = endPosition - endActIdx;
 
+	const actName = (index: number) => ctx.actNames?.[index] || `Act ${index + 1}`;
+
 	// Single-act presence
 	if (startActIdx === endActIdx) {
 		const m = ctx.sceneCounts?.[startActIdx] ?? 0;
@@ -134,28 +119,28 @@ export function presenceLabel(
 			const startMatches = Math.abs(startFrac * m - startSceneIdx) < 1e-9;
 			const endMatches = Math.abs(endFrac * m - endSceneIdx) < 1e-9;
 			if (startMatches && endMatches) {
-				if (startSceneIdx === 0 && endSceneIdx === m) return `Act ${startActIdx}`;
+				if (startSceneIdx === 0 && endSceneIdx === m) return actName(startActIdx);
 				if (endSceneIdx - startSceneIdx === 1) {
-					return `Act ${startActIdx}, scene ${startSceneIdx}`;
+					return `${actName(startActIdx)}, scene ${startSceneIdx + 1}`;
 				}
-				return `Act ${startActIdx}, scenes ${startSceneIdx}–${endSceneIdx - 1} of ${m}`;
+				return `${actName(startActIdx)}, scenes ${startSceneIdx + 1}–${endSceneIdx} of ${m}`;
 			}
 		}
-		if (startFrac === 0 && endFrac === 1) return `Act ${startActIdx}`;
-		if (startFrac === 0) return `first ${Math.round(endFrac * 100)}% of Act ${startActIdx}`;
-		if (endFrac === 1) return `last ${Math.round((1 - startFrac) * 100)}% of Act ${startActIdx}`;
-		return `${Math.round(startFrac * 100)}–${Math.round(endFrac * 100)}% of Act ${startActIdx}`;
+		if (startFrac === 0 && endFrac === 1) return actName(startActIdx);
+		if (startFrac === 0) return `first ${Math.round(endFrac * 100)}% of ${actName(startActIdx)}`;
+		if (endFrac === 1) return `last ${Math.round((1 - startFrac) * 100)}% of ${actName(startActIdx)}`;
+		return `${Math.round(startFrac * 100)}–${Math.round(endFrac * 100)}% of ${actName(startActIdx)}`;
 	}
 
 	// Multi-act
 	const startStr =
 		startFrac === 0
-			? `start of Act ${startActIdx}`
-			: `${Math.round(startFrac * 100)}% into Act ${startActIdx}`;
+			? `start of ${actName(startActIdx)}`
+			: `${Math.round(startFrac * 100)}% into ${actName(startActIdx)}`;
 	const endStr =
 		endFrac === 1
-			? `end of Act ${endActIdx}`
-			: `${Math.round(endFrac * 100)}% into Act ${endActIdx}`;
+			? `end of ${actName(endActIdx)}`
+			: `${Math.round(endFrac * 100)}% into ${actName(endActIdx)}`;
 	return `${startStr} → ${endStr}`;
 }
 
