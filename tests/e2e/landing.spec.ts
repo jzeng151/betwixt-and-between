@@ -15,6 +15,7 @@ test.describe('Landing page', () => {
 
   test('CTA links to /app', async ({ page }) => {
     const ctaLinks = page.locator('.cta-button');
+    await expect(ctaLinks.first()).toBeVisible();
     const count = await ctaLinks.count();
     for (let i = 0; i < count; i++) {
       await expect(ctaLinks.nth(i)).toHaveAttribute('href', '/app');
@@ -62,7 +63,7 @@ test.describe('App route migration', () => {
     });
 
     await page.goto('/app');
-    await expect(page.getByText('Expand your browser window to continue.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Continue at this size' })).toBeVisible();
     expect(entityRequests).toBe(0);
 
     await page.setViewportSize({ width: 1400, height: 800 });
