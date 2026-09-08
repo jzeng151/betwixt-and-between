@@ -1577,6 +1577,7 @@
 	}
 
 	function startPixiDraw(stageX?: number, stageY?: number) {
+		if (pixiDrawingActive) return;
 		// Beginning a polygon draw is region authoring: pin so PR2 cycling can't
 		// switch maps before the user saves, which would create the new region on
 		// the wrong map (the save handler runs against the live activeMapId).
@@ -2521,7 +2522,7 @@
 					isInScope={$isInScope}
 					events={causeEvents}
 					onEventCommitted={revealAuthoredTime}
-					onDrawHere={startPixiDraw}
+					onDrawHere={pixiDrawingActive ? undefined : startPixiDraw}
 					onEditRegion={(id) => startEditRegion(id)}
 					onDeleteRegion={(id) => void handleDeleteRegion(id)}
 					onDrillIntoLocation={(locId) => {
@@ -3188,15 +3189,9 @@
 		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 	}
 	.hint-overlay {
-		position: absolute;
-		/* bottom-center: the hint shows only on an empty new map ($mapRegions
-		   is empty), which is the moment the .map-toolbar is most needed for
-		   picking a Location. Centering at top:12 collides horizontally with
-		   the toolbar's controls. Bottom is unused real estate. */
-		bottom: 16px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 1000;
+		flex-shrink: 0;
+		margin: 6px 10px;
+		text-align: center;
 		background: color-mix(in srgb, var(--color-surface) 92%, transparent);
 		backdrop-filter: blur(8px);
 		-webkit-backdrop-filter: blur(8px);

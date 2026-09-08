@@ -57,6 +57,11 @@ async function drawTriangleRegion(
 	const win = page.locator('.window[aria-label="World Map"]');
 	const canvas = win.locator('.pixi-stage canvas');
 	await expect(canvas).toBeVisible({ timeout: 10000 });
+	const hintBox = await win.locator('.hint-overlay').boundingBox();
+	const toolsBox = await win.getByRole('toolbar', { name: 'Map tools' }).boundingBox();
+	expect(hintBox).not.toBeNull();
+	expect(toolsBox).not.toBeNull();
+	expect(hintBox!.y).toBeGreaterThanOrEqual(toolsBox!.y + toolsBox!.height);
 	const box = await canvas.boundingBox();
 	if (!box) throw new Error('canvas has no bounding box');
 
@@ -78,6 +83,10 @@ async function drawTriangleRegion(
 
 	if (withShift) await page.keyboard.down('Shift');
 	await page.mouse.click(v1.x, v1.y);
+	if (!withShift) {
+		await canvas.click({ button: 'right', position: { x: box.width * 0.8, y: box.height * 0.6 } });
+		await expect(page.getByRole('menuitem', { name: /Draw region here/ })).toBeDisabled();
+	}
 	await page.mouse.click(v2.x, v2.y);
 	if (withShift) await page.keyboard.up('Shift');
 
