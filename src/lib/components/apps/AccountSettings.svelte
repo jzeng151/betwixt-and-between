@@ -14,8 +14,9 @@
     error = '';
     let leaving = false;
     try {
-      await closeWorkspaces(async () => {
-        const result = await authClient.signOut();
+      await closeWorkspaces(async (signal) => {
+        const result = await authClient.signOut({ fetchOptions: { signal } });
+        signal.throwIfAborted();
         if (result.error) throw new Error(result.error.message ?? "Couldn't sign out. Try again.");
         await onAuthChange('logout');
       });

@@ -52,6 +52,10 @@ function leave() {
 
 /** Hold a shared lock for this mounted workspace, including background tabs. */
 export function startWorkspaceSession() {
+	if (!navigator.locks || typeof BroadcastChannel === 'undefined') {
+		workspaceReady.set(true);
+		return () => workspaceReady.set(false);
+	}
 	active = true;
 	channel = new BroadcastChannel('betwixt-auth');
 	holdWorkspace();
@@ -82,28 +86,31 @@ export function startWorkspaceSession() {
 }
 
 /** Revoke the session only after every open workspace has saved and released its lock. */
-export async function closeWorkspaces(signOut: () => Promise<void>): Promise<void> {
+export async function closeWorkspaces(signOut: (signal: AbortSignal) => Promise<void>): Promise<void> {
+	if (!navigator.locks || typeof BroadcastChannel === 'undefined') {
+		throw new Error('This browser cannot safely sign out all tabs here. Open the site over HTTPS in an up-to-date browser and try again.');
+	}
 	await navigator.locks.request('betwixt-logout', { ifAvailable: true }, async (lock) => {
 		if (!lock) throw new Error('Sign-out is already running in another tab.');
 		const id = crypto.randomUUID();
-		controller = new AbortController();
-		const timeout = setTimeout(() => controller?.abort(new Error('Another workspace is not responding. Check your other tabs and try again.')), 30_000);
+		const abort = new AbortController();
+		controller = abort;
+		const timeout = setTimeout(() => abort.abort(new Error('Sign-out timed out. Check your connection and other tabs, then try again.')), 30_000);
 		let signedOut = false;
 		try {
 			channel.postMessage({ type: 'prepare', id });
 			const cancelled = new Promise<never>((_, reject) => {
-				controller!.signal.addEventListener('abort', () => reject(controller!.signal.reason), { once: true });
+				abort.signal.addEventListener('abort', () => reject(abort.signal.reason), { once: true });
 			});
 			await Promise.race([prepare(id), cancelled]);
-			await navigator.locks.request('betwixt-workspace', { signal: controller.signal }, async () => {
-				clearTimeout(timeout);
-				await signOut();
+			await navigator.locks.request('betwixt-workspace', { signal: abort.signal }, async () => {
+				await Promise.race([signOut(abort.signal), cancelled]);
 				signedOut = true;
 				channel.postMessage({ type: 'logout', id });
 				leave();
 			});
 		} catch (error) {
-			throw controller.signal.aborted ? controller.signal.reason : error;
+			throw abort.signal.aborted ? abort.signal.reason : error;
 		} finally {
 			clearTimeout(timeout);
 			controller = undefined;

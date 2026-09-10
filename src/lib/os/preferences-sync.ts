@@ -62,6 +62,7 @@ let inFlight = false;
 // profile-change guard, losing an edit meant for the old profile (codex).
 let activeFlush: Promise<void> | null = null;
 let hydrating = false;
+const hydrations = new Set<Promise<void>>();
 // Set true on the first successful (200) hydrate and never reset for the session.
 // Distinct from serverVersion (which the post-activate path resets to 0): this
 // gates profile switch/create on the INITIAL reconcile having happened (codex).
@@ -133,6 +134,7 @@ export function __resetSyncForTesting(): void {
 	pending = { set: {}, unset: [] };
 	inFlight = false;
 	activeFlush = null;
+	hydrations.clear();
 	hydrating = false;
 	hasHydratedOnce = false;
 	switching = false;
@@ -225,7 +227,14 @@ function reapplyOntoBase(base: Preferences): Preferences {
  * localStorage-only, no server writes. A newer-than-code blob → stale-app
  * (writes suppressed, "update the app").
  */
-export async function hydratePreferences(): Promise<void> {
+export function hydratePreferences(): Promise<void> {
+	const task = hydratePreferencesNow();
+	hydrations.add(task);
+	void task.then(() => hydrations.delete(task), () => hydrations.delete(task));
+	return task;
+}
+
+async function hydratePreferencesNow(): Promise<void> {
 	hydrating = true;
 	_status.set('syncing');
 	// We are hydrating now — cancel any scheduled hydrate retry so it can't pile up.
@@ -477,6 +486,8 @@ function requireHydrated(): void {
 }
 
 export async function flushPendingPreferences(): Promise<void> {
+	while (hydrations.size) await Promise.all(hydrations);
+	if (!get(_resolved)) throw new Error('Preferences are still loading; try again.');
 	if (timer) {
 		clearTimeout(timer);
 		timer = null;

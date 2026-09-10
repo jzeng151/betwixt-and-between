@@ -1005,3 +1005,25 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		expect(get(preferences).appearance.theme).toBe('light');
 	});
 });
+
+
+it('waits for initial hydration to reconcile local preferences before sign-out', async () => {
+	let finish!: () => void;
+	const gate = new Promise<void>((resolve) => { finish = resolve; });
+	mockFetch(async (c) => {
+		if (c.method === 'GET') {
+			await gate;
+			return fakeRes(200, { data: {}, version: 1, initialized: false });
+		}
+		return fakeRes(200, { version: 2 });
+	});
+	preferences.update((p) => ({ ...p, appearance: { ...p.appearance, accentColor: '#abc123' } }));
+	const hydration = hydratePreferences();
+	let saved = false;
+	const flush = flushPendingPreferences().then(() => { saved = true; });
+	await Promise.resolve();
+	expect(saved).toBe(false);
+	finish();
+	await Promise.all([hydration, flush]);
+	expect(calls.find((c) => c.method === 'PATCH')?.body.set.appearance.accentColor).toBe('#abc123');
+});

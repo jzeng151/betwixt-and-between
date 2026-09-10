@@ -114,3 +114,52 @@ test('Account saves the latest Notes draft and signs out through the auth endpoi
     await request.delete(`/api/notes/folders/${folder.id}`, { headers: E2E_USER_HEADERS });
   }
 });
+
+test('a browser without Web Locks can still use the workspace', async ({ page }) => {
+  await page.setExtraHTTPHeaders(E2E_USER_HEADERS);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'locks', { value: undefined });
+    localStorage.setItem('tutorial-dismissed', 'true');
+  });
+  await page.goto('/app');
+  await expect(page.getByTitle('Notes', { exact: true })).toBeVisible();
+  await page.getByTitle('Settings', { exact: true }).click();
+  const settings = page.locator('.window[aria-label="Settings"]');
+  await settings.getByRole('button', { name: 'Account', exact: true }).click();
+  await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(settings.getByRole('alert')).toContainText('Open the site over HTTPS');
+  await expect(settings.getByRole('button', { name: 'Sign out', exact: true })).toBeEnabled();
+});
+
+test('a stalled sign-out request times out and restores both workspaces', async ({ page, context }) => {
+  await context.setExtraHTTPHeaders(E2E_USER_HEADERS);
+  await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+  await page.clock.install();
+  await page.goto('/app');
+  const otherTab = await context.newPage();
+  await otherTab.goto('/app');
+  await expect(otherTab.getByTitle('Notes', { exact: true })).toBeVisible();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/auth/sign-out', async (route) => {
+    await gate;
+    await route.abort();
+  });
+  try {
+    await page.getByTitle('Settings', { exact: true }).click();
+    const settings = page.locator('.window[aria-label="Settings"]');
+    await settings.getByRole('button', { name: 'Account', exact: true }).click();
+    const requested = page.waitForRequest('**/api/auth/sign-out');
+    await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await requested;
+    await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+    await page.clock.fastForward(31_000);
+    await expect(settings.getByRole('alert')).toContainText('Sign-out timed out');
+    await expect(settings.getByRole('button', { name: 'Sign out', exact: true })).toBeEnabled();
+    await expect(page.getByRole('dialog', { name: 'Signing out' })).not.toBeVisible();
+    await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).not.toBeVisible();
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: 'wait' });
+  }
+});

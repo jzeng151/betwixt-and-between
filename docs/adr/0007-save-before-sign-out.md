@@ -7,3 +7,5 @@ Notes and Settings track outstanding mutations in a shared store. Failed writes 
 Each mounted workspace holds a shared Web Lock. Sign-out broadcasts a save request, blocks editing in each participating tab, and waits for an exclusive workspace lock. Tabs release their locks only after saving. A failed or unresponsive tab cancels sign-out and restores editing; an exclusive coordinator lock prevents simultaneous sign-out attempts. Successful revocation broadcasts navigation to login and replaces history entries.
 
 Validation includes two authenticated Firefox tabs with pending edits, a rejected remote save followed by retry, a Settings mutation surviving window closure, session revocation, and protected navigation after logout.
+
+The watchdog covers both saving and session revocation, and cancels the auth fetch on timeout. Preference reconciliation must finish before the save barrier is released. Browsers without the required coordination APIs can still open the workspace; sign-out explains how to reopen it in a supported secure context.

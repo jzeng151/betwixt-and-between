@@ -12,7 +12,7 @@ const user = { id: 'user', name: 'Writer', email: 'writer@example.com', emailVer
 beforeEach(() => {
   vi.resetAllMocks();
   failedWrites.set([]);
-  mocks.close.mockImplementation((signOut) => signOut());
+  mocks.close.mockImplementation((signOut) => signOut(new AbortController().signal));
   mocks.signOut.mockResolvedValue({ error: { message: 'Network unavailable' } });
 });
 afterEach(cleanup);
