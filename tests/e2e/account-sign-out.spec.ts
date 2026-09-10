@@ -1,8 +1,22 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import postgres from 'postgres';
 import { E2E_USER_HEADERS, E2E_USER_EMAIL, PGLITE_URL } from './pglite-config.js';
 
 test.use({ viewport: { width: 1440, height: 1000 } });
+
+async function signIn(page: Page) {
+  const link = await page.request.post('/api/auth/sign-in/magic-link', { headers: { Origin: new URL(page.url()).origin }, data: { email: E2E_USER_EMAIL } });
+  expect(link.ok(), await link.text()).toBe(true);
+  const sql = postgres(PGLITE_URL, { max: 1, prepare: false });
+  let token: string;
+  try {
+    const [verification] = await sql`select identifier from verification where value::jsonb->>'email' = ${E2E_USER_EMAIL} order by created_at desc limit 1`;
+    token = verification.identifier;
+  } finally { await sql.end(); }
+  await page.goto(`/api/auth/magic-link/verify?token=${encodeURIComponent(token)}&callbackURL=/app`);
+  await expect(page).toHaveURL(/\/app$/);
+  expect((await page.request.get('/api/auth/get-session')).ok()).toBe(true);
+}
 
 test('Account saves the latest Notes draft and signs out through the auth endpoint', async ({ page, request, context }) => {
   const folder = await (await request.post('/api/notes/folders', { headers: E2E_USER_HEADERS, data: { name: 'Sign-out test' } })).json();
@@ -12,17 +26,7 @@ test('Account saves the latest Notes draft and signs out through the auth endpoi
   try {
     await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
     await page.goto('/auth/login');
-    const link = await page.request.post('/api/auth/sign-in/magic-link', { headers: { Origin: new URL(page.url()).origin }, data: { email: E2E_USER_EMAIL } });
-    expect(link.ok(), await link.text()).toBe(true);
-    const sql = postgres(PGLITE_URL, { max: 1, prepare: false });
-    let token: string;
-    try {
-      const [verification] = await sql`select identifier from verification where value::jsonb->>'email' = ${E2E_USER_EMAIL} order by created_at desc limit 1`;
-      token = verification.identifier;
-    } finally { await sql.end(); }
-    await page.goto(`/api/auth/magic-link/verify?token=${encodeURIComponent(token)}&callbackURL=/app`);
-    await expect(page).toHaveURL(/\/app$/);
-    expect((await page.request.get('/api/auth/get-session')).ok()).toBe(true);
+    await signIn(page);
     const otherTab = await context.newPage();
     await otherTab.goto('/app');
     await otherTab.getByTitle('Notes', { exact: true }).click();
@@ -131,17 +135,21 @@ test('a browser without Web Locks can still use the workspace', async ({ page })
   await expect(settings.getByRole('button', { name: 'Sign out', exact: true })).toBeEnabled();
 });
 
-test('a stalled sign-out request times out and restores both workspaces', async ({ page, context }) => {
-  await context.setExtraHTTPHeaders(E2E_USER_HEADERS);
+test('a lost sign-out response closes both workspaces without claiming confirmation', async ({ page, context }) => {
   await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
   await page.clock.install();
-  await page.goto('/app');
+  await page.goto('/auth/login');
+  await signIn(page);
   const otherTab = await context.newPage();
   await otherTab.goto('/app');
   await expect(otherTab.getByTitle('Notes', { exact: true })).toBeVisible();
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
+  let processed!: () => void;
+  const revoked = new Promise<void>((resolve) => { processed = resolve; });
   await page.route('**/api/auth/sign-out', async (route) => {
+    expect((await route.fetch()).ok()).toBe(true);
+    processed();
     await gate;
     await route.abort();
   });
@@ -152,12 +160,14 @@ test('a stalled sign-out request times out and restores both workspaces', async 
     const requested = page.waitForRequest('**/api/auth/sign-out');
     await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
     await requested;
+    await revoked;
     await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
     await page.clock.fastForward(31_000);
-    await expect(settings.getByRole('alert')).toContainText('Sign-out timed out');
-    await expect(settings.getByRole('button', { name: 'Sign out', exact: true })).toBeEnabled();
-    await expect(page.getByRole('dialog', { name: 'Signing out' })).not.toBeVisible();
-    await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).not.toBeVisible();
+    await expect(page).toHaveURL(/\/auth\/login\?signOut=unconfirmed$/);
+    await expect(otherTab).toHaveURL(/\/auth\/login\?signOut=unconfirmed$/);
+    await expect(page.getByRole('alert')).toContainText('sign-out could not be confirmed');
+    await expect(page.locator('.window')).toHaveCount(0);
+    await expect(otherTab.locator('.window')).toHaveCount(0);
   } finally {
     release();
     await page.unrouteAll({ behavior: 'wait' });

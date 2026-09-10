@@ -44,10 +44,10 @@ function resume(id: string) {
 	if (!release) holdWorkspace();
 }
 
-function leave() {
+function leave(unconfirmed = false) {
 	attempt = undefined;
 	workspaceSignedOut.set(true);
-	window.location.replace('/auth/login');
+	window.location.replace(unconfirmed ? '/auth/login?signOut=unconfirmed' : '/auth/login');
 }
 
 /** Hold a shared lock for this mounted workspace, including background tabs. */
@@ -74,7 +74,7 @@ export function startWorkspaceSession() {
 		} else if (data.type === 'cancel') {
 			resume(data.id);
 		} else if (data.type === 'logout') {
-			leave();
+			leave(data.unconfirmed === true);
 		}
 	};
 	return () => {
@@ -96,7 +96,8 @@ export async function closeWorkspaces(signOut: (signal: AbortSignal) => Promise<
 		const abort = new AbortController();
 		controller = abort;
 		const timeout = setTimeout(() => abort.abort(new Error('Sign-out timed out. Check your connection and other tabs, then try again.')), 30_000);
-		let signedOut = false;
+		let leaving = false;
+		let revoking = false;
 		try {
 			channel.postMessage({ type: 'prepare', id });
 			const cancelled = new Promise<never>((_, reject) => {
@@ -104,17 +105,24 @@ export async function closeWorkspaces(signOut: (signal: AbortSignal) => Promise<
 			});
 			await Promise.race([prepare(id), cancelled]);
 			await navigator.locks.request('betwixt-workspace', { signal: abort.signal }, async () => {
+				revoking = true;
 				await Promise.race([signOut(abort.signal), cancelled]);
-				signedOut = true;
+				leaving = true;
 				channel.postMessage({ type: 'logout', id });
 				leave();
 			});
 		} catch (error) {
+			if (revoking) {
+				leaving = true;
+				channel.postMessage({ type: 'logout', id, unconfirmed: true });
+				leave(true);
+				return;
+			}
 			throw abort.signal.aborted ? abort.signal.reason : error;
 		} finally {
 			clearTimeout(timeout);
 			controller = undefined;
-			if (!signedOut) {
+			if (!leaving) {
 				channel.postMessage({ type: 'cancel', id });
 				resume(id);
 			}
