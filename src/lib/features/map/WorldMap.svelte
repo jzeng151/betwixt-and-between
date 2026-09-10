@@ -2810,7 +2810,7 @@
 				/>
 			{/if}
 		{/if}
-		{#if uploadError}<p class="upload-error" role="alert">{uploadError}</p>{/if}
+		{#if uploadError && hasCanvas}<p class="upload-error" role="alert">{uploadError}</p>{/if}
 		{#if !hasCanvas}
 			<div class="upload-area">
 				<p>Start with a blank canvas or import a map image.</p>
@@ -2833,6 +2833,7 @@
 						hidden
 					/>
 				</label>
+				{#if uploadError}<p class="upload-error" role="alert">{uploadError}</p>{/if}
 			</div>
 		{:else if scopedRegions.length === 0 && !showRegionForm && !pixiDrawingActive && activeTool === 'select'}
 			<div class="hint-overlay">Choose Draw region, then click the map to outline a location.</div>

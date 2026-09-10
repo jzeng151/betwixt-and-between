@@ -66,6 +66,9 @@ test('create a blank canvas, paint a stroke, then grouped-undo reverts every pai
 	await win.locator('button[aria-label="Maximize"]').click();
 	await win.getByLabel('Width').fill('640');
 	await win.getByLabel('Height').fill('480');
+	await page.route(`**/api/maps/${map.id}`, (route) => route.fulfill({ status: 503, body: 'Temporarily unavailable' }), { times: 1 });
+	await win.getByRole('button', { name: 'Create blank canvas' }).click();
+	await expect(win.locator('.upload-area').getByRole('alert')).toHaveText("Couldn't create the canvas. Try again.");
 	await win.getByRole('button', { name: 'Create blank canvas' }).click();
 	await expect(win.getByRole('button', { name: 'Create blank canvas' })).toHaveCount(0);
 	const blank = await (await request.get(`/api/maps/${map.id}`)).json();
