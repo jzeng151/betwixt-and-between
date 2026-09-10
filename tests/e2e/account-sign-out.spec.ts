@@ -16,6 +16,7 @@ async function signIn(page: Page) {
   await page.goto(`/api/auth/magic-link/verify?token=${encodeURIComponent(token)}&callbackURL=/app`);
   await expect(page).toHaveURL(/\/app$/);
   expect((await page.request.get('/api/auth/get-session')).ok()).toBe(true);
+  await expect.poll(async () => (await (await page.request.get('/api/preferences')).json()).initialized).toBe(true);
 }
 
 test('Account saves the latest Notes draft and signs out through the auth endpoint', async ({ page, request, context }) => {
@@ -135,41 +136,48 @@ test('a browser without Web Locks can still use the workspace', async ({ page })
   await expect(settings.getByRole('button', { name: 'Sign out', exact: true })).toBeEnabled();
 });
 
-test('a lost sign-out response closes both workspaces without claiming confirmation', async ({ page, context }) => {
-  await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-  await page.clock.install();
-  await page.goto('/auth/login');
-  await signIn(page);
-  const otherTab = await context.newPage();
-  await otherTab.goto('/app');
-  await expect(otherTab.getByTitle('Notes', { exact: true })).toBeVisible();
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  let processed!: () => void;
-  const revoked = new Promise<void>((resolve) => { processed = resolve; });
-  await page.route('**/api/auth/sign-out', async (route) => {
-    expect((await route.fetch()).ok()).toBe(true);
-    processed();
-    await gate;
-    await route.abort();
+for (const interruptedBy of ['timeout', 'closing the initiating tab']) {
+  test(`${interruptedBy} after revocation closes the remaining workspaces`, async ({ page, context }) => {
+    await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+    await page.clock.install();
+    await page.goto('/auth/login');
+    await signIn(page);
+    const otherTab = await context.newPage();
+    await otherTab.goto('/app');
+    await expect(otherTab.getByTitle('Notes', { exact: true })).toBeVisible();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let processed!: () => void;
+    const revoked = new Promise<void>((resolve) => { processed = resolve; });
+    await page.route('**/api/auth/sign-out', async (route) => {
+      expect((await route.fetch()).ok()).toBe(true);
+      processed();
+      await gate;
+      await route.abort();
+    });
+    try {
+      await page.getByTitle('Settings', { exact: true }).click();
+      const settings = page.locator('.window[aria-label="Settings"]');
+      await settings.getByRole('button', { name: 'Account', exact: true }).click();
+      const requested = page.waitForRequest('**/api/auth/sign-out');
+      await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await requested;
+      await revoked;
+      await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+      if (interruptedBy === 'timeout') {
+        await page.clock.fastForward(31_000);
+        await expect(page).toHaveURL(/\/auth\/login\?signOut=unconfirmed$/);
+        await expect(page.getByRole('alert')).toContainText('sign-out could not be confirmed');
+        await expect(page.locator('.window')).toHaveCount(0);
+      } else {
+        await page.close();
+      }
+      await expect(otherTab).toHaveURL(/\/auth\/login\?signOut=unconfirmed$/);
+      await expect(otherTab.locator('.window')).toHaveCount(0);
+    } finally {
+      release();
+      if (!page.isClosed()) await page.unrouteAll({ behavior: 'wait' });
+    }
   });
-  try {
-    await page.getByTitle('Settings', { exact: true }).click();
-    const settings = page.locator('.window[aria-label="Settings"]');
-    await settings.getByRole('button', { name: 'Account', exact: true }).click();
-    const requested = page.waitForRequest('**/api/auth/sign-out');
-    await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
-    await requested;
-    await revoked;
-    await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
-    await page.clock.fastForward(31_000);
-    await expect(page).toHaveURL(/\/auth\/login\?signOut=unconfirmed$/);
-    await expect(otherTab).toHaveURL(/\/auth\/login\?signOut=unconfirmed$/);
-    await expect(page.getByRole('alert')).toContainText('sign-out could not be confirmed');
-    await expect(page.locator('.window')).toHaveCount(0);
-    await expect(otherTab.locator('.window')).toHaveCount(0);
-  } finally {
-    release();
-    await page.unrouteAll({ behavior: 'wait' });
-  }
-});
+
+}

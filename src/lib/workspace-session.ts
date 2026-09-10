@@ -12,6 +12,7 @@ let active = false;
 let ready = Promise.resolve();
 let attempt: string | undefined;
 let controller: AbortController | undefined;
+const LOGOUT_STATE_KEY = 'betwixt-logout-state';
 
 function holdWorkspace() {
 	let acquired!: () => void;
@@ -50,6 +51,18 @@ function leave(unconfirmed = false) {
 	window.location.replace(unconfirmed ? '/auth/login?signOut=unconfirmed' : '/auth/login');
 }
 
+// The coordinator can disappear after dispatching revocation, before broadcasting
+// its outcome. Read the persisted phase before deciding whether editing can resume.
+function recover(id: string) {
+	if (attempt !== id) return;
+	let phase: string | null;
+	try { phase = localStorage.getItem(LOGOUT_STATE_KEY); }
+	catch { leave(true); return; }
+	if (phase === `${id}:pending`) leave(true);
+	else if (phase === `${id}:done`) leave();
+	else resume(id);
+}
+
 /** Hold a shared lock for this mounted workspace, including background tabs. */
 export function startWorkspaceSession() {
 	if (!navigator.locks || typeof BroadcastChannel === 'undefined') {
@@ -63,7 +76,7 @@ export function startWorkspaceSession() {
 		if (data.type === 'prepare') {
 			const saving = prepare(data.id);
 			// Releasing the coordinator lock also recovers tabs if its owner closes.
-			void navigator.locks.request('betwixt-logout', () => resume(data.id));
+			void navigator.locks.request('betwixt-logout', () => recover(data.id));
 			try { await saving; }
 			catch (error) {
 				if (!active || attempt !== data.id) return;
@@ -99,14 +112,17 @@ export async function closeWorkspaces(signOut: (signal: AbortSignal) => Promise<
 		let leaving = false;
 		let revoking = false;
 		try {
+			localStorage.setItem(LOGOUT_STATE_KEY, `${id}:preparing`);
 			channel.postMessage({ type: 'prepare', id });
 			const cancelled = new Promise<never>((_, reject) => {
 				abort.signal.addEventListener('abort', () => reject(abort.signal.reason), { once: true });
 			});
 			await Promise.race([prepare(id), cancelled]);
 			await navigator.locks.request('betwixt-workspace', { signal: abort.signal }, async () => {
+				localStorage.setItem(LOGOUT_STATE_KEY, `${id}:pending`);
 				revoking = true;
 				await Promise.race([signOut(abort.signal), cancelled]);
+				localStorage.setItem(LOGOUT_STATE_KEY, `${id}:done`);
 				leaving = true;
 				channel.postMessage({ type: 'logout', id });
 				leave();
