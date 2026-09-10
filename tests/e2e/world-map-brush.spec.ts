@@ -39,21 +39,20 @@ async function livePaintEvents(request: APIRequestContext, mapId: string): Promi
 	return rows.filter((e) => e.kind === 'paint_cells');
 }
 
-test('paint a stroke on the canvas, then grouped-undo reverts every painted cell', async ({
+test('create a blank canvas, paint a stroke, then grouped-undo reverts every painted cell', async ({
 	page,
 	request
 }) => {
 	await clearAll(request);
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 
-	// Brush requires a map with image + linked Location (the palette only
-	// mounts then) and canvas dimensions (for the cell-coordinate math).
+	// Link a Location; initialize the canvas through the UI without an image.
 	const loc = await (
 		await request.post('/api/entities', { data: { type: 'Location', name: 'Paint Realm' } })
 	).json();
 	const map = await (await request.post('/api/maps', { data: { name: 'Brush Test' } })).json();
 	await request.patch(`/api/maps/${map.id}`, {
-		data: { baseImageUrl: 'about:blank', width: 640, height: 480, locationId: loc.id }
+		data: { locationId: loc.id }
 	});
 
 	expect(await livePaintEvents(request, map.id)).toHaveLength(0);
@@ -65,6 +64,18 @@ test('paint a stroke on the canvas, then grouped-undo reverts every painted cell
 	// Maximize so the BrushPalette (below the canvas) is within the viewport
 	// — the default 1024×720 window pushes it below the fold.
 	await win.locator('button[aria-label="Maximize"]').click();
+	await win.getByLabel('Width').fill('640');
+	await win.getByLabel('Height').fill('480');
+	await win.getByRole('button', { name: 'Create blank canvas' }).click();
+	await expect(win.getByRole('button', { name: 'Create blank canvas' })).toHaveCount(0);
+	const blank = await (await request.get(`/api/maps/${map.id}`)).json();
+	expect(blank).toMatchObject({ width: 640, height: 480, baseImageUrl: null });
+	expect(blank.gridCellsX / blank.gridCellsY).toBeCloseTo(640 / 480, 1);
+	await page.reload();
+	await page.click('button[title="World Map"]');
+	await win.locator('button[aria-label="Maximize"]').click();
+	await expect(win.getByRole('button', { name: 'Create blank canvas' })).toHaveCount(0);
+	await expect(win.getByTitle('Import image')).toBeVisible();
 	const canvas = win.locator('.pixi-stage canvas');
 	await expect(canvas).toBeVisible({ timeout: 10000 });
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { squareGridCounts } from './grid-dims.js';
 	import {
 		worldMapStore,
 		worldMaps,
@@ -170,7 +171,7 @@
 	// Location/image the palette needs) clears any stale arm so the next canvas
 	// tap can't drop a placement with locationId=null after the palette unmounts.
 	$effect(() => {
-		if (activeTool !== 'place' || !activeMap?.locationId || !hasImage) armedPlaceableId = null;
+		if (activeTool !== 'place' || !activeMap?.locationId || !hasCanvas) armedPlaceableId = null;
 	});
 
 	// Fall back to Select when the active map can't host the current tool, so the
@@ -178,7 +179,7 @@
 	// and Move act on Location-scoped placements so they need a linked Location.
 	$effect(() => {
 		const canPaint = !!(activeMap?.width && activeMap?.height);
-		const canPlaceOrMove = !!(activeMap?.locationId && hasImage);
+		const canPlaceOrMove = !!(activeMap?.locationId && hasCanvas);
 		if (activeTool === 'brush' && !canPaint) activeTool = 'select';
 		if ((activeTool === 'place' || activeTool === 'move') && !canPlaceOrMove) activeTool = 'select';
 	});
@@ -441,6 +442,9 @@
 	let regionFormColor = $state('#e8a838');
 	let regionFormSceneIds = $state<Set<string>>(new Set());
 	let uploadError = $state<string | null>(null);
+	let preparingCanvas = $state(false);
+	let canvasWidth = $state<number | undefined>(1024);
+	let canvasHeight = $state<number | undefined>(768);
 	let editingRegionId: string | null = $state(null);
 	let editingOriginalLocationId: string | null = $state(null);
 	let renamingMapName = $state<string | null>(null);
@@ -463,7 +467,7 @@
 	let activeMap = $derived($worldMaps.find((m) => m.id === activeMapId) ?? null);
 	let locations = $derived($entities.filter((e) => e.type === 'Location'));
 	let hasMaps = $derived($worldMaps.length > 0);
-	let hasImage = $derived(activeMap?.baseImageUrl != null && activeMap.width != null && activeMap.height != null);
+	let hasCanvas = $derived((activeMap?.width ?? 0) > 0 && (activeMap?.height ?? 0) > 0);
 	let acts = $derived(
 		$entities
 			.filter((e) => e.type === 'Act')
@@ -2153,18 +2157,41 @@
 		deleting = false;
 	}
 
+	async function createBlankCanvas(event: SubmitEvent) {
+		event.preventDefault();
+		if (!activeMapId || preparingCanvas || !canvasWidth || !canvasHeight) return;
+		pinView();
+		const mapId = activeMapId;
+		preparingCanvas = true;
+		uploadError = null;
+		try {
+			await worldMapStore.updateMap(mapId, {
+				width: canvasWidth,
+				height: canvasHeight,
+				...squareGridCounts(canvasWidth, canvasHeight)
+			});
+		} catch {
+			if (activeMapId === mapId) uploadError = "Couldn't create the canvas. Try again.";
+		} finally {
+			preparingCanvas = false;
+		}
+	}
+
 	async function handleImageUpload(e: Event) {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
-		if (!file || !activeMapId) return;
-
+		if (!file || !activeMapId || preparingCanvas) return;
+		const mapId = activeMapId;
+		preparingCanvas = true;
 		uploadError = null;
 		try {
-			await worldMapStore.uploadImage(activeMapId, file);
-		} catch (err) {
-			uploadError = 'Couldn\'t upload map image. Try again.';
+			await worldMapStore.uploadImage(mapId, file);
+		} catch {
+			if (activeMapId === mapId) uploadError = "Couldn't upload map image. Try again.";
+		} finally {
+			preparingCanvas = false;
+			input.value = '';
 		}
-		input.value = '';
 	}
 
 	async function handleSaveRegion() {
@@ -2380,10 +2407,7 @@
 		<button class="btn-primary" onclick={handleCreateMap}>Create your first map</button>
 	</div>
 {:else}
-	<!-- Active map. Always render the map-canvas (so Leaflet initializes
-	     once on open and survives the hasImage transition AND the brief
-	     activeMap=null gap during map delete); overlay the upload prompt
-	     on top when no image is imported yet. -->
+	<!-- Keep the stage mounted while setting up a canvas or switching maps. -->
 	<div
 		class="map-wrapper"
 		class:has-breadcrumb={breadcrumbAncestors.length > 0 && activeMap}
@@ -2401,7 +2425,8 @@
 			worldMaps={$worldMaps}
 			{activeMap}
 			{activeMapId}
-			{hasImage}
+			{hasCanvas}
+			{preparingCanvas}
 			{locations}
 			{duplicating}
 			bind:renamingMapName
@@ -2667,7 +2692,7 @@
 			</div>
 		{/if}
 		<MapSidebar {activeMapId} {activeMap} />
-		{#if hasImage}
+		{#if hasCanvas}
 			<!-- Slice 4 PR-F (DS4) — unified tool bar. Single entry point for
 			     Select/Brush/Place/Move; the palettes below are detail panels
 			     shown only when their tool is active. Place/Move act on
@@ -2706,7 +2731,7 @@
 				<button type="button" onclick={() => (strokeError = '')}>✕</button>
 			</div>
 		{/if}
-		{#if hasImage && moveActive}
+		{#if hasCanvas && moveActive}
 			<!-- DS4 keyboard a11y — status hint for the Move tool. The nudge keys
 			     (arrows / Shift+arrows / Enter / Escape) are handled window-scoped
 			     in handleMapKeydown when a marker is selected; this panel just
@@ -2720,7 +2745,7 @@
 				{/if}
 			</div>
 		{/if}
-		{#if activeTool === 'place' && hasImage && activeMap?.locationId}
+		{#if activeTool === 'place' && hasCanvas && activeMap?.locationId}
 			<!-- Slice 4 PR-D — single placeables palette. Each chip is both a
 			     click-to-arm target (armed chip → PixiPlacementLayer pointertap →
 			     handleCanvasClick → create placement) and a drag source (drop
@@ -2728,7 +2753,7 @@
 			     only under the Place tool (DS4). -->
 			<PlaceablePalette armedId={armedPlaceableId} onArm={(id) => (armedPlaceableId = id)} />
 		{/if}
-		{#if activeTool === 'brush' && hasImage}
+		{#if activeTool === 'brush' && hasCanvas}
 			<!-- WM3 Slice A: Grid | Freeform sub-mode toggle. Grid = the existing
 			     cell painting (first-class, amendment §3); Freeform = paint_stroke. -->
 			<div class="brush-mode-toggle" role="group" aria-label="Brush type">
@@ -2785,9 +2810,15 @@
 				/>
 			{/if}
 		{/if}
-		{#if !hasImage}
+		{#if uploadError}<p class="upload-error" role="alert">{uploadError}</p>{/if}
+		{#if !hasCanvas}
 			<div class="upload-area">
-				<p>Import a map image to get started</p>
+				<p>Start with a blank canvas or import a map image.</p>
+				<form class="blank-canvas-form" onsubmit={createBlankCanvas}>
+					<label>Width <input type="number" min="1" max="16384" step="1" required bind:value={canvasWidth} disabled={preparingCanvas} /> px</label>
+					<label>Height <input type="number" min="1" max="16384" step="1" required bind:value={canvasHeight} disabled={preparingCanvas} /> px</label>
+					<button class="btn-primary" disabled={preparingCanvas || !activeMapId}>{preparingCanvas ? 'Preparing canvas...' : 'Create blank canvas'}</button>
+				</form>
 				<label class="btn-primary upload-btn">
 					Import image
 					<!-- Pin on picker-open (input click fires as the dialog opens) so a cycle
@@ -2798,12 +2829,10 @@
 						accept=".jpg,.jpeg,.png,.webp"
 						onclick={() => pinView()}
 						onchange={handleImageUpload}
+						disabled={preparingCanvas}
 						hidden
 					/>
 				</label>
-				{#if uploadError}
-					<p class="upload-error">{uploadError} <button onclick={() => uploadError = null}>✕</button></p>
-				{/if}
 			</div>
 		{:else if scopedRegions.length === 0 && !showRegionForm && !pixiDrawingActive && activeTool === 'select'}
 			<div class="hint-overlay">Choose Draw region, then click the map to outline a location.</div>
@@ -2882,6 +2911,10 @@
 {/if}
 
 <style>
+	.blank-canvas-form { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-items: center; }
+	.blank-canvas-form label { display: flex; gap: 6px; align-items: center; }
+	.blank-canvas-form input { width: 80px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 6px; }
+
 	.map-wrapper {
 		position: relative;
 		width: 100%;
@@ -3141,13 +3174,6 @@
 	.upload-error {
 		color: #e74c3c;
 		font-size: 13px;
-	}
-	.upload-error button {
-		background: none;
-		border: none;
-		color: #e74c3c;
-		cursor: pointer;
-		font-size: 14px;
 	}
 
 	:global(.btn-primary) {

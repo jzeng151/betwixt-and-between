@@ -145,6 +145,8 @@ function createWorldMapStore() {
 			baseImageUrl?: string;
 			width?: number;
 			height?: number;
+			gridCellsX?: number;
+			gridCellsY?: number;
 			locationId?: string | null;
 			startActId?: string | null;
 			startSceneId?: string | null;
