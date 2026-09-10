@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
+import { failedWrites, flushPendingWrites } from '../../src/lib/stores/pending-writes.js';
 import { notesStore, noteFolders, noteEntries } from '../../src/lib/stores/notes.js';
 
 // =============================================================================
@@ -16,6 +17,7 @@ function makeResponse(body: unknown, ok = true, status = 200): Response {
 }
 
 beforeEach(async () => {
+	failedWrites.set([]);
 	// Reset stores by loading empty
 	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([])) as unknown as typeof fetch;
 	await notesStore.loadFolders();
@@ -181,4 +183,28 @@ describe('notesStore.deleteFolder', () => {
 		expect(get(noteFolders)).toHaveLength(0);
 		expect(get(noteEntries)).toHaveLength(0);
 	});
+});
+
+
+it.each([true, false])('waits for a pending folder rename before sign-out (success: %s)', async (ok) => {
+	let finish!: (response: Response) => void;
+	globalThis.fetch = vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; }));
+	const rename = notesStore.renameFolder('f1', 'Renamed');
+	const handledRename = rename.catch(() => undefined);
+	let drained = false;
+	const flush = flushPendingWrites().then(() => { drained = true; return true; }, () => { drained = true; return false; });
+	await Promise.resolve();
+	expect(drained).toBe(false);
+	finish(makeResponse({ name: 'Renamed' }, ok, ok ? 200 : 500));
+	expect(await flush).toBe(ok);
+	await handledRename;
+});
+
+
+it('retains an already-failed rename until the user acknowledges it', async () => {
+	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse({}, false, 500));
+	await expect(notesStore.renameFolder('f1', 'Keep this name')).rejects.toThrow('Failed to rename folder');
+	await expect(flushPendingWrites()).rejects.toThrow(/failed to save/);
+	failedWrites.set([]);
+	await expect(flushPendingWrites()).resolves.toBeUndefined();
 });

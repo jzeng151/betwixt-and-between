@@ -1,5 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/stores';
+  import { trackWrite } from '$lib/stores/pending-writes.js';
+  import AccountSettings from './AccountSettings.svelte';
   import { preferences, setPreference, getPreference } from '$lib/os/preferences-store.js';
   import {
     applyPreferencePatch,
@@ -112,7 +115,7 @@
   // ── Phase 3: workspace profiles (D1) ──────────────────────────────────────
   let profiles = $state<ProfileSummary[]>([]);
   let profilesError = $state<string | null>(null);
-  let busy = $state(false); // true during switch/create (disables the panel)
+  let busy = $state(false);
   let newProfileName = $state('');
   let renamingId = $state<string | null>(null);
   let renameDraft = $state('');
@@ -135,7 +138,7 @@
     if (p.isActive || busy) return;
     busy = true;
     try {
-      await switchProfile(p.profileId);
+      await trackWrite(switchProfile(p.profileId));
       await loadProfiles();
       profilesError = null;
     } catch (e) {
@@ -150,7 +153,7 @@
     if (!name || busy) return;
     busy = true;
     try {
-      await createProfile(name);
+      await trackWrite(createProfile(name));
       newProfileName = '';
       await loadProfiles();
       profilesError = null;
@@ -176,25 +179,33 @@
       cancelRename();
       return;
     }
+    if (busy) return;
+    busy = true;
     try {
-      await renameProfileRequest(p.profileId, name);
+      await trackWrite(renameProfileRequest(p.profileId, name));
       cancelRename();
       await loadProfiles();
       profilesError = null;
     } catch (e) {
       profilesError = e instanceof Error ? e.message : 'failed to rename profile';
+    } finally {
+      busy = false;
     }
   }
 
   async function doDeleteProfile(p: ProfileSummary) {
+    if (busy) return;
+    busy = true;
     try {
-      await deleteProfileRequest(p.profileId);
+      await trackWrite(deleteProfileRequest(p.profileId));
       confirmDeleteId = null;
       await loadProfiles();
       profilesError = null;
     } catch (e) {
       profilesError = e instanceof Error ? e.message : 'failed to delete profile';
       confirmDeleteId = null;
+    } finally {
+      busy = false;
     }
   }
 
@@ -210,7 +221,7 @@
   let userPresets = $state<PresetSummary[]>([]);
   let presetsError = $state<string | null>(null);
   let newPresetName = $state('');
-  let savingPreset = $state(false);
+
   // The preset awaiting an apply-confirm (Gap Z: only when the active profile
   // has customizations to lose). null = no pending confirm.
   let pendingApplyPreset = $state<PresetSummary | null>(null);
@@ -259,27 +270,31 @@
     //     store still holds the PREVIOUS profile, so saving captures stale colors.
     // The save bypasses applyPreferencePatch (POSTs appearance directly), so it
     // needs its own guard (codex).
-    if (!name || savingPreset || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
-    savingPreset = true;
+    if (!name || busy || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
+    busy = true;
     try {
-      await createPresetRequest(name, appearance);
+      await trackWrite(createPresetRequest(name, appearance));
       newPresetName = '';
       await loadPresets();
       presetsError = null;
     } catch (e) {
       presetsError = e instanceof Error ? e.message : 'failed to save preset';
     } finally {
-      savingPreset = false;
+      busy = false;
     }
   }
 
   async function deleteUserPreset(p: PresetSummary) {
+    if (busy) return;
+    busy = true;
     try {
-      await deletePresetRequest(p.presetId);
+      await trackWrite(deletePresetRequest(p.presetId));
       await loadPresets();
       presetsError = null;
     } catch (e) {
       presetsError = e instanceof Error ? e.message : 'failed to delete preset';
+    } finally {
+      busy = false;
     }
   }
 
@@ -326,9 +341,12 @@
     >
       Profiles
     </button>
+    <button class="sidebar-item" class:active={activeSection === 'account'} disabled={busy} onclick={() => (activeSection = 'account')}>Account</button>
   </nav>
   <div class="panel">
-    {#if activeSection === 'appearance'}
+    {#if activeSection === 'account'}
+      <AccountSettings user={$page.data.user} />
+    {:else if activeSection === 'appearance'}
       <h2>Appearance</h2>
       <p class="active-profile-line">Profile: {activeProfileName}</p>
 
@@ -459,7 +477,7 @@
           />
           <button
             class="action-btn"
-            disabled={!newPresetName.trim() || savingPreset || !$preferencesOwnershipResolved || !$preferencesProfileId}
+            disabled={!newPresetName.trim() || busy || !$preferencesOwnershipResolved || !$preferencesProfileId}
             onclick={saveCurrentAsPreset}
           >
             Save current

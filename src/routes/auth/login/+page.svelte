@@ -47,6 +47,10 @@
 	<h1>Welcome to Betwixt</h1>
 	<p class="subtitle">Sign in to your writing workspace</p>
 
+	{#if $page.url.searchParams.get('signOut') === 'unconfirmed'}
+		<p class="error" role="alert">Your workspaces were closed, but sign-out could not be confirmed. You may still be signed in. <a href="/app">Return to the workspace</a> to try again.</p>
+	{/if}
+
 	{#if error}
 		<p class="error">{error}</p>
 	{/if}
