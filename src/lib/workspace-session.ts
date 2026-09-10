@@ -1,3 +1,4 @@
+import { invalidateAll } from '$app/navigation';
 import { writable } from 'svelte/store';
 import { notesStore } from '$lib/stores/notes.js';
 import { flushPendingWrites } from '$lib/stores/pending-writes.js';
@@ -59,6 +60,8 @@ async function resume(id: string) {
 	attempt = undefined;
 	localStorage.removeItem(workspaceId);
 	if (!release) holdWorkspace();
+	await ready;
+	if (attempt !== undefined) return;
 	workspaceClosing.set(false);
 }
 
@@ -90,15 +93,16 @@ export function startWorkspaceSession() {
 	workspaceId = `${WORKSPACE_PREFIX}${crypto.randomUUID()}`;
 	channel = new BroadcastChannel('betwixt-auth');
 	// A document authenticated before logout can mount after its broadcast.
-	// Register behind the coordinator and recheck a protected endpoint first.
+	// Register behind the coordinator and rerun the existing auth-only layout load.
 	void navigator.locks.request('betwixt-logout', { mode: 'shared' }, async () => {
+		const timeout = setTimeout(() => { if (active) leave(true); }, 30_000);
 		try {
-			const response = await fetch('/api/preferences', { cache: 'no-store', signal: AbortSignal.timeout(30_000) });
-			if (!response.ok) { leave(response.status !== 401); return; }
+			await invalidateAll();
 			if (!active) return;
 			holdWorkspace();
 			await ready;
 		} catch { if (active) leave(true); }
+		finally { clearTimeout(timeout); }
 	});
 	channel.onmessage = async ({ data }) => {
 		if (data.type === 'prepare') {
@@ -139,7 +143,8 @@ export async function closeWorkspaces(signOut: (signal: AbortSignal) => Promise<
 		const timeout = setTimeout(() => abort.abort(new Error('Sign-out timed out. Check your connection and other tabs, then try again.')), 30_000);
 		let leaving = false;
 		let revoking = false;
-		const participants = (await navigator.locks.query()).held?.filter((lock) => lock.name?.startsWith(WORKSPACE_PREFIX)).map((lock) => lock.name!) ?? [];
+		const locks = await navigator.locks.query();
+		const participants = [...new Set([...(locks.held ?? []), ...(locks.pending ?? [])].filter((lock) => lock.name?.startsWith(WORKSPACE_PREFIX)).map((lock) => lock.name!))];
 		try {
 			localStorage.setItem(LOGOUT_STATE_KEY, `${id}:preparing`);
 			channel.postMessage({ type: 'prepare', id });

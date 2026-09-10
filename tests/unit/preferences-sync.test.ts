@@ -1072,3 +1072,13 @@ it('keeps a second explicit drain waiting for the first save', async () => {
 	expect(saved).toBe(true);
 	expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
 });
+
+
+it.each([false, true])('stale-app sign-out requires a clean preference queue (pending: %s)', async (dirty) => {
+	mockFetch(() => fakeRes(200, { data: { schemaVersion: PREFERENCES_CODE_MAX_VERSION + 1 }, version: 1 }));
+	if (dirty) applyPreferencePatch({ set: { appearance: { accentColor: '#abc123' } } });
+	await hydratePreferences();
+	if (dirty) await expect(flushPendingPreferences()).rejects.toThrow(/still loading/);
+	else await expect(flushPendingPreferences()).resolves.toBeUndefined();
+	expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
+});

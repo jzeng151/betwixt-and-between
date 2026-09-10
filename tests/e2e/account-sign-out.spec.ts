@@ -267,3 +267,52 @@ test('a workspace document mounted after logout rechecks authentication before r
     await navigation.catch(() => {});
   }
 });
+
+
+test('a preference outage does not redirect an authenticated workspace to login', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+  await page.goto('/auth/login');
+  await signIn(page);
+  await page.route('**/api/preferences', (route) => route.fulfill({ status: 503, body: 'Preferences temporarily unavailable' }));
+  await page.reload();
+  await expect(page.getByTitle('Notes', { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/app$/);
+});
+
+test('retry waits for a workspace whose lock reacquisition is still pending', async ({ page, context }) => {
+  await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+  await page.clock.install();
+  await page.goto('/auth/login');
+  await signIn(page);
+  await expect(page.getByTitle('Notes', { exact: true })).toBeVisible();
+  const initial = await page.evaluate(async () => (await navigator.locks.query()).held!.map((lock) => lock.name));
+  const otherTab = await context.newPage();
+  await otherTab.goto('/app');
+  await expect(otherTab.getByTitle('Notes', { exact: true })).toBeVisible();
+  await page.evaluate(async (initial) => {
+    const name = (await navigator.locks.query()).held!.find((lock) => lock.name?.startsWith('betwixt-workspace:') && !initial.includes(lock.name))!.name!;
+    void navigator.locks.request(name, () => new Promise<void>((resolve) => {
+      (window as any).releaseTestLock = resolve;
+    }));
+  }, initial);
+  try {
+    await page.getByTitle('Settings', { exact: true }).click();
+    const settings = page.locator('.window[aria-label="Settings"]');
+    await settings.getByRole('button', { name: 'Account', exact: true }).click();
+    let revocations = 0;
+    page.on('request', (req) => { if (req.url().endsWith('/api/auth/sign-out')) revocations++; });
+    await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => typeof (window as any).releaseTestLock)).toBe('function');
+    await page.clock.fastForward(31_000);
+    await expect(settings.getByRole('alert')).toContainText('timed out');
+    await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+    await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+    expect(revocations).toBe(0);
+    await page.evaluate(() => (window as any).releaseTestLock());
+    await expect(page).toHaveURL(/\/auth\/login$/);
+    await expect(otherTab).toHaveURL(/\/auth\/login$/);
+  } finally {
+    if (!page.isClosed()) await page.evaluate(() => (window as any).releaseTestLock?.());
+  }
+});

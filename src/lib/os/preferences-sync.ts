@@ -481,7 +481,10 @@ function requireHydrated(): void {
 
 export async function flushPendingPreferences(): Promise<void> {
 	while (hydrations.size) await Promise.all(hydrations);
-	if (!get(_resolved)) throw new Error('Preferences are still loading; try again.');
+	if (activeFlush) await activeFlush;
+	if (!get(_resolved) && !(get(_status) === 'stale-app' && !hasPending())) {
+		throw new Error('Preferences are still loading; try again.');
+	}
 	if (timer) {
 		clearTimeout(timer);
 		timer = null;
@@ -490,8 +493,6 @@ export async function flushPendingPreferences(): Promise<void> {
 		clearTimeout(retryTimer);
 		retryTimer = null;
 	}
-	// Wait for any earlier save, then drain edits queued while it was in flight.
-	if (activeFlush) await activeFlush;
 	// ponytail: five attempts; serialize tab writers if contention routinely exceeds this.
 	for (let attempt = 0; attempt < 5; attempt++) {
 		if (await flush() !== 'retry') break;

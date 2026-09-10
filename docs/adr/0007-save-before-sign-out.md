@@ -4,7 +4,7 @@ Sign-out revokes a browser-wide session. Component-local busy flags cannot prote
 
 Notes and Settings track outstanding mutations in a shared store. Failed writes block sign-out until the user acknowledges them in Account; non-idempotent requests are not automatically replayed. Notes drafts and rejected preference patches retain their existing retry behavior.
 
-Each mounted workspace holds its own named Web Lock. Sign-out broadcasts a save request, blocks editing in each participating tab, and snapshots the participant locks. Tabs persist a successful-save acknowledgement before releasing their locks; a tab disappearing without acknowledgement cancels sign-out. A failed or unresponsive tab cancels sign-out; editing resumes only after outstanding saves settle; an exclusive coordinator lock prevents simultaneous sign-out attempts. Successful revocation broadcasts navigation to login and replaces history entries.
+Each mounted workspace holds its own named Web Lock. Sign-out broadcasts a save request, blocks editing in each participating tab, and snapshots both held and pending participant locks. Tabs persist a successful-save acknowledgement before releasing their locks; a tab disappearing without acknowledgement cancels sign-out. A failed or unresponsive tab cancels sign-out; editing resumes only after outstanding saves settle; an exclusive coordinator lock prevents simultaneous sign-out attempts. Successful revocation broadcasts navigation to login and replaces history entries.
 
 Validation includes two authenticated Firefox tabs with pending edits, a rejected remote save followed by retry, a Settings mutation surviving window closure, session revocation, and protected navigation after logout.
 
@@ -12,4 +12,6 @@ The watchdog covers both saving and session revocation, and cancels the auth fet
 
 The coordinator records its phase before sending the revocation request. If that tab closes or crashes, surviving tabs read the phase before resuming; dispatched or confirmed revocation closes their workspaces instead. The record contains only an attempt ID and phase.
 
-Workspace registration runs behind the coordinator lock and revalidates a protected endpoint before rendering, covering documents loaded before revocation but mounted after its broadcast. Acknowledgements contain only workspace/attempt IDs and are removed after each attempt.
+Workspace registration runs behind the coordinator lock and reruns the existing authentication-only app layout load before rendering, covering documents loaded before revocation but mounted after its broadcast. Acknowledgements contain only workspace/attempt IDs and are removed after each attempt.
+
+Cancellation waits for lock reacquisition before restoring editing. A terminal newer-schema preference state permits sign-out only when its pending queue is empty; it never writes a downgrade.
