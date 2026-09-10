@@ -20,6 +20,7 @@
  */
 
 import { get, writable, type Readable } from 'svelte/store';
+import { failedWrites } from '../stores/pending-writes.js';
 import {
 	preferences,
 	migrateAndMerge,
@@ -708,6 +709,7 @@ async function flush(): Promise<void> {
 		// the SAME stale value that just 409'd would loop. hydratePreferences' tail
 		// schedules the flush against the fresh version (or a hydrate retry).
 		if (profileChanged) {
+			failedWrites.update((errors) => [...errors, 'Some appearance changes could not be saved because another tab switched profiles.']);
 			// Everything still queued in `pending` was also authored against the OLD
 			// profile (this tab hasn't switched), so re-applying it onto the new
 			// active profile after hydrate would leak old-profile edits across. Drop

@@ -83,6 +83,9 @@ test('Account saves the latest Notes draft and signs out through the auth endpoi
     await expect(page.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
     expect(signOutRequests).toBe(0);
     await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+    await otherTab.evaluate(() => window.addEventListener('keydown', () => { document.body.dataset.backgroundShortcut = 'fired'; }));
+    await otherTab.keyboard.press('Control+z');
+    await expect(otherTab.locator('body')).not.toHaveAttribute('data-background-shortcut');
     releaseRename();
     releaseSave();
     expect(signOutRequests).toBe(0);

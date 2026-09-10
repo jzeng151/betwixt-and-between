@@ -31,6 +31,8 @@ async function prepare(id: string) {
 	await flushPendingWrites();
 	if (!await notesStore.flushDrafts()) throw new Error("Couldn't save your notes. Retry saving in Notes before signing out.");
 	await flushPendingPreferences();
+	// A profile-change conflict can discard an old-profile patch during this flush.
+	await flushPendingWrites();
 	// A cancelled request may finish after editing has resumed. Keep its lock.
 	if (attempt === id) release?.();
 }

@@ -12,7 +12,7 @@
 </script>
 
 {#if !$workspaceSignedOut && $workspaceReady}{@render children()}{/if}
-<dialog bind:this={progress} aria-label="Signing out" oncancel={(event) => event.preventDefault()}>
+<dialog bind:this={progress} aria-label="Signing out" onkeydown={(event) => event.stopPropagation()} oncancel={(event) => event.preventDefault()}>
 	<p role="status">Saving changes in your open tabs and signing out...</p>
 </dialog>
 

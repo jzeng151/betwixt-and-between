@@ -9,6 +9,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
+import { failedWrites, flushPendingWrites } from '../../src/lib/stores/pending-writes.js';
 import {
 	preferences,
 	versionError,
@@ -75,6 +76,7 @@ beforeEach(() => {
 	__setStorageForTesting(null);
 	__reloadFromStorageForTesting();
 	__resetSyncForTesting();
+	failedWrites.set([]);
 });
 
 describe('T4 hydratePreferences', () => {
@@ -754,6 +756,11 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		await __flushForTesting();
 		// Nothing pending to replay — the old-profile edit was dropped, not re-sent.
 		expect(calls.filter((c) => c.method === 'PATCH').length).toBe(patchesBefore);
+		// Sign-out must report the rejected edit even though the queue is empty.
+		await expect(flushPendingWrites()).rejects.toThrow(/failed to save/);
+		expect(get(failedWrites)[0]).toContain('another tab switched profiles');
+		failedWrites.set([]);
+		await expect(flushPendingWrites()).resolves.toBeUndefined();
 	});
 
 	// codex PR #69: a profile-change 409 must drop the WHOLE pending queue, not just
