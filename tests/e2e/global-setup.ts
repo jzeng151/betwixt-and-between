@@ -53,7 +53,8 @@ export default async function globalSetup() {
 		`INSERT INTO "user" (id, name, email, email_verified) VALUES ('${E2E_USER_ID}', 'E2E User', '${E2E_USER_EMAIL}', true) ON CONFLICT (id) DO NOTHING`
 	);
 
-	const server = new PGLiteSocketServer({ db, host: '127.0.0.1', port: PGLITE_PORT });
+	// Preview keeps one connection; auth tests read magic-link fixtures on the second.
+	const server = new PGLiteSocketServer({ db, host: '127.0.0.1', port: PGLITE_PORT, maxConnections: 2 });
 	try {
 		await server.start();
 	} catch (err: unknown) {

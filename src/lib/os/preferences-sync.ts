@@ -727,8 +727,9 @@ async function flush(): Promise<void> {
 	}
 	if (!res.ok) {
 		if (isClientPatchError(res.status)) {
-			// 400 / 422 — the patch is bad; drop it (looping can't fix it) and
-			// surface error.
+			// Preserve rejected edits for correction or an explicit retry; do not
+			// retry automatically. Sign-out/profile changes must see the unsaved patch.
+			requeue(patch);
 			inFlight = false;
 			_status.set('error');
 			return;

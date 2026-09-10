@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render } from '@testing-library/svelte';
 import AccountSettings from '$lib/components/apps/AccountSettings.svelte';
 
 const mocks = vi.hoisted(() => ({ notes: vi.fn(), preferences: vi.fn(), signOut: vi.fn(), logout: vi.fn() }));
-vi.mock('$lib/stores/notes.js', () => ({ notesStore: { flushDrafts: mocks.notes } }));
+vi.mock('$lib/stores/notes.js', () => ({ notesStore: { flushPendingChanges: mocks.notes } }));
 vi.mock('$lib/os/preferences-sync.js', () => ({ flushPendingPreferences: mocks.preferences, onAuthChange: mocks.logout }));
 vi.mock('$lib/auth-client.js', () => ({ authClient: { signOut: mocks.signOut } }));
 

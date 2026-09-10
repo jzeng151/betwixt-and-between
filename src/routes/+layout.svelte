@@ -12,12 +12,20 @@
 	import { PALETTE_COOKIE } from '$lib/palette-cookie.js';
 
 	let { children } = $props();
+	let signedOut = $state(false);
 
 	// Activate server sync on app load: pull the user's saved preferences from
 	// /api/preferences (401 → anonymous, localStorage-only). This is what makes
 	// applyPreferencePatch (Settings) persist server-side + follow across devices.
 	onMount(() => {
 		void hydratePreferences();
+		const channel = new BroadcastChannel('betwixt-auth');
+		channel.onmessage = (event) => {
+			if (event.data !== 'logout') return;
+			signedOut = true;
+			window.location.replace('/auth/login');
+		};
+		return () => channel.close();
 	});
 
 	// Apply theme + the user's color overrides globally whenever appearance
@@ -75,4 +83,8 @@
 	<link rel="alternate icon" type="image/x-icon" href="data:," />
 </svelte:head>
 
-{@render children()}
+{#if signedOut}
+	<p>You signed out in another tab. <a href="/auth/login" data-sveltekit-reload>Sign in again</a></p>
+{:else}
+	{@render children()}
+{/if}

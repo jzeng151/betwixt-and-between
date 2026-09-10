@@ -15,13 +15,16 @@
     progressDialog.showModal();
     let leaving = false;
     try {
-      if (!await notesStore.flushDrafts()) {
-        throw new Error("Couldn't save your notes. Your drafts are still here. Retry saving in Notes before signing out.");
+      if (!await notesStore.flushPendingChanges()) {
+        throw new Error("Couldn't save your notes. Check Notes and retry before signing out.");
       }
       await flushPendingPreferences();
       const result = await authClient.signOut();
       if (result.error) throw new Error(result.error.message ?? "Couldn't sign out. Try again.");
       await onAuthChange('logout');
+      const channel = new BroadcastChannel('betwixt-auth');
+      channel.postMessage('logout');
+      channel.close();
       // A full navigation clears every story store and open editor from memory.
       window.location.replace('/auth/login');
       leaving = true;

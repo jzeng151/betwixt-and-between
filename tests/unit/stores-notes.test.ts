@@ -182,3 +182,18 @@ describe('notesStore.deleteFolder', () => {
 		expect(get(noteEntries)).toHaveLength(0);
 	});
 });
+
+
+it.each([true, false])('waits for a pending folder rename before sign-out (success: %s)', async (ok) => {
+	let finish!: (response: Response) => void;
+	globalThis.fetch = vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; }));
+	const rename = notesStore.renameFolder('f1', 'Renamed');
+	const handledRename = rename.catch(() => undefined);
+	let drained = false;
+	const flush = notesStore.flushPendingChanges().then((saved) => { drained = true; return saved; });
+	await Promise.resolve();
+	expect(drained).toBe(false);
+	finish(makeResponse({ name: 'Renamed' }, ok, ok ? 200 : 500));
+	expect(await flush).toBe(ok);
+	await handledRename;
+});

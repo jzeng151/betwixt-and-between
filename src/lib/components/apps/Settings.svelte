@@ -114,7 +114,7 @@
   // ── Phase 3: workspace profiles (D1) ──────────────────────────────────────
   let profiles = $state<ProfileSummary[]>([]);
   let profilesError = $state<string | null>(null);
-  let busy = $state(false); // true during switch/create (disables the panel)
+  let busy = $state(false);
   let newProfileName = $state('');
   let renamingId = $state<string | null>(null);
   let renameDraft = $state('');
@@ -178,6 +178,8 @@
       cancelRename();
       return;
     }
+    if (busy) return;
+    busy = true;
     try {
       await renameProfileRequest(p.profileId, name);
       cancelRename();
@@ -185,10 +187,14 @@
       profilesError = null;
     } catch (e) {
       profilesError = e instanceof Error ? e.message : 'failed to rename profile';
+    } finally {
+      busy = false;
     }
   }
 
   async function doDeleteProfile(p: ProfileSummary) {
+    if (busy) return;
+    busy = true;
     try {
       await deleteProfileRequest(p.profileId);
       confirmDeleteId = null;
@@ -197,6 +203,8 @@
     } catch (e) {
       profilesError = e instanceof Error ? e.message : 'failed to delete profile';
       confirmDeleteId = null;
+    } finally {
+      busy = false;
     }
   }
 
@@ -212,7 +220,7 @@
   let userPresets = $state<PresetSummary[]>([]);
   let presetsError = $state<string | null>(null);
   let newPresetName = $state('');
-  let savingPreset = $state(false);
+
   // The preset awaiting an apply-confirm (Gap Z: only when the active profile
   // has customizations to lose). null = no pending confirm.
   let pendingApplyPreset = $state<PresetSummary | null>(null);
@@ -261,8 +269,8 @@
     //     store still holds the PREVIOUS profile, so saving captures stale colors.
     // The save bypasses applyPreferencePatch (POSTs appearance directly), so it
     // needs its own guard (codex).
-    if (!name || savingPreset || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
-    savingPreset = true;
+    if (!name || busy || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
+    busy = true;
     try {
       await createPresetRequest(name, appearance);
       newPresetName = '';
@@ -271,17 +279,21 @@
     } catch (e) {
       presetsError = e instanceof Error ? e.message : 'failed to save preset';
     } finally {
-      savingPreset = false;
+      busy = false;
     }
   }
 
   async function deleteUserPreset(p: PresetSummary) {
+    if (busy) return;
+    busy = true;
     try {
       await deletePresetRequest(p.presetId);
       await loadPresets();
       presetsError = null;
     } catch (e) {
       presetsError = e instanceof Error ? e.message : 'failed to delete preset';
+    } finally {
+      busy = false;
     }
   }
 
@@ -464,7 +476,7 @@
           />
           <button
             class="action-btn"
-            disabled={!newPresetName.trim() || savingPreset || !$preferencesOwnershipResolved || !$preferencesProfileId}
+            disabled={!newPresetName.trim() || busy || !$preferencesOwnershipResolved || !$preferencesProfileId}
             onclick={saveCurrentAsPreset}
           >
             Save current

@@ -18,6 +18,7 @@ import {
 } from '../../src/lib/os/preferences-store.js';
 import {
 	hydratePreferences,
+	flushPendingPreferences,
 	applyPreferencePatch,
 	switchProfile,
 	createProfile,
@@ -531,17 +532,17 @@ describe('T4 transient-failure retry (codex)', () => {
 		expect(calls.find((c) => c.method === 'PATCH')?.body.set.appearance.accentColor).toBe('#abc123');
 	});
 
-	it('drops the patch on a 400 (bad patch) without retrying', async () => {
-		mockFetch((c) =>
-			c.method === 'GET'
-				? fakeRes(200, { data: {}, version: 1, initialized: true })
-				: fakeRes(400, {})
-		);
+	it.each([400, 422])('preserves a rejected %s patch and blocks sign-out until corrected', async (status) => {
+		mockFetch((c) => c.method === 'GET'
+			? fakeRes(200, { data: {}, version: 1, initialized: true })
+			: c.body.set.appearance.accentColor === '#bad' ? fakeRes(status, {}) : fakeRes(200, { version: 2 }));
 		await hydratePreferences();
+		applyPreferencePatch({ set: { appearance: { accentColor: '#bad' } } });
+		await __flushForTesting();
+		await expect(flushPendingPreferences()).rejects.toThrow(/could not save/);
 		applyPreferencePatch({ set: { appearance: { accentColor: '#ff0000' } } });
-		await __flushForTesting(); // PATCH → 400 → dropped
-		await __flushForTesting(); // nothing pending → no retry
-		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+		await expect(flushPendingPreferences()).resolves.toBeUndefined();
+		expect(__getServerVersionForTesting()).toBe(2);
 	});
 });
 
