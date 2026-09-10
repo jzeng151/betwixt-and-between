@@ -181,3 +181,89 @@ for (const interruptedBy of ['timeout', 'closing the initiating tab']) {
   });
 
 }
+
+for (const interruption of ['close participant', 'save timeout']) {
+  test(`${interruption} cannot revoke an unconfirmed save or resume editing early`, async ({ page, context, request }) => {
+    const folder = await (await request.post('/api/notes/folders', { headers: E2E_USER_HEADERS, data: { name: 'Pending rename' } })).json();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+    await page.clock.install();
+    await page.goto('/auth/login');
+    await signIn(page);
+    const otherTab = await context.newPage();
+    await otherTab.goto('/app');
+    try {
+      await otherTab.getByTitle('Notes', { exact: true }).click();
+      const notes = otherTab.locator('.window[aria-label="Notes"]');
+      await otherTab.route(`**/api/notes/folders/${folder.id}`, async (route) => {
+        if (route.request().method() === 'PATCH') await gate;
+        await route.continue();
+      });
+      await notes.getByRole('button', { name: 'Pending rename', exact: true }).click({ button: 'right' });
+      await otherTab.getByRole('menuitem', { name: 'Rename', exact: true }).click();
+      await notes.locator('.rename-input').fill('Saved rename');
+      const started = otherTab.waitForRequest((req) => req.url().endsWith(`/api/notes/folders/${folder.id}`) && req.method() === 'PATCH');
+      await notes.locator('.rename-input').press('Enter');
+      await started;
+      let revocations = 0;
+      page.on('request', (req) => { if (req.url().endsWith('/api/auth/sign-out')) revocations++; });
+      await page.getByTitle('Settings', { exact: true }).click();
+      const settings = page.locator('.window[aria-label="Settings"]');
+      await settings.getByRole('button', { name: 'Account', exact: true }).click();
+      await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+      if (interruption === 'close participant') {
+        await otherTab.close();
+        await expect(settings.getByRole('alert')).toContainText('closed before confirming');
+      } else {
+        await page.clock.fastForward(31_000);
+        await expect(settings.getByRole('alert')).toContainText('timed out');
+        await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+        release();
+        await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).not.toBeVisible();
+        await expect(notes.getByRole('button', { name: 'Saved rename', exact: true })).toBeVisible();
+      }
+      expect(revocations).toBe(0);
+      expect(await (await page.request.get('/api/auth/get-session')).json()).not.toBeNull();
+    } finally {
+      release();
+      if (!otherTab.isClosed()) await otherTab.unrouteAll({ behavior: 'wait' });
+      await request.delete(`/api/notes/folders/${folder.id}`, { headers: E2E_USER_HEADERS });
+    }
+  });
+}
+
+test('a workspace document mounted after logout rechecks authentication before rendering', async ({ page, context }) => {
+  await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+  await page.goto('/auth/login');
+  await signIn(page);
+  const lateTab = await context.newPage();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let loaded!: () => void;
+  const authenticated = new Promise<void>((resolve) => { loaded = resolve; });
+  await lateTab.route('**/app', async (route) => {
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    loaded();
+    await gate;
+    await route.fulfill({ response });
+  });
+  const navigation = lateTab.goto('/app');
+  try {
+    await authenticated;
+    await page.getByTitle('Settings', { exact: true }).click();
+    const settings = page.locator('.window[aria-label="Settings"]');
+    await settings.getByRole('button', { name: 'Account', exact: true }).click();
+    await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page).toHaveURL(/\/auth\/login$/);
+    release();
+    await navigation;
+    await expect(lateTab).toHaveURL(/\/auth\/login$/);
+    await expect(lateTab.locator('.window')).toHaveCount(0);
+  } finally {
+    release();
+    await navigation.catch(() => {});
+  }
+});

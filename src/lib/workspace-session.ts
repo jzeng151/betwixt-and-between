@@ -13,11 +13,14 @@ let ready = Promise.resolve();
 let attempt: string | undefined;
 let controller: AbortController | undefined;
 const LOGOUT_STATE_KEY = 'betwixt-logout-state';
+const WORKSPACE_PREFIX = 'betwixt-workspace:';
+let workspaceId: string;
+let preparing: Promise<void> | undefined;
 
 function holdWorkspace() {
 	let acquired!: () => void;
 	ready = new Promise<void>((resolve) => { acquired = resolve; });
-	void navigator.locks.request('betwixt-workspace', { mode: 'shared' }, async () => {
+	void navigator.locks.request(workspaceId, async () => {
 		if (!active) return;
 		workspaceReady.set(true);
 		await new Promise<void>((resolve) => { release = resolve; acquired(); });
@@ -25,24 +28,38 @@ function holdWorkspace() {
 	});
 }
 
-async function prepare(id: string) {
+function prepare(id: string) {
 	attempt = id;
 	workspaceClosing.set(true);
-	await ready;
-	await flushPendingWrites();
-	if (!await notesStore.flushDrafts()) throw new Error("Couldn't save your notes. Retry saving in Notes before signing out.");
-	await flushPendingPreferences();
-	// A profile-change conflict can discard an old-profile patch during this flush.
-	await flushPendingWrites();
-	// A cancelled request may finish after editing has resumed. Keep its lock.
-	if (attempt === id) release?.();
+	preparing = saveWorkspace(id);
+	return preparing;
 }
 
-function resume(id: string) {
+async function saveWorkspace(id: string) {
+	await ready;
+	// Wait for every category even when one fails, so cancellation cannot expose
+	// editing while an older write can still overwrite a new edit.
+	const writes = await Promise.allSettled([flushPendingWrites(), notesStore.flushDrafts()]);
+	const preferences = await Promise.allSettled([flushPendingPreferences()]);
+	await flushPendingWrites();
+	for (const result of [...writes, ...preferences]) {
+		if (result.status === 'rejected') throw result.reason;
+		if (result.value === false) throw new Error("Couldn't save your notes. Retry saving in Notes before signing out.");
+	}
+	if (active && attempt === id) {
+		localStorage.setItem(workspaceId, id);
+		release?.();
+	}
+}
+
+async function resume(id: string) {
+	if (attempt !== id) return;
+	await preparing?.catch(() => {});
 	if (attempt !== id) return;
 	attempt = undefined;
-	workspaceClosing.set(false);
+	localStorage.removeItem(workspaceId);
 	if (!release) holdWorkspace();
+	workspaceClosing.set(false);
 }
 
 function leave(unconfirmed = false) {
@@ -63,15 +80,26 @@ function recover(id: string) {
 	else resume(id);
 }
 
-/** Hold a shared lock for this mounted workspace, including background tabs. */
+/** Register this mounted workspace, including background tabs. */
 export function startWorkspaceSession() {
 	if (!navigator.locks || typeof BroadcastChannel === 'undefined') {
 		workspaceReady.set(true);
 		return () => workspaceReady.set(false);
 	}
 	active = true;
+	workspaceId = `${WORKSPACE_PREFIX}${crypto.randomUUID()}`;
 	channel = new BroadcastChannel('betwixt-auth');
-	holdWorkspace();
+	// A document authenticated before logout can mount after its broadcast.
+	// Register behind the coordinator and recheck a protected endpoint first.
+	void navigator.locks.request('betwixt-logout', { mode: 'shared' }, async () => {
+		try {
+			const response = await fetch('/api/preferences', { cache: 'no-store', signal: AbortSignal.timeout(30_000) });
+			if (!response.ok) { leave(response.status !== 401); return; }
+			if (!active) return;
+			holdWorkspace();
+			await ready;
+		} catch { if (active) leave(true); }
+	});
 	channel.onmessage = async ({ data }) => {
 		if (data.type === 'prepare') {
 			const saving = prepare(data.id);
@@ -98,7 +126,7 @@ export function startWorkspaceSession() {
 	};
 }
 
-/** Revoke the session only after every open workspace has saved and released its lock. */
+/** Revoke only after every registered workspace explicitly confirms its save. */
 export async function closeWorkspaces(signOut: (signal: AbortSignal) => Promise<void>): Promise<void> {
 	if (!navigator.locks || typeof BroadcastChannel === 'undefined') {
 		throw new Error('This browser cannot safely sign out all tabs here. Open the site over HTTPS in an up-to-date browser and try again.');
@@ -111,6 +139,7 @@ export async function closeWorkspaces(signOut: (signal: AbortSignal) => Promise<
 		const timeout = setTimeout(() => abort.abort(new Error('Sign-out timed out. Check your connection and other tabs, then try again.')), 30_000);
 		let leaving = false;
 		let revoking = false;
+		const participants = (await navigator.locks.query()).held?.filter((lock) => lock.name?.startsWith(WORKSPACE_PREFIX)).map((lock) => lock.name!) ?? [];
 		try {
 			localStorage.setItem(LOGOUT_STATE_KEY, `${id}:preparing`);
 			channel.postMessage({ type: 'prepare', id });
@@ -118,15 +147,16 @@ export async function closeWorkspaces(signOut: (signal: AbortSignal) => Promise<
 				abort.signal.addEventListener('abort', () => reject(abort.signal.reason), { once: true });
 			});
 			await Promise.race([prepare(id), cancelled]);
-			await navigator.locks.request('betwixt-workspace', { signal: abort.signal }, async () => {
-				localStorage.setItem(LOGOUT_STATE_KEY, `${id}:pending`);
-				revoking = true;
-				await Promise.race([signOut(abort.signal), cancelled]);
-				localStorage.setItem(LOGOUT_STATE_KEY, `${id}:done`);
-				leaving = true;
-				channel.postMessage({ type: 'logout', id });
-				leave();
-			});
+			await Promise.all(participants.map((name) => navigator.locks.request(name, { signal: abort.signal }, () => {
+				if (localStorage.getItem(name) !== id) throw new Error('A workspace closed before confirming its changes were saved. Sign-out was cancelled.');
+			})));
+			localStorage.setItem(LOGOUT_STATE_KEY, `${id}:pending`);
+			revoking = true;
+			await Promise.race([signOut(abort.signal), cancelled]);
+			localStorage.setItem(LOGOUT_STATE_KEY, `${id}:done`);
+			leaving = true;
+			channel.postMessage({ type: 'logout', id });
+			leave();
 		} catch (error) {
 			if (revoking) {
 				leaving = true;
@@ -138,9 +168,10 @@ export async function closeWorkspaces(signOut: (signal: AbortSignal) => Promise<
 		} finally {
 			clearTimeout(timeout);
 			controller = undefined;
+			for (const name of participants) localStorage.removeItem(name);
 			if (!leaving) {
 				channel.postMessage({ type: 'cancel', id });
-				resume(id);
+				await resume(id);
 			}
 		}
 	});
