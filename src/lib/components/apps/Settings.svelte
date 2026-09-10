@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/stores';
+  import AccountSettings from './AccountSettings.svelte';
   import { preferences, setPreference, getPreference } from '$lib/os/preferences-store.js';
   import {
     applyPreferencePatch,
@@ -326,9 +328,12 @@
     >
       Profiles
     </button>
+    <button class="sidebar-item" class:active={activeSection === 'account'} disabled={busy} onclick={() => (activeSection = 'account')}>Account</button>
   </nav>
   <div class="panel">
-    {#if activeSection === 'appearance'}
+    {#if activeSection === 'account'}
+      <AccountSettings user={$page.data.user} />
+    {:else if activeSection === 'appearance'}
       <h2>Appearance</h2>
       <p class="active-profile-line">Profile: {activeProfileName}</p>
 

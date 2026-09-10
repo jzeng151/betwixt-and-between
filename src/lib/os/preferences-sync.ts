@@ -55,7 +55,7 @@ let serverVersion = 0; // 0 = not hydrated / anonymous (no server writes)
 let serverProfileId: string | null = null;
 let pending: PendingPatch = { set: {}, unset: [] };
 let inFlight = false;
-// The currently-running flush() promise (null when idle). drainBeforeSwitch
+// The currently-running flush() promise (null when idle). flushPendingPreferences
 // awaits it so a profile switch can't proceed while a save is still in the air —
 // otherwise that in-flight PATCH lands after the activate and is dropped by the
 // profile-change guard, losing an edit meant for the old profile (codex).
@@ -426,7 +426,7 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 	inFlight = false;
 	// Drop the previous account's in-flight flush handle: its result is already
 	// discarded (inFlight reset), and leaving it would make the new account's
-	// drainBeforeSwitch await an abandoned request that may hang until it
+	// flushPendingPreferences await an abandoned request that may hang until it
 	// completes/times out (codex).
 	activeFlush = null;
 	_userId.set(null);
@@ -475,7 +475,7 @@ function requireHydrated(): void {
 	}
 }
 
-async function drainBeforeSwitch(): Promise<void> {
+export async function flushPendingPreferences(): Promise<void> {
 	if (timer) {
 		clearTimeout(timer);
 		timer = null;
@@ -498,7 +498,7 @@ async function drainBeforeSwitch(): Promise<void> {
 	// the CURRENT profile, and the scheduled retry delivers it once the server
 	// recovers (codex). On a clean flush `pending` is already empty — no-op.
 	if (hasPending()) {
-		throw new Error('could not save pending changes before switching; try again');
+		throw new Error('could not save pending preference changes; try again');
 	}
 }
 
@@ -514,10 +514,10 @@ export async function switchProfile(profileId: string): Promise<void> {
 	// would operate on an un-reconciled base and the subsequent hydrate could
 	// overwrite the user's unsynced local prefs (codex).
 	requireHydrated();
-	// Drain BEFORE flipping `switching`: drainBeforeSwitch's flush() is itself
+	// Drain BEFORE flipping `switching`: flushPendingPreferences's flush() is itself
 	// gated by the `switching` guard, so setting it first makes the drain a no-op
 	// and silently discards the user's last pending edit (data loss).
-	await drainBeforeSwitch();
+	await flushPendingPreferences();
 	switching = true;
 	try {
 		const res = await fetchImpl(`/api/preferences/profiles/${encodeURIComponent(profileId)}/activate`, {
@@ -574,7 +574,7 @@ export async function createProfile(name: string): Promise<ProfileSummary> {
 	requireHydrated();
 	// Drain BEFORE flipping `switching` (see switchProfile) so the copied blob
 	// includes the user's latest edits and nothing pending is silently dropped.
-	await drainBeforeSwitch();
+	await flushPendingPreferences();
 	switching = true;
 	let created: ProfileSummary;
 	try {
@@ -600,7 +600,7 @@ export async function createProfile(name: string): Promise<ProfileSummary> {
 // ── flush machinery ──────────────────────────────────────────────────────────
 
 /** Launch a fire-and-forget flush, tracking its promise in `activeFlush` so
- *  drainBeforeSwitch can await an in-flight save. */
+ *  flushPendingPreferences can await an in-flight save. */
 function launchFlush(): void {
 	activeFlush = flush().finally(() => {
 		activeFlush = null;
