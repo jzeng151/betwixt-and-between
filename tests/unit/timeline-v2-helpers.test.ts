@@ -34,46 +34,50 @@ describe('widthClassForBar', () => {
 
 describe('presenceLabel', () => {
 	// Single-act, no scene context
-	it('full Act 1 → "Act 1"', () => {
-		expect(presenceLabel(1.0, 2.0)).toBe('Act 1');
+	it('full Act 2 → "Act 2"', () => {
+		expect(presenceLabel(1.0, 2.0)).toBe('Act 2');
 	});
 
-	it('first 25% of Act 1 → "first 25% of Act 1"', () => {
-		expect(presenceLabel(1.0, 1.25)).toBe('first 25% of Act 1');
+	it('first 25% of Act 2 → "first 25% of Act 2"', () => {
+		expect(presenceLabel(1.0, 1.25)).toBe('first 25% of Act 2');
 	});
 
-	it('last 50% of Act 1 → "last 50% of Act 1"', () => {
-		expect(presenceLabel(1.5, 2.0)).toBe('last 50% of Act 1');
+	it('last 50% of Act 2 → "last 50% of Act 2"', () => {
+		expect(presenceLabel(1.5, 2.0)).toBe('last 50% of Act 2');
 	});
 
-	it('mid-fraction of Act 0 → "25–75% of Act 0"', () => {
-		expect(presenceLabel(0.25, 0.75)).toBe('25–75% of Act 0');
+	it('mid-fraction of Act 1 → "25–75% of Act 1"', () => {
+		expect(presenceLabel(0.25, 0.75)).toBe('25–75% of Act 1');
 	});
 
 	// Scene-anchored single-act
-	it('full Act 1 with scenes context still says "Act 1"', () => {
-		expect(presenceLabel(1.0, 2.0, { sceneCounts: { 1: 5 } })).toBe('Act 1');
+	it('full Act 2 with scenes context still says "Act 2"', () => {
+		expect(presenceLabel(1.0, 2.0, { sceneCounts: { 1: 5 } })).toBe('Act 2');
 	});
 
-	it('one scene of Act 1 (scene 0 of 5) → "Act 1, scene 0"', () => {
-		expect(presenceLabel(1.0, 1.2, { sceneCounts: { 1: 5 } })).toBe('Act 1, scene 0');
+	it('one scene of Act 2 (scene 1 of 5) → "Act 2, scene 1"', () => {
+		expect(presenceLabel(1.0, 1.2, { sceneCounts: { 1: 5 } })).toBe('Act 2, scene 1');
 	});
 
-	it('scenes 1–3 of Act 1 (5 scenes) → "Act 1, scenes 1–3 of 5"', () => {
-		expect(presenceLabel(1.2, 1.8, { sceneCounts: { 1: 5 } })).toBe('Act 1, scenes 1–3 of 5');
+	it('scenes 2–4 of Act 2 (5 scenes) → "Act 2, scenes 2–4 of 5"', () => {
+		expect(presenceLabel(1.2, 1.8, { sceneCounts: { 1: 5 } })).toBe('Act 2, scenes 2–4 of 5');
 	});
 
 	// Multi-act
-	it('Act 0 → end of Act 2 → "start of Act 0 → end of Act 2"', () => {
-		expect(presenceLabel(0, 3)).toBe('start of Act 0 → end of Act 2');
+	it('Act 1 → end of Act 3 → "start of Act 1 → end of Act 3"', () => {
+		expect(presenceLabel(0, 3)).toBe('start of Act 1 → end of Act 3');
 	});
 
-	it('middle of Act 0 through end of Act 2 → "50% into Act 0 → end of Act 2"', () => {
-		expect(presenceLabel(0.5, 3.0)).toBe('50% into Act 0 → end of Act 2');
+	it('middle of Act 1 through end of Act 3 → "50% into Act 1 → end of Act 3"', () => {
+		expect(presenceLabel(0.5, 3.0)).toBe('50% into Act 1 → end of Act 3');
 	});
 
-	it('mid Act 1 → mid Act 2 → "50% into Act 1 → 75% into Act 2"', () => {
-		expect(presenceLabel(1.5, 2.75)).toBe('50% into Act 1 → 75% into Act 2');
+	it('mid Act 2 → mid Act 3 → "50% into Act 2 → 75% into Act 3"', () => {
+		expect(presenceLabel(1.5, 2.75)).toBe('50% into Act 2 → 75% into Act 3');
+	});
+	it('uses authored act names', () => {
+		expect(presenceLabel(0, 1, { actNames: ['The departure'] })).toBe('The departure');
+		expect(presenceLabel(0, 2, { actNames: ['The departure', 'Homecoming'] })).toBe('start of The departure → end of Homecoming');
 	});
 });
 

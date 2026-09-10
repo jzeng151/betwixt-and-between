@@ -1,6 +1,11 @@
+<script lang="ts">
+  let { onContinue }: { onContinue: () => void } = $props();
+</script>
+
 <div class="too-small-inner">
   <p class="app-name">betwixt-and-between</p>
-  <p class="message">Works best on a larger screen.<br>Expand your browser window to continue.</p>
+  <p class="message">Works best on a larger screen.<br>Expand your browser window for more room, or continue at this size.</p>
+  <button onclick={onContinue}>Continue at this size</button>
 </div>
 
 <style>

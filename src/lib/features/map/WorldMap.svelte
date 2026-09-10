@@ -1576,13 +1576,14 @@
 		showRegionForm = true;
 	}
 
-	function startPixiDraw(stageX: number, stageY: number) {
+	function startPixiDraw(stageX?: number, stageY?: number) {
+		if (pixiDrawingActive) return;
 		// Beginning a polygon draw is region authoring: pin so PR2 cycling can't
 		// switch maps before the user saves, which would create the new region on
 		// the wrong map (the save handler runs against the live activeMapId).
 		// (Codex PR #72)
 		pinView();
-		pixiDrawSeed = { x: stageX, y: stageY };
+		pixiDrawSeed = stageX === undefined || stageY === undefined ? null : { x: stageX, y: stageY };
 		pixiDrawingActive = true;
 	}
 	function handlePixiPolygonCommit(polygon: number[][]) {
@@ -2521,7 +2522,7 @@
 					isInScope={$isInScope}
 					events={causeEvents}
 					onEventCommitted={revealAuthoredTime}
-					onDrawHere={startPixiDraw}
+					onDrawHere={pixiDrawingActive ? undefined : startPixiDraw}
 					onEditRegion={(id) => startEditRegion(id)}
 					onDeleteRegion={(id) => void handleDeleteRegion(id)}
 					onDrillIntoLocation={(locId) => {
@@ -2673,7 +2674,10 @@
 			     Location-scoped placements so they're disabled without a Location. -->
 			<MapToolSelector
 				tool={activeTool}
-				onSelect={(t) => (activeTool = t)}
+				onSelect={(t) => { cancelPixiDraw(); activeTool = t; }}
+				onDraw={() => { if (pixiDrawingActive) cancelPixiDraw(); else { activeTool = 'select'; startPixiDraw(); } }}
+				drawing={pixiDrawingActive}
+				drawEnabled={!dataLoading && !mapLoading && !mapTransitionActive && !showRegionForm}
 				placeEnabled={!!activeMap?.locationId}
 				moveEnabled={!!activeMap?.locationId}
 				canUndo={canUndo && !mapLoading && !mapTransitionActive}
@@ -2801,8 +2805,8 @@
 					<p class="upload-error">{uploadError} <button onclick={() => uploadError = null}>✕</button></p>
 				{/if}
 			</div>
-		{:else if $mapRegions.length === 0 && !showRegionForm}
-			<div class="hint-overlay">Use the draw tool to create regions linked to locations.</div>
+		{:else if scopedRegions.length === 0 && !showRegionForm && !pixiDrawingActive && activeTool === 'select'}
+			<div class="hint-overlay">Choose Draw region, then click the map to outline a location.</div>
 		{/if}
 	</div>
 {/if}
@@ -3185,15 +3189,9 @@
 		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 	}
 	.hint-overlay {
-		position: absolute;
-		/* bottom-center: the hint shows only on an empty new map ($mapRegions
-		   is empty), which is the moment the .map-toolbar is most needed for
-		   picking a Location. Centering at top:12 collides horizontally with
-		   the toolbar's controls. Bottom is unused real estate. */
-		bottom: 16px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 1000;
+		flex-shrink: 0;
+		margin: 6px 10px;
+		text-align: center;
 		background: color-mix(in srgb, var(--color-surface) 92%, transparent);
 		backdrop-filter: blur(8px);
 		-webkit-backdrop-filter: blur(8px);

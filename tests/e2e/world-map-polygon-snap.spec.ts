@@ -11,9 +11,9 @@
  *   - Shift held  → the user-placed vertices land on grid corners.
  *   - Shift absent → at least one user-placed vertex is off-grid.
  *
- * The first vertex is seeded by the "Draw region here" context-menu click
- * (raw, never snapped), so assertions target the subsequently-placed
- * vertices (polygon[1..]).
+ * The Shift case starts from the context menu; the free-form case starts
+ * from the Draw region toolbar button. Assertions target vertices placed
+ * after the first point.
  */
 
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
@@ -57,6 +57,11 @@ async function drawTriangleRegion(
 	const win = page.locator('.window[aria-label="World Map"]');
 	const canvas = win.locator('.pixi-stage canvas');
 	await expect(canvas).toBeVisible({ timeout: 10000 });
+	const hintBox = await win.locator('.hint-overlay').boundingBox();
+	const toolsBox = await win.getByRole('toolbar', { name: 'Map tools' }).boundingBox();
+	expect(hintBox).not.toBeNull();
+	expect(toolsBox).not.toBeNull();
+	expect(hintBox!.y).toBeGreaterThanOrEqual(toolsBox!.y + toolsBox!.height);
 	const box = await canvas.boundingBox();
 	if (!box) throw new Error('canvas has no bounding box');
 
@@ -65,12 +70,23 @@ async function drawTriangleRegion(
 	const v1 = { x: box.x + box.width * 0.7, y: box.y + box.height * 0.32 };
 	const v2 = { x: box.x + box.width * 0.5, y: box.y + box.height * 0.72 };
 
-	// Right-click → context menu → seed the first vertex.
-	await canvas.click({ button: 'right', position: { x: seed.x - box.x, y: seed.y - box.y } });
-	await page.locator('text=Draw region here').first().click();
+	if (withShift) {
+		await canvas.click({ button: 'right', position: { x: seed.x - box.x, y: seed.y - box.y } });
+		await page.locator('text=Draw region here').first().click();
+	} else {
+		await win.getByRole('button', { name: 'Brush', exact: true }).click();
+		await expect(win.locator('.hint-overlay')).toBeHidden();
+		await win.getByRole('button', { name: 'Draw region', exact: true }).click();
+		await expect(win.getByRole('button', { name: 'Draw region', exact: true })).toHaveAttribute('aria-pressed', 'true');
+		await page.mouse.click(seed.x, seed.y);
+	}
 
 	if (withShift) await page.keyboard.down('Shift');
 	await page.mouse.click(v1.x, v1.y);
+	if (!withShift) {
+		await canvas.click({ button: 'right', position: { x: box.width * 0.8, y: box.height * 0.6 } });
+		await expect(page.getByRole('menuitem', { name: /Draw region here/ })).toBeDisabled();
+	}
 	await page.mouse.click(v2.x, v2.y);
 	if (withShift) await page.keyboard.up('Shift');
 

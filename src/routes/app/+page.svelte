@@ -7,17 +7,23 @@
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
 
+  let allowSmallScreen = $state(false);
+  let loaded = false;
+
+  function loadCoreStores() {
+    if (loaded) return;
+    loaded = true;
+    void Promise.allSettled([entities.load(), relationships.load()]);
+  }
+
   onMount(() => {
     const supported = window.matchMedia('(min-width: 1280px)');
-    let loaded = false;
-    function loadCoreStores() {
-      if (loaded || !supported.matches) return;
-      loaded = true;
-      void Promise.all([entities.load(), relationships.load()]);
+    function loadIfSupported() {
+      if (supported.matches) loadCoreStores();
     }
-    loadCoreStores();
-    supported.addEventListener('change', loadCoreStores);
-    return () => supported.removeEventListener('change', loadCoreStores);
+    loadIfSupported();
+    supported.addEventListener('change', loadIfSupported);
+    return () => supported.removeEventListener('change', loadIfSupported);
   });
 </script>
 
@@ -25,11 +31,11 @@
   <title>Betwixt &amp; Between</title>
 </svelte:head>
 
-<div class="too-small" style="display:none; height:100vh; align-items:center; justify-content:center; background:var(--color-desktop)">
-  <TooSmall />
+<div class="too-small" class:small-screen-accepted={allowSmallScreen} style="display:none; height:100vh; align-items:center; justify-content:center; background:var(--color-desktop)">
+  <TooSmall onContinue={() => { allowSmallScreen = true; loadCoreStores(); }} />
 </div>
 
-<div class="app-shell">
+<div class="app-shell" class:small-screen-accepted={allowSmallScreen}>
   <Desktop />
   <WindowManager />
   <Taskbar />

@@ -21,6 +21,9 @@
 	interface Props {
 		tool: MapTool;
 		onSelect: (tool: MapTool) => void;
+		onDraw: () => void;
+		drawing: boolean;
+		drawEnabled: boolean;
 		placeEnabled: boolean;
 		moveEnabled: boolean;
 		// Undo/redo live here (always-visible chrome) rather than inside the brush
@@ -34,6 +37,9 @@
 	let {
 		tool,
 		onSelect,
+		onDraw,
+		drawing,
+		drawEnabled,
 		placeEnabled,
 		moveEnabled,
 		canUndo = false,
@@ -69,8 +75,8 @@
 		<button
 			type="button"
 			class="tool-button"
-			class:active={tool === t.id}
-			aria-pressed={tool === t.id}
+			class:active={!drawing && tool === t.id}
+			aria-pressed={!drawing && tool === t.id}
 			disabled={!enabled(t.id)}
 			title={enabled(t.id) ? t.hint : `${t.label} needs a linked Location`}
 			onclick={() => onSelect(t.id)}
@@ -79,6 +85,9 @@
 			<span class="tool-label">{t.label}</span>
 		</button>
 	{/each}
+
+	<button type="button" class="tool-button" class:active={drawing} aria-pressed={drawing}
+		disabled={!drawEnabled} onclick={onDraw} title="Draw a region linked to a location">Draw region</button>
 
 	<div class="history-controls" aria-label="History">
 		<button
@@ -105,6 +114,7 @@
 <style>
 	.tool-selector {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 4px;
 		padding: 6px 10px;
 		background: var(--color-panel, rgba(0, 0, 0, 0.6));
