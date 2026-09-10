@@ -23,7 +23,7 @@
       if (result.error) throw new Error(result.error.message ?? "Couldn't sign out. Try again.");
       await onAuthChange('logout');
       // A full navigation clears every story store and open editor from memory.
-      window.location.assign('/auth/login');
+      window.location.replace('/auth/login');
       leaving = true;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Couldn't sign out. Try again.";

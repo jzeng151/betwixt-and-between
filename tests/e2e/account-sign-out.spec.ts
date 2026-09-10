@@ -8,6 +8,7 @@ test('Account saves the latest Notes draft and signs out through the auth endpoi
   const entry = await (await request.post('/api/notes/entries', { data: { name: 'Last edit', body: '', parentId: folder.id } })).json();
   try {
     await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+    await page.goto('/auth/login');
     await page.goto('/app');
     await page.getByTitle('Notes', { exact: true }).click();
     const notes = page.locator('.window[aria-label="Notes"]');
@@ -34,6 +35,9 @@ test('Account saves the latest Notes draft and signs out through the auth endpoi
     await expect(page).toHaveURL(/\/auth\/login$/);
     await expect(page.getByRole('heading', { name: 'Welcome to Betwixt' })).toBeVisible();
     expect((await (await request.get(`/api/notes/entries/${entry.id}`)).json()).data.body).toBe('Keep this after sign-out.');
+    await expect(page.locator('.window')).toHaveCount(0);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/auth\/login$/);
     await expect(page.locator('.window')).toHaveCount(0);
   } finally {
     await request.delete(`/api/notes/folders/${folder.id}`);
