@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
+  import { trackWrite } from '$lib/stores/pending-writes.js';
   import AccountSettings from './AccountSettings.svelte';
   import { preferences, setPreference, getPreference } from '$lib/os/preferences-store.js';
   import {
@@ -137,7 +138,7 @@
     if (p.isActive || busy) return;
     busy = true;
     try {
-      await switchProfile(p.profileId);
+      await trackWrite(switchProfile(p.profileId));
       await loadProfiles();
       profilesError = null;
     } catch (e) {
@@ -152,7 +153,7 @@
     if (!name || busy) return;
     busy = true;
     try {
-      await createProfile(name);
+      await trackWrite(createProfile(name));
       newProfileName = '';
       await loadProfiles();
       profilesError = null;
@@ -181,7 +182,7 @@
     if (busy) return;
     busy = true;
     try {
-      await renameProfileRequest(p.profileId, name);
+      await trackWrite(renameProfileRequest(p.profileId, name));
       cancelRename();
       await loadProfiles();
       profilesError = null;
@@ -196,7 +197,7 @@
     if (busy) return;
     busy = true;
     try {
-      await deleteProfileRequest(p.profileId);
+      await trackWrite(deleteProfileRequest(p.profileId));
       confirmDeleteId = null;
       await loadProfiles();
       profilesError = null;
@@ -272,7 +273,7 @@
     if (!name || busy || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
     busy = true;
     try {
-      await createPresetRequest(name, appearance);
+      await trackWrite(createPresetRequest(name, appearance));
       newPresetName = '';
       await loadPresets();
       presetsError = null;
@@ -287,7 +288,7 @@
     if (busy) return;
     busy = true;
     try {
-      await deletePresetRequest(p.presetId);
+      await trackWrite(deletePresetRequest(p.presetId));
       await loadPresets();
       presetsError = null;
     } catch (e) {

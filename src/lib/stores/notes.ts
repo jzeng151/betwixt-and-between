@@ -1,4 +1,5 @@
 import { get, writable } from 'svelte/store';
+import { trackWrite } from './pending-writes.js';
 
 type NoteFolder = {
 	id: string;
@@ -23,22 +24,6 @@ function createNotesStore() {
 	const saveState = writable<'saved' | 'unsaved' | 'saving' | 'error'>('saved');
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
 	const saving = new Map<string, Promise<boolean>>();
-	const mutations = new Set<Promise<unknown>>();
-
-	function trackMutation<T>(task: Promise<T>): Promise<T> {
-		mutations.add(task);
-		void task.then(() => mutations.delete(task), () => mutations.delete(task));
-		return task;
-	}
-
-	async function flushPendingChanges(): Promise<boolean> {
-		try {
-			await Promise.all(mutations);
-			return await flushDrafts();
-		} catch {
-			return false;
-		}
-	}
 	const saveErrors = new Set<string>();
 	const entryVersions = new Map<string, number>();
 	let version = 0;
@@ -256,15 +241,14 @@ function createNotesStore() {
 		saveState,
 		editDraft,
 		flushDrafts,
-		flushPendingChanges,
 		loadFolders,
 		loadEntries,
-		createFolder: (...args: Parameters<typeof createFolder>) => trackMutation(createFolder(...args)),
-		renameFolder: (...args: Parameters<typeof renameFolder>) => trackMutation(renameFolder(...args)),
-		deleteFolder: (...args: Parameters<typeof deleteFolder>) => trackMutation(deleteFolder(...args)),
-		createEntry: (...args: Parameters<typeof createEntry>) => trackMutation(createEntry(...args)),
-		updateEntry: (...args: Parameters<typeof updateEntry>) => trackMutation(updateEntry(...args)),
-		deleteEntry: (...args: Parameters<typeof deleteEntry>) => trackMutation(deleteEntry(...args))
+		createFolder: (...args: Parameters<typeof createFolder>) => trackWrite(createFolder(...args)),
+		renameFolder: (...args: Parameters<typeof renameFolder>) => trackWrite(renameFolder(...args)),
+		deleteFolder: (...args: Parameters<typeof deleteFolder>) => trackWrite(deleteFolder(...args)),
+		createEntry: (...args: Parameters<typeof createEntry>) => trackWrite(createEntry(...args)),
+		updateEntry: (...args: Parameters<typeof updateEntry>) => trackWrite(updateEntry(...args)),
+		deleteEntry: (...args: Parameters<typeof deleteEntry>) => trackWrite(deleteEntry(...args))
 	};
 }
 
