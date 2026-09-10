@@ -15,3 +15,5 @@ The coordinator records its phase before sending the revocation request. If that
 Workspace registration runs behind the coordinator lock and reruns the existing authentication-only app layout load before rendering, covering documents loaded before revocation but mounted after its broadcast. Acknowledgements contain only workspace/attempt IDs and are removed after each attempt.
 
 Cancellation waits for lock reacquisition before restoring editing. A terminal newer-schema preference state permits sign-out only when its pending queue is empty; it never writes a downgrade.
+
+Startup callbacks retain their mount lifetime, and lock callbacks retain their workspace identity, so navigation away and back cannot register stale work or release a new mount’s lock.

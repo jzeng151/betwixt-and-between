@@ -19,13 +19,14 @@ let workspaceId: string;
 let preparing: Promise<void> | undefined;
 
 function holdWorkspace() {
+	const id = workspaceId;
 	let acquired!: () => void;
 	ready = new Promise<void>((resolve) => { acquired = resolve; });
-	void navigator.locks.request(workspaceId, async () => {
-		if (!active) return;
+	void navigator.locks.request(id, async () => {
+		if (!active || workspaceId !== id) { acquired(); return; }
 		workspaceReady.set(true);
 		await new Promise<void>((resolve) => { release = resolve; acquired(); });
-		release = undefined;
+		if (workspaceId === id) release = undefined;
 	});
 }
 
@@ -89,19 +90,21 @@ export function startWorkspaceSession() {
 		workspaceReady.set(true);
 		return () => workspaceReady.set(false);
 	}
+	let mounted = true;
 	active = true;
 	workspaceId = `${WORKSPACE_PREFIX}${crypto.randomUUID()}`;
 	channel = new BroadcastChannel('betwixt-auth');
 	// A document authenticated before logout can mount after its broadcast.
 	// Register behind the coordinator and rerun the existing auth-only layout load.
 	void navigator.locks.request('betwixt-logout', { mode: 'shared' }, async () => {
-		const timeout = setTimeout(() => { if (active) leave(true); }, 30_000);
+		if (!mounted) return;
+		const timeout = setTimeout(() => { if (mounted) leave(true); }, 30_000);
 		try {
 			await invalidateAll();
-			if (!active) return;
+			if (!mounted) return;
 			holdWorkspace();
 			await ready;
-		} catch { if (active) leave(true); }
+		} catch { if (mounted) leave(true); }
 		finally { clearTimeout(timeout); }
 	});
 	channel.onmessage = async ({ data }) => {
@@ -123,6 +126,7 @@ export function startWorkspaceSession() {
 		}
 	};
 	return () => {
+		mounted = false;
 		active = false;
 		workspaceReady.set(false);
 		release?.();
