@@ -1027,3 +1027,48 @@ it('waits for initial hydration to reconcile local preferences before sign-out',
 	await Promise.all([hydration, flush]);
 	expect(calls.find((c) => c.method === 'PATCH')?.body.set.appearance.accentColor).toBe('#abc123');
 });
+
+
+it('finishes stale-version conflict recovery before reporting a sign-out save failure', async () => {
+	let version = 1;
+	let patches = 0;
+	mockFetch((c) => {
+		if (c.method === 'GET') return fakeRes(200, { data: {}, version, initialized: true });
+		patches++;
+		if (patches === 1) {
+			version = 2;
+			return fakeRes(409, { message: 'stale version' });
+		}
+		return fakeRes(200, { version: 3 });
+	});
+	await hydratePreferences();
+	applyPreferencePatch({ set: { appearance: { accentColor: '#abc123' } } });
+	await expect(flushPendingPreferences()).resolves.toBeUndefined();
+	const writes = calls.filter((c) => c.method === 'PATCH');
+	expect(writes).toHaveLength(2);
+	expect(writes[1].body.version).toBe(2);
+	expect(writes[1].body.set.appearance.accentColor).toBe('#abc123');
+	expect(get(failedWrites)).toEqual([]);
+});
+
+
+it('keeps a second explicit drain waiting for the first save', async () => {
+	let finish!: () => void;
+	const gate = new Promise<void>((resolve) => { finish = resolve; });
+	mockFetch(async (c) => {
+		if (c.method === 'GET') return fakeRes(200, { data: {}, version: 1, initialized: true });
+		await gate;
+		return fakeRes(200, { version: 2 });
+	});
+	await hydratePreferences();
+	applyPreferencePatch({ set: { appearance: { accentColor: '#abc123' } } });
+	const first = flushPendingPreferences();
+	let saved = false;
+	const second = flushPendingPreferences().then(() => { saved = true; });
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	expect(saved).toBe(false);
+	finish();
+	await Promise.all([first, second]);
+	expect(saved).toBe(true);
+	expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+});
