@@ -10,6 +10,7 @@
 -->
 
 <script lang="ts">
+  import { ROLE_OPTIONS, roleColor, initials } from '$lib/character-roles.js';
 	import { getCharacterIcon } from '$lib/icons/registry.js';
 
 	interface Props {
@@ -36,29 +37,6 @@
 		onToggleIconPicker,
 		onAvatarChange
 	}: Props = $props();
-
-	// Role badge colors now read their OWN --color-role-* tokens (eng-review
-	// T1A) so customizing a relationship-edge color no longer silently recolors
-	// a role badge. app.css defaults are seeded from the prior values, so the
-	// badge looks identical until the user customizes a role color.
-	const ROLE_OPTIONS: { value: string; color: string }[] = [
-		{ value: '',            color: 'var(--color-text-muted)' },
-		{ value: 'Protagonist', color: 'var(--color-role-protagonist)' },
-		{ value: 'Antagonist',  color: 'var(--color-role-antagonist)' },
-		{ value: 'Ally',        color: 'var(--color-role-ally)' },
-		{ value: 'Rival',       color: 'var(--color-role-rival)' },
-		{ value: 'Mentor',      color: 'var(--color-role-mentor)' },
-		{ value: 'Supporting',  color: 'var(--color-role-supporting)' }
-	];
-
-	function roleColor(r: string): string {
-		const lower = r.toLowerCase();
-		return ROLE_OPTIONS.find((o) => o.value.toLowerCase() === lower)?.color ?? 'var(--color-text-muted)';
-	}
-
-	function initials(name: string): string {
-		return name.split(' ').map((w) => w[0] ?? '').join('').slice(0, 2).toUpperCase() || '?';
-	}
 
 	const iconEntry = $derived(getCharacterIcon(icon));
 

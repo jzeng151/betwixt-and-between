@@ -206,9 +206,7 @@
       }))
   );
 
-  // Single source of truth for "edges currently in the graph": both endpoints
-  // rendered. graphEdges + layoutByType's edge list both project from this so
-  // the filter predicate stays in lockstep.
+  // Only draw relationships whose endpoints are rendered.
   const visibleRelationships = $derived(filterVisibleRelationships($relationships, renderedEntityIds));
 
   const graphEdges = $derived.by(() => {
@@ -288,7 +286,7 @@
   let initialPositions = $state<Record<string, NodePosition>>({});
   // Pinned set: ids whose pinned column is 1 in this window's
   // window_canvas_state. Drives both the pin/unpin menu state and C5
-  // layout-by-type (pinned nodes don't move during dagre).
+  // layout-by-type (pinned nodes stay put).
   let pinnedSet = $state<Set<string>>(new Set());
   // Live mirror of current node positions. The canvas owns nodePos
   // internally, but C5 needs to read centroid-of-pinned to compute the
@@ -465,7 +463,7 @@
       let optimisticApplied = false;
 
       try {
-        const { layoutByType: runLayout } = await import('$lib/features/graph/dagre-layout.js');
+        const { layoutByType: runLayout } = await import('$lib/features/graph/type-layout.js');
         const typeOrder = win?.typeOrder ?? DEFAULT_TYPE_ORDER;
 
         // Build inputs from the current visible set. Notes excluded as in
@@ -480,10 +478,6 @@
         }));
         // Reuse the same predicate that drives graphEdges — keeps the
         // visible-edge contract DRY.
-        const layoutEdges = visibleRelationships.map((r) => ({
-          fromId: r.fromId,
-          toId: r.toId
-        }));
         // Only include currently-visible entities. currentPositions accumulates
         // stale entries from prior display states; stale pinned positions skew
         // pinnedCentroid and shift the unpinned cluster away from visible pins.
@@ -492,9 +486,8 @@
           .filter(([id]) => displayEntityIdSet.has(id))
           .map(([id, p]) => ({ id, x: p.x, y: p.y }));
 
-        const newPositions = await runLayout({
+        const newPositions = runLayout({
           nodes: layoutNodes,
-          edges: layoutEdges,
           pinnedIds: pinnedSet,
           currentPositions: positionsForCentroid,
           typeOrder

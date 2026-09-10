@@ -198,9 +198,7 @@
 
   const presentRelTypes = $derived(buildPresentRelTypes($relationships, displayEntityIdSet));
 
-  // Single source of truth for "edges currently in the graph": both
-  // endpoints rendered. graphEdges + layoutByType's edge list both project
-  // from this so the filter stays in lockstep.
+  // Only draw relationships whose endpoints are rendered.
   const visibleRelationships = $derived(filterVisibleRelationships($relationships, renderedEntityIds));
 
   const graphEdges = $derived.by(() => {
@@ -332,7 +330,7 @@
     layoutQueueDepth++;
     layoutLock = layoutLock.then(async () => {
       try {
-        const { layoutByType: runLayout } = await import('$lib/features/graph/dagre-layout.js');
+        const { layoutByType: runLayout } = await import('$lib/features/graph/type-layout.js');
         // Over-estimate per-node rendered width: name @ ~9px/char +
         // 100px constant covers padding, gap, and the type-tag suffix
         // (e.g. "Character" alone is ~50px at the smaller font).
@@ -345,15 +343,10 @@
           width: Math.max(180, e.name.length * 9 + 100),
           height: 32
         }));
-        const layoutEdges = visibleRelationships.map((r) => ({
-          fromId: r.fromId,
-          toId: r.toId
-        }));
-        // No pinned ids on StoryGraph; pass empty set so dagre lays out
+        // No pinned ids on StoryGraph; pass an empty set to lay out
         // every visible node.
-        const newPositions = await runLayout({
+        const newPositions = runLayout({
           nodes: layoutNodes,
-          edges: layoutEdges,
           pinnedIds: new Set<string>(),
           currentPositions: Object.entries(initialPositions).map(([id, p]) => ({
             id,

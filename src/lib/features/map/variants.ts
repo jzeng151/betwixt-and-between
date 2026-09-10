@@ -58,24 +58,3 @@ export function resolveActiveVariant(
 	if (opts?.strict) return null;
 	return candidates[0] ?? null;
 }
-
-/**
- * All variants of a Location, sorted by start_position (default first).
- * Used by the variant editor + the map switcher to group + label variants.
- */
-export function variantsForLocation(
-	maps: WorldMap[],
-	locationId: string | null | undefined
-): WorldMap[] {
-	if (!locationId) return [];
-	return maps
-		.filter((m) => m.locationId === locationId)
-		.sort((a, b) => {
-			const aDefault = a.startPosition === null;
-			const bDefault = b.startPosition === null;
-			if (aDefault && !bDefault) return -1;
-			if (bDefault && !aDefault) return 1;
-			if (aDefault && bDefault) return 0;
-			return (a.startPosition ?? 0) - (b.startPosition ?? 0);
-		});
-}

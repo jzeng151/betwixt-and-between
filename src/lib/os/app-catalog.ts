@@ -59,8 +59,3 @@ export const DOCK_ORDER: AppId[] = [
 	'notes',
 	'settings'
 ];
-
-/** Predicate: render this app's window edge-to-edge (no content padding)? */
-export function isBare(appId: AppId): boolean {
-	return APP_CATALOG[appId].bare === true;
-}

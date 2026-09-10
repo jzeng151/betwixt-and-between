@@ -8,8 +8,7 @@ import { windowStore } from '$lib/os/windows-store.js';
 import { openEntity } from '$lib/navigation.js';
 
 vi.mock('$lib/navigation.js', () => ({
-	openEntity: vi.fn(),
-	openEntityDetail: vi.fn()
+	openEntity: vi.fn()
 }));
 
 function makeResponse(body: unknown, ok = true, status = 200): Response {
