@@ -1,13 +1,15 @@
 <script lang="ts">
   import { notesStore, noteFolders, noteEntries, type NoteEntry } from '$lib/stores/notes.js';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import ContextMenu from '$lib/os/ContextMenu.svelte';
 
   let selectedFolderId = $state<string | null>(null);
   let selectedEntryId = $state<string | null>(null);
   let editName = $state('');
   let editBody = $state('');
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  const saveState = notesStore.saveState;
+  let loadError = $state(false);
+  let loadRequest = 0;
 
   // Tweak 1: New folder dialog
   let showNewFolderDialog = $state(false);
@@ -47,9 +49,8 @@
       { label: 'Open', onSelect: () => selectFolder(id) },
       {
         label: 'New Note...',
-        onSelect: () => {
-          selectFolder(id);
-          addEntryInFolder(id);
+        onSelect: async () => {
+          if (await selectFolder(id)) await addEntryInFolder(id);
         }
       },
       {
@@ -68,27 +69,35 @@
 
   // ── Helpers ─────────────────────────────────────────────────────────────
 
-  function debouncedSave() {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      if (selectedEntryId && (editName || editBody)) {
-        notesStore.updateEntry(selectedEntryId, { name: editName, body: editBody });
-      }
-    }, 300);
+  function editField(field: 'name' | 'body', value: string) {
+    if (field === 'name') editName = value;
+    else editBody = value;
+    if (selectedEntryId) notesStore.editDraft(selectedEntryId, { name: editName, body: editBody });
   }
 
-  function selectFolder(id: string) {
+  async function selectFolder(id: string): Promise<boolean> {
+    const request = ++loadRequest;
+    if (selectedEntryId && !await notesStore.flushDrafts(selectedEntryId)) return false;
+    if (request !== loadRequest) return false;
     selectedFolderId = id;
     selectedEntryId = null;
     editName = '';
     editBody = '';
     renamingFolderId = null;
-    notesStore.loadEntries(id);
+    try {
+      await notesStore.loadEntries(id);
+      if (request !== loadRequest) return false;
+      loadError = false;
+      return true;
+    } catch {
+      if (request === loadRequest) loadError = true;
+      return false;
+    }
   }
 
   function selectEntry(id: string) {
     selectedEntryId = id;
-    const entry = $noteEntries.find((e) => e.id === id);
+    const entry = notesStore.drafts.get(id) ?? $noteEntries.find((e) => e.id === id);
     editName = entry?.name ?? '';
     editBody = entry?.body ?? '';
   }
@@ -102,6 +111,7 @@
   async function confirmNewFolder() {
     const name = newFolderName.trim();
     if (!name) return;
+    if (selectedEntryId && !await notesStore.flushDrafts(selectedEntryId)) return;
     const folder = await notesStore.createFolder(name);
     showNewFolderDialog = false;
     newFolderName = '';
@@ -119,17 +129,11 @@
   }
 
   // Entries
-  async function addEntry() {
-    if (!selectedFolderId) return;
-    const entry = await notesStore.createEntry('Untitled', selectedFolderId);
-    selectedEntryId = entry.id;
-    editName = entry.name;
-    editBody = '';
-  }
-
   async function addEntryInFolder(folderId: string) {
+    if (folderId !== selectedFolderId) return;
+    const request = loadRequest;
     const entry = await notesStore.createEntry('Untitled', folderId);
-    if (folderId === selectedFolderId) {
+    if (request === loadRequest && folderId === selectedFolderId) {
       selectedEntryId = entry.id;
       editName = entry.name;
       editBody = '';
@@ -156,19 +160,6 @@
     contextMenu = { folderId, x: e.clientX, y: e.clientY };
   }
 
-  // Tweak 4: Click-to-rename
-  function onFolderClick(folderId: string) {
-    if (selectedFolderId === folderId) {
-      const folder = $noteFolders.find((f) => f.id === folderId);
-      if (folder) {
-        renameDraft = folder.name;
-        renamingFolderId = folderId;
-      }
-    } else {
-      selectFolder(folderId);
-    }
-  }
-
   function handleRenameKeydown(e: KeyboardEvent, folderId: string) {
     if (e.key === 'Enter') {
       commitRename(folderId);
@@ -185,10 +176,18 @@
     renamingFolderId = null;
   }
 
-  onMount(() => {
-    notesStore.loadFolders().catch(() => {});
-    notesStore.loadEntries().catch(() => {});
-  });
+  async function loadNotes() {
+    const request = ++loadRequest;
+    try {
+      await Promise.all([notesStore.loadFolders(), notesStore.loadEntries()]);
+      if (request === loadRequest) loadError = false;
+    } catch {
+      if (request === loadRequest) loadError = true;
+    }
+  }
+
+  onMount(() => { void loadNotes(); });
+  onDestroy(() => { ++loadRequest; void notesStore.flushDrafts(); });
 </script>
 
 <div class="notes-app">
@@ -205,8 +204,8 @@
           class:selected={selectedFolderId === folder.id}
           role="button"
           tabindex="0"
-          onclick={() => onFolderClick(folder.id)}
-          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onFolderClick(folder.id); }}
+          onclick={() => { if (renamingFolderId !== folder.id) void selectFolder(folder.id); }}
+          onkeydown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); void selectFolder(folder.id); } }}
           oncontextmenu={(e) => onFolderContextMenu(e, folder.id)}
         >
           {#if renamingFolderId === folder.id}
@@ -236,24 +235,36 @@
 
   <!-- Content area: entries list or editor -->
   <div class="content">
+    {#if loadError}
+      <div role="alert">Couldn't load notes. <button onclick={loadNotes}>Retry loading</button></div>
+    {/if}
+    <div class="save-status" role="status">
+      {#if $saveState === 'error'}
+        Couldn't save. Your draft is kept in this session.
+        <button onclick={() => notesStore.flushDrafts()}>Retry saving</button>
+      {:else if $saveState === 'saving'}Saving...
+      {:else if $saveState === 'unsaved'}Unsaved changes
+      {:else}Saved{/if}
+    </div>
     {#if viewMode === 'editor' && selectedEntry}
+      <button class="back-to-notes" onclick={() => selectedFolderId && selectFolder(selectedFolderId)}>Back to notes</button>
       <input
         class="entry-title"
         type="text"
-        bind:value={editName}
-        oninput={debouncedSave}
+        value={editName}
+        oninput={(event) => editField('name', event.currentTarget.value)}
         placeholder="Entry title"
       />
       <textarea
         class="entry-body"
-        bind:value={editBody}
-        oninput={debouncedSave}
+        value={editBody}
+        oninput={(event) => editField('body', event.currentTarget.value)}
         placeholder="Start writing..."
       ></textarea>
     {:else if viewMode === 'entries-list'}
       <div class="entries-list-header">
         <span class="entries-list-title">{selectedFolderName}</span>
-        <button class="icon-btn" onclick={addEntry} title="New note">+</button>
+        <button class="icon-btn" onclick={() => selectedFolderId && addEntryInFolder(selectedFolderId)} title="New note">+</button>
       </div>
       <div class="content-entry-list">
         {#each folderEntries as entry (entry.id)}
@@ -309,6 +320,8 @@
 </div>
 
 <style>
+  .save-status { padding: 8px 16px; color: var(--color-text-muted); }
+  .back-to-notes { align-self: flex-start; margin: 8px 16px; }
   .notes-app {
     display: flex;
     height: 100%;
@@ -321,8 +334,10 @@
   /* ── Sidebar ─────────────────────────────────────────────────────────── */
 
   .sidebar {
-    width: 200px;
-    min-width: 200px;
+    width: 35%;
+    min-width: 100px;
+    max-width: 200px;
+    flex-shrink: 0;
     border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
@@ -472,6 +487,10 @@
   }
 
   .entries-list-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-weight: 600;
     font-size: 14px;
   }
