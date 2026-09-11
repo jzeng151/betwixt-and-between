@@ -67,9 +67,8 @@
         windowStore.close(focused.id);
       }
     }
-    if (e.ctrlKey && e.key === 'Tab' && windowStore.focusedWindow()) {
+    if (e.ctrlKey && e.key === 'Tab' && windowStore.cycle(e.shiftKey ? -1 : 1)) {
       e.preventDefault();
-      windowStore.cycle(e.shiftKey ? -1 : 1);
     }
   }
 </script>

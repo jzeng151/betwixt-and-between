@@ -167,14 +167,17 @@ test.describe('Window Manager', () => {
 		await expect(notes).toBeFocused();
 	});
 
-	test('does not consume unimplemented or empty-workspace browser shortcuts', async ({ page }) => {
-		for (const key of ['k', 'w', 'Tab']) {
-			const prevented = await page.evaluate((key) => {
-				const event = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true });
-				window.dispatchEvent(event);
-				return event.defaultPrevented;
-			}, key);
-			expect(prevented).toBe(false);
+	test('only consumes shortcuts when a window action is available', async ({ page }) => {
+		for (const app of [null, 'Wiki']) {
+			if (app) await page.getByTitle(app, { exact: true }).click();
+			for (const key of app ? ['k', 'Tab'] : ['k', 'w', 'Tab']) {
+				const prevented = await page.evaluate((key) => {
+					const event = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true });
+					window.dispatchEvent(event);
+					return event.defaultPrevented;
+				}, key);
+				expect(prevented).toBe(false);
+			}
 		}
 	});
 

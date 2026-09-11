@@ -391,9 +391,11 @@ describe('window keyboard navigation', () => {
 		windowStore.open('notes');
 		windowStore.minimize('notes');
 		expect(windowStore.focusedWindow()?.id).toBe('wiki');
+		expect(windowStore.cycle(1)).toBe(false);
+		expect(windowStore.cycle(-1)).toBe(false);
 		windowStore.minimize('wiki');
-		windowStore.cycle(1);
-		windowStore.cycle(-1);
+		expect(windowStore.cycle(1)).toBe(false);
+		expect(windowStore.cycle(-1)).toBe(false);
 		expect(windowStore.focusedWindow()).toBeUndefined();
 	});
 });

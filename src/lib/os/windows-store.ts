@@ -350,11 +350,12 @@ function createWindowStore() {
 
 	function cycle(direction: 1 | -1) {
 		const all = get({ subscribe }).filter((w) => !w.minimized);
-		if (all.length < 2) return;
+		if (all.length < 2) return false;
 		// Keep opening order stable while focus changes the stacking order.
 		const current = focusedWindow()?.id;
 		const index = all.findIndex((w) => w.id === current);
 		focus(all[(index + direction + all.length) % all.length].id);
+		return true;
 	}
 
 	/**
