@@ -40,7 +40,7 @@
 
 {#if $failedWrites.length}
   <p>These changes failed to save:</p>
-  <ul>{#each $failedWrites as failure}<li>{failure}</li>{/each}</ul>
+  <ul>{#each $failedWrites as failure}<li>{failure.message}</li>{/each}</ul>
   <button type="button" onclick={() => failedWrites.set([])}>Acknowledge failed changes</button>
   <p>This clears the failure notice. It does not retry or save those changes.</p>
 {/if}

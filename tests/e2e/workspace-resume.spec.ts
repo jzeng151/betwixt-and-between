@@ -92,3 +92,24 @@ test('switching accounts in the same tab discards the previous account window sn
     await sql.end();
   }
 });
+
+
+test('successful Wiki creation retry permits sign-out without acknowledging a stale failure', async ({ page }) => {
+  await page.goto('/app');
+  await page.getByTitle('Wiki', { exact: true }).click();
+  const wiki = page.locator('.window[aria-label="Wiki"]');
+  const create = wiki.getByRole('button', { name: 'Create a character' });
+  await expect(create).toBeVisible();
+  await page.route('**/api/entities', (route) => route.request().method() === 'POST'
+    ? route.fulfill({ status: 503, body: 'Unavailable' }) : route.continue(), { times: 1 });
+  await create.click();
+  await expect(wiki.getByRole('alert')).toContainText("Couldn't create character");
+  await create.click();
+  await expect(wiki.locator('.inline-edit-input')).toHaveValue('Untitled Character');
+  await page.getByTitle('Settings', { exact: true }).click();
+  const settings = page.locator('.window[aria-label="Settings"]');
+  await settings.getByRole('button', { name: 'Account', exact: true }).click();
+  await expect(settings.getByRole('button', { name: 'Acknowledge failed changes' })).toHaveCount(0);
+  await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page).toHaveURL(/\/auth\/login$/);
+});

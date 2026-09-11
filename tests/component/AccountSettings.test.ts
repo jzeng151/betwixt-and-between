@@ -29,7 +29,7 @@ it.each(['save', 'session'])('keeps the workspace available when %s prevents sig
 });
 
 it('lets the user explicitly acknowledge failed writes', async () => {
-  failedWrites.set(['Failed to rename folder']);
+  failedWrites.set([{ message: 'Failed to rename folder' }]);
   const ui = render(AccountSettings, { user });
   expect(ui.getByText('Failed to rename folder')).toBeInTheDocument();
   await fireEvent.click(ui.getByRole('button', { name: 'Acknowledge failed changes' }));
