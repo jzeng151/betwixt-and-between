@@ -46,8 +46,13 @@ export const PATCH: RequestHandler = async (event) => {
 	const updates: Record<string, unknown> = {};
 	if (typeof body.name === 'string') updates.name = body.name.trim();
 	if (typeof body.baseImageUrl === 'string') updates.baseImageUrl = body.baseImageUrl;
-	if (typeof body.width === 'number') updates.width = body.width;
-	if (typeof body.height === 'number') updates.height = body.height;
+	for (const dimension of ['width', 'height']) {
+		if (!(dimension in body)) continue;
+		if (!Number.isInteger(body[dimension]) || body[dimension] < 1 || body[dimension] > 16384) {
+			error(400, `${dimension} must be an integer in [1, 16384]`);
+		}
+		updates[dimension] = body[dimension];
+	}
 
 	// Slice 3 (QA gap fix) — grid settings write path. The grid_* columns
 	// landed in 0018 with defaults and are read by the Pixi renderer, but

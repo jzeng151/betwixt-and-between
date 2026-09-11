@@ -13,7 +13,8 @@
 		worldMaps,
 		activeMap,
 		activeMapId,
-		hasImage,
+		hasCanvas,
+		preparingCanvas,
 		locations,
 		duplicating,
 		renamingMapName = $bindable(),
@@ -39,7 +40,8 @@
 		worldMaps: WorldMap[];
 		activeMap: WorldMap | null;
 		activeMapId: string | null;
-		hasImage: boolean;
+		hasCanvas: boolean;
+		preparingCanvas: boolean;
 		locations: Entity[];
 		duplicating: boolean;
 		renamingMapName: string | null;
@@ -109,8 +111,8 @@
 		title="Delete map"
 		disabled={!activeMap}
 	>×</button>
-	{#if hasImage}
-		<label class="btn-icon" title="Replace image">
+	{#if hasCanvas}
+		<label class="btn-icon" title={activeMap?.baseImageUrl ? 'Replace image' : 'Import image'}>
 			📁
 			<!-- onclick fires as the dialog opens → parent pins to suspend cycling (#954). -->
 			<input
@@ -118,6 +120,7 @@
 				accept=".jpg,.jpeg,.png,.webp"
 				onclick={() => onImagePickerOpen?.()}
 				onchange={onImageUpload}
+				disabled={preparingCanvas}
 				hidden
 			/>
 		</label>

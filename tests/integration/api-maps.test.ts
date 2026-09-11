@@ -192,6 +192,19 @@ describe('/api/maps/[id]', () => {
 		expect(body.name).toBe('New');
 	});
 
+	it('PATCH sets blank canvas dimensions and rejects invalid dimensions', async () => {
+		const created = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'Blank map' } })));
+		for (const dimension of ['width', 'height']) {
+			for (const value of [0, -1, 1.5, 16385, '1024', null]) {
+				await expect(mapIdRoute.PATCH(mkEvent({ params: { id: created.id }, body: { [dimension]: value } })))
+					.rejects.toMatchObject({ status: 400 });
+			}
+		}
+		await mapIdRoute.PATCH(mkEvent({ params: { id: created.id }, body: { width: 1024, height: 768 } }));
+		const map = await readJson(await mapIdRoute.GET(mkEvent({ params: { id: created.id } })));
+		expect(map).toMatchObject({ width: 1024, height: 768, baseImageUrl: null });
+	});
+
 	it('PATCH updates bitmap fields', async () => {
 		const created = await readJson(
 			await CREATE_MAP(mkEvent({ body: { name: 'Map' } }))
