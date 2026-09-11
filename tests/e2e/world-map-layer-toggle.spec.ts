@@ -20,13 +20,6 @@ async function clearAll(request: APIRequestContext) {
 	for (const m of maps) await request.delete(`/api/maps/${m.id}`);
 }
 
-async function openMap(page: import('@playwright/test').Page) {
-	await page.click('button[title="World Map"]');
-	const win = page.locator('.window[aria-label="World Map"]');
-	await expect(win).toBeVisible();
-	return win;
-}
-
 test('toggling a layer off persists across a page reload', async ({ page, request }) => {
 	await clearAll(request);
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
@@ -39,7 +32,9 @@ test('toggling a layer off persists across a page reload', async ({ page, reques
 	});
 
 	await page.goto('/app');
-	let win = await openMap(page);
+	await page.click('button[title="World Map"]');
+	const win = page.locator('.window[aria-label="World Map"]');
+	await expect(win).toBeVisible();
 
 	// The Grid layer row + its checkbox. Default: visible (checked).
 	const gridRow = win.locator('.layer-row', { hasText: 'Grid' });
@@ -67,7 +62,7 @@ test('toggling a layer off persists across a page reload', async ({ page, reques
 	// Reload the whole page — the toggle must survive (loaded from the DB,
 	// not from in-memory component state).
 	await page.reload();
-	win = await openMap(page);
+	await expect(win).toBeVisible();
 	const gridCheckboxAfter = win
 		.locator('.layer-row', { hasText: 'Grid' })
 		.locator('input[type="checkbox"]');

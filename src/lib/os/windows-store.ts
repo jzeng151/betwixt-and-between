@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
-import { type AppId, persistsPosition } from './app-ids.js';
+import { APP_IDS, type AppId, persistsPosition } from './app-ids.js';
 import { preferences } from './preferences-store.js';
 import { applyPreferencePatch, preferencesOwnershipResolved } from './preferences-sync.js';
 import { clampToViewport } from './context-menu-clamp.js';
@@ -130,8 +130,67 @@ function clampOpenGeom(
 	return { x: pos.x, y: pos.y, width: w, height: h };
 }
 
+// Session storage is untrusted and may outlive an app version. Only restore
+// known window metadata; story content and editor drafts are never stored here.
+function readSessionWindow(value: unknown): WindowState | null {
+	if (!value || typeof value !== 'object') return null;
+	const w = value as WindowState;
+	const validId = (id: unknown): id is string =>
+		typeof id === 'string' && /^[a-zA-Z0-9-]{1,200}$/.test(id);
+	if (!APP_IDS.includes(w.appId) || !validId(w.id) ||
+		!(w.id === w.appId || w.id.startsWith(`${w.appId}-`)) ||
+		!(w.entityId === null || validId(w.entityId)) ||
+		![w.x, w.y, w.width, w.height].every((n) => typeof n === 'number' && Number.isFinite(n)) ||
+		w.width <= 0 || w.height <= 0 ||
+		!Number.isSafeInteger(w.zIndex) || w.zIndex < 0 || w.zIndex > 1_000_000 ||
+		typeof w.minimized !== 'boolean' || typeof w.maximized !== 'boolean') return null;
+	return {
+		id: w.id, appId: w.appId, entityId: w.entityId,
+		...clampOpenGeom(w.x, w.y, w.width, w.height),
+		minimized: w.minimized, maximized: w.maximized, zIndex: w.zIndex,
+		alwaysOnTop: w.alwaysOnTop === true,
+		geomAdjusted: true,
+		...(w.appId === 'focused-graph' ? {
+			focalSet: Array.isArray(w.focalSet) ? [...new Set(w.focalSet.filter(validId))] : [],
+			viewMode: w.viewMode === 'shared' || w.viewMode === 'reachable' ? w.viewMode : 'their_worlds' as const,
+			typeOrder: Array.isArray(w.typeOrder) ? [...new Set(w.typeOrder.filter((t) => typeof t === 'string' && Object.hasOwn(ENTITY_APP, t)))] : undefined
+		} : {})
+	};
+}
+
 function createWindowStore() {
 	const { subscribe, update, set } = writable<WindowState[]>([]);
+
+	/** Restore this tab's windows only after the server identifies its owner. */
+	function startSession(userId: string) {
+		const key = 'betwixt-windows-v1';
+		let restored: WindowState[] = [];
+		try {
+			const saved = JSON.parse(sessionStorage.getItem(key) ?? 'null');
+			if (saved?.userId === userId && Array.isArray(saved.windows)) {
+				const ids = new Set<string>();
+				for (const value of saved.windows) {
+					const win = readSessionWindow(value);
+					if (win && !ids.has(win.id)) { ids.add(win.id); restored.push(win); }
+				}
+			}
+		} catch { /* Storage can be unavailable; the workspace still works. */ }
+		zCounter = Math.max(100, ...restored.map((w) => w.zIndex));
+		set(restored);
+		function save() {
+			try { sessionStorage.setItem(key, JSON.stringify({ userId, windows: get({ subscribe }) })); }
+			catch { /* A layout snapshot must never block editing or navigation. */ }
+		}
+		function onVisibilityChange() { if (document.visibilityState === 'hidden') save(); }
+		window.addEventListener('pagehide', save);
+		document.addEventListener('visibilitychange', onVisibilityChange);
+		return () => {
+			window.removeEventListener('pagehide', save);
+			document.removeEventListener('visibilitychange', onVisibilityChange);
+			save();
+			set([]);
+		};
+	}
 
 	function open(appId: AppId, entityId: string | null = null): string {
 		// story-graph and focused-graph windows are always independent —
@@ -400,6 +459,7 @@ function createWindowStore() {
 
 	return {
 		subscribe,
+		startSession,
 		open,
 		openForEntity,
 		openFocusedGraph,

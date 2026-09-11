@@ -75,8 +75,7 @@ test('create a blank canvas, paint a stroke, then grouped-undo reverts every pai
 	expect(blank).toMatchObject({ width: 640, height: 480, baseImageUrl: null });
 	expect(blank.gridCellsX / blank.gridCellsY).toBeCloseTo(640 / 480, 1);
 	await page.reload();
-	await page.click('button[title="World Map"]');
-	await win.locator('button[aria-label="Maximize"]').click();
+	await expect(win).toBeVisible();
 	await expect(win.getByRole('button', { name: 'Create blank canvas' })).toHaveCount(0);
 	await expect(win.getByTitle('Import image')).toBeVisible();
 	const canvas = win.locator('.pixi-stage canvas');
