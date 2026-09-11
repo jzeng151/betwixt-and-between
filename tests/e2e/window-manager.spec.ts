@@ -140,4 +140,42 @@ test.describe('Window Manager', () => {
 
 		await expect(wikiWin).toBeFocused();
 	});
+
+	test('window shortcuts cycle in both directions, skip minimized windows, and close the focused window', async ({ page }) => {
+		for (const app of ['Wiki', 'Notes', 'Settings']) await page.getByTitle(app, { exact: true }).click();
+		const wiki = page.locator('.window[aria-label="Wiki"]');
+		const notes = page.locator('.window[aria-label="Notes"]');
+		const settings = page.locator('.window[aria-label="Settings"]');
+		for (const win of [wiki, notes, settings, wiki]) {
+			await page.keyboard.press('Control+Tab');
+			await expect(win).toBeFocused();
+		}
+		for (const win of [settings, notes, wiki]) {
+			await page.keyboard.press('Control+Shift+Tab');
+			await expect(win).toBeFocused();
+		}
+		await page.keyboard.press('Control+Tab');
+		await notes.getByRole('button', { name: 'Minimize', exact: true }).click();
+		await expect(notes).not.toBeVisible();
+		await wiki.click({ position: { x: 10, y: 10 } });
+		await page.keyboard.press('Control+Tab');
+		await expect(settings).toBeFocused();
+		await page.keyboard.press('Control+w');
+		await expect(settings).toHaveCount(0);
+		await expect(page.getByTitle('Notes', { exact: true }).locator('.active-dot')).toBeVisible();
+		await page.getByTitle('Notes', { exact: true }).click();
+		await expect(notes).toBeFocused();
+	});
+
+	test('does not consume unimplemented or empty-workspace browser shortcuts', async ({ page }) => {
+		for (const key of ['k', 'w', 'Tab']) {
+			const prevented = await page.evaluate((key) => {
+				const event = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true });
+				window.dispatchEvent(event);
+				return event.defaultPrevented;
+			}, key);
+			expect(prevented).toBe(false);
+		}
+	});
+
 });

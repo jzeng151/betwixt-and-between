@@ -43,18 +43,9 @@ describe('windowStore.open', () => {
 
 	it('story-graph creates a new instance on each call', () => {
 		const a = windowStore.open('story-graph');
-		// Date.now() may be the same ms — guard with a small delay-equivalent
-		// by mutating zCounter through an extra open. The id is timestamp-based,
-		// so we just assert the two windows coexist when the IDs differ.
 		const b = windowStore.open('story-graph');
-		const all = get(windowStore);
-		// At minimum, there must be at least one story-graph window.
-		// If timestamps collided, the second call would have focused — but that
-		// would still leave both ids equal. So either ids differ (2 windows) or
-		// they collided (1 window, focused). We assert the prefix in both cases.
-		expect(a.startsWith('story-graph-')).toBe(true);
-		expect(b.startsWith('story-graph-')).toBe(true);
-		expect(all.every((w) => w.appId === 'story-graph')).toBe(true);
+		expect(a).not.toBe(b);
+		expect(get(windowStore).map((w) => w.id)).toEqual([a, b]);
 	});
 
 	it('increments z-index on each new window', () => {
@@ -375,5 +366,34 @@ describe('windowStore — Item 3 window geometry defaults', () => {
 		windowStore.move(id, 70, 80);
 		windowStore.setAsDefault(id);
 		expect(get(preferences).windows.defaults.wiki).toEqual({ width: 850, height: 640, x: 70, y: 80 });
+	});
+});
+
+describe('window keyboard navigation', () => {
+	it('cycles in both directions through every visible window and skips minimized windows', () => {
+		windowStore.open('wiki');
+		windowStore.open('notes');
+		windowStore.open('settings');
+		windowStore.open('timeline');
+		windowStore.minimize('notes');
+		for (const id of ['wiki', 'settings', 'timeline', 'wiki']) {
+			windowStore.cycle(1);
+			expect(windowStore.focusedWindow()?.id).toBe(id);
+		}
+		for (const id of ['timeline', 'settings', 'wiki', 'timeline']) {
+			windowStore.cycle(-1);
+			expect(windowStore.focusedWindow()?.id).toBe(id);
+		}
+	});
+
+	it('never selects a minimized window as the close-shortcut target', () => {
+		windowStore.open('wiki');
+		windowStore.open('notes');
+		windowStore.minimize('notes');
+		expect(windowStore.focusedWindow()?.id).toBe('wiki');
+		windowStore.minimize('wiki');
+		windowStore.cycle(1);
+		windowStore.cycle(-1);
+		expect(windowStore.focusedWindow()).toBeUndefined();
 	});
 });
