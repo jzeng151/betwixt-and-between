@@ -20,6 +20,7 @@
  */
 
 import { get, writable, type Readable } from 'svelte/store';
+import { failedWrites } from '../stores/pending-writes.js';
 import {
 	preferences,
 	migrateAndMerge,
@@ -54,13 +55,13 @@ let serverVersion = 0; // 0 = not hydrated / anonymous (no server writes)
 // not hydrated.
 let serverProfileId: string | null = null;
 let pending: PendingPatch = { set: {}, unset: [] };
-let inFlight = false;
-// The currently-running flush() promise (null when idle). drainBeforeSwitch
+// The currently-running flush() promise (null when idle). flushPendingPreferences
 // awaits it so a profile switch can't proceed while a save is still in the air —
 // otherwise that in-flight PATCH lands after the activate and is dropped by the
 // profile-change guard, losing an edit meant for the old profile (codex).
-let activeFlush: Promise<void> | null = null;
+let activeFlush: Promise<'retry' | void> | null = null;
 let hydrating = false;
+const hydrations = new Set<Promise<void>>();
 // Set true on the first successful (200) hydrate and never reset for the session.
 // Distinct from serverVersion (which the post-activate path resets to 0): this
 // gates profile switch/create on the INITIAL reconcile having happened (codex).
@@ -130,8 +131,8 @@ export function __resetSyncForTesting(): void {
 	serverVersion = 0;
 	serverProfileId = null;
 	pending = { set: {}, unset: [] };
-	inFlight = false;
 	activeFlush = null;
+	hydrations.clear();
 	hydrating = false;
 	hasHydratedOnce = false;
 	switching = false;
@@ -224,7 +225,14 @@ function reapplyOntoBase(base: Preferences): Preferences {
  * localStorage-only, no server writes. A newer-than-code blob → stale-app
  * (writes suppressed, "update the app").
  */
-export async function hydratePreferences(): Promise<void> {
+export function hydratePreferences(): Promise<void> {
+	const task = hydratePreferencesNow();
+	hydrations.add(task);
+	void task.then(() => hydrations.delete(task), () => hydrations.delete(task));
+	return task;
+}
+
+async function hydratePreferencesNow(): Promise<void> {
 	hydrating = true;
 	_status.set('syncing');
 	// We are hydrating now — cancel any scheduled hydrate retry so it can't pile up.
@@ -423,11 +431,7 @@ export async function onAuthChange(kind: 'logout' | 'switch'): Promise<void> {
 	serverProfileId = null;
 	hasHydratedOnce = false; // new account must re-hydrate before switch/create
 	switching = false;
-	inFlight = false;
-	// Drop the previous account's in-flight flush handle: its result is already
-	// discarded (inFlight reset), and leaving it would make the new account's
-	// drainBeforeSwitch await an abandoned request that may hang until it
-	// completes/times out (codex).
+	// A new account must not await the previous account's abandoned request.
 	activeFlush = null;
 	_userId.set(null);
 	_profileId.set(null);
@@ -475,7 +479,12 @@ function requireHydrated(): void {
 	}
 }
 
-async function drainBeforeSwitch(): Promise<void> {
+export async function flushPendingPreferences(): Promise<void> {
+	while (hydrations.size) await Promise.all(hydrations);
+	if (activeFlush) await activeFlush;
+	if (!get(_resolved) && !(get(_status) === 'stale-app' && !hasPending())) {
+		throw new Error('Preferences are still loading; try again.');
+	}
 	if (timer) {
 		clearTimeout(timer);
 		timer = null;
@@ -484,12 +493,10 @@ async function drainBeforeSwitch(): Promise<void> {
 		clearTimeout(retryTimer);
 		retryTimer = null;
 	}
-	// Await a save already in flight: flush() early-returns while inFlight, and the
-	// in-flight patch is no longer in `pending`, so without this the switch would
-	// proceed and that PATCH could land after the activate (dropped by the
-	// profile-change guard, losing the edit) (codex).
-	if (activeFlush) await activeFlush;
-	await flush();
+	// ponytail: five attempts; serialize tab writers if contention routinely exceeds this.
+	for (let attempt = 0; attempt < 5; attempt++) {
+		if (await flush() !== 'retry') break;
+	}
 	// If flush hit a transient failure (offline / 5xx / expired session) it
 	// requeued the patch and scheduled a retry, so `pending` is non-empty here.
 	// Do NOT clear it (that would discard the edit) and do NOT switch (the
@@ -498,7 +505,7 @@ async function drainBeforeSwitch(): Promise<void> {
 	// the CURRENT profile, and the scheduled retry delivers it once the server
 	// recovers (codex). On a clean flush `pending` is already empty — no-op.
 	if (hasPending()) {
-		throw new Error('could not save pending changes before switching; try again');
+		throw new Error('could not save pending preference changes; try again');
 	}
 }
 
@@ -514,10 +521,10 @@ export async function switchProfile(profileId: string): Promise<void> {
 	// would operate on an un-reconciled base and the subsequent hydrate could
 	// overwrite the user's unsynced local prefs (codex).
 	requireHydrated();
-	// Drain BEFORE flipping `switching`: drainBeforeSwitch's flush() is itself
+	// Drain BEFORE flipping `switching`: flushPendingPreferences's flush() is itself
 	// gated by the `switching` guard, so setting it first makes the drain a no-op
 	// and silently discards the user's last pending edit (data loss).
-	await drainBeforeSwitch();
+	await flushPendingPreferences();
 	switching = true;
 	try {
 		const res = await fetchImpl(`/api/preferences/profiles/${encodeURIComponent(profileId)}/activate`, {
@@ -574,7 +581,7 @@ export async function createProfile(name: string): Promise<ProfileSummary> {
 	requireHydrated();
 	// Drain BEFORE flipping `switching` (see switchProfile) so the copied blob
 	// includes the user's latest edits and nothing pending is silently dropped.
-	await drainBeforeSwitch();
+	await flushPendingPreferences();
 	switching = true;
 	let created: ProfileSummary;
 	try {
@@ -599,19 +606,11 @@ export async function createProfile(name: string): Promise<ProfileSummary> {
 
 // ── flush machinery ──────────────────────────────────────────────────────────
 
-/** Launch a fire-and-forget flush, tracking its promise in `activeFlush` so
- *  drainBeforeSwitch can await an in-flight save. */
-function launchFlush(): void {
-	activeFlush = flush().finally(() => {
-		activeFlush = null;
-	});
-}
-
 function scheduleFlush(): void {
 	if (timer) clearTimeout(timer);
 	timer = setTimeout(() => {
 		timer = null;
-		launchFlush();
+		void flush();
 	}, debounceMs);
 }
 
@@ -627,7 +626,7 @@ function scheduleRetry(): void {
 	if (retryTimer) return;
 	retryTimer = setTimeout(() => {
 		retryTimer = null;
-		launchFlush();
+		void flush();
 	}, retryBackoffMs);
 	retryBackoffMs = Math.min(retryBackoffMs * 2, RETRY_MAX_MS);
 }
@@ -652,15 +651,23 @@ function scheduleHydrateRetry(): void {
 	hydrateBackoffMs = Math.min(hydrateBackoffMs * 2, RETRY_MAX_MS);
 }
 
-async function flush(): Promise<void> {
-	if (inFlight || hydrating || switching || serverVersion === 0 || !hasPending()) return;
+function flush(): Promise<'retry' | void> {
+	if (activeFlush) return activeFlush;
+	const task = flushNow().finally(() => {
+		if (activeFlush === task) activeFlush = null;
+	});
+	activeFlush = task;
+	return task;
+}
+
+async function flushNow(): Promise<'retry' | void> {
+	if (hydrating || switching || serverVersion === 0 || !hasPending()) return;
 	// We are flushing now — cancel any scheduled retry so it doesn't double-fire.
 	if (retryTimer) {
 		clearTimeout(retryTimer);
 		retryTimer = null;
 	}
 	const patch = drainPending();
-	inFlight = true;
 	_status.set('syncing');
 
 	let res: Response;
@@ -682,7 +689,6 @@ async function flush(): Promise<void> {
 		// Network failure — requeue and retry with backoff so the edit isn't
 		// stranded in localStorage until the user happens to edit again (codex).
 		requeue(patch);
-		inFlight = false;
 		_status.set('offline');
 		scheduleRetry();
 		return;
@@ -708,6 +714,7 @@ async function flush(): Promise<void> {
 		// the SAME stale value that just 409'd would loop. hydratePreferences' tail
 		// schedules the flush against the fresh version (or a hydrate retry).
 		if (profileChanged) {
+			failedWrites.update((errors) => [...errors, 'Some appearance changes could not be saved because another tab switched profiles.']);
 			// Everything still queued in `pending` was also authored against the OLD
 			// profile (this tab hasn't switched), so re-applying it onto the new
 			// active profile after hydrate would leak old-profile edits across. Drop
@@ -721,15 +728,16 @@ async function flush(): Promise<void> {
 		} else {
 			requeue(patch);
 		}
-		inFlight = false;
+
 		await hydratePreferences();
+		if (!profileChanged) return 'retry';
 		return;
 	}
 	if (!res.ok) {
 		if (isClientPatchError(res.status)) {
-			// 400 / 422 — the patch is bad; drop it (looping can't fix it) and
-			// surface error.
-			inFlight = false;
+			// Preserve rejected edits for correction or an explicit retry; do not
+			// retry automatically. Sign-out/profile changes must see the unsaved patch.
+			requeue(patch);
 			_status.set('error');
 			return;
 		}
@@ -737,7 +745,6 @@ async function flush(): Promise<void> {
 		// The optimistic edit already shows locally; requeue + retry so it reaches
 		// the server once the server recovers / the session is refreshed (codex).
 		requeue(patch);
-		inFlight = false;
 		_status.set('offline');
 		scheduleRetry();
 		return;
@@ -745,7 +752,6 @@ async function flush(): Promise<void> {
 
 	const body = (await res.json()) as { version: number };
 	serverVersion = body.version;
-	inFlight = false;
 	retryBackoffMs = RETRY_BASE_MS; // recovered — reset backoff
 	if (hasPending()) {
 		scheduleFlush();

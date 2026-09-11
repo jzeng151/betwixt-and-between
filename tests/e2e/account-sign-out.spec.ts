@@ -1,0 +1,318 @@
+import { test, expect, type Page } from '@playwright/test';
+import postgres from 'postgres';
+import { E2E_USER_HEADERS, E2E_USER_EMAIL, PGLITE_URL } from './pglite-config.js';
+
+test.use({ viewport: { width: 1440, height: 1000 } });
+
+async function signIn(page: Page) {
+  const link = await page.request.post('/api/auth/sign-in/magic-link', { headers: { Origin: new URL(page.url()).origin }, data: { email: E2E_USER_EMAIL } });
+  expect(link.ok(), await link.text()).toBe(true);
+  const sql = postgres(PGLITE_URL, { max: 1, prepare: false });
+  let token: string;
+  try {
+    const [verification] = await sql`select identifier from verification where value::jsonb->>'email' = ${E2E_USER_EMAIL} order by created_at desc limit 1`;
+    token = verification.identifier;
+  } finally { await sql.end(); }
+  await page.goto(`/api/auth/magic-link/verify?token=${encodeURIComponent(token)}&callbackURL=/app`);
+  await expect(page).toHaveURL(/\/app$/);
+  expect((await page.request.get('/api/auth/get-session')).ok()).toBe(true);
+  await expect.poll(async () => (await (await page.request.get('/api/preferences')).json()).initialized).toBe(true);
+}
+
+test('Account saves the latest Notes draft and signs out through the auth endpoint', async ({ page, request, context }) => {
+  const folder = await (await request.post('/api/notes/folders', { headers: E2E_USER_HEADERS, data: { name: 'Sign-out test' } })).json();
+  const entry = await (await request.post('/api/notes/entries', { headers: E2E_USER_HEADERS, data: { name: 'Last edit', body: '', parentId: folder.id } })).json();
+  const otherEntry = await (await request.post('/api/notes/entries', { headers: E2E_USER_HEADERS, data: { name: 'Other tab edit', body: '', parentId: folder.id } })).json();
+  let renamedProfileUrl: string | undefined;
+  try {
+    await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+    await page.goto('/auth/login');
+    await signIn(page);
+    const otherTab = await context.newPage();
+    await otherTab.goto('/app');
+    await otherTab.getByTitle('Notes', { exact: true }).click();
+    const otherNotes = otherTab.locator('.window[aria-label="Notes"]');
+    await otherNotes.getByRole('button', { name: 'Sign-out test' }).click();
+    await otherNotes.getByRole('button', { name: /Other tab edit/ }).click();
+    let releaseOtherSave!: () => void;
+    const otherSave = new Promise<void>((resolve) => { releaseOtherSave = resolve; });
+    let rejectOtherSave = true;
+    await otherTab.route(`**/api/notes/entries/${otherEntry.id}`, async (route) => {
+      if (route.request().method() === 'PATCH') {
+        await otherSave;
+        if (rejectOtherSave) {
+          rejectOtherSave = false;
+          await route.fulfill({ status: 503, body: 'Temporarily unavailable' });
+          return;
+        }
+      }
+      await route.continue();
+    });
+    await otherNotes.getByPlaceholder('Start writing...').fill('Keep the other tab edit too.');
+    await page.getByTitle('Notes', { exact: true }).click();
+    const notes = page.locator('.window[aria-label="Notes"]');
+    await notes.getByRole('button', { name: 'Sign-out test' }).click();
+    await notes.getByRole('button', { name: /Last edit/ }).click();
+    let releaseSave!: () => void;
+    const pendingSave = new Promise<void>((resolve) => { releaseSave = resolve; });
+    await page.route(`**/api/notes/entries/${entry.id}`, async (route) => {
+      if (route.request().method() === 'PATCH') await pendingSave;
+      await route.continue();
+    });
+    let signOutRequests = 0;
+    page.on('request', (req) => { if (req.url().endsWith('/api/auth/sign-out')) signOutRequests++; });
+    await notes.getByPlaceholder('Start writing...').fill('Keep this after sign-out.');
+    await page.getByTitle('Settings', { exact: true }).click();
+    const settings = page.locator('.window[aria-label="Settings"]');
+    await settings.getByRole('button', { name: 'Profiles', exact: true }).click();
+    await settings.getByRole('button', { name: 'Rename', exact: true }).first().click();
+    await settings.locator('.rename-input').fill('Sign-out profile');
+    let releaseRename!: () => void;
+    const pendingRename = new Promise<void>((resolve) => { releaseRename = resolve; });
+    await page.route('**/api/preferences/profiles/*', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        renamedProfileUrl = route.request().url();
+        await pendingRename;
+      }
+      await route.continue();
+    });
+    const renameStarted = page.waitForRequest((req) => req.url().includes('/api/preferences/profiles/') && req.method() === 'PATCH');
+    await settings.locator('.rename-input').press('Tab');
+    await renameStarted;
+    await expect(settings.getByRole('button', { name: 'Account', exact: true })).toBeDisabled();
+    await settings.getByRole('button', { name: 'Close', exact: true }).click();
+    await page.getByTitle('Settings', { exact: true }).click();
+    await settings.getByRole('button', { name: 'Account', exact: true }).click();
+    const signingOut = page.waitForResponse((res) => res.url().endsWith('/api/auth/sign-out') && res.request().method() === 'POST');
+    await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+    expect(signOutRequests).toBe(0);
+    await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+    await otherTab.evaluate(() => window.addEventListener('keydown', () => { document.body.dataset.backgroundShortcut = 'fired'; }));
+    await otherTab.keyboard.press('Control+z');
+    await expect(otherTab.locator('body')).not.toHaveAttribute('data-background-shortcut');
+    releaseRename();
+    releaseSave();
+    expect(signOutRequests).toBe(0);
+    releaseOtherSave();
+    await expect(settings.getByRole('alert')).toContainText('Another tab could not save');
+    expect(signOutRequests).toBe(0);
+    await expect(otherNotes.getByPlaceholder('Start writing...')).toHaveValue('Keep the other tab edit too.');
+    await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).not.toBeVisible();
+    await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+    expect((await signingOut).ok()).toBe(true);
+    await expect(page).toHaveURL(/\/auth\/login$/);
+    await expect(page.getByRole('heading', { name: 'Welcome to Betwixt' })).toBeVisible();
+    expect((await (await request.get(`/api/notes/entries/${entry.id}`, { headers: E2E_USER_HEADERS })).json()).data.body).toBe('Keep this after sign-out.');
+    await expect(page.locator('.window')).toHaveCount(0);
+    expect((await (await request.get(`/api/notes/entries/${otherEntry.id}`, { headers: E2E_USER_HEADERS })).json()).data.body).toBe('Keep the other tab edit too.');
+    await expect(otherTab).toHaveURL(/\/auth\/login$/);
+    await expect(otherTab.locator('.window')).toHaveCount(0);
+    expect(await (await page.request.get('/api/auth/get-session')).json()).toBeNull();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/auth\/login$/);
+    await expect(page.locator('.window')).toHaveCount(0);
+    await page.goto('/app');
+    await expect(page).toHaveURL(/\/auth\/login$/);
+  } finally {
+    if (renamedProfileUrl) await request.patch(renamedProfileUrl, { headers: E2E_USER_HEADERS, data: { name: 'Default' } });
+    await request.delete(`/api/notes/folders/${folder.id}`, { headers: E2E_USER_HEADERS });
+  }
+});
+
+test('a browser without Web Locks can still use the workspace', async ({ page }) => {
+  await page.setExtraHTTPHeaders(E2E_USER_HEADERS);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'locks', { value: undefined });
+    localStorage.setItem('tutorial-dismissed', 'true');
+  });
+  await page.goto('/app');
+  await expect(page.getByTitle('Notes', { exact: true })).toBeVisible();
+  await page.getByTitle('Settings', { exact: true }).click();
+  const settings = page.locator('.window[aria-label="Settings"]');
+  await settings.getByRole('button', { name: 'Account', exact: true }).click();
+  await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(settings.getByRole('alert')).toContainText('Open the site over HTTPS');
+  await expect(settings.getByRole('button', { name: 'Sign out', exact: true })).toBeEnabled();
+});
+
+for (const interruptedBy of ['timeout', 'closing the initiating tab']) {
+  test(`${interruptedBy} after revocation closes the remaining workspaces`, async ({ page, context }) => {
+    await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+    await page.clock.install();
+    await page.goto('/auth/login');
+    await signIn(page);
+    const otherTab = await context.newPage();
+    await otherTab.goto('/app');
+    await expect(otherTab.getByTitle('Notes', { exact: true })).toBeVisible();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let processed!: () => void;
+    const revoked = new Promise<void>((resolve) => { processed = resolve; });
+    await page.route('**/api/auth/sign-out', async (route) => {
+      expect((await route.fetch()).ok()).toBe(true);
+      processed();
+      await gate;
+      await route.abort();
+    });
+    try {
+      await page.getByTitle('Settings', { exact: true }).click();
+      const settings = page.locator('.window[aria-label="Settings"]');
+      await settings.getByRole('button', { name: 'Account', exact: true }).click();
+      const requested = page.waitForRequest('**/api/auth/sign-out');
+      await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await requested;
+      await revoked;
+      await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+      if (interruptedBy === 'timeout') {
+        await page.clock.fastForward(31_000);
+        await expect(page).toHaveURL(/\/auth\/login\?signOut=unconfirmed$/);
+        await expect(page.getByRole('alert')).toContainText('sign-out could not be confirmed');
+        await expect(page.locator('.window')).toHaveCount(0);
+      } else {
+        await page.close();
+      }
+      await expect(otherTab).toHaveURL(/\/auth\/login\?signOut=unconfirmed$/);
+      await expect(otherTab.locator('.window')).toHaveCount(0);
+    } finally {
+      release();
+      if (!page.isClosed()) await page.unrouteAll({ behavior: 'wait' });
+    }
+  });
+
+}
+
+for (const interruption of ['close participant', 'save timeout']) {
+  test(`${interruption} cannot revoke an unconfirmed save or resume editing early`, async ({ page, context, request }) => {
+    const folder = await (await request.post('/api/notes/folders', { headers: E2E_USER_HEADERS, data: { name: 'Pending rename' } })).json();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+    await page.clock.install();
+    await page.goto('/auth/login');
+    await signIn(page);
+    const otherTab = await context.newPage();
+    await otherTab.goto('/app');
+    try {
+      await otherTab.getByTitle('Notes', { exact: true }).click();
+      const notes = otherTab.locator('.window[aria-label="Notes"]');
+      await otherTab.route(`**/api/notes/folders/${folder.id}`, async (route) => {
+        if (route.request().method() === 'PATCH') await gate;
+        await route.continue();
+      });
+      await notes.getByRole('button', { name: 'Pending rename', exact: true }).click({ button: 'right' });
+      await otherTab.getByRole('menuitem', { name: 'Rename', exact: true }).click();
+      await notes.locator('.rename-input').fill('Saved rename');
+      const started = otherTab.waitForRequest((req) => req.url().endsWith(`/api/notes/folders/${folder.id}`) && req.method() === 'PATCH');
+      await notes.locator('.rename-input').press('Enter');
+      await started;
+      let revocations = 0;
+      page.on('request', (req) => { if (req.url().endsWith('/api/auth/sign-out')) revocations++; });
+      await page.getByTitle('Settings', { exact: true }).click();
+      const settings = page.locator('.window[aria-label="Settings"]');
+      await settings.getByRole('button', { name: 'Account', exact: true }).click();
+      await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+      if (interruption === 'close participant') {
+        await otherTab.close();
+        await expect(settings.getByRole('alert')).toContainText('closed before confirming');
+      } else {
+        await page.clock.fastForward(31_000);
+        await expect(settings.getByRole('alert')).toContainText('timed out');
+        await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+        release();
+        await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).not.toBeVisible();
+        await expect(notes.getByRole('button', { name: 'Saved rename', exact: true })).toBeVisible();
+      }
+      expect(revocations).toBe(0);
+      expect(await (await page.request.get('/api/auth/get-session')).json()).not.toBeNull();
+    } finally {
+      release();
+      if (!otherTab.isClosed()) await otherTab.unrouteAll({ behavior: 'wait' });
+      await request.delete(`/api/notes/folders/${folder.id}`, { headers: E2E_USER_HEADERS });
+    }
+  });
+}
+
+test('a workspace document mounted after logout rechecks authentication before rendering', async ({ page, context }) => {
+  await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+  await page.goto('/auth/login');
+  await signIn(page);
+  const lateTab = await context.newPage();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let loaded!: () => void;
+  const authenticated = new Promise<void>((resolve) => { loaded = resolve; });
+  await lateTab.route('**/app', async (route) => {
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    loaded();
+    await gate;
+    await route.fulfill({ response });
+  });
+  const navigation = lateTab.goto('/app');
+  try {
+    await authenticated;
+    await page.getByTitle('Settings', { exact: true }).click();
+    const settings = page.locator('.window[aria-label="Settings"]');
+    await settings.getByRole('button', { name: 'Account', exact: true }).click();
+    await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page).toHaveURL(/\/auth\/login$/);
+    release();
+    await navigation;
+    await expect(lateTab).toHaveURL(/\/auth\/login$/);
+    await expect(lateTab.locator('.window')).toHaveCount(0);
+  } finally {
+    release();
+    await navigation.catch(() => {});
+  }
+});
+
+
+test('a preference outage does not redirect an authenticated workspace to login', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+  await page.goto('/auth/login');
+  await signIn(page);
+  await page.route('**/api/preferences', (route) => route.fulfill({ status: 503, body: 'Preferences temporarily unavailable' }));
+  await page.reload();
+  await expect(page.getByTitle('Notes', { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/app$/);
+});
+
+test('retry waits for a workspace whose lock reacquisition is still pending', async ({ page, context }) => {
+  await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+  await page.clock.install();
+  await page.goto('/auth/login');
+  await signIn(page);
+  await expect(page.getByTitle('Notes', { exact: true })).toBeVisible();
+  const initial = await page.evaluate(async () => (await navigator.locks.query()).held!.map((lock) => lock.name));
+  const otherTab = await context.newPage();
+  await otherTab.goto('/app');
+  await expect(otherTab.getByTitle('Notes', { exact: true })).toBeVisible();
+  await page.evaluate(async (initial) => {
+    const name = (await navigator.locks.query()).held!.find((lock) => lock.name?.startsWith('betwixt-workspace:') && !initial.includes(lock.name))!.name!;
+    void navigator.locks.request(name, () => new Promise<void>((resolve) => {
+      (window as any).releaseTestLock = resolve;
+    }));
+  }, initial);
+  try {
+    await page.getByTitle('Settings', { exact: true }).click();
+    const settings = page.locator('.window[aria-label="Settings"]');
+    await settings.getByRole('button', { name: 'Account', exact: true }).click();
+    let revocations = 0;
+    page.on('request', (req) => { if (req.url().endsWith('/api/auth/sign-out')) revocations++; });
+    await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => typeof (window as any).releaseTestLock)).toBe('function');
+    await page.clock.fastForward(31_000);
+    await expect(settings.getByRole('alert')).toContainText('timed out');
+    await expect(otherTab.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+    await settings.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Signing out' })).toBeVisible();
+    expect(revocations).toBe(0);
+    await page.evaluate(() => (window as any).releaseTestLock());
+    await expect(page).toHaveURL(/\/auth\/login$/);
+    await expect(otherTab).toHaveURL(/\/auth\/login$/);
+  } finally {
+    if (!page.isClosed()) await page.evaluate(() => (window as any).releaseTestLock?.());
+  }
+});

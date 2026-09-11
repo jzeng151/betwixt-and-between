@@ -9,6 +9,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
+import { failedWrites, flushPendingWrites } from '../../src/lib/stores/pending-writes.js';
 import {
 	preferences,
 	versionError,
@@ -18,6 +19,7 @@ import {
 } from '../../src/lib/os/preferences-store.js';
 import {
 	hydratePreferences,
+	flushPendingPreferences,
 	applyPreferencePatch,
 	switchProfile,
 	createProfile,
@@ -74,6 +76,7 @@ beforeEach(() => {
 	__setStorageForTesting(null);
 	__reloadFromStorageForTesting();
 	__resetSyncForTesting();
+	failedWrites.set([]);
 });
 
 describe('T4 hydratePreferences', () => {
@@ -531,17 +534,17 @@ describe('T4 transient-failure retry (codex)', () => {
 		expect(calls.find((c) => c.method === 'PATCH')?.body.set.appearance.accentColor).toBe('#abc123');
 	});
 
-	it('drops the patch on a 400 (bad patch) without retrying', async () => {
-		mockFetch((c) =>
-			c.method === 'GET'
-				? fakeRes(200, { data: {}, version: 1, initialized: true })
-				: fakeRes(400, {})
-		);
+	it.each([400, 422])('preserves a rejected %s patch and blocks sign-out until corrected', async (status) => {
+		mockFetch((c) => c.method === 'GET'
+			? fakeRes(200, { data: {}, version: 1, initialized: true })
+			: c.body.set.appearance.accentColor === '#bad' ? fakeRes(status, {}) : fakeRes(200, { version: 2 }));
 		await hydratePreferences();
+		applyPreferencePatch({ set: { appearance: { accentColor: '#bad' } } });
+		await __flushForTesting();
+		await expect(flushPendingPreferences()).rejects.toThrow(/could not save/);
 		applyPreferencePatch({ set: { appearance: { accentColor: '#ff0000' } } });
-		await __flushForTesting(); // PATCH → 400 → dropped
-		await __flushForTesting(); // nothing pending → no retry
-		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+		await expect(flushPendingPreferences()).resolves.toBeUndefined();
+		expect(__getServerVersionForTesting()).toBe(2);
 	});
 });
 
@@ -753,6 +756,11 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		await __flushForTesting();
 		// Nothing pending to replay — the old-profile edit was dropped, not re-sent.
 		expect(calls.filter((c) => c.method === 'PATCH').length).toBe(patchesBefore);
+		// Sign-out must report the rejected edit even though the queue is empty.
+		await expect(flushPendingWrites()).rejects.toThrow(/failed to save/);
+		expect(get(failedWrites)[0]).toContain('another tab switched profiles');
+		failedWrites.set([]);
+		await expect(flushPendingWrites()).resolves.toBeUndefined();
 	});
 
 	// codex PR #69: a profile-change 409 must drop the WHOLE pending queue, not just
@@ -996,4 +1004,81 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		applyPreferencePatch({ set: { appearance: { theme: 'light' } } });
 		expect(get(preferences).appearance.theme).toBe('light');
 	});
+});
+
+
+it('waits for initial hydration to reconcile local preferences before sign-out', async () => {
+	let finish!: () => void;
+	const gate = new Promise<void>((resolve) => { finish = resolve; });
+	mockFetch(async (c) => {
+		if (c.method === 'GET') {
+			await gate;
+			return fakeRes(200, { data: {}, version: 1, initialized: false });
+		}
+		return fakeRes(200, { version: 2 });
+	});
+	preferences.update((p) => ({ ...p, appearance: { ...p.appearance, accentColor: '#abc123' } }));
+	const hydration = hydratePreferences();
+	let saved = false;
+	const flush = flushPendingPreferences().then(() => { saved = true; });
+	await Promise.resolve();
+	expect(saved).toBe(false);
+	finish();
+	await Promise.all([hydration, flush]);
+	expect(calls.find((c) => c.method === 'PATCH')?.body.set.appearance.accentColor).toBe('#abc123');
+});
+
+
+it('finishes stale-version conflict recovery before reporting a sign-out save failure', async () => {
+	let version = 1;
+	let patches = 0;
+	mockFetch((c) => {
+		if (c.method === 'GET') return fakeRes(200, { data: {}, version, initialized: true });
+		patches++;
+		if (patches === 1) {
+			version = 2;
+			return fakeRes(409, { message: 'stale version' });
+		}
+		return fakeRes(200, { version: 3 });
+	});
+	await hydratePreferences();
+	applyPreferencePatch({ set: { appearance: { accentColor: '#abc123' } } });
+	await expect(flushPendingPreferences()).resolves.toBeUndefined();
+	const writes = calls.filter((c) => c.method === 'PATCH');
+	expect(writes).toHaveLength(2);
+	expect(writes[1].body.version).toBe(2);
+	expect(writes[1].body.set.appearance.accentColor).toBe('#abc123');
+	expect(get(failedWrites)).toEqual([]);
+});
+
+
+it('keeps a second explicit drain waiting for the first save', async () => {
+	let finish!: () => void;
+	const gate = new Promise<void>((resolve) => { finish = resolve; });
+	mockFetch(async (c) => {
+		if (c.method === 'GET') return fakeRes(200, { data: {}, version: 1, initialized: true });
+		await gate;
+		return fakeRes(200, { version: 2 });
+	});
+	await hydratePreferences();
+	applyPreferencePatch({ set: { appearance: { accentColor: '#abc123' } } });
+	const first = flushPendingPreferences();
+	let saved = false;
+	const second = flushPendingPreferences().then(() => { saved = true; });
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	expect(saved).toBe(false);
+	finish();
+	await Promise.all([first, second]);
+	expect(saved).toBe(true);
+	expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+});
+
+
+it.each([false, true])('stale-app sign-out requires a clean preference queue (pending: %s)', async (dirty) => {
+	mockFetch(() => fakeRes(200, { data: { schemaVersion: PREFERENCES_CODE_MAX_VERSION + 1 }, version: 1 }));
+	if (dirty) applyPreferencePatch({ set: { appearance: { accentColor: '#abc123' } } });
+	await hydratePreferences();
+	if (dirty) await expect(flushPendingPreferences()).rejects.toThrow(/still loading/);
+	else await expect(flushPendingPreferences()).resolves.toBeUndefined();
+	expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
 });
