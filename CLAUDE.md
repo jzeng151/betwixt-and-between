@@ -11,7 +11,7 @@ SvelteKit + Cloudflare Workers app for composing stories: typed entities (Charac
 
 ## Conventions
 
-- **Server-only code lives in `src/lib/server/**`.** Imports from there into client modules are forbidden except for declaration-only re-exports (types, `as const` arrays). `schema.ts` is currently declaration-only; keep it that way or break the import-leak guarantee.
+- **Server-only code lives in `src/lib/server/**`.** Client modules may use `import type` from there. Put shared runtime declarations outside that directory; SvelteKit rejects browser imports of server modules even when the imported value is a const array.
 - **Never set `updated_at` or `created_at` on UPDATE in app code.** A `bump_updated_at` BEFORE UPDATE trigger maintains them on `entities`, `intervals`, `world_maps`, `user_preferences`.
 - **`relationships` is a discriminated union of typed edges.** Types are declared in [schema.ts](src/lib/server/db/schema.ts); write validation lives in the [relationship route](src/routes/api/relationships/+server.ts), with graph policy in [edge-policy.ts](src/lib/features/graph/edge-policy.ts).
 - **`window_canvas_state.pinned` is `integer` 0/1, not `boolean`.** Schema, validators, and client all assume the integer shape.

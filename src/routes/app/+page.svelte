@@ -1,11 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { windowStore } from '$lib/os/windows-store.js';
+  import type { PageData } from './$types.js';
+
   import Desktop from '$lib/os/Desktop.svelte';
   import WindowManager from '$lib/os/WindowManager.svelte';
   import Taskbar from '$lib/os/Taskbar.svelte';
   import TooSmall from '$lib/os/TooSmall.svelte';
   import { entities } from '$lib/stores/entities.js';
   import { relationships } from '$lib/stores/relationships.js';
+
+  let { data }: { data: PageData } = $props();
+  const userId = $derived(data.user.id);
+  $effect(() => windowStore.startSession(userId));
 
   let allowSmallScreen = $state(false);
   let loaded = false;

@@ -1,15 +1,21 @@
 import { get, writable } from 'svelte/store';
 
 const pending = new Set<Promise<unknown>>();
-export const failedWrites = writable<string[]>([]);
+export const failedWrites = writable<Array<{ message: string; retryKey?: symbol }>>([]);
 
-export function trackWrite<T>(task: Promise<T>): Promise<T> {
+export function trackWrite<T>(task: Promise<T>, retryKey?: symbol): Promise<T> {
 	pending.add(task);
 	void task.then(
-		() => pending.delete(task),
+		() => {
+			pending.delete(task);
+			if (retryKey) failedWrites.update((errors) => errors.filter((failure) => failure.retryKey !== retryKey));
+		},
 		(error) => {
 			pending.delete(task);
-			failedWrites.update((errors) => [...errors, error instanceof Error ? error.message : 'A change could not be saved']);
+			failedWrites.update((errors) => [
+				...(retryKey ? errors.filter((failure) => failure.retryKey !== retryKey) : errors),
+				{ message: error instanceof Error ? error.message : 'A change could not be saved', retryKey }
+			]);
 		}
 	);
 	return task;

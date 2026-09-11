@@ -59,6 +59,8 @@ test('graph toggles persist server-side and hydrate into a freshly-opened graph 
 		.poll(() => graphPrefs(request), { timeout: 5000 })
 		.toEqual({ hardFilter: false, showGhostTrails: true });
 
+	await win.locator('button[aria-label="Close"]').click();
+
 	// Clear the localStorage cache + reload so the next graph window MUST hydrate
 	// the toggles from the SERVER (not the optimistic client cache). A graph window
 	// snapshots prefs at open time (intentional "apply on open"), so wait for the

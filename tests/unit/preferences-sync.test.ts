@@ -758,7 +758,7 @@ describe('Phase 3 profile switch/create drains pending edits first', () => {
 		expect(calls.filter((c) => c.method === 'PATCH').length).toBe(patchesBefore);
 		// Sign-out must report the rejected edit even though the queue is empty.
 		await expect(flushPendingWrites()).rejects.toThrow(/failed to save/);
-		expect(get(failedWrites)[0]).toContain('another tab switched profiles');
+		expect(get(failedWrites)[0].message).toContain('another tab switched profiles');
 		failedWrites.set([]);
 		await expect(flushPendingWrites()).resolves.toBeUndefined();
 	});

@@ -95,7 +95,7 @@
       {#if win.appId === 'character-editor'}
         <App winId={win.id} entityId={win.entityId} />
       {:else if win.appId === 'wiki'}
-        <App entityId={win.entityId} />
+        <App entityId={win.entityId} windowId={win.id} />
       {:else if win.appId === 'timeline'}
         <App />
       {:else if win.appId === 'entity-detail'}
