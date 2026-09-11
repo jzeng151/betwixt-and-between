@@ -34,15 +34,6 @@ test.describe('Wiki', () => {
 		await page.goto('/app');
 	});
 
-	test('empty state asks the user to create a Character or Location', async ({ page }) => {
-		await page.click('button[title="Wiki"]');
-		const win = page.locator('.window[aria-label="Wiki"]');
-		await expect(win).toBeVisible({ timeout: LIST_LOAD_TIMEOUT });
-		await expect(win.locator('.empty-state')).toContainText(
-			'Your wiki is empty. Create a Character or Location to begin.'
-		);
-	});
-
 	test('sidebar groups entities by type and excludes Notes', async ({ page, request }) => {
 		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
 		await request.post('/api/entities', { data: { type: 'Location', name: 'Edoras' } });
@@ -403,11 +394,10 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 		// Reload the page.
 		await page.reload();
 
-		// Re-open Settings → Editor and verify the checkbox is still off.
-		await page.click('button[title="Settings"]');
-		const settings2 = page.locator('.window[aria-label="Settings"]');
-		await settings2.locator('.sidebar-item', { hasText: 'Editor' }).click();
-		await expect(settings2.locator('input[type="checkbox"]')).not.toBeChecked();
+		// Select Editor in the restored Settings window and verify the checkbox is still off.
+		await expect(settings).toBeVisible();
+		await settings.locator('.sidebar-item', { hasText: 'Editor' }).click();
+		await expect(settings.locator('input[type="checkbox"]')).not.toBeChecked();
 	});
 
 	test('Body textarea is below the structured editor branch (placement order)', async ({

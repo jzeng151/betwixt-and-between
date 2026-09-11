@@ -8,8 +8,8 @@
 -->
 
 <script lang="ts">
-	import { setContext } from 'svelte';
-	import { entities } from '$lib/stores/entities.js';
+	import { setContext, onDestroy } from 'svelte';
+	import { entities, entityLoadStatus, entitySnapshotReady } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
 	import { playhead, intervalContainsT } from '$lib/features/timeline/playhead-store.js';
@@ -18,13 +18,15 @@
 	import { WIKI_NAV, type WikiNavContext } from '$lib/contexts/wiki-nav.js';
 	import type { EntityType } from '$lib/server/db/schema.js';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
-	import EntityDetail from '$lib/components/EntityDetail.svelte';
+	import EntityDetail, { pendingEditMode } from '$lib/components/EntityDetail.svelte';
+	import { trackWrite } from '$lib/stores/pending-writes.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
 
 	interface Props {
 		entityId: string | null;
+		windowId: string;
 	}
-	let { entityId }: Props = $props();
+	let { entityId, windowId }: Props = $props();
 
 	// Note entities are deliberately excluded from the sidebar (design
 	// specs Lock 2 — Notes are sections of their parent entity, not
@@ -49,7 +51,29 @@
 		Item: 'Items'
 	};
 
-	let selectedId = $state<string | null>(null);
+	function navigate(id: string) {
+		windowStore.setEntityId(windowId, id);
+	}
+
+	let mounted = true;
+	onDestroy(() => { mounted = false; });
+	let creating = $state(false);
+	let createError = $state('');
+	async function createEntry(type: 'Character' | 'Location') {
+		if (creating) return;
+		creating = true;
+		createError = '';
+		try {
+			const created = await trackWrite(entities.createEntity(type, `Untitled ${type}`));
+			if (!mounted) return;
+			pendingEditMode.add(created.id);
+			navigate(created.id);
+		} catch {
+			createError = `Couldn't create ${type.toLowerCase()}. Please try again.`;
+		} finally {
+			creating = false;
+		}
+	}
 
 	// Expose in-window navigation to descendant components. EntityLink
 	// chips inside our subtree (relationship chips, [[Name]] hyperlinks,
@@ -59,12 +83,7 @@
 	// undefined and consumers fall back to openEntity. See
 	// src/lib/contexts/wiki-nav.ts for the ambient-hijack contract.
 	setContext<WikiNavContext>(WIKI_NAV, {
-		navigate: (id: string) => {
-			selectedId = id;
-		}
-	});
-	$effect(() => {
-		if (entityId) selectedId = entityId;
+		navigate
 	});
 
 	let searchQuery = $state('');
@@ -170,9 +189,24 @@
 	});
 </script>
 
-{#if totalSidebarEntities === 0}
+{#if !$entitySnapshotReady}
 	<div class="empty-state">
-		<p>Your wiki is empty. Create a Character or Location to begin.</p>
+		{#if $entityLoadStatus === 'error'}
+			<p role="alert">Couldn't load your wiki.</p>
+			<button onclick={() => entities.load().catch(() => {})}>Retry</button>
+		{:else}
+			<p role="status">Loading your wiki…</p>
+		{/if}
+	</div>
+{:else if totalSidebarEntities === 0}
+	<div class="empty-state">
+		<p>Your wiki is empty. Start with a character or location.</p>
+		<div class="empty-actions">
+			<button disabled={creating} onclick={() => createEntry('Character')}>Create a character</button>
+			<button disabled={creating} onclick={() => createEntry('Location')}>Create a location</button>
+		</div>
+		{#if creating}<p role="status">Creating entry…</p>{/if}
+		{#if createError}<p role="alert">{createError}</p>{/if}
 	</div>
 {:else}
 	<div class="wiki-layout">
@@ -198,9 +232,9 @@
 							<button
 								type="button"
 								class="entry"
-								class:active={entry.id === selectedId}
+								class:active={entry.id === entityId}
 								class:out-of-scope={outOfScopeIds.has(entry.id)}
-								onclick={() => (selectedId = entry.id)}
+								onclick={() => navigate(entry.id)}
 								oncontextmenu={(e) => openContextMenu(e, entry.id)}
 							>
 								{entry.name}
@@ -230,8 +264,8 @@
 		</aside>
 
 		<section class="wiki-content">
-			{#if selectedId}
-				<EntityDetail entityId={selectedId} isPopout={true} />
+			{#if entityId}
+				<EntityDetail entityId={entityId} isPopout={true} />
 			{:else}
 				<p class="no-selection">Pick an entity from the sidebar.</p>
 			{/if}
@@ -392,8 +426,21 @@
 		font-style: italic;
 	}
 
+	.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+	.empty-state button {
+		min-height: 40px;
+		padding: 8px 14px;
+		border: 1px solid var(--color-border);
+		border-radius: 5px;
+		background: var(--color-surface-2);
+		color: var(--color-text);
+		cursor: pointer;
+	}
+	.empty-state button:disabled { opacity: 0.5; cursor: wait; }
 	.empty-state {
 		display: flex;
+		flex-direction: column;
+		gap: 16px;
 		align-items: center;
 		justify-content: center;
 		height: 100%;

@@ -15,13 +15,6 @@ async function getCharacterColor(request: APIRequestContext): Promise<string | u
 	return body?.data?.appearance?.entityTypeColors?.Character;
 }
 
-async function openSettings(page: import('@playwright/test').Page) {
-	await page.click('button[title="Settings"]');
-	const win = page.locator('.window[aria-label="Settings"]');
-	await expect(win).toBeVisible();
-	return win;
-}
-
 test('entity-type color customization persists server-side and resets to default', async ({
 	page,
 	request
@@ -29,7 +22,9 @@ test('entity-type color customization persists server-side and resets to default
 	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 	await page.goto('/app');
 
-	let win = await openSettings(page);
+	await page.click('button[title="Settings"]');
+	const win = page.locator('.window[aria-label="Settings"]');
+	await expect(win).toBeVisible();
 	const charChip = win.locator('.swatch', { hasText: 'Character' });
 	const charInput = charChip.locator('input[type="color"]');
 	await expect(charInput).toBeAttached({ timeout: 10000 });
@@ -64,7 +59,7 @@ test('entity-type color customization persists server-side and resets to default
 	// reload, and the customization re-hydrates from the server.
 	await page.evaluate(() => localStorage.removeItem('btw:preferences'));
 	await page.reload();
-	win = await openSettings(page);
+	await expect(win).toBeVisible();
 	await expect(win.locator('.swatch', { hasText: 'Character' }).locator('.swatch-modified')).toBeVisible({
 		timeout: 10000
 	});

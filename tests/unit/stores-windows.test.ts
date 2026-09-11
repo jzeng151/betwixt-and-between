@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { windowStore } from '../../src/lib/os/windows-store.js';
 import { preferences } from '../../src/lib/os/preferences-store.js';
@@ -397,5 +397,79 @@ describe('window keyboard navigation', () => {
 		expect(windowStore.cycle(1)).toBe(false);
 		expect(windowStore.cycle(-1)).toBe(false);
 		expect(windowStore.focusedWindow()).toBeUndefined();
+	});
+});
+
+describe('tab window restoration', () => {
+	let saved: Map<string, string>;
+	let stop: (() => void) | undefined;
+	beforeEach(() => {
+		saved = new Map();
+		vi.stubGlobal('sessionStorage', {
+			getItem: (key: string) => saved.get(key) ?? null,
+			setItem: (key: string, value: string) => saved.set(key, value)
+		});
+		vi.stubGlobal('window', Object.assign(new EventTarget(), { innerWidth: 800, innerHeight: 600 }));
+		vi.stubGlobal('document', Object.assign(new EventTarget(), { documentElement: {}, visibilityState: 'hidden' }));
+		vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '44' }));
+	});
+	afterEach(() => { stop?.(); stop = undefined; vi.unstubAllGlobals(); });
+
+	it('restores entity selection, independent graph IDs, stacking and minimized state with visible geometry', () => {
+		stop = windowStore.startSession('user-a');
+		windowStore.open('wiki');
+		windowStore.setEntityId('wiki', 'character-1');
+		windowStore.move('wiki', 700, 600);
+		windowStore.resize('wiki', 720, 500);
+		const first = windowStore.openFocusedGraph(['character-1'], 'shared');
+		const second = windowStore.openFocusedGraph(['location-1']);
+		windowStore.setTypeOrder(first, ['Location', 'Character']);
+		windowStore.togglePin(first);
+		windowStore.open('notes');
+		windowStore.minimize('notes');
+		windowStore.focus(second);
+		window.dispatchEvent(new Event('pagehide'));
+		stop();
+		stop = windowStore.startSession('user-a');
+		const windows = get(windowStore);
+		expect(windows.map((w) => w.id)).toEqual(['wiki', first, second, 'notes']);
+		expect(windows[0]).toMatchObject({ entityId: 'character-1', x: 80, y: 56, width: 720, height: 500, geomAdjusted: true });
+		expect(windows[1]).toMatchObject({ focalSet: ['character-1'], viewMode: 'shared', typeOrder: ['Location', 'Character'], alwaysOnTop: true });
+		expect(windows[3].minimized).toBe(true);
+		expect(windowStore.focusedWindow()?.id).toBe(second);
+		windowStore.open('settings');
+		expect(windowStore.focusedWindow()?.id).toBe('settings');
+		windowStore.close('wiki');
+		stop();
+		stop = windowStore.startSession('user-a');
+		expect(get(windowStore).some((w) => w.id === 'wiki')).toBe(false);
+	});
+
+	it('rejects another account, corrupt records and duplicates without blocking valid windows', () => {
+		windowStore.open('wiki');
+		const valid = get(windowStore)[0];
+		for (const value of ['{broken', JSON.stringify({ userId: 'user-b', windows: [valid] })]) {
+			saved.set('betwixt-windows-v1', value);
+			stop = windowStore.startSession('user-a');
+			expect(get(windowStore)).toEqual([]);
+			stop();
+		}
+		saved.set('betwixt-windows-v1', JSON.stringify({ userId: 'user-a', windows: [
+			{ ...valid, appId: 'unknown' }, { ...valid, width: -1 }, { ...valid, x: null },
+			{ ...valid, id: '../../bad' }, { ...valid, zIndex: 1e100 }, valid, valid
+		] }));
+		stop = windowStore.startSession('user-a');
+		expect(get(windowStore).map((w) => w.id)).toEqual(['wiki']);
+	});
+
+	it('keeps windows usable when browser storage is disabled', () => {
+		vi.stubGlobal('sessionStorage', {
+			getItem: () => { throw new Error('Blocked'); },
+			setItem: () => { throw new Error('Blocked'); }
+		});
+		stop = windowStore.startSession('user-a');
+		windowStore.open('wiki');
+		window.dispatchEvent(new Event('pagehide'));
+		expect(windowStore.focusedWindow()?.id).toBe('wiki');
 	});
 });
