@@ -50,10 +50,12 @@ describe('Causal Cartography — traceRegionProvenance (Slice 5 PR-E / D6)', () 
 	async function transferRegion(
 		sourceEventId: string | null,
 		tPosition = 0,
-		opts: { undone?: boolean } = {}
+		opts: { undone?: boolean; createdAt?: Date; id?: string } = {}
 	) {
 		await db.insert(mapEvents).values({
 			worldMapId: mapId,
+			id: opts.id,
+			createdAt: opts.createdAt,
 			tPosition,
 			kind: 'transfer_region',
 			payloadJsonb: { region_id: REGION, new_faction_id: 'fac-x' },
@@ -212,11 +214,20 @@ describe('Causal Cartography — traceRegionProvenance (Slice 5 PR-E / D6)', () 
 		expect(r.status === 'found' && r.earliest.eventId).toBe(live);
 	});
 
-	it('same-T tie-break: highest (createdAt,id) change wins, deterministically', async () => {
+	it.each(['createdAt', 'id'])('same-T tie-break: highest %s wins regardless of insertion order', async (tieBreak) => {
 		const first = await event('First @5');
 		const second = await event('Second @5');
-		await transferRegion(first, 5);
-		await transferRegion(second, 5); // same tPosition, later createdAt → wins
+		const lowId = '00000000-0000-0000-0000-000000000001';
+		const highId = '00000000-0000-0000-0000-000000000002';
+		// Insert the winner first so insertion order cannot satisfy the assertion.
+		await transferRegion(second, 5, {
+			id: tieBreak === 'id' ? highId : lowId,
+			createdAt: new Date(tieBreak === 'createdAt' ? '2026-01-02Z' : '2026-01-01Z')
+		});
+		await transferRegion(first, 5, {
+			id: tieBreak === 'id' ? lowId : highId,
+			createdAt: new Date('2026-01-01Z')
+		});
 		const r = await traceRegionProvenance(db, userId, mapId, REGION, 5);
 		expect(r.status === 'found' && r.earliest.eventId).toBe(second);
 	});
