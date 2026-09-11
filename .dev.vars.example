@@ -1,4 +1,12 @@
-# Cloudflare local runtime bindings for `wrangler pages dev` / `wrangler dev`.
+# Cloudflare local runtime bindings for `npm run cf:preview`.
 # Keep the real `.dev.vars` file untracked.
 
 DATABASE_URL=postgres://user:pass@ep-xxxxx.region.aws.neon.tech/dbname
+
+# Auth (Better-Auth): replace the secret with `openssl rand -base64 32` output.
+BETTER_AUTH_SECRET=generate-with-openssl-rand-base64-32
+BETTER_AUTH_URL=http://localhost:8787
+
+# Production builds require these for magic-link sign-in (see DEPLOY.md).
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
