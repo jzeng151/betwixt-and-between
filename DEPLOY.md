@@ -1,14 +1,14 @@
 # Deploy — operator runbook
 
-Architecture, bindings, and deployment shape are in [docs/architecture.md → Deployment shape](docs/architecture.md#deployment-shape). This file is the step-by-step runbook for operators.
+The [Worker configuration](wrangler.jsonc) and [deployment workflow](.github/workflows/deploy.yml) define the deployment. This file covers operator setup and verification.
 
 The deploy target is **Cloudflare Workers** with Static Assets (the unified 2024+ replacement for Cloudflare Pages). The repo's `wrangler.jsonc` is the source of truth for the Worker's name, compatibility settings, the `_worker.js` entrypoint, the `ASSETS` binding, observability, and bindings to external resources (R2, etc.).
 
 ## Deploy pipeline
 
-`.github/workflows/deploy.yml` runs `wrangler deploy` on every push to `main`, after `npm run check` + `npm test` pass in the same job. The Worker is deployed to whichever Cloudflare account the `CLOUDFLARE_API_TOKEN` GitHub secret authenticates.
+On every push to `main`, `.github/workflows/deploy.yml` runs the E2E job, then `npm run check`, `npm test`, a production build, and `wrangler deploy` in the dependent deploy job. The Worker is deployed to whichever Cloudflare account the `CLOUDFLARE_API_TOKEN` GitHub secret authenticates.
 
-`npm run deploy` (= `wrangler deploy`) is the same command, run from a developer's machine. Use it for the very first deploy (before the GitHub Action's secrets are set), for one-off hotfixes, and to reproduce a CI failure locally.
+`npm run deploy` builds the app and runs `wrangler deploy` from a developer's machine. Use it for the very first deploy (before the GitHub Action's secrets are set), for one-off hotfixes, and to reproduce a CI failure locally.
 
 ## One-time setup
 
@@ -45,7 +45,7 @@ Set via `wrangler secret put <NAME>` (interactive) or the dashboard (Workers & P
 | `RESEND_API_KEY` | Resend dashboard | required for prod magic-links |
 | `RESEND_FROM_EMAIL` | Resend-verified sender | required for prod magic-links |
 
-`buildAuth` throws if `BETTER_AUTH_SECRET` or `BETTER_AUTH_URL` is missing — the Worker returns 500 on every request until both are set. The check is unconditional; even E2E paths must supply their own secret. A previous version silently fell back to a hardcoded dev secret in test mode, which turned out to be a session-forgery primitive on any prod with a misapplied `BETWIXT_E2E_PGLITE=1` runtime secret. See [docs/findings/x-test-user-id-prod-guard.md](docs/findings/x-test-user-id-prod-guard.md) § Resolution.
+`buildAuth` throws if `BETTER_AUTH_SECRET` or `BETTER_AUTH_URL` is missing — the Worker returns 500 on every request until both are set. The check is unconditional; even E2E paths must supply their own secret. A previous version silently fell back to a hardcoded dev secret in test mode, which turned out to be a session-forgery primitive on any prod with a misapplied `BETWIXT_E2E_PGLITE=1` runtime secret. See [buildAuth](src/lib/server/auth.ts) and the [request hook](src/hooks.server.ts) for the checks.
 
 **Never set `BETWIXT_E2E_PGLITE` in production**, in either:
 - the Worker's runtime secrets/variables (the `wrangler secret list` surface), **OR**
@@ -68,8 +68,7 @@ Before the GitHub Action can run, the Worker must exist and have its secrets set
 ```sh
 npm install
 DATABASE_URL='postgres://...prod-branch...' npm run db:migrate   # see § Migrations
-npm run build
-npm run deploy   # = wrangler deploy
+npm run deploy   # builds the app, then runs wrangler deploy
 ```
 
 The first `wrangler deploy` creates the Worker. Note the URL it prints (e.g. `https://betwixt-and-between.<account-subdomain>.workers.dev`). Update `BETTER_AUTH_URL` to match if you didn't already:
@@ -131,7 +130,7 @@ For fresh deploys with no pre-existing data, skip the backfill — every new row
 
 ## Deploying
 
-After one-time setup, deploy is `git push origin main`. The GitHub Action runs `npm run check`, `npm test`, then `wrangler deploy`. First request after deploy may take ~1s as the Worker cold-starts the Neon pool.
+After one-time setup, deploy is `git push origin main`. The GitHub Action gates deployment on E2E, type checks, unit/integration tests, and a production build. First request after deploy may take ~1s as the Worker cold-starts the Neon pool.
 
 If a deploy ships a migration: **run `npm run db:migrate` first** (against the prod Neon branch from your machine), then `git push`.
 
@@ -141,7 +140,7 @@ For an emergency manual deploy: `npm run deploy` from a checkout of the commit y
 
 1. Hit `https://<your-worker-or-custom-domain>/` — should serve the landing page.
 2. Visit `/auth/login`, enter your email, submit. Check inbox for the magic-link (Resend must be wired). Click → land on `/app` authenticated.
-3. Open `/app` → timeline + map + entity list visible.
+3. Open `/app`, then use the taskbar to open Characters, Timeline, and World Map. Confirm each window loads.
 
 If any step fails: `wrangler tail` for live logs, or Cloudflare dashboard → your Worker → Logs.
 
@@ -192,9 +191,9 @@ Cloudflare retains previous Worker versions. To revert: dashboard → your Worke
 
 ## References
 
-- [docs/architecture.md](docs/architecture.md) — deployment shape, env vars, trust boundaries.
-- [docs/adr/0004-neon-postgres-better-auth.md](docs/adr/0004-neon-postgres-better-auth.md) — why Postgres + Better-Auth + Workers.
-- [docs/findings/x-test-user-id-prod-guard.md](docs/findings/x-test-user-id-prod-guard.md) — security follow-up on the E2E bypass.
+- [wrangler.jsonc](wrangler.jsonc) — Worker entrypoint, assets, and runtime bindings.
+- [src/hooks.server.ts](src/hooks.server.ts) and [vite.config.ts](vite.config.ts) — runtime and build-time E2E bypass guards.
+- [src/lib/server/auth.ts](src/lib/server/auth.ts) — required auth configuration and magic-link delivery.
 - `.github/workflows/test.yml` — CI test gate (runs on PRs).
 - `.github/workflows/deploy.yml` — auto-deploy on push to main.
 - `.github/workflows/backup.yml` — weekly Neon backup to Backblaze B2.

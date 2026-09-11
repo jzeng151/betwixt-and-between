@@ -4,17 +4,16 @@ SvelteKit + Cloudflare Workers app for composing stories: typed entities (Charac
 
 ## Documentation
 
-- [docs/architecture.md](docs/architecture.md) — system overview, trust boundaries, concurrency model, deployment, sharp edges.
-- [docs/schema.md](docs/schema.md) — generated from `schema.ts` + `drizzle/*.sql`. Tables, columns, FKs, indexes, constraints, triggers.
-- [docs/api.md](docs/api.md) — generated route inventory. Per-route MANUAL blocks (error codes, list bounds).
-- [docs/edges.md](docs/edges.md) — generated relationship-type catalog. Direction, endpoints, temporal eligibility, cascades.
-- [docs/adr/](docs/adr/) — architecture decisions worth keeping.
+- For request lifecycle, authentication, and environment precedence, read [src/hooks.server.ts](src/hooks.server.ts) and [src/lib/server/auth.ts](src/lib/server/auth.ts).
+- For deployment and runtime bindings, read [DEPLOY.md](DEPLOY.md) and [wrangler.jsonc](wrangler.jsonc).
+- For schema, API, and relationship references, run `npm run docs:all`. It creates gitignored local files at `docs/schema.md`, `docs/api.md`, and `docs/edges.md`; they are absent in a fresh checkout.
+- [docs/adr/](docs/adr/) — tracked architecture decisions.
 
 ## Conventions
 
-- **Server-only code lives in `src/lib/server/**`.** Imports from there into client modules are forbidden except for declaration-only re-exports (types, `as const` arrays). `schema.ts` is currently declaration-only; keep it that way or break the import-leak guarantee. See [architecture.md](docs/architecture.md#schema-import-leak-risk).
+- **Server-only code lives in `src/lib/server/**`.** Imports from there into client modules are forbidden except for declaration-only re-exports (types, `as const` arrays). `schema.ts` is currently declaration-only; keep it that way or break the import-leak guarantee.
 - **Never set `updated_at` or `created_at` on UPDATE in app code.** A `bump_updated_at` BEFORE UPDATE trigger maintains them on `entities`, `intervals`, `world_maps`, `user_preferences`.
-- **`relationships` is a discriminated union of typed edges.** 11 types in `RelationshipType`; per-type write semantics in [docs/edges.md](docs/edges.md) and [docs/adr/0001-relationships-as-discriminated-union.md](docs/adr/0001-relationships-as-discriminated-union.md).
+- **`relationships` is a discriminated union of typed edges.** Types are declared in [schema.ts](src/lib/server/db/schema.ts); write validation lives in the [relationship route](src/routes/api/relationships/+server.ts), with graph policy in [edge-policy.ts](src/lib/features/graph/edge-policy.ts).
 - **`window_canvas_state.pinned` is `integer` 0/1, not `boolean`.** Schema, validators, and client all assume the integer shape.
 - **`entity_aliases` has no `user_id` column.** Every query must scope through the parent table (`entities.user_id`). A missing JOIN is a cross-user data leak. (Note: `map_regions` was dropped in Slice 2 D2 PR-C — region identity now lives in `map_anchors.state_jsonb.regions[]` and the cross-user invariant is enforced via `world_maps.user_id` on the anchor read sites; see `src/lib/server/world-map-v3.ts → readBaselineRegionsForUser`.)
 - **Polymorphic FK invariants** (e.g. `intervals.start_act_id` must reference a row of `type='Act'`) are enforced at the application layer + Vitest invariant tests, not at the DB. Adding a new polymorphic FK requires both.
@@ -41,4 +40,4 @@ Every change of these shapes must touch the matching doc in the same commit. CI 
 | E2E (Playwright) | `npm run test:e2e` | Production preview on `:4173`, in-process PGlite via `tests/e2e/global-setup.ts`, `workers: 1` (shared DB). |
 | Type-check | `npm run check` | `svelte-check` against `tsconfig.json`. |
 
-E2E uses `BETWIXT_E2E_PGLITE=1` + `x-test-user-id` header to skip Better-Auth. The bypass is gated three ways: (1) a build-time Vite `define` (`__E2E_BYPASS__` in `vite.config.ts`) that tree-shakes the entire `x-test-user-id` branch from the production worker bundle when `BETWIXT_E2E_PGLITE` is unset at build time; (2) a runtime check on `platformEnv.BETWIXT_E2E_PGLITE === '1'`; (3) `BETWIXT_E2E_PGLITE: ''` scoped at the deploy job level in `.github/workflows/deploy.yml`. `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are required unconditionally — there is no test-mode fallback (a publicly-visible fallback was removed in v0.7.3.0; see [CHANGELOG.md](CHANGELOG.md)). See [architecture.md → Trust boundaries](docs/architecture.md#trust-boundaries).
+E2E uses `BETWIXT_E2E_PGLITE=1` + `x-test-user-id` header to skip Better-Auth. The bypass is gated three ways: (1) a build-time Vite `define` (`__E2E_BYPASS__` in `vite.config.ts`) that tree-shakes the entire `x-test-user-id` branch from the production worker bundle when `BETWIXT_E2E_PGLITE` is unset at build time; (2) a runtime check on `platformEnv.BETWIXT_E2E_PGLITE === '1'`; (3) `BETWIXT_E2E_PGLITE: ''` scoped at the deploy job level in `.github/workflows/deploy.yml`. `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are required unconditionally — there is no test-mode fallback (a publicly-visible fallback was removed in v0.7.3.0; see [CHANGELOG.md](CHANGELOG.md)). See [DEPLOY.md](DEPLOY.md#3-cloudflare-worker-secrets) for production configuration.
