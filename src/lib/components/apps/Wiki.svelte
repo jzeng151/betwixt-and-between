@@ -57,6 +57,7 @@
 
 	let mounted = true;
 	onDestroy(() => { mounted = false; });
+	const creationKeys = { Character: Symbol(), Location: Symbol() };
 	let creating = $state(false);
 	let createError = $state('');
 	async function createEntry(type: 'Character' | 'Location') {
@@ -64,7 +65,7 @@
 		creating = true;
 		createError = '';
 		try {
-			const created = await trackWrite(entities.createEntity(type, `Untitled ${type}`));
+			const created = await trackWrite(entities.createEntity(type, `Untitled ${type}`), creationKeys[type]);
 			if (!mounted) return;
 			pendingEditMode.add(created.id);
 			navigate(created.id);
