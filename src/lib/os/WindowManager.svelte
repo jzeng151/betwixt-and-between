@@ -61,16 +61,13 @@
 
   function onKeydown(e: KeyboardEvent) {
     if (e.ctrlKey && e.key === 'w') {
-      e.preventDefault();
       const focused = windowStore.focusedWindow();
-      if (focused) windowStore.close(focused.id);
+      if (focused) {
+        e.preventDefault();
+        windowStore.close(focused.id);
+      }
     }
-    if (e.ctrlKey && e.key === 'Tab') {
-      e.preventDefault();
-      if (e.shiftKey) windowStore.cycleBackward();
-      else windowStore.cycleForward();
-    }
-    if (e.ctrlKey && e.key === 'k') {
+    if (e.ctrlKey && e.key === 'Tab' && windowStore.cycle(e.shiftKey ? -1 : 1)) {
       e.preventDefault();
     }
   }

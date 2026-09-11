@@ -341,27 +341,21 @@ function createWindowStore() {
 	}
 
 	function focusedWindow(): WindowState | undefined {
-		const all = get({ subscribe });
+		const all = get({ subscribe }).filter((w) => !w.minimized);
 		return all.reduce<WindowState | undefined>(
 			(top, w) => (!top || w.zIndex > top.zIndex ? w : top),
 			undefined
 		);
 	}
 
-	function cycleForward() {
+	function cycle(direction: 1 | -1) {
 		const all = get({ subscribe }).filter((w) => !w.minimized);
-		if (all.length < 2) return;
-		const sorted = [...all].sort((a, b) => a.zIndex - b.zIndex);
-		const next = sorted[sorted.length - 1];
-		focus(next.id);
-	}
-
-	function cycleBackward() {
-		const all = get({ subscribe }).filter((w) => !w.minimized);
-		if (all.length < 2) return;
-		const sorted = [...all].sort((a, b) => a.zIndex - b.zIndex);
-		const next = sorted[0];
-		focus(next.id);
+		if (all.length < 2) return false;
+		// Keep opening order stable while focus changes the stacking order.
+		const current = focusedWindow()?.id;
+		const index = all.findIndex((w) => w.id === current);
+		focus(all[(index + direction + all.length) % all.length].id);
+		return true;
 	}
 
 	/**
@@ -423,8 +417,7 @@ function createWindowStore() {
 		setAsDefault,
 		focusedWindow,
 		findOpenEditorFor,
-		cycleForward,
-		cycleBackward
+		cycle
 	};
 }
 
