@@ -1,5 +1,6 @@
 <script lang="ts">
-	import daylightSection from '$lib/assets/daylight-story-section.png';
+	import daylightSection from '$lib/assets/daylight-story-section.webp';
+	import daylightSectionSmall from '$lib/assets/daylight-story-section-small.webp';
 </script>
 
 <svelte:head>
@@ -14,7 +15,7 @@
 
 <main class="daylight">
 
-	<img class="section-image" src={daylightSection} alt="" aria-hidden="true" />
+	<img class="section-image" src={daylightSection} srcset="{daylightSectionSmall} 800w, {daylightSection} 1672w" sizes="100vw" alt="" aria-hidden="true" />
 	<div class="wash" aria-hidden="true"></div>
 
 	<header class="topbar">
@@ -64,12 +65,7 @@
 </main>
 
 <style>
-	:global(html),
-	:global(body) {
-		background: #eeece4;
-	}
-
-	:global(::selection) {
+	.daylight :global(::selection) {
 		background: #dca536;
 		color: #1f211d;
 	}

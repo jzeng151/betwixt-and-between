@@ -4,6 +4,8 @@ import { E2E_USER_HEADERS } from './pglite-config.js';
 for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
   test(`landing example is clearly illustrative at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize(viewport);
+    await page.goto('/auth/login');
+    const loginBackground = await page.locator('body').evaluate((body) => getComputedStyle(body).backgroundColor);
     await page.goto('/');
     await expect(page.getByRole('heading', { level: 1 })).toContainText('story in section');
     await expect(page.getByText('An example of a connected story, not a playable demo.')).toBeVisible();
@@ -15,6 +17,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await expect(action).toBeVisible();
     await action.click();
     await expect(page).toHaveURL(/\/auth\/login$/);
+    await expect(page.locator('body')).toHaveCSS('background-color', loginBackground);
   });
 }
 
