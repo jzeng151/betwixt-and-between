@@ -1,45 +1,25 @@
 import { test, expect } from '@playwright/test';
 import { E2E_USER_HEADERS } from './pglite-config.js';
 
-test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
-
-test.describe('Landing page', () => {
-  test.beforeEach(async ({ page }) => {
+for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  test(`landing example is clearly illustrative at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
     await page.goto('/');
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('story in section');
+    await expect(page.getByText('An example of a connected story, not a playable demo.')).toBeVisible();
+    await expect(page.locator('.connection strong')).toHaveText(['Elara Voss', 'Ashenveil']);
+    await expect(page.locator('.connection a, .views a')).toHaveCount(0);
+    await expect(page).toHaveTitle(/Betwixt and Between/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const action = page.getByRole('link', { name: 'Open the workspace' });
+    await expect(action).toBeVisible();
+    await action.click();
+    await expect(page).toHaveURL(/\/auth\/login$/);
   });
-
-  test('hero section is visible on load', async ({ page }) => {
-    await expect(page.locator('#intro')).toBeVisible();
-    await expect(page.locator('.hero-heading')).toContainText('fully mapped');
-  });
-
-  test('CTA links to /app', async ({ page }) => {
-    const ctaLinks = page.locator('.cta-button');
-    await expect(ctaLinks.first()).toBeVisible();
-    const count = await ctaLinks.count();
-    for (let i = 0; i < count; i++) {
-      await expect(ctaLinks.nth(i)).toHaveAttribute('href', '/app');
-    }
-  });
-
-  test('theatre sections scroll into view', async ({ page }) => {
-    // Scroll to characters section
-    await page.locator('#characters').scrollIntoViewIfNeeded();
-    await expect(page.locator('#characters')).toBeVisible();
-
-    // Scroll to map section
-    await page.locator('#map').scrollIntoViewIfNeeded();
-    await expect(page.locator('#map')).toBeVisible();
-  });
-
-  test('has proper page title and meta description', async ({ page }) => {
-    await expect(page).toHaveTitle(/betwixt-and-between/);
-    const metaDesc = page.locator('meta[name="description"]');
-    await expect(metaDesc).toHaveAttribute('content', /Characters, story graphs/);
-  });
-});
+}
 
 test.describe('App route migration', () => {
+  test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
   test('/app offers a useful empty workspace', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
     await page.goto('/app');
