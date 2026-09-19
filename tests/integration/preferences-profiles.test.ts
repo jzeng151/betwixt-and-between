@@ -73,6 +73,24 @@ describe('Phase 3 profiles', () => {
 		expect(profiles.map((p) => p.name).sort()).toEqual(['Default', 'Revision']);
 	});
 
+	it('replays a creation ID without duplicating, copying again, or changing the active profile', async () => {
+		const id = crypto.randomUUID();
+		const results = await Promise.all([createProfile(db, storyId, 'Copy', id), createProfile(db, storyId, 'Copy', id)]);
+		expect(results.map((r) => r.profileId)).toEqual([id, id]);
+		expect(await listProfiles(db, storyId)).toHaveLength(2);
+		const other = await createProfile(db, storyId, 'Other');
+		await patchPreferences(db, storyId, { set: { appearance: { theme: 'light' } } }, other.version, other.profileId);
+		expect(await createProfile(db, storyId, 'Copy', id)).toMatchObject({ profileId: id, isActive: false });
+		expect((await getActivePreferences(db, storyId)).profileId).toBe(other.profileId);
+		await activateProfile(db, storyId, id);
+		expect((await getActivePreferences(db, storyId)).data.appearance).not.toMatchObject({ theme: 'light' });
+		await expectStatus(createProfile(db, storyId, 'Changed', id), 409);
+		await expectStatus(createProfile(db, storyId, 'Invalid', 'not-a-uuid'), 400);
+		const otherStory = (await seedTestUser(db, { email: 'replay-other@t.com' })).id;
+		expect(await createProfile(db, otherStory, 'Own copy', id)).toMatchObject({ profileId: id, name: 'Own copy' });
+		expect((await listProfiles(db, storyId)).find((p) => p.profileId === id)?.name).toBe('Copy');
+	});
+
 	it('requires a profileId stamp on writes once multiple profiles exist (codex PR #69)', async () => {
 		const a = await getActivePreferences(db, storyId); // single profile
 		// One profile → a stampless write is unambiguous, allowed.

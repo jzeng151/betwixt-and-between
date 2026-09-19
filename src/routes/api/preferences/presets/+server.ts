@@ -5,12 +5,14 @@
 //   caller's saved presets (oldest first). User derived from session. 401 unauthed.
 //
 // POST /api/preferences/presets
-//   Body: { name: string, appearance: object }
+//   Body: { name: string, appearance: object, presetId?: UUID }
 //   Saves an appearance blob as a named preset (the client sends the active
 //   profile's current appearance). Returns the new PresetSummary.
-//     200 — created; body: PresetSummary
-//     400 — missing/empty name, invalid appearance (bad hex / unknown key), bad JSON
+//   Reusing presetId with the same name and appearance returns the existing preset.
+//     200 — created or replayed; body: PresetSummary
+//     400 — missing/empty name, invalid appearance or presetId, bad JSON
 //     401 — unauthenticated
+//     409 — presetId exists with different data
 //
 // Apply is NOT an endpoint: applying a preset is an ordinary PATCH
 // /api/preferences the client builds (buildApplyPresetPatch).
@@ -28,7 +30,7 @@ export const GET: RequestHandler = async (event) => {
 
 export const POST: RequestHandler = async (event) => {
 	const storyId = await getStoryId(event);
-	let body: { name?: unknown; appearance?: unknown };
+	let body: { name?: unknown; appearance?: unknown; presetId?: unknown };
 	try {
 		body = (await event.request.json()) as typeof body;
 	} catch {
@@ -41,7 +43,8 @@ export const POST: RequestHandler = async (event) => {
 		event.locals.db,
 		storyId,
 		body.name as string,
-		body.appearance
+		body.appearance,
+		body.presetId as string | undefined
 	);
 	return json(preset);
 };

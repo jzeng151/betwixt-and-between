@@ -2,7 +2,8 @@ import { get, writable } from 'svelte/store';
 
 const pending = new Set<Promise<unknown>>();
 const latest = new Map<symbol | string, Promise<unknown>>();
-export const failedWrites = writable<Array<{ message: string; retryKey?: symbol | string }>>([]);
+const creations = new Map<string, Promise<unknown>>();
+export const failedWrites = writable<Array<{ message: string; retryKey?: symbol | string; creationId?: string }>>([]);
 
 // Retry identity follows JSON values, independent of object insertion order.
 export function writeRetryKey(operation: string, payload: unknown): string {
@@ -13,7 +14,16 @@ export function writeRetryKey(operation: string, payload: unknown): string {
 	)}`;
 }
 
-export function trackWrite<T>(task: Promise<T>, retryKey?: symbol | string): Promise<T> {
+export function trackCreation<T>(retryKey: string, create: (id: string) => Promise<T>): Promise<T> {
+	const inFlight = creations.get(retryKey);
+	if (inFlight) return inFlight as Promise<T>;
+	const id = get(failedWrites).find((failure) => failure.retryKey === retryKey)?.creationId ?? crypto.randomUUID();
+	const task = trackWrite(create(id), retryKey, id).finally(() => creations.delete(retryKey));
+	creations.set(retryKey, task);
+	return task;
+}
+
+export function trackWrite<T>(task: Promise<T>, retryKey?: symbol | string, creationId?: string): Promise<T> {
 	pending.add(task);
 	if (retryKey) latest.set(retryKey, task);
 	void task.then(
@@ -32,7 +42,7 @@ export function trackWrite<T>(task: Promise<T>, retryKey?: symbol | string): Pro
 			}
 			failedWrites.update((errors) => [
 				...(retryKey ? errors.filter((failure) => failure.retryKey !== retryKey) : errors),
-				{ message: error instanceof Error ? error.message : 'A change could not be saved', retryKey }
+				{ message: error instanceof Error ? error.message : 'A change could not be saved', retryKey, ...(creationId ? { creationId } : {}) }
 			]);
 		}
 	);
