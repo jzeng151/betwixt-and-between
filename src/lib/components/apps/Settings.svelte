@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { trackWrite } from '$lib/stores/pending-writes.js';
+  import { trackWrite, writeRetryKey } from '$lib/stores/pending-writes.js';
   import AccountSettings from './AccountSettings.svelte';
   import Stories from './Stories.svelte';
   import StoryExport from './StoryExport.svelte';
@@ -140,7 +140,7 @@
     if (p.isActive || busy) return;
     busy = true;
     try {
-      await trackWrite(switchProfile(p.profileId));
+      await trackWrite(switchProfile(p.profileId), 'settings:profile:activate');
       await loadProfiles();
       profilesError = null;
     } catch (e) {
@@ -152,10 +152,12 @@
 
   async function createProfileFromInput() {
     const name = newProfileName.trim();
-    if (!name || busy) return;
+    if (!name || busy || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
     busy = true;
     try {
-      await trackWrite(createProfile(name));
+      // Editor toggles are local-only and do not change the profile copied by the server.
+      const { editor: _editor, ...profilePreferences } = $preferences;
+      await trackWrite(createProfile(name), writeRetryKey('settings:profile:create', { name, profileId: $preferencesProfileId, preferences: profilePreferences }));
       newProfileName = '';
       await loadProfiles();
       profilesError = null;
@@ -184,7 +186,7 @@
     if (busy) return;
     busy = true;
     try {
-      await trackWrite(renameProfileRequest(p.profileId, name));
+      await trackWrite(renameProfileRequest(p.profileId, name), `settings:profile:${p.profileId}:rename`);
       cancelRename();
       await loadProfiles();
       profilesError = null;
@@ -199,7 +201,7 @@
     if (busy) return;
     busy = true;
     try {
-      await trackWrite(deleteProfileRequest(p.profileId));
+      await trackWrite(deleteProfileRequest(p.profileId), `settings:profile:${p.profileId}:delete`);
       confirmDeleteId = null;
       await loadProfiles();
       profilesError = null;
@@ -275,7 +277,7 @@
     if (!name || busy || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
     busy = true;
     try {
-      await trackWrite(createPresetRequest(name, appearance));
+      await trackWrite(createPresetRequest(name, appearance), writeRetryKey('settings:preset:create', { name, appearance }));
       newPresetName = '';
       await loadPresets();
       presetsError = null;
@@ -290,7 +292,7 @@
     if (busy) return;
     busy = true;
     try {
-      await trackWrite(deletePresetRequest(p.presetId));
+      await trackWrite(deletePresetRequest(p.presetId), `settings:preset:${p.presetId}:delete`);
       await loadPresets();
       presetsError = null;
     } catch (e) {
@@ -578,7 +580,7 @@
           />
           <button
             class="action-btn"
-            disabled={!newProfileName.trim() || busy}
+            disabled={!newProfileName.trim() || busy || !$preferencesOwnershipResolved || !$preferencesProfileId}
             onclick={createProfileFromInput}
           >
             New profile
