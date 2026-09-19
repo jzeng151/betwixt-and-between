@@ -250,6 +250,8 @@
 
 	function onTextKeydown(e: KeyboardEvent, allowEnter: boolean) {
 		if (e.key === 'Escape') {
+			lastAttempt = null;
+			saveError = null;
 			draft = currentValue;
 			focused = false;
 			(e.target as HTMLElement).blur();

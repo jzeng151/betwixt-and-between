@@ -142,6 +142,23 @@ describe('EditableField — kind=textarea', () => {
 		expect(updateEntityMock).not.toHaveBeenCalled();
 	});
 
+	it('Escape discards a failed draft so switching cannot retry the cancelled text', async () => {
+		seedEntity({ id: 'act-1', name: 'A', data: { synopsis: 'Saved' } });
+		updateEntityMock.mockRejectedValue(new Error('server'));
+		const { container, getByRole, queryByRole } = render(EditableField, {
+			props: { entityId: 'act-1', field: 'synopsis', kind: 'textarea' }
+		});
+		const ta = container.querySelector('textarea')!;
+		await fireEvent.input(ta, { target: { value: 'Discard this' } });
+		await fireEvent.blur(ta);
+		await waitFor(() => expect(getByRole('button', { name: /retry/i })).toBeTruthy());
+		await fireEvent.keyDown(ta, { key: 'Escape' });
+		await drainPendingCommit(true);
+		expect(updateEntityMock).toHaveBeenCalledTimes(1);
+		expect(queryByRole('button', { name: /retry/i })).toBeNull();
+		expect(ta.value).toBe('Saved');
+	});
+
 	it('shows Retry button on PATCH failure and re-fires the PATCH with the same value', async () => {
 		seedEntity({ id: 'act-1', name: 'A', data: { synopsis: '' } });
 		updateEntityMock
