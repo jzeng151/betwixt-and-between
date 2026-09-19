@@ -81,3 +81,35 @@ test('successful Settings retries clear only their own failures, including after
 		await request.delete(`/api/preferences/profiles/${profile.profileId}`);
 	}
 });
+
+test('a local Editor toggle does not change the profile creation being retried', async ({ page, request }) => {
+	const name = `Editor retry ${Date.now()}`;
+	const original = await (await request.get('/api/preferences')).json();
+	let fail = true;
+	try {
+		await page.route('**/api/preferences/profiles', route => fail && route.request().method() === 'POST'
+			? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'Profile unavailable' }) })
+			: route.continue());
+		await page.goto('/app');
+		await page.getByTitle('Settings', { exact: true }).click();
+		const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+		await settings.getByRole('button', { name: 'Profiles', exact: true }).click();
+		await settings.getByPlaceholder('New profile name').fill(name);
+		await settings.getByRole('button', { name: 'New profile', exact: true }).click();
+		await expect(settings.getByText('Profile unavailable', { exact: true })).toBeVisible();
+		await settings.getByRole('button', { name: 'Editor', exact: true }).click();
+		await settings.getByRole('checkbox', { name: 'Show link preview while editing' }).click();
+		await settings.getByRole('button', { name: 'Profiles', exact: true }).click();
+		fail = false;
+		await settings.getByRole('button', { name: 'New profile', exact: true }).click();
+		await expect(settings.locator('.profile-row.active .profile-name')).toHaveText(name);
+		await settings.getByRole('button', { name: 'Account', exact: true }).click();
+		await expect(settings.getByRole('button', { name: 'Acknowledge failed changes' })).toHaveCount(0);
+	} finally {
+		await request.post(`/api/preferences/profiles/${original.profileId}/activate`);
+		const { profiles } = await (await request.get('/api/preferences/profiles')).json();
+		for (const profile of profiles.filter((p: { name: string }) => p.name === name)) {
+			await request.delete(`/api/preferences/profiles/${profile.profileId}`);
+		}
+	}
+});
