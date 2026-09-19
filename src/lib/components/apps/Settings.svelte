@@ -155,9 +155,7 @@
     if (!name || busy || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
     busy = true;
     try {
-      // Editor toggles are local-only and do not change the profile copied by the server.
-      const { editor: _editor, ...profilePreferences } = $preferences;
-      await trackCreation(writeRetryKey('settings:profile:create', { name, preferences: profilePreferences }), (id) => createProfile(name, id));
+      await trackCreation(writeRetryKey('settings:profile:create', { name }), (id) => createProfile(name, id));
       newProfileName = '';
       await loadProfiles();
       profilesError = null;
