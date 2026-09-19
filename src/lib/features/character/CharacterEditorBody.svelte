@@ -135,7 +135,7 @@
 			delete data.icon;
 		}
 		try {
-			await entities.updateEntity(entityId, { data });
+			await entities.updateEntity(entityId, { data }, `entity:${entityId}:character-form`);
 		} catch {
 			saveError = "Couldn't save.";
 		}

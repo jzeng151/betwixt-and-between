@@ -29,7 +29,7 @@
 		const data = { ...((entity.data as Record<string, unknown>) ?? {}) };
 		if (color) data.color = color;
 		else delete data.color;
-		await entities.updateEntity(entity.id, { data });
+		await entities.updateEntity(entity.id, { data }, `entity:${entity.id}:data:color`);
 	}
 </script>
 

@@ -63,7 +63,7 @@
 			await flushPendingWrites();
 			// A fresh document clears all per-story stores and undo history. Other
 			// tabs keep their URL and cannot redirect this tab's pending writes.
-			window.location.assign(`/app?story=${encodeURIComponent(id)}`);
+			window.location.replace(`/app?story=${encodeURIComponent(id)}`);
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not save changes. Story switching was cancelled.';
 			progress.close();

@@ -77,7 +77,7 @@ function createPlacementsStore() {
 		return created;
 	}
 
-	async function update(id: string, payload: UpdatePlacementPayload): Promise<MapPlacement> {
+	async function update(id: string, payload: UpdatePlacementPayload, retryKey?: string): Promise<MapPlacement> {
 		// Optimistic merge: apply the payload to the matching row before the
 		// PATCH resolves so consumers — and the NEXT edit's merge base — see the
 		// change immediately. Without this, rapid multi-field edits from the
@@ -107,7 +107,7 @@ function createPlacementsStore() {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload)
-			});
+			}, { retryKey });
 			if (!res.ok) throw new Error(await errorMessage(res));
 			return (await res.json()) as MapPlacement;
 		})();

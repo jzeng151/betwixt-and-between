@@ -22,8 +22,10 @@ test('creates and renames stories, isolates two tabs, and restores each story wo
 	await settings.getByRole('button', { name: 'Stories', exact: true }).click();
 	await settings.getByLabel('New story name').fill(storyName);
 	await settings.getByRole('button', { name: 'Create story', exact: true }).click();
+	const historyLength = await page.evaluate(() => history.length);
 	await settings.getByRole('button', { name: `Open ${storyName}`, exact: true }).click();
 	await expect(page).toHaveURL(/\/app\?story=/);
+	expect(await page.evaluate(() => history.length)).toBe(historyLength);
 	const storyId = new URL(page.url()).searchParams.get('story')!;
 	expect(storyId).not.toBe(E2E_USER_ID);
 	await expect(wiki).toHaveCount(0);
@@ -196,4 +198,43 @@ test('switching flushes a timeline width change before its debounce timer fires'
 	await settings.getByRole('button', { name: `Open ${target.name}`, exact: true }).click();
 	await expect(page).toHaveURL(new RegExp(`story=${target.id}`));
 	expect((await read()).data.timelineWeight).toBeCloseTo(1.05);
+});
+
+test('a palette change cannot hide a failed style edit, and retrying the style clears its failure', async ({ page, request }) => {
+	const suffix = Date.now();
+	const target = await (await request.post('/api/stories', { data: { name: `Style target ${suffix}` } })).json();
+	const entity = await (await request.post('/api/entities', { data: { type: 'Character', name: `Style character ${suffix}` } })).json();
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+	await page.goto('/app');
+	await page.getByTitle('Wiki', { exact: true }).click();
+	const wiki = page.locator('.window[aria-label="Wiki"]');
+	await wiki.locator('.entry', { hasText: entity.name }).click();
+	await wiki.locator('.mode-toggle').click();
+	let fail = true;
+	await page.route(`**/api/entities/${entity.id}`, route => fail && route.request().method() === 'PATCH'
+		? route.fulfill({ status: 503, body: 'Unavailable' }) : route.continue());
+	const hex = wiki.locator('[data-testid="entity-style-section"] .hex-input');
+	const rejected = page.waitForResponse(response => response.url().endsWith(`/api/entities/${entity.id}`) && response.status() === 503);
+	await hex.fill('#123456');
+	await hex.blur();
+	await rejected;
+	await expect(hex).toHaveValue('');
+	fail = false;
+	await wiki.getByTestId('is-asset-toggle').uncheck();
+	const read = async () => (await (await request.get('/api/entities')).json()).find((e: any) => e.id === entity.id);
+	await expect.poll(async () => (await read()).data.is_asset).toBe(false);
+	await page.getByTitle('Settings', { exact: true }).click();
+	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+	await settings.getByRole('button', { name: 'Stories', exact: true }).click();
+	await settings.getByRole('button', { name: `Open ${target.name}`, exact: true }).click();
+	await expect(settings.getByRole('alert')).toContainText('failed to save');
+	await expect(page).toHaveURL(/\/app$/);
+	await settings.getByRole('button', { name: 'Close', exact: true }).click();
+	await hex.fill('#abcdef');
+	await hex.blur();
+	await expect.poll(async () => (await read()).data.style?.color).toBe('#abcdef');
+	await page.getByTitle('Settings', { exact: true }).click();
+	await settings.getByRole('button', { name: 'Stories', exact: true }).click();
+	await settings.getByRole('button', { name: `Open ${target.name}`, exact: true }).click();
+	await expect(page).toHaveURL(new RegExp(`story=${target.id}`));
 });
