@@ -492,48 +492,35 @@ test('a switch that supersedes an active fade gets a fresh transition', async ({
 		(window as unknown as { __SPOTLIGHT_DIAG__?: boolean }).__SPOTLIGHT_DIAG__ = true;
 		localStorage.setItem('tutorial-dismissed', 'true');
 	});
+	await page.clock.install({ time: new Date('2030-01-01T00:00:00Z') });
 	await page.goto('/app');
 	const win = await openWorldMap(page);
 	const switcher = win.locator('.map-switcher');
 	await switcher.selectOption({ label: 'Northmarch' });
 	await expect(win.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
+	// Warm both destinations before controlling time, so texture IO is outside
+	// the fade-duration assertion. Browser protocol latency must not age the fade.
 	await switcher.selectOption({ label: 'Greyhold' });
-	await expect
-		.poll(() =>
-			page.evaluate(
-				() =>
-					(window as unknown as { __spotlightMapTransitionActive?: boolean })
-						.__spotlightMapTransitionActive ?? false
-			)
-		)
-		.toBe(true);
-	await page.waitForTimeout(140);
-	expect(
-		await page.evaluate(
-			() =>
-				(window as unknown as { __spotlightMapTransitionActive?: boolean })
-					.__spotlightMapTransitionActive ?? false
-		)
-	).toBe(true);
+	await expect(win.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
 	await switcher.selectOption({ label: 'Northmarch' });
 	await expect(win.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
-	await page.waitForTimeout(120);
-	expect(
-		await page.evaluate(
-			() =>
-				(window as unknown as { __spotlightMapTransitionActive?: boolean })
-					.__spotlightMapTransitionActive ?? false
-		)
-	).toBe(true);
-	await expect
-		.poll(() =>
-			page.evaluate(
-				() =>
-					(window as unknown as { __spotlightMapTransitionActive?: boolean })
-						.__spotlightMapTransitionActive ?? false
-			)
-		)
-		.toBe(false);
+	await page.clock.pauseAt(new Date('2030-01-01T01:00:00Z'));
+	await page.clock.runFor(300);
+	const transitionActive = () => page.evaluate(() =>
+		(window as unknown as { __spotlightMapTransitionActive?: boolean }).__spotlightMapTransitionActive ?? false
+	);
+	await expect.poll(transitionActive).toBe(false);
+	await switcher.selectOption({ label: 'Greyhold' });
+	await expect.poll(transitionActive).toBe(true);
+	await page.clock.runFor(144);
+	expect(await transitionActive()).toBe(true);
+	await switcher.selectOption({ label: 'Northmarch' });
+	await expect(win.locator('.map-loading-overlay')).toBeHidden({ timeout: 10000 });
+	await page.clock.runFor(128);
+	// The old fade's 220 ms have elapsed; the replacement must have its own timer.
+	expect(await transitionActive()).toBe(true);
+	await page.clock.runFor(128);
+	expect(await transitionActive()).toBe(false);
 });
 
 test('deleting the active map does not crossfade the temporary null-map gap', async ({

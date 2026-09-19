@@ -23,10 +23,17 @@
     void Promise.allSettled([entities.load(), relationships.load()]);
   }
 
+  function continueAtThisSize() {
+    allowSmallScreen = true;
+    try { sessionStorage.setItem('betwixt-small-screen', 'true'); } catch { /* Storage is optional. */ }
+    loadCoreStores();
+  }
+
   onMount(() => {
+    try { allowSmallScreen = sessionStorage.getItem('betwixt-small-screen') === 'true'; } catch { /* Storage is optional. */ }
     const supported = window.matchMedia('(min-width: 1280px)');
     function loadIfSupported() {
-      if (supported.matches) loadCoreStores();
+      if (supported.matches || allowSmallScreen) loadCoreStores();
     }
     loadIfSupported();
     supported.addEventListener('change', loadIfSupported);
@@ -39,7 +46,7 @@
 </svelte:head>
 
 <div class="too-small" class:small-screen-accepted={allowSmallScreen} style="display:none; height:100vh; align-items:center; justify-content:center; background:var(--color-desktop)">
-  <TooSmall onContinue={() => { allowSmallScreen = true; loadCoreStores(); }} />
+  <TooSmall onContinue={continueAtThisSize} />
 </div>
 
 <div class="app-shell" class:small-screen-accepted={allowSmallScreen}>
