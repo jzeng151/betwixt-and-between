@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import { invalidateAll } from '$app/navigation';
 	import { drainPendingCommit } from '$lib/util/pending-commit.js';
-	import { flushPendingWrites, trackWrite } from '$lib/stores/pending-writes.js';
+	import { flushPendingWrites, trackWrite, trackCreation, writeRetryKey } from '$lib/stores/pending-writes.js';
 	import { notesStore } from '$lib/stores/notes.js';
 	import { flushPendingPreferences } from '$lib/os/preferences-sync.js';
 
@@ -13,8 +13,6 @@
 	let error = $state('');
 	let loading = $state(true);
 	let busy = $state(false);
-	const createRetry = Symbol('create-story');
-	const renameRetry = Symbol('rename-story');
 	let progress: HTMLDialogElement;
 	const current = $derived($page.data.story);
 	$effect(() => { name = current.name; });
@@ -36,12 +34,15 @@
 		busy = true;
 		error = '';
 		try {
-			await trackWrite(fetch(create ? '/api/stories' : `/api/stories/${current.id}`, {
+			const submittedName = (create ? newName : name).trim();
+			const request = (id?: string) => fetch(create ? '/api/stories' : `/api/stories/${current.id}`, {
 				method: create ? 'POST' : 'PATCH', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name: create ? newName : name })
+				body: JSON.stringify({ name: submittedName, ...(create ? { id } : {}) })
 			}).then(async response => {
 				if (!response.ok) throw new Error((await response.json()).message ?? 'Could not save the story name.');
-			}), create ? createRetry : renameRetry);
+			});
+			if (create) await trackCreation(writeRetryKey('settings:story:create', { name: submittedName }), request);
+			else await trackWrite(request(), `settings:story:rename:${current.id}`);
 			if (create) newName = '';
 			await Promise.all([load(), invalidateAll()]);
 		} catch (cause) { error = cause instanceof Error ? cause.message : 'Could not save the story name.'; }

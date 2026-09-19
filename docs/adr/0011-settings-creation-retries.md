@@ -1,5 +1,7 @@
-# Retry profile and preset creation with the same ID
+# Retry Settings creation with the same ID
 
 A save can commit even when its response never reaches the browser. Settings assigns a UUID to each profile or preset creation attempt and reuses it when retrying a failed save. The server uses the existing story-scoped primary key to return the existing resource. Profile attempts are keyed by their submitted name, so changing the current preferences or active profile does not lose the pending ID. Preset attempts also include their submitted appearance. Profile replay neither copies preferences again nor reactivates the profile; conflicting names return 409. Preset replay requires the same name and appearance, otherwise it returns 409. Profile mutations lock the owning story row, including before its first profile exists.
 
 A successful save or acknowledged failure ends the attempt, so users can deliberately create another copy. Failed attempt IDs share the existing in-memory failure lifetime: closing Settings preserves them, but reloading the document clears them. These IDs prevent duplicate rows during retries; they are not a durable operation journal and do not survive deletion of the resource. Older clients may omit the ID. No migration is needed.
+
+Story creation follows the same contract with an optional UUID id. The account lock serializes creation and enforces the 100-story limit; replay is checked before that limit. An ID owned by another account returns a conflict without exposing its data. Story rename retries are keyed by the story ID so returning to Settings can clear the earlier failure.
