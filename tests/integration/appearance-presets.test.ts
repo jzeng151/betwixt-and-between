@@ -38,6 +38,24 @@ describe('Phase 3 presets', () => {
 		expect(builtins.every((p) => p.builtin)).toBe(true);
 	});
 
+	it('replays a creation ID atomically and compares JSON values within its story', async () => {
+		const id = crypto.randomUUID();
+		const appearance = { theme: 'dark', accentColor: '#abcdef', roleColors: { Ally: '#123456', Rival: '#abcdef' } };
+		const reordered = { roleColors: { Rival: '#abcdef', Ally: '#123456' }, accentColor: '#abcdef', theme: 'dark' };
+		const results = await Promise.all([
+			createPreset(db, storyId, 'Colors', appearance, id),
+			createPreset(db, storyId, 'Colors', reordered, id)
+		]);
+		expect(results.map((r) => r.presetId)).toEqual([id, id]);
+		expect((await listPresets(db, storyId)).user).toHaveLength(1);
+		await expectStatus(createPreset(db, storyId, 'Changed', appearance, id), 409);
+		await expectStatus(createPreset(db, storyId, 'Colors', { ...appearance, theme: 'light' }, id), 409);
+		await expectStatus(createPreset(db, storyId, 'Invalid', appearance, 'not-a-uuid'), 400);
+		const otherStory = (await seedTestUser(db, { email: 'preset-replay-other@t.com' })).id;
+		expect(await createPreset(db, otherStory, 'Own colors', appearance, id)).toMatchObject({ presetId: id, name: 'Own colors' });
+		expect((await listPresets(db, storyId)).user[0].name).toBe('Colors');
+	});
+
 	it('creates a user preset and lists it', async () => {
 		const created = await createPreset(db, storyId, 'My Theme', {
 			theme: 'dark',

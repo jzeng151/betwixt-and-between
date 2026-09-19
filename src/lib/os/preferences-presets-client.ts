@@ -22,13 +22,14 @@ export async function fetchPresets(): Promise<{ builtins: PresetSummary[]; user:
 
 export async function createPresetRequest(
 	name: string,
-	appearance: Appearance
+	appearance: Appearance,
+	presetId?: string
 ): Promise<PresetSummary> {
 	const res = await ensureOk(
 		await fetch('/api/preferences/presets', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, appearance })
+			body: JSON.stringify({ name, appearance, presetId })
 		}, { required: false }),
 		'save preset failed'
 	);
