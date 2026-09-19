@@ -125,17 +125,3 @@ export function createTerrainShimmerFilter(PIXI: PixiModule): TerrainShimmer {
 		}
 	};
 }
-
-// FALLBACK (zero mis-bind risk) if the custom shader errors on first run:
-// a brightness pulse using the built-in ColorMatrixFilter. Swap
-// createTerrainShimmerFilter for this to confirm the anim-controller wiring
-// works independent of custom-GLSL correctness.
-//
-// export function createTerrainPulse(PIXI: PixiModule): TerrainShimmer {
-// 	const filter = new PIXI.ColorMatrixFilter();
-// 	return {
-// 		filter,
-// 		setTime(seconds) { filter.brightness(1 + Math.sin(seconds) * 0.05, false); },
-// 		destroy() { try { filter.destroy(); } catch (_) { /* */ } }
-// 	};
-// }

@@ -17,5 +17,4 @@ export const MAP_PALETTE = [
 	'#06b6d4'
 ] as const;
 
-export const DEFAULT_REGION_COLOR = MAP_PALETTE[0];
 export const DEFAULT_FACTION_COLOR = MAP_PALETTE[1];

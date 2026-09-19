@@ -3,9 +3,7 @@
 // The terrain palette is asset-folder-driven: a generated manifest
 // (static/Sprites/terrain-manifest.json, from scripts/generate-terrain-manifest.mjs)
 // lists each category (Grass, Sand, ...) and its base/road/waterEdge tile URLs.
-// This module loads that manifest once and resolves a (category, cell) → tile URL
-// deterministically, so a given cell always renders the same variant across
-// reloads (no random-on-reload churn — Fix-6).
+// This module loads the manifest once and resolves stored texture keys to tile URLs.
 
 export type TerrainCategory = {
 	/** Base ground tiles (the paintable fill). */
@@ -208,16 +206,6 @@ export function texturesForType(manifest: TerrainManifest | null, type: string):
 	});
 }
 
-// Stable 2D integer hash (xorshift-ish mix of two coordinates). Deterministic
-// per (x,y) so a cell's variant never changes across reloads.
-function hash2(x: number, y: number): number {
-	let h = (Math.imul(x | 0, 73856093) ^ Math.imul(y | 0, 19349663)) >>> 0;
-	h ^= h >>> 13;
-	h = Math.imul(h, 0x5bd1e995) >>> 0;
-	h ^= h >>> 15;
-	return h >>> 0;
-}
-
 /**
  * Coherent fill: the single representative base tile for a category (null if
  * none). This is what the renderer uses today — one consistent tile per terrain
@@ -226,24 +214,6 @@ function hash2(x: number, y: number): number {
 export function firstBaseTile(manifest: TerrainManifest | null, category: string): string | null {
 	const cat = manifest?.categories?.[category];
 	return cat && cat.base.length > 0 ? cat.base[0] : null;
-}
-
-/**
- * RESERVED (variant-mixing, Fix-6): deterministic per-(x,y) variant pick for
- * natural within-terrain variation. NOT used by the renderer yet — proper
- * variant mixing needs a per-cell seed STORED on the cell (so a stroke's look is
- * stable + author-controlled), not a render-time hash. Kept + tested for that
- * future step. Returns null when the category has no tiles.
- */
-export function pickBaseTile(
-	manifest: TerrainManifest | null,
-	category: string,
-	x: number,
-	y: number
-): string | null {
-	const cat = manifest?.categories?.[category];
-	if (!cat || cat.base.length === 0) return null;
-	return cat.base[hash2(x, y) % cat.base.length];
 }
 
 // -- WM3 Slice A: stamp sprites (freeform brush stamp mode) -------------------

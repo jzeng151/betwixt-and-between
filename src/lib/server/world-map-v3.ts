@@ -1921,13 +1921,9 @@ export async function upsertWorldMapLayerPref(
 // callers without further changes.
 //
 // Limit defaults to DEFAULT_PAGE_SIZE; clamped to [1, MAX_PAGE_SIZE].
-// LIST_LIMIT is preserved as an alias of DEFAULT_PAGE_SIZE for back-compat
-// with any external callers; new code uses DEFAULT_PAGE_SIZE.
 
 export const DEFAULT_PAGE_SIZE = 500;
 export const MAX_PAGE_SIZE = 1000;
-/** @deprecated use DEFAULT_PAGE_SIZE; kept for back-compat. */
-export const LIST_LIMIT = DEFAULT_PAGE_SIZE;
 
 export type ListResponse<T> = {
 	rows: T[];
