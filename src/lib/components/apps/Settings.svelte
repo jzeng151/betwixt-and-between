@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import { trackWrite } from '$lib/stores/pending-writes.js';
   import AccountSettings from './AccountSettings.svelte';
+  import StoryExport from './StoryExport.svelte';
   import { preferences, setPreference, getPreference } from '$lib/os/preferences-store.js';
   import {
     applyPreferencePatch,
@@ -342,10 +343,13 @@
       Profiles
     </button>
     <button class="sidebar-item" class:active={activeSection === 'account'} disabled={busy} onclick={() => (activeSection = 'account')}>Account</button>
+    <button class="sidebar-item" class:active={activeSection === 'export'} disabled={busy} onclick={() => (activeSection = 'export')}>Export</button>
   </nav>
   <div class="panel">
     {#if activeSection === 'account'}
       <AccountSettings user={$page.data.user} />
+    {:else if activeSection === 'export'}
+      <StoryExport />
     {:else if activeSection === 'appearance'}
       <h2>Appearance</h2>
       <p class="active-profile-line">Profile: {activeProfileName}</p>
