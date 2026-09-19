@@ -1,9 +1,9 @@
 import { get, writable } from 'svelte/store';
 
 const pending = new Set<Promise<unknown>>();
-export const failedWrites = writable<Array<{ message: string; retryKey?: symbol }>>([]);
+export const failedWrites = writable<Array<{ message: string; retryKey?: symbol | string }>>([]);
 
-export function trackWrite<T>(task: Promise<T>, retryKey?: symbol): Promise<T> {
+export function trackWrite<T>(task: Promise<T>, retryKey?: symbol | string): Promise<T> {
 	pending.add(task);
 	void task.then(
 		() => {
