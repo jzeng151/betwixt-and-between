@@ -249,3 +249,47 @@ test('a palette change cannot hide a failed style edit, and retrying the style c
 	await settings.getByRole('button', { name: `Open ${target.name}`, exact: true }).click();
 	await expect(page).toHaveURL(new RegExp(`story=${target.id}`));
 });
+
+test('keeps appearance, profiles and presets separate across tabs and story switches', async ({ page, context, request }) => {
+	const suffix = Date.now();
+	const a = await (await request.post('/api/stories', { data: { name: `Light story ${suffix}` } })).json();
+	const b = await (await request.post('/api/stories', { data: { name: `Dark story ${suffix}` } })).json();
+	await context.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+	await page.goto(`/app?story=${a.id}`);
+	await page.getByTitle('Settings', { exact: true }).click();
+	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+	await settings.getByRole('radio', { name: 'Light', exact: true }).check();
+	await expect.poll(async () => (await (await request.get('/api/preferences', { headers: { 'x-story-id': a.id } })).json()).data.appearance?.theme).toBe('light');
+	const other = await context.newPage();
+	await other.goto(`/app?story=${b.id}`);
+	await other.getByTitle('Settings', { exact: true }).click();
+	await expect(other.getByRole('radio', { name: 'Dark', exact: true })).toBeChecked();
+	await expect(other.locator('html')).not.toHaveAttribute('data-theme', 'light');
+	await expect.poll(async () => (await (await request.get('/api/preferences', { headers: { 'x-story-id': b.id } })).json()).initialized).toBe(true);
+	await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+	// The last palette cookie was written by B. SSR for A must not inline it.
+	const response = await page.request.get(`/app?story=${a.id}`);
+	expect(await response.text()).not.toContain('id="palette-ssr"');
+	await page.reload();
+	await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+	await settings.getByRole('button', { name: 'Profiles', exact: true }).click();
+	await settings.getByPlaceholder('New profile name').fill(`Light profile ${suffix}`);
+	await settings.getByRole('button', { name: 'New profile', exact: true }).click();
+	await expect.poll(async () => (await (await request.get('/api/preferences/profiles', { headers: { 'x-story-id': a.id } })).json()).profiles.map((p: any) => p.name)).toContain(`Light profile ${suffix}`);
+	expect((await (await request.get('/api/preferences/profiles', { headers: { 'x-story-id': b.id } })).json()).profiles.map((p: any) => p.name)).toEqual(['Default']);
+	await settings.getByRole('button', { name: 'Appearance', exact: true }).click();
+	await settings.getByPlaceholder('New preset name').fill(`Light palette ${suffix}`);
+	await settings.getByRole('button', { name: 'Save current', exact: true }).click();
+	await expect.poll(async () => (await (await request.get('/api/preferences/presets', { headers: { 'x-story-id': a.id } })).json()).user.map((p: any) => p.name)).toContain(`Light palette ${suffix}`);
+	expect((await (await request.get('/api/preferences/presets', { headers: { 'x-story-id': b.id } })).json()).user).toEqual([]);
+	await settings.getByRole('button', { name: 'Stories', exact: true }).click();
+	await settings.getByRole('button', { name: `Open ${b.name}`, exact: true }).click();
+	await expect(page).toHaveURL(new RegExp(`story=${b.id}`));
+	await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'light');
+	await page.getByTitle('Settings', { exact: true }).click();
+	await settings.getByRole('button', { name: 'Stories', exact: true }).click();
+	await settings.getByRole('button', { name: `Open ${a.name}`, exact: true }).click();
+	await expect(page).toHaveURL(new RegExp(`story=${a.id}`));
+	await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+	await other.close();
+});

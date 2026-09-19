@@ -16,18 +16,18 @@
 // /api/preferences the client builds (buildApplyPresetPatch).
 
 import { json, error } from '@sveltejs/kit';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { listPresets, createPreset } from '$lib/server/appearance-presets.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
-	const userId = getUserId(event);
-	const presets = await listPresets(event.locals.db, userId);
+	const storyId = await getStoryId(event);
+	const presets = await listPresets(event.locals.db, storyId);
 	return json(presets);
 };
 
 export const POST: RequestHandler = async (event) => {
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	let body: { name?: unknown; appearance?: unknown };
 	try {
 		body = (await event.request.json()) as typeof body;
@@ -39,7 +39,7 @@ export const POST: RequestHandler = async (event) => {
 	}
 	const preset = await createPreset(
 		event.locals.db,
-		userId,
+		storyId,
 		body.name as string,
 		body.appearance
 	);

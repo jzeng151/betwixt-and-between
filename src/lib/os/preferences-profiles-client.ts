@@ -1,3 +1,4 @@
+import { storyFetch as fetch } from '../story-fetch.js';
 /**
  * Client-side fetch helpers for the workspace-profiles API (Settings
  * customization Phase 3, T9 — D1 switcher UI).
@@ -26,7 +27,7 @@ export async function renameProfileRequest(
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name })
-		}),
+		}, { required: false }),
 		'rename profile failed'
 	);
 	return (await res.json()) as ProfileSummary;
@@ -34,7 +35,7 @@ export async function renameProfileRequest(
 
 export async function deleteProfileRequest(profileId: string): Promise<void> {
 	await ensureOk(
-		await fetch(`/api/preferences/profiles/${encodeURIComponent(profileId)}`, { method: 'DELETE' }),
+		await fetch(`/api/preferences/profiles/${encodeURIComponent(profileId)}`, { method: 'DELETE' }, { required: false }),
 		'delete profile failed'
 	);
 }

@@ -28,8 +28,8 @@ it('exports every saved data table for the authenticated account, including map 
 		await db.insert(schema.mapPlacements).values({ storyId: user.id, mapId: map.id, placeableId: character.id, x: 0.2, y: 0.3 });
 		await db.insert(schema.factions).values({ storyId: user.id, name: `${name} faction`, color: '#123456' });
 		await db.insert(schema.worldMapLayerPrefs).values({ storyId: user.id, worldMapId: map.id, layerKey: 'terrain', visible: 0 });
-		await db.insert(schema.userPreferences).values({ userId: user.id, name: `${name} profile` });
-		await db.insert(schema.appearancePresets).values({ userId: user.id, name: `${name} preset` });
+		await db.insert(schema.userPreferences).values({ storyId: user.id, name: `${name} profile` });
+		await db.insert(schema.appearancePresets).values({ storyId: user.id, name: `${name} preset` });
 		await db.insert(schema.session).values({ userId: user.id, token: `${name}-secret`, expiresAt: new Date(Date.now() + 60_000) });
 	}
 	const response = await GET({ locals: { db, user: users[0] } } as any);

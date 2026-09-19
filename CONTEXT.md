@@ -9,5 +9,5 @@ A named collection of characters, places, notes, timeline events, and maps. Each
 _Avoid_: Project, profile
 
 **Profile**:
-An account-wide collection of appearance and workspace preferences that can be used across stories.
+A collection of appearance and workspace preferences within one story.
 _Avoid_: Story, saved story

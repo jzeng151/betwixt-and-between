@@ -22,7 +22,7 @@ describe('T5b parsePaletteCookie', () => {
 		expect(parsePaletteCookie(raw)).toEqual({
 			theme: 'light',
 			vars: { '--color-type-character': '#ff0000' },
-			owner: null
+			owner: null, storyId: null
 		});
 	});
 
@@ -47,7 +47,7 @@ describe('T5b parsePaletteCookie', () => {
 		expect(parsePaletteCookie(raw)).toEqual({
 			theme: 'dark',
 			vars: { '--color-type-character': '#abcdef' },
-			owner: null
+			owner: null, storyId: null
 		});
 	});
 
@@ -65,14 +65,14 @@ describe('T5b parsePaletteCookie', () => {
 describe('T5b paletteCookieToCss', () => {
 	it('builds :root block, empty when no vars or null', () => {
 		expect(paletteCookieToCss(null)).toBe('');
-		expect(paletteCookieToCss({ theme: 'dark', vars: {}, owner: null })).toBe('');
+		expect(paletteCookieToCss({ theme: 'dark', vars: {}, owner: null, storyId: null })).toBe('');
 		expect(
-			paletteCookieToCss({ theme: 'dark', vars: { '--color-accent': '#111111' }, owner: null })
+			paletteCookieToCss({ theme: 'dark', vars: { '--color-accent': '#111111' }, owner: null, storyId: null })
 		).toBe(':root{--color-accent:#111111;--color-on-accent:#ffffff}');
 	});
 
 	it('derives contrast for legacy accent-only cookies', () => {
-		expect(paletteCookieToCss({ theme: 'dark', vars: { '--color-accent': '#fff' }, owner: null }))
+		expect(paletteCookieToCss({ theme: 'dark', vars: { '--color-accent': '#fff' }, owner: null, storyId: null }))
 			.toContain('--color-on-accent:#000000');
 	});
 });
@@ -96,6 +96,8 @@ describe('T5b serialize → parse round-trip', () => {
 	it('carries the owner id through the round-trip when provided', () => {
 		const app: Appearance = { theme: 'dark', accentColor: '#123456' };
 		const cookie = encodeURIComponent(serializePaletteCookie(app, 'user-42'));
-		expect(parsePaletteCookie(cookie)?.owner).toBe('user-42');
+		expect(parsePaletteCookie(cookie)).toMatchObject({ owner: 'user-42', storyId: 'user-42' });
+		const scoped = serializePaletteCookie(app, 'user-42', 'story-7');
+		expect(parsePaletteCookie(scoped)).toMatchObject({ owner: 'user-42', storyId: 'story-7' });
 	});
 });

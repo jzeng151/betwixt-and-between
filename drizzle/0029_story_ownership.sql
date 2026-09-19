@@ -28,7 +28,8 @@ DECLARE
 BEGIN
  FOREACH relation_name IN ARRAY ARRAY[
   'entities', 'relationships', 'canvas_positions', 'window_canvas_state',
-  'intervals', 'world_maps', 'map_placements', 'factions', 'world_map_layer_prefs'
+  'intervals', 'world_maps', 'map_placements', 'factions', 'world_map_layer_prefs',
+  'user_preferences', 'appearance_presets'
  ] LOOP
   FOR fk IN SELECT c.conname FROM pg_constraint c
    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)

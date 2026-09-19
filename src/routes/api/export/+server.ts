@@ -35,8 +35,8 @@ export const GET: RequestHandler = async (event) => {
 			worldMapLayerPrefs: tx.select(getTableColumns(worldMapLayerPrefs)).from(worldMapLayerPrefs)
 				.innerJoin(worldMaps, eq(worldMapLayerPrefs.worldMapId, worldMaps.id))
 				.where(and(inArray(worldMapLayerPrefs.storyId, ownedStories), inArray(worldMaps.storyId, ownedStories))),
-			userPreferences: tx.select().from(userPreferences).where(eq(userPreferences.userId, userId)),
-			appearancePresets: tx.select().from(appearancePresets).where(eq(appearancePresets.userId, userId))
+			userPreferences: tx.select().from(userPreferences).where(inArray(userPreferences.storyId, ownedStories)),
+			appearancePresets: tx.select().from(appearancePresets).where(inArray(appearancePresets.storyId, ownedStories))
 		};
 		const tables: string[] = [];
 		let bytes = 0;

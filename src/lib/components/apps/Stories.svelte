@@ -73,7 +73,7 @@
 </script>
 
 <h2>Stories</h2>
-<p>Stories keep data and open windows separate. Appearance profiles are shared.</p>
+<p>Stories keep data, appearance, profiles, saved presets, and open windows separate.</p>
 <form onsubmit={(event) => { event.preventDefault(); void save(true); }}>
 	<label for="new-story-name">New story name</label>
 	<div class="row"><input id="new-story-name" bind:value={newName} required maxlength="100" disabled={busy || loading} /><button disabled={busy || loading || !newName.trim()}>Create story</button></div>

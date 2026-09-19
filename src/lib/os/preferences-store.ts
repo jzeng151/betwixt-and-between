@@ -37,14 +37,15 @@ import { deepMerge, isPlainObject, PROTO_POLLUTION_KEYS } from '../preferences-m
  *    check was trying to protect.
  */
 
-const STORAGE_KEY = 'btw:preferences';
+const storyId = typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('story');
+const STORAGE_KEY = storyId ? `btw:preferences:${storyId}` : 'btw:preferences';
 
 // Records which signed-in user the cached blob in STORAGE_KEY belongs to, so the
 // first-login reconcile (preferences-sync.ts) can tell "this browser's prefs are
 // mine / unclaimed" from "these are a different user's, do not import them"
 // (codex P1). Kept in a SEPARATE key, not inside the synced blob, so it never
 // reaches the server or the merge/diff paths. Absent = legacy/anonymous cache.
-const OWNER_KEY = 'btw:preferences:owner';
+const OWNER_KEY = `${STORAGE_KEY}:owner`;
 
 // PROTO_POLLUTION_KEYS, isPlainObject, and deepMerge now live in
 // ../preferences-merge.js (shared with the server PATCH handler) and are

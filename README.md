@@ -17,7 +17,7 @@ Entity body fields accept Markdown in edit mode and render it in view mode. Code
 | **Timeline** | Acts, scenes, and events on a scrollable timeline. Expand rows to see nested detail. |
 | **World Map** | Paint terrain freehand, stack art on layers (blend mode + opacity), scatter object stamps, and let terrain change as the story plays. Polygon regions and placed characters/events sit on a zoomable canvas. |
 | **Window manager** | Every entity opens in its own floating window. Multiple windows of the same type stay open simultaneously. Taskbar groups them. |
-| **Stories** | Settings → Stories creates, renames, and switches isolated stories. Other tabs keep their current story; appearance profiles remain shared. |
+| **Stories** | Settings → Stories creates, renames, and switches isolated stories. Other tabs keep their current story; each story has its own appearance profiles and saved presets. |
 | **Story export** | Settings → Export downloads all this account's saved stories and preferences as JSON. |
 
 Format version 2 exports include stories, entities, aliases, relationships, timeline intervals, graph positions, maps, placements, map anchors and event history, factions, map-layer preferences, profiles, and appearance presets. Uploaded and external images remain URLs; the file does not contain those image files, unsaved drafts, or sign-in credentials. Import is not yet supported. The current download limit is 16 MiB of table data and 10,000 rows per table; larger exports fail explicitly instead of producing a partial file.

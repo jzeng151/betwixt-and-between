@@ -516,7 +516,7 @@
       <h2>Profiles</h2>
       <p class="setting-helper">
         Profiles save colors, graph preferences, and window defaults.
-        Profiles work across all stories. Switch stories in the Stories section.
+        Profiles belong to the current story. Switch stories in the Stories section.
       </p>
 
       <div class="setting-group">

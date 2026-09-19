@@ -83,3 +83,32 @@ it('provisions the original story on concurrent loads without a signup trigger',
 	expect(await db.select({ id: stories.id, userId: stories.userId }).from(stories).where(eq(stories.userId, user.id)))
 		.toEqual([{ id: user.id, userId: user.id }]);
 });
+
+it('isolates appearance, active profiles and saved presets between stories and exports both', async () => {
+	const prefs = await import('../../src/routes/api/preferences/+server.js');
+	const profiles = await import('../../src/routes/api/preferences/profiles/+server.js');
+	const profile = await import('../../src/routes/api/preferences/profiles/[id]/+server.js');
+	const activate = await import('../../src/routes/api/preferences/profiles/[id]/activate/+server.js');
+	const presets = await import('../../src/routes/api/preferences/presets/+server.js');
+	const preset = await import('../../src/routes/api/preferences/presets/[id]/+server.js');
+	const first = await (await prefs.GET(event())).json();
+	await prefs.PATCH(event(undefined, { version: first.version, profileId: first.profileId, set: { appearance: { theme: 'light', accentColor: '#123456' } } }));
+	const secondPrefs = await (await prefs.GET(event(second))).json();
+	expect(secondPrefs).toMatchObject({ storyId: second, userId: user.id, data: {}, initialized: false });
+	expect(secondPrefs.profileId).not.toBe(first.profileId);
+	const copied = await (await profiles.POST(event(undefined, { name: 'Original setup' }))).json();
+	const saved = await (await presets.POST(event(undefined, { name: 'Original colors', appearance: { theme: 'light', accentColor: '#123456' } }))).json();
+	expect((await (await profiles.GET(event(second))).json()).profiles.map((p: any) => p.name)).toEqual(['Default']);
+	expect((await (await presets.GET(event(second))).json()).user).toEqual([]);
+	await expect(activate.POST(event(second, undefined, { id: copied.profileId }))).rejects.toMatchObject({ status: 404 });
+	await expect(profile.PATCH(event(second, { name: 'Stolen' }, { id: copied.profileId }))).rejects.toMatchObject({ status: 404 });
+	await expect(profile.DELETE(event(second, undefined, { id: first.profileId }))).rejects.toMatchObject({ status: 404 });
+	await expect(preset.DELETE(event(second, undefined, { id: saved.presetId }))).rejects.toMatchObject({ status: 404 });
+	await prefs.PATCH(event(second, { version: secondPrefs.version, profileId: secondPrefs.profileId, set: { appearance: { theme: 'dark', accentColor: '#abcdef' } } }));
+	expect((await (await prefs.GET(event())).json()).data.appearance).toEqual({ theme: 'light', accentColor: '#123456' });
+	const foreign = await seedTestUser(db, { email: 'appearance-foreign@example.com' });
+	await expect(prefs.GET(event(foreign.id))).rejects.toMatchObject({ status: 404 });
+	const exported = await (await exportRoute.GET(event())).json();
+	expect([...new Set(exported.tables.userPreferences.map((p: any) => p.storyId))].sort()).toEqual([user.id, second].sort());
+	expect(exported.tables.appearancePresets).toMatchObject([{ storyId: user.id, presetId: saved.presetId }]);
+});

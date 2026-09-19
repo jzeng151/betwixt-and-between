@@ -741,15 +741,15 @@ export const worldMapLayerPrefs = pgTable(
 // only `preferences` store as the source of truth; the client store becomes a
 // cache that hydrates from here on login and writes through via PATCH.
 //
-// Profile-shaped from day one (eng-review P4): the (user_id, profile_id) PK +
+// Profile-shaped from day one (eng-review P4): the (user_id (story ownership), profile_id) PK +
 // is_active flag mean Phase 3 "workspace profiles" / "theme presets" become
 // "allow N rows + a switcher" with NO schema migration. Phase 1 writes exactly
-// one row per user: name='Default', is_active=1.
+// one row per story: name='Default', is_active=1.
 //
 // `is_active` is integer 0/1 (NOT boolean) per CLAUDE.md convention (matches
 // window_canvas_state.pinned, world_map_layer_prefs.visible). The partial
 // unique index user_preferences_one_active enforces "at most one active row
-// per user" at the storage layer — the lowest-level guarantee behind the
+// per story" at the storage layer — the lowest-level guarantee behind the
 // profile switcher, and the conflict target the lazy first-login upsert
 // (ON CONFLICT DO NOTHING) needs to be race-safe (codex outside-voice).
 //
@@ -772,9 +772,9 @@ export const worldMapLayerPrefs = pgTable(
 export const userPreferences = pgTable(
 	'user_preferences',
 	{
-		userId: uuid('user_id')
+		storyId: uuid('user_id')
 			.notNull()
-			.references(() => user.id, { onDelete: 'cascade' }),
+			.references(() => stories.id, { onDelete: 'cascade' }),
 		profileId: uuid('profile_id').notNull().defaultRandom(),
 		name: text('name').notNull(),
 		isActive: integer('is_active').notNull().default(1),
@@ -785,11 +785,11 @@ export const userPreferences = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
-		primaryKey({ columns: [table.userId, table.profileId] }),
-		// At most one active profile per user. is_active is integer 0/1, so the
+		primaryKey({ columns: [table.storyId, table.profileId] }),
+		// At most one active profile per story. is_active is integer 0/1, so the
 		// predicate is `= 1` (cf. factions_user_one_system which is boolean).
 		uniqueIndex('user_preferences_one_active')
-			.on(table.userId)
+			.on(table.storyId)
 			.where(sql`is_active = 1`)
 	]
 );
@@ -816,13 +816,13 @@ export const userPreferences = pgTable(
 export const appearancePresets = pgTable(
 	'appearance_presets',
 	{
-		userId: uuid('user_id')
+		storyId: uuid('user_id')
 			.notNull()
-			.references(() => user.id, { onDelete: 'cascade' }),
+			.references(() => stories.id, { onDelete: 'cascade' }),
 		presetId: uuid('preset_id').notNull().defaultRandom(),
 		name: text('name').notNull(),
 		appearance: jsonb('appearance').notNull().default({}).$type<Record<string, unknown>>(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 	},
-	(table) => [primaryKey({ columns: [table.userId, table.presetId] })]
+	(table) => [primaryKey({ columns: [table.storyId, table.presetId] })]
 );

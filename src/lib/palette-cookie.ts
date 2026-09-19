@@ -23,6 +23,7 @@ export interface ParsedPaletteCookie {
 	vars: Record<string, string>;
 	/** The user id the cookie was written for, or null if unscoped/anonymous. */
 	owner: string | null;
+	storyId: string | null;
 }
 
 export function accentForeground(hex: string): '#000000' | '#ffffff' {
@@ -53,7 +54,7 @@ export function parsePaletteCookie(raw: string | undefined | null): ParsedPalett
 		return null;
 	}
 	if (typeof obj !== 'object' || obj === null) return null;
-	const o = obj as { t?: unknown; v?: unknown; u?: unknown };
+	const o = obj as { t?: unknown; v?: unknown; u?: unknown; s?: unknown };
 	const vars: Record<string, string> = {};
 	if (o.v && typeof o.v === 'object') {
 		for (const [k, val] of Object.entries(o.v as Record<string, unknown>)) {
@@ -63,7 +64,8 @@ export function parsePaletteCookie(raw: string | undefined | null): ParsedPalett
 		}
 	}
 	const owner = typeof o.u === 'string' && OWNER_RE.test(o.u) ? o.u : null;
-	return { theme: o.t === 'l' ? 'light' : 'dark', vars, owner };
+	const storyId = typeof o.s === 'string' && OWNER_RE.test(o.s) ? o.s : owner;
+	return { theme: o.t === 'l' ? 'light' : 'dark', vars, owner, storyId };
 }
 
 /** Build the `:root{…}` body (empty string when no vars). */
