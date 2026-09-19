@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { entities, windowCanvasState } from '$lib/server/db/schema.js';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { isUuid, coercePinned } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
 
@@ -16,7 +16,7 @@ const MAX_CANVAS_BATCH = 2000;
  */
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const { windowId } = event.params;
 	if (!windowId) error(400, 'windowId is required');
 
@@ -39,7 +39,7 @@ export const POST: RequestHandler = async (event) => {
 			error(400, `row ${i}: x and y must be numbers`);
 		return {
 			windowId,
-			userId,
+			storyId,
 			entityId: entityId as string,
 			x: Math.trunc(x),
 			y: Math.trunc(y),
@@ -56,7 +56,7 @@ export const POST: RequestHandler = async (event) => {
 	const owned = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(inArray(entities.id, entityIds), eq(entities.userId, userId)));
+		.where(and(inArray(entities.id, entityIds), eq(entities.storyId, storyId)));
 	if (owned.length !== new Set(entityIds).size) {
 		error(400, 'one or more entityIds not found');
 	}

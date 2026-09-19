@@ -60,7 +60,7 @@ async function readJson(res: Response): Promise<unknown> {
 async function seedMap(ownerId: string, name = 'M'): Promise<string> {
 	const [row] = await currentDb
 		.insert(worldMaps)
-		.values({ userId: ownerId, name })
+		.values({ storyId: ownerId, name })
 		.returning({ id: worldMaps.id });
 	return row.id;
 }
@@ -120,7 +120,7 @@ describe('Slice 3 E1 — world_map_layer_prefs', () => {
 			.from(worldMapLayerPrefs)
 			.where(
 				and(
-					eq(worldMapLayerPrefs.userId, userId),
+					eq(worldMapLayerPrefs.storyId, userId),
 					eq(worldMapLayerPrefs.worldMapId, mapId),
 					eq(worldMapLayerPrefs.layerKey, 'terrain')
 				)
@@ -211,8 +211,8 @@ describe('Slice 3 E1 — world_map_layer_prefs', () => {
 
 		const rows = await currentDb
 			.select({
-				prefUser: worldMapLayerPrefs.userId,
-				mapUser: worldMaps.userId,
+				prefUser: worldMapLayerPrefs.storyId,
+				mapUser: worldMaps.storyId,
 				layerKey: worldMapLayerPrefs.layerKey
 			})
 			.from(worldMapLayerPrefs)

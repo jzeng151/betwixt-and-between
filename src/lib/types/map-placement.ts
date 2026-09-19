@@ -4,7 +4,7 @@
  */
 export interface MapPlacement {
 	id: string;
-	userId: string | null;
+	storyId: string | null;
 	placeableId: string;
 	locationId: string | null;
 	mapId: string | null;

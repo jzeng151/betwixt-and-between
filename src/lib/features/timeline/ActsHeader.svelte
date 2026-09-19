@@ -8,6 +8,8 @@
 -->
 
 <script lang="ts">
+	import { storyFetch } from '$lib/story-fetch.js';
+
 	import { onDestroy, tick } from 'svelte';
 	import { entities } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
@@ -86,7 +88,7 @@
 		try {
 			// Create scenes sequentially so positions are stable.
 			for (let i = 0; i < names.length; i++) {
-				await fetch('/api/entities', {
+				await storyFetch('/api/entities', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ type: 'Scene', name: names[i], parentId: actId, position: i })
@@ -159,7 +161,7 @@
 				deletingSceneCount > 0 && reparentTarget !== '__delete__'
 					? `/api/entities/${deletingActId}?moveScenesTo=${reparentTarget}`
 					: `/api/entities/${deletingActId}`;
-			const res = await fetch(url, { method: 'DELETE' });
+			const res = await storyFetch(url, { method: 'DELETE' });
 			if (!res.ok) throw new Error(await res.text());
 			// Reload both stores; interval CASCADE happens server-side.
 			await refreshTimelineStores();
@@ -197,7 +199,7 @@
 		savingInsert = true;
 		insertError = null;
 		try {
-			const res = await fetch('/api/entities', {
+			const res = await storyFetch('/api/entities', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ type: 'Act', name, position: insertingAtIdx })
@@ -255,7 +257,7 @@
 		const movedFromIdx = acts.findIndex((act) => act.id === actId);
 		if (movedFromIdx < 0) return;
 		try {
-			const res = await fetch(`/api/entities/${actId}`, {
+			const res = await storyFetch(`/api/entities/${actId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ position: targetPos })
@@ -361,7 +363,7 @@
 			? document.activeElement
 			: null;
 		try {
-			const res = await fetch(`/api/entities/${sceneId}`, {
+			const res = await storyFetch(`/api/entities/${sceneId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ parentId: targetActId, position: targetPos })

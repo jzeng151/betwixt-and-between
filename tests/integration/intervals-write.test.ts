@@ -33,7 +33,7 @@ describe('writeInterval — chokepoint', () => {
 		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -162,7 +162,7 @@ describe('writeInterval — chokepoint', () => {
 	it('SET NULL on start_scene when scene is deleted', async () => {
 		const [s0] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		await writeInterval(db, {
 			entityId: ellie,
@@ -193,7 +193,7 @@ describe('updateInterval', () => {
 		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -355,7 +355,7 @@ describe('writeInterval — same-entity overlap rejection', () => {
 		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -390,7 +390,7 @@ describe('writeInterval — same-entity overlap rejection', () => {
 	it('allows different-entity overlapping intervals', async () => {
 		const [j] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Joel' })
+			.values({ storyId: userId, type: 'Character', name: 'Joel' })
 			.returning();
 
 		await writeInterval(db, { entityId: ellie, startActId: acts.act1, endActId: acts.act1 }, userId);
@@ -426,7 +426,7 @@ describe('recomputeIntervalsForAct', () => {
 		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -435,15 +435,15 @@ describe('recomputeIntervalsForAct', () => {
 		// 3 scenes in Act 1, positions 0/1/2 → ranges [1.0,1.333), [1.333,1.667), [1.667,2.0)
 		const [s0] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ storyId: userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 		const [s2] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S2', parentId: acts.act1, position: 2 })
+			.values({ storyId: userId, type: 'Scene', name: 'S2', parentId: acts.act1, position: 2 })
 			.returning();
 
 		// Ellie anchored to scene s1 only.
@@ -476,13 +476,13 @@ describe('recomputeIntervalsForAct', () => {
 		// First write a scene-anchored interval to establish baseline numbers.
 		await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 });
+			.values({ storyId: userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 });
 
 		// Now plant a fraction-positioned interval (no scene FK) at start=1.5, end=1.75.
 		// We can't create this via writeInterval (which derives from FKs only), so we use
 		// raw insert. This simulates a future PR 2 capability.
 		await db.insert(intervals).values({
-			userId,
+			storyId: userId,
 			entityId: ellie,
 			startActId: acts.act1,
 			startSceneId: null,
@@ -515,7 +515,7 @@ describe('recomputeAllIntervals (Act-level mutations)', () => {
 		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});

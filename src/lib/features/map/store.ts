@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 import { writable } from 'svelte/store';
 import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } from './types.js';
 import type { MapArtLayer } from './projection.js';
@@ -59,7 +60,7 @@ function createWorldMapStore() {
 		const generation = ++mapListGeneration;
 		worldMapsLoadStatus.set('loading');
 		const request = (async () => {
-			const res = await fetch('/api/maps');
+			const res = await storyFetch('/api/maps');
 			if (!res.ok) throw new Error('Failed to load maps');
 			const data: WorldMap[] = await res.json();
 			if (generation !== mapListGeneration) return;
@@ -77,7 +78,7 @@ function createWorldMapStore() {
 
 	async function loadMapRegions(mapId: string): Promise<LoadRegionsResult> {
 		const seq = ++loadSeq;
-		const res = await fetch(`/api/maps/${mapId}`);
+		const res = await storyFetch(`/api/maps/${mapId}`);
 		if (seq !== loadSeq) return { status: 'superseded' }; // a newer load/commit superseded this
 		if (!res.ok) {
 			if (res.status === 404) return { status: 'not-found' };
@@ -97,7 +98,7 @@ function createWorldMapStore() {
 	async function prefetchMapRegions(
 		mapId: string
 	): Promise<{ map: WorldMap; regions: MapRegion[] } | null> {
-		const res = await fetch(`/api/maps/${mapId}`);
+		const res = await storyFetch(`/api/maps/${mapId}`);
 		if (!res.ok) {
 			if (res.status === 404) return null;
 			throw new Error('Failed to prefetch map');
@@ -126,7 +127,7 @@ function createWorldMapStore() {
 			endSceneId?: string | null;
 		}
 	): Promise<WorldMap> {
-		const res = await fetch('/api/maps', {
+		const res = await storyFetch('/api/maps', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name, locationId, ...(variantBounds ?? {}) })
@@ -155,7 +156,7 @@ function createWorldMapStore() {
 			artLayersJsonb?: MapArtLayer[];
 		}
 	): Promise<WorldMap> {
-		const res = await fetch(`/api/maps/${id}`, {
+		const res = await storyFetch(`/api/maps/${id}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(fields)
@@ -190,7 +191,7 @@ function createWorldMapStore() {
 			removed = all.find((m) => m.id === id);
 			return all.filter((m) => m.id !== id);
 		});
-		const res = await fetch(`/api/maps/${id}`, { method: 'DELETE' });
+		const res = await storyFetch(`/api/maps/${id}`, { method: 'DELETE' });
 		if (!res.ok) {
 			if (removed) maps.update((all) => upsertMap(all, removed!));
 			await loadMaps();
@@ -202,7 +203,7 @@ function createWorldMapStore() {
 	}
 
 	async function createRegion(mapId: string, payload: CreateRegionPayload): Promise<MapRegion> {
-		const res = await fetch(`/api/maps/${mapId}/regions`, {
+		const res = await storyFetch(`/api/maps/${mapId}/regions`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload)
@@ -218,7 +219,7 @@ function createWorldMapStore() {
 		regionId: string,
 		payload: UpdateRegionPayload
 	): Promise<MapRegion> {
-		const res = await fetch(`/api/maps/${mapId}/regions/${regionId}`, {
+		const res = await storyFetch(`/api/maps/${mapId}/regions/${regionId}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload)
@@ -231,7 +232,7 @@ function createWorldMapStore() {
 
 	async function deleteRegion(mapId: string, regionId: string): Promise<void> {
 		regions.update((all) => all.filter((r) => r.id !== regionId));
-		const res = await fetch(`/api/maps/${mapId}/regions/${regionId}`, { method: 'DELETE' });
+		const res = await storyFetch(`/api/maps/${mapId}/regions/${regionId}`, { method: 'DELETE' });
 		if (!res.ok) {
 			await loadMapRegions(mapId);
 			throw new Error('Failed to delete region');
@@ -239,7 +240,7 @@ function createWorldMapStore() {
 	}
 
 	async function duplicateMap(mapId: string): Promise<WorldMap> {
-		const res = await fetch(`/api/maps/${mapId}/duplicate`, { method: 'POST' });
+		const res = await storyFetch(`/api/maps/${mapId}/duplicate`, { method: 'POST' });
 		if (!res.ok) throw new Error(await errorMessage(res));
 		const data = await res.json();
 		const { regions: cloneRegions, ...clone } = data;
@@ -255,7 +256,7 @@ function createWorldMapStore() {
 	async function uploadImage(mapId: string, file: File): Promise<WorldMap> {
 		const formData = new FormData();
 		formData.append('file', file);
-		const res = await fetch(`/api/maps/${mapId}/upload-image`, {
+		const res = await storyFetch(`/api/maps/${mapId}/upload-image`, {
 			method: 'POST',
 			body: formData
 		});

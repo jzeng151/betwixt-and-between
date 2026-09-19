@@ -15,7 +15,7 @@
 // a DELETE later.
 
 import { json, error } from '@sveltejs/kit';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import {
 	listWorldMapLayerPrefs,
 	upsertWorldMapLayerPref
@@ -25,17 +25,17 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const worldMapId = event.url.searchParams.get('worldMapId');
 	if (!worldMapId || !isUuid(worldMapId)) {
 		error(400, 'worldMapId query param required (uuid)');
 	}
-	return json(await listWorldMapLayerPrefs(db, userId, worldMapId));
+	return json(await listWorldMapLayerPrefs(db, storyId, worldMapId));
 };
 
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const body = await event.request.json();
 	const { worldMapId, layerKey, visible } = body as {
 		worldMapId?: string;
@@ -45,7 +45,7 @@ export const PATCH: RequestHandler = async (event) => {
 	if (!worldMapId || !isUuid(worldMapId)) error(400, 'worldMapId required (uuid)');
 	const row = await upsertWorldMapLayerPref(
 		db,
-		userId,
+		storyId,
 		worldMapId,
 		layerKey as string,
 		visible as 0 | 1

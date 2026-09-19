@@ -26,7 +26,7 @@ describe('bump_updated_at BEFORE UPDATE trigger', () => {
 	it('advances entities.updated_at on UPDATE without app-side updatedAt set', async () => {
 		const [row] = await db
 			.insert(entities)
-			.values({ userId, type: 'Act', name: 'A' })
+			.values({ storyId: userId, type: 'Act', name: 'A' })
 			.returning();
 		const initial = row.updatedAt;
 
@@ -45,11 +45,11 @@ describe('bump_updated_at BEFORE UPDATE trigger', () => {
 		// the test focused on trigger semantics, not chokepoint logic).
 		const [act0] = await db
 			.insert(entities)
-			.values({ userId, type: 'Act', name: 'Act 0', position: 0 })
+			.values({ storyId: userId, type: 'Act', name: 'Act 0', position: 0 })
 			.returning();
 		const [ellie] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		const [interval] = await db
 			.insert(intervals)
@@ -82,7 +82,7 @@ describe('bump_updated_at BEFORE UPDATE trigger', () => {
 	it('advances map_anchors.updated_at on UPDATE (Δ1a-B)', async () => {
 		const [map] = await db
 			.insert(worldMaps)
-			.values({ userId, name: 'Map' })
+			.values({ storyId: userId, name: 'Map' })
 			.returning();
 		const [anchor] = await db
 			.insert(mapAnchors)
@@ -108,7 +108,7 @@ describe('bump_updated_at BEFORE UPDATE trigger', () => {
 	it('does not advance updated_at on no-op SELECT', async () => {
 		const [row] = await db
 			.insert(entities)
-			.values({ userId, type: 'Note', name: 'n' })
+			.values({ storyId: userId, type: 'Note', name: 'n' })
 			.returning();
 		const initial = row.updatedAt;
 

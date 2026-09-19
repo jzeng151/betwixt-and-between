@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 import { writable, get } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
 import { APP_IDS, type AppId, persistsPosition } from './app-ids.js';
@@ -162,8 +163,8 @@ function createWindowStore() {
 	const { subscribe, update, set } = writable<WindowState[]>([]);
 
 	/** Restore this tab's windows only after the server identifies its owner. */
-	function startSession(userId: string) {
-		const key = 'betwixt-windows-v1';
+	function startSession(userId: string, storyId = userId) {
+		const key = storyId === userId ? 'betwixt-windows-v1' : `betwixt-windows-v1:${userId}:${storyId}`;
 		let restored: WindowState[] = [];
 		try {
 			const saved = JSON.parse(sessionStorage.getItem(key) ?? 'null');
@@ -332,7 +333,7 @@ function createWindowStore() {
 		// on explicit close (X button or Ctrl-W).
 		const w = get({ subscribe }).find((x) => x.id === id);
 		if (w?.appId === 'focused-graph' && typeof fetch !== 'undefined') {
-			void fetch(`/api/canvas-positions/window/${id}`, { method: 'DELETE' }).catch(() => {
+			void storyFetch(`/api/canvas-positions/window/${id}`, { method: 'DELETE' }).catch(() => {
 				// non-fatal — the row stays orphan, no user impact
 			});
 		}

@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { worldMaps, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf } from '$lib/server/location-hierarchy.js';
@@ -11,13 +11,13 @@ import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 
 	// Verify map exists AND belongs to user.
 	const [map] = await db
 		.select()
 		.from(worldMaps)
-		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.storyId, storyId)));
 	if (!map) error(404, 'Map not found');
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,7 +75,7 @@ export const POST: RequestHandler = async (event) => {
 			.where(
 				and(
 					eq(entities.id, locationId),
-					eq(entities.userId, userId),
+					eq(entities.storyId, storyId),
 					eq(entities.type, 'Location')
 				)
 			);
@@ -95,11 +95,11 @@ export const POST: RequestHandler = async (event) => {
 		created = await db.transaction(async (tx) => {
 			// Slice 2 D1: ensure the user has a Neutral faction before the
 			// region's anchor entry needs to reference one. Idempotent.
-			const neutralFactionId = await ensureNeutralFaction(tx, userId);
+			const neutralFactionId = await ensureNeutralFaction(tx, storyId);
 			if (resolvedLocationId && map.locationId) {
-				await ensurePartOf(tx, userId, resolvedLocationId, map.locationId);
+				await ensurePartOf(tx, storyId, resolvedLocationId, map.locationId);
 			}
-			await fanOutRegionAdd(tx, event.params.id!, userId, {
+			await fanOutRegionAdd(tx, event.params.id!, storyId, {
 				id: newRegionId,
 				factionId: neutralFactionId,
 				polygon,

@@ -1,22 +1,22 @@
 import { json, error } from '@sveltejs/kit';
 import { canvasPositions, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const rows = await db
 		.select()
 		.from(canvasPositions)
-		.where(eq(canvasPositions.userId, userId));
+		.where(eq(canvasPositions.storyId, storyId));
 	return json(rows);
 };
 
 export const PUT: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const body = await event.request.json();
 	const { entityId, x, y, width, height } = body;
 
@@ -26,13 +26,13 @@ export const PUT: RequestHandler = async (event) => {
 	const [entity] = await db
 		.select()
 		.from(entities)
-		.where(and(eq(entities.id, entityId), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, entityId), eq(entities.storyId, storyId)));
 	if (!entity) error(400, 'Entity not found');
 
 	const [upserted] = await db
 		.insert(canvasPositions)
 		.values({
-			userId,
+			storyId,
 			entityId,
 			x: x ?? 0,
 			y: y ?? 0,

@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { worldMaps, mapAnchors } from '$lib/server/db/schema.js';
 import { desc, eq, sql } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import {
 	assertLocationIdIsLocation,
@@ -12,18 +12,18 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const rows = await db
 		.select()
 		.from(worldMaps)
-		.where(eq(worldMaps.userId, userId))
+		.where(eq(worldMaps.storyId, storyId))
 		.orderBy(desc(worldMaps.createdAt));
 	return json(rows);
 };
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const body = (await readJson(event)) as any;
 	const {
@@ -38,7 +38,7 @@ export const POST: RequestHandler = async (event) => {
 	if (!name || typeof name !== 'string' || name.trim() === '') {
 		error(400, 'Name is required');
 	}
-	await assertLocationIdIsLocation(db, userId, locationId);
+	await assertLocationIdIsLocation(db, storyId, locationId);
 
 	// Scene FKs without their parent Act FK are auto-cleared, mirroring PATCH's
 	// "clearing an act FK must also clear its scene FK" rule. Without this, a
@@ -50,7 +50,7 @@ export const POST: RequestHandler = async (event) => {
 	const normalizedStartSceneId = normalizedStartActId === null ? null : (startSceneId ?? null);
 	const normalizedEndSceneId = normalizedEndActId === null ? null : (endSceneId ?? null);
 
-	await assertWorldMapVariantBounds(db, userId, {
+	await assertWorldMapVariantBounds(db, storyId, {
 		startActId: normalizedStartActId,
 		startSceneId: normalizedStartSceneId,
 		endActId: normalizedEndActId,
@@ -68,7 +68,7 @@ export const POST: RequestHandler = async (event) => {
 				endActId: normalizedEndActId,
 				endSceneId: normalizedEndSceneId
 			},
-			userId
+			storyId
 		);
 		startPosition = bounds.startPosition;
 		endPosition = bounds.endPosition;
@@ -89,7 +89,7 @@ export const POST: RequestHandler = async (event) => {
 			const [row] = await tx
 				.insert(worldMaps)
 				.values({
-					userId,
+					storyId,
 					name: name.trim(),
 					locationId: locationId ?? null,
 					startActId: normalizedStartActId,

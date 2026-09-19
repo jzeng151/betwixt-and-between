@@ -35,7 +35,7 @@ const POSITION_EPSILON = 1e-9;
 
 export async function assertLocationIdIsLocation(
 	db: unknown,
-	userId: string,
+	storyId: string,
 	locationId: string | null | undefined
 ): Promise<void> {
 	if (locationId === null || locationId === undefined) return;
@@ -44,7 +44,7 @@ export async function assertLocationIdIsLocation(
 	const rows = (await (db as SelectableDB)
 		.select({ type: entities.type })
 		.from(entities)
-		.where(and(eq(entities.id, locationId), eq(entities.userId, userId)))) as Array<{
+		.where(and(eq(entities.id, locationId), eq(entities.storyId, storyId)))) as Array<{
 		type: string;
 	}>;
 
@@ -73,7 +73,7 @@ export interface WorldMapVariantBoundsInput {
  */
 export async function assertWorldMapVariantBounds(
 	db: unknown,
-	userId: string,
+	storyId: string,
 	input: WorldMapVariantBoundsInput
 ): Promise<void> {
 	const checks: Array<{ id: string | null | undefined; expected: 'Act' | 'Scene'; column: string }> = [
@@ -90,7 +90,7 @@ export async function assertWorldMapVariantBounds(
 		const rows = (await (db as SelectableDB)
 			.select({ type: entities.type })
 			.from(entities)
-			.where(and(eq(entities.id, check.id), eq(entities.userId, userId)))) as Array<{
+			.where(and(eq(entities.id, check.id), eq(entities.storyId, storyId)))) as Array<{
 			type: string;
 		}>;
 
@@ -114,7 +114,7 @@ export async function assertWorldMapVariantBounds(
 export async function resolveWorldMapVariantBounds(
 	db: Parameters<typeof resolveRelationshipBounds>[0],
 	input: WorldMapVariantBoundsInput,
-	userId: string
+	storyId: string
 ): Promise<{ startPosition: number | null; endPosition: number | null }> {
 	return resolveRelationshipBounds(
 		db,
@@ -124,7 +124,7 @@ export async function resolveWorldMapVariantBounds(
 			endActId: input.endActId ?? null,
 			endSceneId: input.endSceneId ?? null
 		},
-		userId
+		storyId
 	);
 }
 
@@ -143,7 +143,7 @@ export async function resolveWorldMapVariantBounds(
  */
 export async function recomputeWorldMapVariantsAll(
 	db: Parameters<typeof resolveRelationshipBounds>[0],
-	userId: string,
+	storyId: string,
 	// Optional act/scene index cache from the calling cascade (2026-06 perf
 	// audit) — without it every scene-anchored row costs several extra queries.
 	cache?: Parameters<typeof resolveRelationshipBounds>[3]
@@ -157,7 +157,7 @@ export async function recomputeWorldMapVariantsAll(
 		.from(worldMaps)
 		.where(
 			and(
-				eq(worldMaps.userId, userId),
+				eq(worldMaps.storyId, storyId),
 				sql`(${worldMaps.startActId} IS NOT NULL OR ${worldMaps.endActId} IS NOT NULL OR ${worldMaps.startPosition} IS NOT NULL OR ${worldMaps.endPosition} IS NOT NULL)`
 			)
 		)) as Array<{
@@ -203,7 +203,7 @@ export async function recomputeWorldMapVariantsAll(
 						endActId: row.endActId,
 						endSceneId: row.endSceneId
 					},
-					userId,
+					storyId,
 					cache
 				);
 				startPosition = resolved.startPosition;
@@ -244,7 +244,7 @@ export async function recomputeWorldMapVariantsAll(
 						.from(worldMaps)
 						.where(
 							and(
-								eq(worldMaps.userId, userId),
+								eq(worldMaps.storyId, storyId),
 								eq(worldMaps.locationId, row.locationId),
 								sql`${worldMaps.startPosition} IS NULL`,
 								sql`${worldMaps.id} <> ${row.id}`
@@ -278,7 +278,7 @@ export async function recomputeWorldMapVariantsAll(
 			})
 				.update(worldMaps)
 				.set(updates)
-				.where(and(eq(worldMaps.id, row.id), eq(worldMaps.userId, userId)));
+				.where(and(eq(worldMaps.id, row.id), eq(worldMaps.storyId, storyId)));
 			updated++;
 		} catch (err) {
 			throw new Error(

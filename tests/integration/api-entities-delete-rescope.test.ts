@@ -53,7 +53,7 @@ describe('act delete rescopes intervals instead of cascading', () => {
 		acts = await seedActs(testDb, userId);
 		const [e] = await testDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = e.id;
 	});
@@ -121,7 +121,7 @@ describe('act delete rescopes intervals instead of cascading', () => {
 			startPosition: 0,
 			endPosition: 2.5
 		}, userId);
-		const [d] = await testDb.insert(entities).values({ userId, type: 'Character', name: 'D' }).returning();
+		const [d] = await testDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'D' }).returning();
 		await writeInterval(testDb, {
 			entityId: d.id,
 			startActId: acts.act2,

@@ -54,8 +54,8 @@ describe('POST /api/relationships — temporal bounds', () => {
 		const _user = await seedTestUser(currentDb);
 		userId = _user.id;
 		acts = await seedActs(currentDb, userId);
-		const [a] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
-		const [b] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [a] = await currentDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'Alice' }).returning();
+		const [b] = await currentDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'Bob' }).returning();
 		alice = a.id;
 		bob = b.id;
 	});
@@ -85,7 +85,7 @@ describe('POST /api/relationships — temporal bounds', () => {
 		// Add a scene inside act0
 		const [scene] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'Scene 1', parentId: acts.act0, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'Scene 1', parentId: acts.act0, position: 0 })
 			.returning();
 
 		const res = await relRoute.POST(
@@ -215,8 +215,8 @@ describe('PATCH /api/relationships/[id] — temporal update', () => {
 		const _user = await seedTestUser(currentDb);
 		userId = _user.id;
 		acts = await seedActs(currentDb, userId);
-		const [a] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
-		const [b] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [a] = await currentDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'Alice' }).returning();
+		const [b] = await currentDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'Bob' }).returning();
 		alice = a.id;
 		bob = b.id;
 	});
@@ -225,7 +225,7 @@ describe('PATCH /api/relationships/[id] — temporal update', () => {
 		// Create a timeless relationship first
 		const [rel] = await currentDb
 			.insert(relationships)
-			.values({ userId, fromId: alice, toId: bob, type: 'rivals' })
+			.values({ storyId: userId, fromId: alice, toId: bob, type: 'rivals' })
 			.returning();
 
 		const res = await relIdRoute.PATCH(
@@ -262,8 +262,8 @@ describe('POST /api/entity-aliases', () => {
 		currentDb = await createTestDb();
 		const _user = await seedTestUser(currentDb);
 		userId = _user.id;
-		const [a] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
-		const [b] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice (alias)' }).returning();
+		const [a] = await currentDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'Alice' }).returning();
+		const [b] = await currentDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'Alice (alias)' }).returning();
 		alice = a.id;
 		aliceAlias = b.id;
 	});
@@ -331,8 +331,8 @@ describe('DELETE /api/entity-aliases/[id]', () => {
 		currentDb = await createTestDb();
 		const _user = await seedTestUser(currentDb);
 		userId = _user.id;
-		const [a] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
-		const [b] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice (alias)' }).returning();
+		const [a] = await currentDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'Alice' }).returning();
+		const [b] = await currentDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'Alice (alias)' }).returning();
 		alice = a.id;
 		aliceAlias = b.id;
 	});
@@ -367,29 +367,29 @@ describe('partial-unique-constraint — timeless vs temporal dedup', () => {
 		currentDb = await createTestDb();
 		const _user = await seedTestUser(currentDb);
 		userId = _user.id;
-		const [a] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
-		const [b] = await currentDb.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [a] = await currentDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'Alice' }).returning();
+		const [b] = await currentDb.insert(entities).values({ storyId: userId, type: 'Character', name: 'Bob' }).returning();
 		alice = a.id;
 		bob = b.id;
 	});
 
 	it('DB rejects duplicate timeless row for same (from, to, type)', async () => {
-		await currentDb.insert(relationships).values({ userId, fromId: alice, toId: bob, type: 'rivals' });
+		await currentDb.insert(relationships).values({ storyId: userId, fromId: alice, toId: bob, type: 'rivals' });
 		await expect(
-			currentDb.insert(relationships).values({ userId, fromId: alice, toId: bob, type: 'rivals' })
+			currentDb.insert(relationships).values({ storyId: userId, fromId: alice, toId: bob, type: 'rivals' })
 		).rejects.toThrow();
 	});
 
 	it('DB accepts two temporal rows with different start_positions', async () => {
 		// Two temporal rows same pair+type but different start_position
-		await currentDb.insert(relationships).values({ userId,
+		await currentDb.insert(relationships).values({ storyId: userId,
 			fromId: alice,
 			toId: bob,
 			type: 'rivals',
 			startPosition: 0.0,
 			endPosition: 1.0
 		});
-		await currentDb.insert(relationships).values({ userId,
+		await currentDb.insert(relationships).values({ storyId: userId,
 			fromId: alice,
 			toId: bob,
 			type: 'rivals',

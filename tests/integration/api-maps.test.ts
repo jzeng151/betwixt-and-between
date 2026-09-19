@@ -642,7 +642,7 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 		// First set a locationId via PATCH
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Forest' })
+			.values({ storyId: userId, type: 'Location', name: 'Forest' })
 			.returning();
 		await regionIdRoute.PATCH(
 			mkEvent({
@@ -685,7 +685,7 @@ describe('/api/maps/[id]/regions/[rid]', () => {
 		);
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Castle' })
+			.values({ storyId: userId, type: 'Location', name: 'Castle' })
 			.returning();
 		const polygon = [[0, 0], [100, 0], [100, 100]];
 		const res = await CREATE_REGION(
@@ -817,7 +817,7 @@ describe('/api/maps/[id]/upload-image', () => {
 	it('Step 1: POST creates map linked to a Location', async () => {
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Gondor' })
+			.values({ storyId: userId, type: 'Location', name: 'Gondor' })
 			.returning();
 		const res = await CREATE_MAP(
 			mkEvent({ body: { name: 'Gondor map', locationId: loc.id } })
@@ -830,7 +830,7 @@ describe('/api/maps/[id]/upload-image', () => {
 	it('Step 1: POST rejects locationId pointing at a non-Location entity', async () => {
 		const [char] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Frodo' })
+			.values({ storyId: userId, type: 'Character', name: 'Frodo' })
 			.returning();
 		await expect(
 			CREATE_MAP(mkEvent({ body: { name: 'Bad', locationId: char.id } }))
@@ -840,7 +840,7 @@ describe('/api/maps/[id]/upload-image', () => {
 	it('Step 1: PATCH links and unlinks locationId', async () => {
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Rivendell' })
+			.values({ storyId: userId, type: 'Location', name: 'Rivendell' })
 			.returning();
 		const created = await readJson(
 			await CREATE_MAP(mkEvent({ body: { name: 'Map' } }))
@@ -868,7 +868,7 @@ describe('/api/maps/[id]/upload-image', () => {
 	it('Step 1: PATCH rejects re-link to a non-Location entity', async () => {
 		const [char] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Sam' })
+			.values({ storyId: userId, type: 'Character', name: 'Sam' })
 			.returning();
 		const created = await readJson(
 			await CREATE_MAP(mkEvent({ body: { name: 'Map' } }))
@@ -984,7 +984,7 @@ describe('region → implied part_of edge', () => {
 			.from(relationships)
 			.where(
 				and(
-					eq(relationships.userId, userId),
+					eq(relationships.storyId, userId),
 					eq(relationships.fromId, fromId),
 					eq(relationships.toId, toId),
 					eq(relationships.type, 'part_of')
@@ -1003,11 +1003,11 @@ describe('region → implied part_of edge', () => {
 	it('POST region with locationId upserts part_of(L, P)', async () => {
 		const [parent] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Gondor' })
+			.values({ storyId: userId, type: 'Location', name: 'Gondor' })
 			.returning();
 		const [child] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Minas Tirith' })
+			.values({ storyId: userId, type: 'Location', name: 'Minas Tirith' })
 			.returning();
 		const map = await readJson(
 			await CREATE_MAP(mkEvent({ body: { name: 'Gondor map', locationId: parent.id } }))
@@ -1027,11 +1027,11 @@ describe('region → implied part_of edge', () => {
 	it('DELETE region drops part_of(L, P) when it was the last polygon for L', async () => {
 		const [parent] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Gondor' })
+			.values({ storyId: userId, type: 'Location', name: 'Gondor' })
 			.returning();
 		const [child] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Minas Tirith' })
+			.values({ storyId: userId, type: 'Location', name: 'Minas Tirith' })
 			.returning();
 		const map = await readJson(
 			await CREATE_MAP(mkEvent({ body: { name: 'Gondor map', locationId: parent.id } }))
@@ -1056,11 +1056,11 @@ describe('region → implied part_of edge', () => {
 	it('DELETE region keeps part_of(L, P) when another polygon still references L', async () => {
 		const [parent] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Gondor' })
+			.values({ storyId: userId, type: 'Location', name: 'Gondor' })
 			.returning();
 		const [child] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Minas Tirith' })
+			.values({ storyId: userId, type: 'Location', name: 'Minas Tirith' })
 			.returning();
 		const map = await readJson(
 			await CREATE_MAP(mkEvent({ body: { name: 'Gondor map', locationId: parent.id } }))
@@ -1093,15 +1093,15 @@ describe('region → implied part_of edge', () => {
 	it('PATCH locationId change drops the old edge and adds the new one', async () => {
 		const [parent] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Gondor' })
+			.values({ storyId: userId, type: 'Location', name: 'Gondor' })
 			.returning();
 		const [first] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Minas Tirith' })
+			.values({ storyId: userId, type: 'Location', name: 'Minas Tirith' })
 			.returning();
 		const [second] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Pelargir' })
+			.values({ storyId: userId, type: 'Location', name: 'Pelargir' })
 			.returning();
 		const map = await readJson(
 			await CREATE_MAP(mkEvent({ body: { name: 'Gondor map', locationId: parent.id } }))
@@ -1130,11 +1130,11 @@ describe('region → implied part_of edge', () => {
 	it('PATCH locationId to null drops the implied edge', async () => {
 		const [parent] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Gondor' })
+			.values({ storyId: userId, type: 'Location', name: 'Gondor' })
 			.returning();
 		const [child] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Minas Tirith' })
+			.values({ storyId: userId, type: 'Location', name: 'Minas Tirith' })
 			.returning();
 		const map = await readJson(
 			await CREATE_MAP(mkEvent({ body: { name: 'Gondor map', locationId: parent.id } }))
@@ -1180,11 +1180,11 @@ describe('removeImpliedPartOf — cross-map sibling check (Codex P1)', () => {
 
 		const [parent] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Parent', position: 0 })
+			.values({ storyId: userId, type: 'Location', name: 'Parent', position: 0 })
 			.returning();
 		const [child] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Child', position: 1 })
+			.values({ storyId: userId, type: 'Location', name: 'Child', position: 1 })
 			.returning();
 
 		// Two non-overlapping variant maps for the same parent location.
@@ -1271,7 +1271,7 @@ describe('POST /api/maps — scene-FK normalization (Codex P2)', () => {
 		const { act0 } = await seedActs(currentDb, userId);
 		const [scene] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', parentId: act0, name: 'Scene A', position: 0 })
+			.values({ storyId: userId, type: 'Scene', parentId: act0, name: 'Scene A', position: 0 })
 			.returning();
 
 		const res = await CREATE_MAP(
@@ -1307,7 +1307,7 @@ describe('recomputeWorldMapVariantsAll — degenerate-variant normalization (Cod
 
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Mordor', position: 0 })
+			.values({ storyId: userId, type: 'Location', name: 'Mordor', position: 0 })
 			.returning();
 
 		// Default variant for the location (start_position IS NULL).
@@ -1358,7 +1358,7 @@ describe('recomputeWorldMapVariantsAll — degenerate-variant normalization (Cod
 
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Shire', position: 0 })
+			.values({ storyId: userId, type: 'Location', name: 'Shire', position: 0 })
 			.returning();
 
 		// Only a scoped variant; no default exists.
@@ -1437,7 +1437,7 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		// insert (unique partial index) before any anchor is created.
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Loc' })
+			.values({ storyId: userId, type: 'Location', name: 'Loc' })
 			.returning();
 		await CREATE_MAP(mkEvent({ body: { name: 'A', locationId: loc.id } }));
 		await expect(
@@ -1451,7 +1451,7 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		const maps = await currentDb
 			.select()
 			.from(worldMaps)
-			.where(eq(worldMaps.userId, userId));
+			.where(eq(worldMaps.storyId, userId));
 		expect(maps).toHaveLength(1);
 		const anchors = await currentDb
 			.select()
@@ -1464,11 +1464,11 @@ describe('Slice 1b — baseline anchor invariant (G1 + G2)', () => {
 		// Source map with two regions linked to two Locations.
 		const [locA] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'A' })
+			.values({ storyId: userId, type: 'Location', name: 'A' })
 			.returning();
 		const [locB] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'B' })
+			.values({ storyId: userId, type: 'Location', name: 'B' })
 			.returning();
 		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Source' } }));
 		const source = await readJson(sourceRes);
@@ -1930,7 +1930,7 @@ describe('Slice 2 D5 — cursor pagination', () => {
 		const factionRows = [];
 		for (let i = 0; i < 12; i++) {
 			factionRows.push({
-				userId,
+				storyId: userId,
 				name: `F${i}`,
 				color: '#ff0000'
 			});
@@ -1978,7 +1978,7 @@ describe('Slice 2 D1 — factions.is_system guards', () => {
 		if (opts.isSystem) {
 			const [row] = await currentDb
 				.insert(factions)
-				.values({ userId, name: 'Neutral', color: '#9CA3AF', isSystem: true })
+				.values({ storyId: userId, name: 'Neutral', color: '#9CA3AF', isSystem: true })
 				.returning();
 			return { id: row.id };
 		}
@@ -2035,7 +2035,7 @@ describe('Slice 2 D1 — factions.is_system guards', () => {
 		await expect(
 			currentDb
 				.insert(factions)
-				.values({ userId, name: 'Neutral2', color: '#000000', isSystem: true })
+				.values({ storyId: userId, name: 'Neutral2', color: '#000000', isSystem: true })
 		).rejects.toThrow();
 	});
 
@@ -2046,7 +2046,7 @@ describe('Slice 2 D1 — factions.is_system guards', () => {
 		// must succeed.
 		const [bRow] = await currentDb
 			.insert(factions)
-			.values({ userId: userB.id, name: 'Neutral', color: '#9CA3AF', isSystem: true })
+			.values({ storyId: userB.id, name: 'Neutral', color: '#9CA3AF', isSystem: true })
 			.returning();
 		expect(bRow.isSystem).toBe(true);
 	});
@@ -2071,7 +2071,7 @@ describe('Slice 2 D1 — Neutral faction backfill (T3)', () => {
 		const before = await currentDb
 			.select()
 			.from(factions)
-			.where(eq(factions.userId, userId));
+			.where(eq(factions.storyId, userId));
 		expect(before).toHaveLength(0);
 
 		const mapRes = await CREATE_MAP(mkEvent({ body: { name: 'M' } }));
@@ -2086,7 +2086,7 @@ describe('Slice 2 D1 — Neutral faction backfill (T3)', () => {
 		const after = await currentDb
 			.select()
 			.from(factions)
-			.where(eq(factions.userId, userId));
+			.where(eq(factions.storyId, userId));
 		expect(after).toHaveLength(1);
 		expect(after[0].isSystem).toBe(true);
 		expect(after[0].name).toBe('Neutral');
@@ -2106,7 +2106,7 @@ describe('Slice 2 D1 — Neutral faction backfill (T3)', () => {
 		const all = await currentDb
 			.select()
 			.from(factions)
-			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+			.where(and(eq(factions.storyId, userId), eq(factions.isSystem, true)));
 		expect(all).toHaveLength(1);
 	});
 
@@ -2120,7 +2120,7 @@ describe('Slice 2 D1 — Neutral faction backfill (T3)', () => {
 		const [neutral] = await currentDb
 			.select({ id: factions.id })
 			.from(factions)
-			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+			.where(and(eq(factions.storyId, userId), eq(factions.isSystem, true)));
 
 		const [anchor] = await currentDb
 			.select()
@@ -2150,11 +2150,11 @@ describe('Slice 2 D1 — Neutral faction backfill (T3)', () => {
 		const aNeutral = await currentDb
 			.select({ id: factions.id })
 			.from(factions)
-			.where(and(eq(factions.userId, prevUserId), eq(factions.isSystem, true)));
+			.where(and(eq(factions.storyId, prevUserId), eq(factions.isSystem, true)));
 		const bNeutral = await currentDb
 			.select({ id: factions.id })
 			.from(factions)
-			.where(and(eq(factions.userId, userB.id), eq(factions.isSystem, true)));
+			.where(and(eq(factions.storyId, userB.id), eq(factions.isSystem, true)));
 		expect(aNeutral).toHaveLength(1);
 		expect(bNeutral).toHaveLength(1);
 		expect(aNeutral[0].id).not.toBe(bNeutral[0].id);
@@ -2173,7 +2173,7 @@ describe('Slice 2 D1 — Neutral faction backfill (T3)', () => {
 		const [neutral] = await currentDb
 			.select({ id: factions.id })
 			.from(factions)
-			.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+			.where(and(eq(factions.storyId, userId), eq(factions.isSystem, true)));
 
 		const [anchor] = await currentDb
 			.select()
@@ -2274,7 +2274,7 @@ describe('Slice 2 D2 PR-A — anchor schema gains polygon + locationId (T4)', ()
 
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Forest' })
+			.values({ storyId: userId, type: 'Location', name: 'Forest' })
 			.returning();
 		await regionIdRoute.PATCH(
 			mkEvent({ params: { id: map.id, rid: region.id }, body: { locationId: loc.id } })
@@ -2307,7 +2307,7 @@ describe('Slice 2 D2 PR-A — anchor schema gains polygon + locationId (T4)', ()
 		const polygon = [[0, 0], [0, 10], [10, 10]];
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'L' })
+			.values({ storyId: userId, type: 'Location', name: 'L' })
 			.returning();
 		const sourceRes = await CREATE_MAP(mkEvent({ body: { name: 'Source' } }));
 		const source = await readJson(sourceRes);
@@ -2607,7 +2607,7 @@ describe('Slice 2 D2 PR-C hardening (codex review)', () => {
 		const map = await readJson(await CREATE_MAP(mkEvent({ body: { name: 'M' } })));
 		const [loc] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Forest' })
+			.values({ storyId: userId, type: 'Location', name: 'Forest' })
 			.returning();
 		await CREATE_REGION(
 			mkEvent({
@@ -2646,7 +2646,7 @@ describe('Slice 2 D2 PR-C hardening (codex review)', () => {
 		// the second-write code path is the one the helper recovers from.
 		const [winner] = await currentDb
 			.insert(factions)
-			.values({ userId, name: 'Neutral', color: '#9ca3af', isSystem: true })
+			.values({ storyId: userId, name: 'Neutral', color: '#9ca3af', isSystem: true })
 			.returning({ id: factions.id });
 		const result = await ensureNeutralFaction(currentDb, userId);
 		expect(result).toBe(winner.id);

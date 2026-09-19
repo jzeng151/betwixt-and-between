@@ -14,7 +14,7 @@
 import { json, error } from '@sveltejs/kit';
 import { mapPlacements } from '$lib/server/db/schema.js';
 import { and, desc, eq } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isPgError } from '$lib/server/pg-errors.js';
 import {
@@ -30,9 +30,9 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const url = event.url;
-	const filters = [eq(mapPlacements.userId, userId)];
+	const filters = [eq(mapPlacements.storyId, storyId)];
 
 	// Validate UUID filters before pushing into the query — Postgres raises an
 	// invalid-cast error on malformed uuid text and we'd surface it as a 500.
@@ -64,7 +64,7 @@ export const GET: RequestHandler = async (event) => {
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const body = (await readJson(event)) as any;
 
@@ -108,10 +108,10 @@ export const POST: RequestHandler = async (event) => {
 
 	try {
 		return await db.transaction(async (tx) => {
-			await assertPlaceableId(tx, userId, placeableId);
-			await assertPlacementLocationId(tx, userId, locationId);
-			await assertPlacementMapId(tx, userId, mapId);
-			await assertPlacementVariantBounds(tx, userId, {
+			await assertPlaceableId(tx, storyId, placeableId);
+			await assertPlacementLocationId(tx, storyId, locationId);
+			await assertPlacementMapId(tx, storyId, mapId);
+			await assertPlacementVariantBounds(tx, storyId, {
 				startActId: normalizedStartActId,
 				startSceneId: normalizedStartSceneId,
 				endActId: normalizedEndActId,
@@ -131,7 +131,7 @@ export const POST: RequestHandler = async (event) => {
 							endActId: normalizedEndActId,
 							endSceneId: normalizedEndSceneId
 						},
-						userId
+						storyId
 					);
 				} catch (e) {
 					// resolvePlacementBounds / computeIntervalPositions throw plain
@@ -150,7 +150,7 @@ export const POST: RequestHandler = async (event) => {
 			const [created] = await tx
 				.insert(mapPlacements)
 				.values({
-					userId,
+					storyId,
 					placeableId,
 					locationId: locationId ?? null,
 					mapId: mapId ?? null,

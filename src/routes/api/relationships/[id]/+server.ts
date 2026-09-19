@@ -1,18 +1,18 @@
 import { json, error } from '@sveltejs/kit';
 import { relationships } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { resolveRelationshipBounds } from '$lib/server/intervals.js';
 import { assertPartOfInvariants } from '$lib/server/location-hierarchy.js';
 import type { RequestHandler } from './$types';
 
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const [rel] = await db
 		.select()
 		.from(relationships)
-		.where(and(eq(relationships.id, event.params.id), eq(relationships.userId, userId)));
+		.where(and(eq(relationships.id, event.params.id), eq(relationships.storyId, storyId)));
 	if (!rel) error(404, 'Relationship not found');
 
 	const body = await event.request.json();
@@ -62,7 +62,7 @@ export const PATCH: RequestHandler = async (event) => {
 					endActId: mergedEndActId,
 					endSceneId: mergedEndSceneId
 				},
-				userId
+				storyId
 			);
 			startPosition = bounds.startPosition;
 			endPosition = bounds.endPosition;
@@ -75,7 +75,7 @@ export const PATCH: RequestHandler = async (event) => {
 	// PATCH doesn't accept fromId/toId, so endpoints are pinned to the existing row.
 	const effectiveType = type !== undefined ? type : rel.type;
 	if (effectiveType === 'part_of') {
-		await assertPartOfInvariants(db, userId, rel.fromId, rel.toId, rel.id);
+		await assertPartOfInvariants(db, storyId, rel.fromId, rel.toId, rel.id);
 	}
 
 	const patch: Partial<typeof rel> = {
@@ -95,7 +95,7 @@ export const PATCH: RequestHandler = async (event) => {
 		[updated] = await db
 			.update(relationships)
 			.set(patch)
-			.where(and(eq(relationships.id, event.params.id), eq(relationships.userId, userId)))
+			.where(and(eq(relationships.id, event.params.id), eq(relationships.storyId, storyId)))
 			.returning();
 	} catch (err) {
 		const code = (err as { code?: string }).code ?? '';
@@ -120,10 +120,10 @@ export const PATCH: RequestHandler = async (event) => {
 
 export const DELETE: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const [deleted] = await db
 		.delete(relationships)
-		.where(and(eq(relationships.id, event.params.id), eq(relationships.userId, userId)))
+		.where(and(eq(relationships.id, event.params.id), eq(relationships.storyId, storyId)))
 		.returning();
 	if (!deleted) error(404, 'Relationship not found');
 	return new Response(null, { status: 204 });

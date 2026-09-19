@@ -43,8 +43,8 @@ describe('EventChain scope — scene-equality via caused_by (Slice 5 PR-B / D3)'
 			await db
 				.insert(entities)
 				.values([
-					{ userId, type: 'Act', name: 'Act 0', position: 0 },
-					{ userId, type: 'Act', name: 'Act 1', position: 1 }
+					{ storyId: userId, type: 'Act', name: 'Act 0', position: 0 },
+					{ storyId: userId, type: 'Act', name: 'Act 1', position: 1 }
 				])
 				.returning()
 		).map((a) => a.id);
@@ -53,9 +53,9 @@ describe('EventChain scope — scene-equality via caused_by (Slice 5 PR-B / D3)'
 		const scenes = await db
 			.insert(entities)
 			.values([
-				{ userId, type: 'Scene', name: 'S0', parentId: act0, position: 0 },
-				{ userId, type: 'Scene', name: 'S1', parentId: act0, position: 1 },
-				{ userId, type: 'Scene', name: 'S2', parentId: act0, position: 2 }
+				{ storyId: userId, type: 'Scene', name: 'S0', parentId: act0, position: 0 },
+				{ storyId: userId, type: 'Scene', name: 'S1', parentId: act0, position: 1 },
+				{ storyId: userId, type: 'Scene', name: 'S2', parentId: act0, position: 2 }
 			])
 			.returning();
 		scene0 = scenes[0].id;
@@ -65,8 +65,8 @@ describe('EventChain scope — scene-equality via caused_by (Slice 5 PR-B / D3)'
 		const evs = await db
 			.insert(entities)
 			.values([
-				{ userId, type: 'Event', name: 'Cause' },
-				{ userId, type: 'Event', name: 'Effect' }
+				{ storyId: userId, type: 'Event', name: 'Cause' },
+				{ storyId: userId, type: 'Event', name: 'Effect' }
 			])
 			.returning();
 		cause = evs[0].id;
@@ -82,7 +82,7 @@ describe('EventChain scope — scene-equality via caused_by (Slice 5 PR-B / D3)'
 		const [rel] = await db
 			.insert(relationships)
 			.values({
-				userId,
+				storyId: userId,
 				fromId: effect,
 				toId: cause,
 				type: 'caused_by',

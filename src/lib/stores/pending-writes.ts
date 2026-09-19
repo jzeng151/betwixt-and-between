@@ -23,5 +23,5 @@ export function trackWrite<T>(task: Promise<T>, retryKey?: symbol): Promise<T> {
 
 export async function flushPendingWrites(): Promise<void> {
 	while (pending.size) await Promise.allSettled(pending);
-	if (get(failedWrites).length) throw new Error('Some changes failed to save. Review them in Account before signing out.');
+	if (get(failedWrites).length) throw new Error('Some changes failed to save. Review them in Account before leaving this workspace.');
 }

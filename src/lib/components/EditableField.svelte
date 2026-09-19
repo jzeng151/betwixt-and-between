@@ -115,7 +115,7 @@
 	let lastAttempt = $state<string | null>(null);
 
 	$effect(() => {
-		if (!focused) draft = currentValue;
+		if (!focused && lastAttempt === null) draft = currentValue;
 	});
 
 	/* Pending-commit handle: lets EntityLink chip clicks (slice 7) drain
@@ -128,7 +128,7 @@
 	   draft changes between the dirty check and commitText's local capture. */
 	const fieldHandle: EditableFieldHandle = {
 		commitNow: async () => {
-			const valueToCommit = draft;
+			const valueToCommit = focused ? draft : (lastAttempt ?? draft);
 			if (valueToCommit !== currentValue) {
 				const value = valueToCommit;
 				lastAttempt = value;
@@ -141,13 +141,14 @@
 					lastAttempt = null;
 				} catch (err) {
 					saveError = (err as Error).message || 'Save failed';
+					throw err;
 				}
 			}
 		}
 	};
 
 	$effect(() => {
-		const isDirty = focused && draft !== currentValue;
+		const isDirty = lastAttempt !== null || (focused && draft !== currentValue);
 		if (isDirty) {
 			registerDirtyField(fieldHandle);
 		} else {

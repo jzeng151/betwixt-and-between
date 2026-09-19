@@ -207,23 +207,23 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 	it('all six worked-example rows are invariant-clean', async () => {
 		const [ellie] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		const [damien] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Damien' })
+			.values({ storyId: userId, type: 'Character', name: 'Damien' })
 			.returning();
 		const [marcus] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Marcus' })
+			.values({ storyId: userId, type: 'Character', name: 'Marcus' })
 			.returning();
 		const [scout] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Scout' })
+			.values({ storyId: userId, type: 'Character', name: 'Scout' })
 			.returning();
 		const [battle] = await db
 			.insert(entities)
-			.values({ userId, type: 'Event', name: 'Battle of Three Rivers' })
+			.values({ storyId: userId, type: 'Event', name: 'Battle of Three Rivers' })
 			.returning();
 
 		// 5 scenes in Act 1
@@ -231,7 +231,7 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 		for (let k = 0; k < 5; k++) {
 			const [s] = await db
 				.insert(entities)
-				.values({ userId, type: 'Scene', name: `A1-S${k}`, parentId: acts.act1, position: k })
+				.values({ storyId: userId, type: 'Scene', name: `A1-S${k}`, parentId: acts.act1, position: k })
 				.returning();
 			a1scenes.push(s);
 		}
@@ -240,7 +240,7 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 		for (let k = 0; k < 3; k++) {
 			const [s] = await db
 				.insert(entities)
-				.values({ userId, type: 'Scene', name: `A2-S${k}`, parentId: acts.act2, position: k })
+				.values({ storyId: userId, type: 'Scene', name: `A2-S${k}`, parentId: acts.act2, position: k })
 				.returning();
 			a2scenes.push(s);
 		}
@@ -255,7 +255,7 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 		// /plan-eng-review resolutions item 1.2 (locked 2026-04-28).
 		const [eve] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Eve' })
+			.values({ storyId: userId, type: 'Character', name: 'Eve' })
 			.returning();
 		await writeInterval(db, {
 			entityId: eve.id,
@@ -288,11 +288,11 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 	it('catches polymorphic FK violation (start_act_id pointing at Character)', async () => {
 		const [ellie] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		// Plant a bad row directly. writeInterval would reject this; we go around it.
 		await db.insert(intervals).values({
-			userId,
+			storyId: userId,
 			entityId: ellie.id,
 			// Both act FKs point at a CHARACTER entity. SQLite doesn't enforce type.
 			startActId: ellie.id,
@@ -309,21 +309,21 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 	it('catches position-FK drift on a scene-anchored row', async () => {
 		const [ellie] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		const [s0] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ storyId: userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 
 		// Plant a bad row: positions deliberately wrong for the FKs.
 		// scene 0 of 2 in Act 1 should be [1.0, 1.5). We write [1.0, 1.7).
 		await db.insert(intervals).values({
-			userId,
+			storyId: userId,
 			entityId: ellie.id,
 			startActId: acts.act1,
 			startSceneId: s0.id,
@@ -340,7 +340,7 @@ describe('intervals invariant: type alignment + position-FK consistency + act or
 	it('catches act-ordering drift after Act position changes (without recompute)', async () => {
 		const [ellie] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		// Write a clean full-Act-1 interval.
 		await writeInterval(db, { entityId: ellie.id, startActId: acts.act1, endActId: acts.act1 }, userId);

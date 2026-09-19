@@ -55,7 +55,7 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 		acts = await seedActs(currentDb, userId);
 		const [c] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -64,11 +64,11 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 		// 2 scenes in act1.
 		const [s0] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 });
+			.values({ storyId: userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 });
 
 		// Interval anchored inside act1.
 		await writeInterval(currentDb, {
@@ -81,7 +81,7 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 		// Survivor: interval in act2 → [2, 3).
 		const [damienE] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Damien' })
+			.values({ storyId: userId, type: 'Character', name: 'Damien' })
 			.returning();
 		await writeInterval(currentDb, {
 			entityId: damienE.id,
@@ -115,15 +115,15 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 		// 2 scenes in act1, 1 scene in act2 (target gets 2 scenes appended after position 0).
 		const [s0] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ storyId: userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 		await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'Existing', parentId: acts.act2, position: 0 });
+			.values({ storyId: userId, type: 'Scene', name: 'Existing', parentId: acts.act2, position: 0 });
 
 		const url = new URL(
 			`http://localhost/api/entities/${acts.act1}?moveScenesTo=${acts.act2}`
@@ -150,11 +150,11 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 	it('moveScenesTo updates intervals.start_act_id / end_act_id (P2-3 critical fix)', async () => {
 		const [s0] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ storyId: userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 
 		// Interval anchored to scenes inside act1.
@@ -186,7 +186,7 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 	it('moveScenesTo: source act is deleted after reparent', async () => {
 		await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 });
+			.values({ storyId: userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 });
 		const url = new URL(
 			`http://localhost/api/entities/${acts.act1}?moveScenesTo=${acts.act2}`
 		);
@@ -233,12 +233,12 @@ describe('DELETE /api/entities/[id] — Act delete cascade and reparent', () => 
 		// state — the source act must remain.
 		const [scene] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'Decoy', parentId: acts.act0, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'Decoy', parentId: acts.act0, position: 0 })
 			.returning();
 
 		await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'X', parentId: acts.act1, position: 0 });
+			.values({ storyId: userId, type: 'Scene', name: 'X', parentId: acts.act1, position: 0 });
 
 		const url = new URL(
 			`http://localhost/api/entities/${acts.act1}?moveScenesTo=${scene.id}`

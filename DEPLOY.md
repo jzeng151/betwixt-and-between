@@ -198,3 +198,7 @@ Cloudflare retains previous Worker versions. To revert: dashboard → your Worke
 - `.github/workflows/deploy.yml` — auto-deploy on push to main.
 - `.github/workflows/backup.yml` — weekly Neon backup to Backblaze B2.
 - [Cloudflare: SvelteKit on Workers](https://developers.cloudflare.com/workers/framework-guides/web-apps/sveltekit/) — canonical wrangler.jsonc shape used by this repo.
+
+### Story ownership migration 0029
+
+Apply migration 0029 before deploying the story-switching Worker. It creates a first story for each existing account and retargets narrative ownership foreign keys. Physical `user_id` columns stay in place for the previous Worker; application fields now call them `storyId`. A Worker rollback can still serve the original story, while additional stories remain stored until the newer Worker is restored. Test the migration on a Neon dev branch first.

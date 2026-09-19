@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 import { writable } from 'svelte/store';
 import { errorMessage } from '$lib/util/api-error-message.js';
 
@@ -43,14 +44,14 @@ function createIntervalStore() {
 	const { subscribe, set, update } = writable<Interval[]>([]);
 
 	async function load() {
-		const res = await fetch('/api/intervals');
+		const res = await storyFetch('/api/intervals');
 		if (!res.ok) throw new Error(`intervals.load failed: ${res.status} ${await errorMessage(res)}`);
 		const data: Interval[] = await res.json();
 		set(data);
 	}
 
 	async function createInterval(input: CreateIntervalInput): Promise<Interval> {
-		const res = await fetch('/api/intervals', {
+		const res = await storyFetch('/api/intervals', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(input)
@@ -62,7 +63,7 @@ function createIntervalStore() {
 	}
 
 	async function updateInterval(id: string, patch: UpdateIntervalInput): Promise<Interval> {
-		const res = await fetch(`/api/intervals/${id}`, {
+		const res = await storyFetch(`/api/intervals/${id}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(patch)
@@ -88,7 +89,7 @@ function createIntervalStore() {
 	}
 
 	async function splitIntervalAt(id: string, atPosition: number): Promise<void> {
-		const res = await fetch(`/api/intervals/${id}/split`, {
+		const res = await storyFetch(`/api/intervals/${id}/split`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ atPosition })
@@ -106,7 +107,7 @@ function createIntervalStore() {
 		update((all) => all.filter((i) => i.id !== id));
 		let res: Response;
 		try {
-			res = await fetch(`/api/intervals/${id}`, { method: 'DELETE' });
+			res = await storyFetch(`/api/intervals/${id}`, { method: 'DELETE' });
 		} catch (err) {
 			// Network error before any response — the optimistic remove would
 			// otherwise hide the row forever. Re-sync from the server and rethrow.

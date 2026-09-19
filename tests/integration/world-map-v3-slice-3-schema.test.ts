@@ -30,7 +30,7 @@ type Db = Awaited<ReturnType<typeof createTestDb>>;
 async function seedMap(db: Db, userId: string, name = 'test map'): Promise<string> {
 	const [row] = await db
 		.insert(worldMaps)
-		.values({ userId, name })
+		.values({ storyId: userId, name })
 		.returning({ id: worldMaps.id });
 	return row.id;
 }
@@ -282,7 +282,7 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 
 	it('insert + read round-trip (visible=1 default)', async () => {
 		await db.insert(worldMapLayerPrefs).values({
-			userId: userA,
+			storyId: userA,
 			worldMapId: mapA,
 			layerKey: 'terrain'
 		});
@@ -291,7 +291,7 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 			.from(worldMapLayerPrefs)
 			.where(
 				and(
-					eq(worldMapLayerPrefs.userId, userA),
+					eq(worldMapLayerPrefs.storyId, userA),
 					eq(worldMapLayerPrefs.worldMapId, mapA),
 					eq(worldMapLayerPrefs.layerKey, 'terrain')
 				)
@@ -303,13 +303,13 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 
 	it('composite PK rejects duplicate (user, map, layer_key)', async () => {
 		await db.insert(worldMapLayerPrefs).values({
-			userId: userA,
+			storyId: userA,
 			worldMapId: mapA,
 			layerKey: 'grid'
 		});
 		await expect(
 			db.insert(worldMapLayerPrefs).values({
-				userId: userA,
+				storyId: userA,
 				worldMapId: mapA,
 				layerKey: 'grid'
 			})
@@ -321,25 +321,25 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 		// does NOT enforce ownership; that lives at the server-side
 		// write helper). Schema test only checks the PK shape.
 		await db.insert(worldMapLayerPrefs).values({
-			userId: userA,
+			storyId: userA,
 			worldMapId: mapA,
 			layerKey: 'grid'
 		});
 		await db.insert(worldMapLayerPrefs).values({
-			userId: userA,
+			storyId: userA,
 			worldMapId: mapB,
 			layerKey: 'grid'
 		});
 		const rows = await db
 			.select()
 			.from(worldMapLayerPrefs)
-			.where(eq(worldMapLayerPrefs.userId, userA));
+			.where(eq(worldMapLayerPrefs.storyId, userA));
 		expect(rows.length).toBe(2);
 	});
 
 	it('bump_updated_at trigger fires on UPDATE', async () => {
 		await db.insert(worldMapLayerPrefs).values({
-			userId: userA,
+			storyId: userA,
 			worldMapId: mapA,
 			layerKey: 'placements'
 		});
@@ -351,7 +351,7 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 			.from(worldMapLayerPrefs)
 			.where(
 				and(
-					eq(worldMapLayerPrefs.userId, userA),
+					eq(worldMapLayerPrefs.storyId, userA),
 					eq(worldMapLayerPrefs.worldMapId, mapA),
 					eq(worldMapLayerPrefs.layerKey, 'placements')
 				)
@@ -363,7 +363,7 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 			.set({ visible: 0 })
 			.where(
 				and(
-					eq(worldMapLayerPrefs.userId, userA),
+					eq(worldMapLayerPrefs.storyId, userA),
 					eq(worldMapLayerPrefs.worldMapId, mapA),
 					eq(worldMapLayerPrefs.layerKey, 'placements')
 				)
@@ -377,7 +377,7 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 			.from(worldMapLayerPrefs)
 			.where(
 				and(
-					eq(worldMapLayerPrefs.userId, userA),
+					eq(worldMapLayerPrefs.storyId, userA),
 					eq(worldMapLayerPrefs.worldMapId, mapA),
 					eq(worldMapLayerPrefs.layerKey, 'placements')
 				)
@@ -401,7 +401,7 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 		// data leak") applies. Same pattern as the entity_aliases
 		// invariant test that scans for unowned rows.
 		await db.insert(worldMapLayerPrefs).values({
-			userId: userA,
+			storyId: userA,
 			worldMapId: mapA,
 			layerKey: 'terrain'
 		});
@@ -421,7 +421,7 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 
 	it('cascade delete: removing a user deletes their layer_prefs', async () => {
 		await db.insert(worldMapLayerPrefs).values({
-			userId: userA,
+			storyId: userA,
 			worldMapId: mapA,
 			layerKey: 'background'
 		});
@@ -429,13 +429,13 @@ describe('Slice 3 PR A — 0021 world_map_layer_prefs', () => {
 		const rows = await db
 			.select()
 			.from(worldMapLayerPrefs)
-			.where(eq(worldMapLayerPrefs.userId, userA));
+			.where(eq(worldMapLayerPrefs.storyId, userA));
 		expect(rows.length).toBe(0);
 	});
 
 	it('cascade delete: removing a world_map deletes its layer_prefs', async () => {
 		await db.insert(worldMapLayerPrefs).values({
-			userId: userA,
+			storyId: userA,
 			worldMapId: mapA,
 			layerKey: 'chrome'
 		});

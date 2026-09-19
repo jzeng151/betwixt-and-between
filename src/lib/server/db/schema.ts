@@ -67,6 +67,15 @@ export const user = pgTable('user', {
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Every account starts with one story whose id equals its user id. Existing
+// story rows retain their ownership UUID when migration 0029 runs.
+export const stories = pgTable('stories', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+	name: text('name').notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+}, (table) => [index('stories_user_id_idx').on(table.userId), check('stories_name_check', sql`char_length(btrim(${table.name})) BETWEEN 1 AND 100`)]);
+
 export const session = pgTable('session', {
 	id: uuid('id').primaryKey().defaultRandom(),
 	expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
@@ -150,11 +159,13 @@ export const RelationshipType = [
 ] as const;
 export type RelationshipType = (typeof RelationshipType)[number];
 
+// Physical user_id column names remain for old-worker compatibility during rollout.
+// In application code these columns are storyId and reference stories.id.
 export const entities = pgTable(
 	'entities',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
-		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+		storyId: uuid('user_id').references(() => stories.id, { onDelete: 'cascade' }),
 		type: text('type', { enum: EntityType }).notNull(),
 		name: text('name').notNull(),
 		// jsonb so app code can pass objects directly; Drizzle's $type<>
@@ -190,7 +201,7 @@ export const relationships = pgTable(
 	'relationships',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
-		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+		storyId: uuid('user_id').references(() => stories.id, { onDelete: 'cascade' }),
 		fromId: uuid('from_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
@@ -227,7 +238,7 @@ export const relationships = pgTable(
 
 export const canvasPositions = pgTable('canvas_positions', {
 	id: uuid('id').primaryKey().defaultRandom(),
-	userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+	storyId: uuid('user_id').references(() => stories.id, { onDelete: 'cascade' }),
 	entityId: uuid('entity_id')
 		.notNull()
 		.unique()
@@ -257,7 +268,7 @@ export const windowCanvasState = pgTable(
 	'window_canvas_state',
 	{
 		windowId: text('window_id').notNull(),
-		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+		storyId: uuid('user_id').references(() => stories.id, { onDelete: 'cascade' }),
 		entityId: uuid('entity_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
@@ -306,7 +317,7 @@ export const intervals = pgTable(
 	'intervals',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
-		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+		storyId: uuid('user_id').references(() => stories.id, { onDelete: 'cascade' }),
 		entityId: uuid('entity_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
@@ -407,7 +418,7 @@ export const entityAliases = pgTable('entity_aliases', {
 // =============================================================================
 export const worldMaps = pgTable('world_maps', {
 	id: uuid('id').primaryKey().defaultRandom(),
-	userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+	storyId: uuid('user_id').references(() => stories.id, { onDelete: 'cascade' }),
 	name: text('name').notNull(),
 	baseImageUrl: text('base_image_url'),
 	width: integer('width'),
@@ -504,7 +515,7 @@ export const mapPlacements = pgTable(
 	'map_placements',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
-		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+		storyId: uuid('user_id').references(() => stories.id, { onDelete: 'cascade' }),
 		placeableId: uuid('placeable_id')
 			.notNull()
 			.references(() => entities.id, { onDelete: 'cascade' }),
@@ -548,7 +559,7 @@ export const mapPlacements = pgTable(
 // location-link now live exclusively in map_anchors.state_jsonb.regions[];
 // the baseline anchor (t_position = -Infinity) is canonical. See
 // src/lib/server/world-map-v3.ts → readBaselineRegions /
-// readBaselineRegionsForUser for the read path, and
+// readBaselineRegionsForStory for the read path, and
 // src/lib/server/anchor-region-write-through.ts for the write helpers.
 
 // =============================================================================
@@ -646,7 +657,7 @@ export const mapEvents = pgTable('map_events', {
 
 export const factions = pgTable('factions', {
 	id: uuid('id').primaryKey().defaultRandom(),
-	userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+	storyId: uuid('user_id').references(() => stories.id, { onDelete: 'cascade' }),
 	name: text('name').notNull(),
 	color: text('color').notNull(),
 	styleJsonb: jsonb('style_jsonb'),
@@ -659,8 +670,8 @@ export const factions = pgTable('factions', {
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
-	index('factions_user_id_idx').on(table.userId),
-	// Slice 2 D1: exactly one is_system=true row per user. The partial
+	index('factions_user_id_idx').on(table.storyId),
+	// Slice 2 D1: exactly one is_system=true row per story. The partial
 	// unique index also lives in drizzle/0013_factions_is_system.sql for
 	// migration-built DBs; declared here as well so `npm run db:push`
 	// (schema-based DB creation) gets the constraint without depending
@@ -669,7 +680,7 @@ export const factions = pgTable('factions', {
 	// first-writes on a freshly-pushed schema have no conflict to ignore
 	// and silently create duplicate Neutral rows.
 	uniqueIndex('factions_user_one_system')
-		.on(table.userId)
+		.on(table.storyId)
 		.where(sql`is_system = true`)
 ]);
 
@@ -684,9 +695,8 @@ export const factions = pgTable('factions', {
 // node placement — different shape, different lifecycle).
 //
 // Cross-user invariant (CLAUDE.md + outside-voice codex #15): every
-// write MUST scope through world_maps.user_id via JOIN — the user_id
-// on this row is "the user authoring the pref," and that user must
-// own the world_map. The server-side write helper validates before
+// write MUST scope through world_maps.user_id via JOIN. This row must
+// belong to the same story as the map. The server-side write helper validates before
 // INSERT/UPDATE/DELETE; cross-user writes return 404. Tests in
 // tests/integration/auth-isolation-world-map-v3.test.ts.
 //
@@ -706,9 +716,9 @@ export const factions = pgTable('factions', {
 export const worldMapLayerPrefs = pgTable(
 	'world_map_layer_prefs',
 	{
-		userId: uuid('user_id')
+		storyId: uuid('user_id')
 			.notNull()
-			.references(() => user.id, { onDelete: 'cascade' }),
+			.references(() => stories.id, { onDelete: 'cascade' }),
 		worldMapId: uuid('world_map_id')
 			.notNull()
 			.references(() => worldMaps.id, { onDelete: 'cascade' }),
@@ -718,7 +728,7 @@ export const worldMapLayerPrefs = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
-		primaryKey({ columns: [table.userId, table.worldMapId, table.layerKey] }),
+		primaryKey({ columns: [table.storyId, table.worldMapId, table.layerKey] }),
 		index('world_map_layer_prefs_map_idx').on(table.worldMapId)
 	]
 );

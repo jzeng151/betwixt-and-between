@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { and, eq } from 'drizzle-orm';
 import { intervals } from '$lib/server/db/schema.js';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isPgError } from '$lib/server/pg-errors.js';
 import { updateInterval } from '$lib/server/intervals.js';
@@ -9,22 +9,22 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const [row] = await db
 		.select()
 		.from(intervals)
-		.where(and(eq(intervals.id, event.params.id), eq(intervals.userId, userId)));
+		.where(and(eq(intervals.id, event.params.id), eq(intervals.storyId, storyId)));
 	if (!row) error(404, 'Interval not found');
 	return json(row);
 };
 
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const [existing] = await db
 		.select()
 		.from(intervals)
-		.where(and(eq(intervals.id, event.params.id), eq(intervals.userId, userId)));
+		.where(and(eq(intervals.id, event.params.id), eq(intervals.storyId, storyId)));
 	if (!existing) error(404, 'Interval not found');
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -66,7 +66,7 @@ export const PATCH: RequestHandler = async (event) => {
 					startPosition: startPosition ?? start_position,
 					endPosition: endPosition ?? end_position
 				},
-				userId
+				storyId
 			)
 		);
 		// Embed absorbed IDs in the response so the client can prune any
@@ -85,10 +85,10 @@ export const PATCH: RequestHandler = async (event) => {
 
 export const DELETE: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const [deleted] = await db
 		.delete(intervals)
-		.where(and(eq(intervals.id, event.params.id), eq(intervals.userId, userId)))
+		.where(and(eq(intervals.id, event.params.id), eq(intervals.storyId, storyId)))
 		.returning();
 	if (!deleted) error(404, 'Interval not found');
 	return new Response(null, { status: 204 });

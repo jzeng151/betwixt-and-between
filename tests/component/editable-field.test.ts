@@ -63,6 +63,7 @@ const addRelationshipMock = createRelationshipMock;
 const removeRelationshipMock = deleteRelationshipMock;
 
 import { entities } from '../../src/lib/stores/entities.js';
+import { drainPendingCommit, _resetPendingCommitRegistry } from '../../src/lib/util/pending-commit.js';
 import EditableField from '../../src/lib/components/EditableField.svelte';
 
 const entitiesWritable = entities as unknown as ReturnType<typeof writable<Entity[]>>;
@@ -82,6 +83,7 @@ function seedEntity(
 }
 
 beforeEach(async () => {
+	_resetPendingCommitRegistry();
 	updateEntityMock.mockReset();
 	updateEntityMock.mockResolvedValue({});
 	addRelationshipMock.mockReset();
@@ -144,6 +146,7 @@ describe('EditableField — kind=textarea', () => {
 		seedEntity({ id: 'act-1', name: 'A', data: { synopsis: '' } });
 		updateEntityMock
 			.mockRejectedValueOnce(new Error('server'))
+			.mockRejectedValueOnce(new Error('server'))
 			.mockResolvedValueOnce({});
 
 		const { container, getByRole } = render(EditableField, {
@@ -155,9 +158,11 @@ describe('EditableField — kind=textarea', () => {
 
 		const retry = await waitFor(() => getByRole('button', { name: /retry/i }));
 		expect(retry).toBeTruthy();
-		await fireEvent.click(retry);
+		expect(ta.value).toBe('attempt-1');
+		await expect(drainPendingCommit(true)).rejects.toThrow('server');
+		await fireEvent.click(await waitFor(() => getByRole('button', { name: /retry/i })));
 
-		await waitFor(() => expect(updateEntityMock).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(updateEntityMock).toHaveBeenCalledTimes(3));
 		expect(updateEntityMock.mock.calls[1][1].data.synopsis).toBe('attempt-1');
 	});
 });

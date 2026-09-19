@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { storyFetch } from '$lib/story-fetch.js';
+  import { registerDirtyField, unregisterDirtyField } from '$lib/util/pending-commit.js';
+
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { preferences } from '$lib/os/preferences-store.js';
@@ -317,7 +320,7 @@
       // StoryGraph seed (`/api/canvas-positions`) because that
       // canvas is much wider than an FG window and produced offscreen-
       // clipping or unreadably-zoomed-out fits.
-      const winRes = await fetch(`/api/canvas-positions/window/${windowId}`).catch(() => null);
+      const winRes = await storyFetch(`/api/canvas-positions/window/${windowId}`).catch(() => null);
       type WinRow = {
         entityId: string;
         x: number;
@@ -362,32 +365,41 @@
   // Greptile P2 on PR #12: see StoryGraph for the same fix rationale. Per-node
   // map preserves rapid-re-drag coalescing of the same node without canceling
   // a different node's pending PUT.
-  const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const saveTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; commit: () => Promise<Response> }>();
+  onMount(() => {
+    const handle = { commitNow: async () => {
+      await layoutLock;
+      await Promise.all([...saveTimers.values()].map(({ timer, commit }) => {
+        clearTimeout(timer);
+        return commit();
+      }));
+    } };
+    registerDirtyField(handle);
+    return () => unregisterDirtyField(handle);
+  });
   function onNodePositionChange(id: string, p: NodePosition) {
     // Mirror so C5 can compute centroid(pinnedSet) without re-fetching.
     currentPositions = { ...currentPositions, [id]: p };
     const existing = saveTimers.get(id);
-    if (existing) clearTimeout(existing);
-    saveTimers.set(
-      id,
-      setTimeout(() => {
-        saveTimers.delete(id);
-        fetch(`/api/canvas-positions/window/${windowId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            entityId: id,
-            x: Math.round(p.x),
-            y: Math.round(p.y),
-            width: Math.round(p.w),
-            height: Math.round(p.h),
-            // Preserve pin state when persisting a drag — dragging a pinned
-            // node updates its position but should NOT unpin it.
-            pinned: pinnedSet.has(id) ? 1 : 0
-          })
-        });
-      }, 500)
-    );
+    if (existing) clearTimeout(existing.timer);
+    const commit = () => {
+      saveTimers.delete(id);
+      return storyFetch(`/api/canvas-positions/window/${windowId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entityId: id,
+          x: Math.round(p.x),
+          y: Math.round(p.y),
+          width: Math.round(p.w),
+          height: Math.round(p.h),
+          // Preserve pin state when persisting a drag — dragging a pinned
+          // node updates its position but should NOT unpin it.
+          pinned: pinnedSet.has(id) ? 1 : 0
+        })
+      });
+    };
+    saveTimers.set(id, { timer: setTimeout(() => void commit().catch(() => {}), 500), commit });
   }
 
   // ── Pin / Unpin (C3 menu item; C5 reads pinnedSet) ────────────────────────
@@ -412,7 +424,7 @@
 
     void (async () => {
       try {
-        const res = await fetch(`/api/canvas-positions/window/${windowId}`, {
+        const res = await storyFetch(`/api/canvas-positions/window/${windowId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -516,7 +528,7 @@
         optimisticApplied = true;
 
         // Atomic batch write via A3.
-        const res = await fetch(`/api/canvas-positions/window/${windowId}/batch`, {
+        const res = await storyFetch(`/api/canvas-positions/window/${windowId}/batch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(

@@ -52,13 +52,13 @@ type Tx = any;
  * jsonb and drops map_regions.
  *
  * Single atomic UPDATE per anchor — PG handles concurrent updates via
- * MVCC. Cross-user scoped via the worldMaps.userId predicate so a stray
+ * MVCC. Cross-story scoped via the worldMaps.storyId predicate so a stray
  * call from an unscoped handler can't touch another user's anchors.
  */
 export async function fanOutRegionAdd(
 	tx: Tx,
 	mapId: string,
-	userId: string,
+	storyId: string,
 	region: { id: string; factionId: string; polygon: number[][]; locationId: string | null }
 ): Promise<void> {
 	const entry = JSON.stringify({
@@ -89,7 +89,7 @@ export async function fanOutRegionAdd(
 		FROM ${worldMaps}
 		WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
 			AND ${mapAnchors.worldMapId} = ${mapId}
-			AND ${worldMaps.userId} = ${userId}
+			AND ${worldMaps.storyId} = ${storyId}
 	`);
 }
 
@@ -107,7 +107,7 @@ export async function fanOutRegionAdd(
 export async function fanOutRegionGeometryUpdate(
 	tx: Tx,
 	mapId: string,
-	userId: string,
+	storyId: string,
 	regionId: string,
 	patch: { polygon?: number[][]; locationId?: string | null }
 ): Promise<void> {
@@ -153,7 +153,7 @@ export async function fanOutRegionGeometryUpdate(
 		FROM ${worldMaps}
 		WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
 			AND ${mapAnchors.worldMapId} = ${mapId}
-			AND ${worldMaps.userId} = ${userId}
+			AND ${worldMaps.storyId} = ${storyId}
 	`);
 }
 
@@ -165,7 +165,7 @@ export async function fanOutRegionGeometryUpdate(
 export async function fanOutRegionDelete(
 	tx: Tx,
 	mapId: string,
-	userId: string,
+	storyId: string,
 	regionId: string
 ): Promise<void> {
 	await tx.execute(sql`
@@ -186,7 +186,7 @@ export async function fanOutRegionDelete(
 		FROM ${worldMaps}
 		WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
 			AND ${mapAnchors.worldMapId} = ${mapId}
-			AND ${worldMaps.userId} = ${userId}
+			AND ${worldMaps.storyId} = ${storyId}
 	`);
 }
 

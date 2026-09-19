@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { worldMaps } from '$lib/server/db/schema.js';
 import { squareGridCounts } from '$lib/features/map/grid-dims.js';
 import { and, eq, sql } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RequestHandler } from './$types';
@@ -13,13 +13,13 @@ const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 
 	// Verify map exists AND belongs to user.
 	const [map] = await db
 		.select()
 		.from(worldMaps)
-		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.storyId, storyId)));
 	if (!map) error(404, 'Map not found');
 
 	const formData = await event.request.formData();
@@ -73,7 +73,7 @@ export const POST: RequestHandler = async (event) => {
 		const [locked] = await tx
 			.select({ baseImageUrl: worldMaps.baseImageUrl, gridType: worldMaps.gridType })
 			.from(worldMaps)
-			.where(and(eq(worldMaps.id, mapId), eq(worldMaps.userId, userId)))
+			.where(and(eq(worldMaps.id, mapId), eq(worldMaps.storyId, storyId)))
 			.for('update');
 		if (!locked) error(404, 'Map not found');
 
@@ -99,7 +99,7 @@ export const POST: RequestHandler = async (event) => {
 		const [u] = await tx
 			.update(worldMaps)
 			.set({ baseImageUrl, width: dimensions.width, height: dimensions.height, ...squared })
-			.where(and(eq(worldMaps.id, mapId), eq(worldMaps.userId, userId)))
+			.where(and(eq(worldMaps.id, mapId), eq(worldMaps.storyId, storyId)))
 			.returning();
 		return u;
 	});

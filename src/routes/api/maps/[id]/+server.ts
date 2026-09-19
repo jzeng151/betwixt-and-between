@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { worldMaps } from '$lib/server/db/schema.js';
 import { and, eq, sql } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import {
 	assertLocationIdIsLocation,
@@ -14,11 +14,11 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const [map] = await db
 		.select()
 		.from(worldMaps)
-		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.storyId, storyId)));
 	if (!map) error(404, 'Map not found');
 
 	// Slice 2 D2 PR-B: regions sourced from the baseline anchor's
@@ -33,14 +33,14 @@ export const GET: RequestHandler = async (event) => {
 
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const body = (await readJson(event)) as any;
 
 	const [existing] = await db
 		.select()
 		.from(worldMaps)
-		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.storyId, storyId)));
 	if (!existing) error(404, 'Map not found');
 
 	const updates: Record<string, unknown> = {};
@@ -115,7 +115,7 @@ export const PATCH: RequestHandler = async (event) => {
 	// trigger (migration 0008) so every unlink path — user PATCH, ON DELETE SET NULL
 	// cascade — stamps uniformly.
 	if ('locationId' in body) {
-		await assertLocationIdIsLocation(db, userId, body.locationId);
+		await assertLocationIdIsLocation(db, storyId, body.locationId);
 		updates.locationId = body.locationId ?? null;
 	}
 
@@ -146,7 +146,7 @@ export const PATCH: RequestHandler = async (event) => {
 					? (body.endSceneId ?? null)
 					: existing.endSceneId;
 
-		await assertWorldMapVariantBounds(db, userId, {
+		await assertWorldMapVariantBounds(db, storyId, {
 			startActId: mergedStartActId,
 			startSceneId: mergedStartSceneId,
 			endActId: mergedEndActId,
@@ -164,7 +164,7 @@ export const PATCH: RequestHandler = async (event) => {
 					endActId: mergedEndActId,
 					endSceneId: mergedEndSceneId
 				},
-				userId
+				storyId
 			);
 			startPosition = bounds.startPosition;
 			endPosition = bounds.endPosition;
@@ -288,7 +288,7 @@ export const PATCH: RequestHandler = async (event) => {
 			const [row] = await tx
 				.update(worldMaps)
 				.set(updates)
-				.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)))
+				.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.storyId, storyId)))
 				.returning();
 			return row;
 		});
@@ -323,10 +323,10 @@ export const PATCH: RequestHandler = async (event) => {
 
 export const DELETE: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const [deleted] = await db
 		.delete(worldMaps)
-		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)))
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.storyId, storyId)))
 		.returning();
 
 	if (!deleted) error(404, 'Map not found');

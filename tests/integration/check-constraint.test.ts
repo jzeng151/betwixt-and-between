@@ -26,7 +26,7 @@ describe('intervals_position_order CHECK constraint', () => {
 		acts = await seedActs(db, userId);
 		const [e] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = e.id;
 	});
@@ -34,7 +34,7 @@ describe('intervals_position_order CHECK constraint', () => {
 	it('rejects start_position > end_position', async () => {
 		await expect(
 			db.insert(intervals).values({
-				userId,
+				storyId: userId,
 			entityId: ellie,
 				startActId: acts.act0,
 				endActId: acts.act0,
@@ -47,7 +47,7 @@ describe('intervals_position_order CHECK constraint', () => {
 	it('rejects start_position == end_position (strict <)', async () => {
 		await expect(
 			db.insert(intervals).values({
-				userId,
+				storyId: userId,
 			entityId: ellie,
 				startActId: acts.act0,
 				endActId: acts.act0,

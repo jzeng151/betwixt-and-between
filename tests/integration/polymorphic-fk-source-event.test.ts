@@ -27,7 +27,7 @@ describe('assertSourceEventIdIsEvent (Δ1a-A)', () => {
 	it('accepts an entity with type=Event owned by the caller', async () => {
 		const [event] = await db
 			.insert(entities)
-			.values({ userId, type: 'Event', name: 'Coronation' })
+			.values({ storyId: userId, type: 'Event', name: 'Coronation' })
 			.returning();
 		await expect(assertSourceEventIdIsEvent(db, event.id, userId)).resolves.toBeUndefined();
 	});
@@ -35,7 +35,7 @@ describe('assertSourceEventIdIsEvent (Δ1a-A)', () => {
 	it('rejects an entity of a different type (e.g., Location)', async () => {
 		const [loc] = await db
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Castle' })
+			.values({ storyId: userId, type: 'Location', name: 'Castle' })
 			.returning();
 		await expect(assertSourceEventIdIsEvent(db, loc.id, userId)).rejects.toThrow(
 			/Polymorphic FK violation.*type='Location'.*expected 'Event'/
@@ -53,7 +53,7 @@ describe('assertSourceEventIdIsEvent (Δ1a-A)', () => {
 		const otherUser = await seedTestUser(db, { email: 'other@test.com' });
 		const [event] = await db
 			.insert(entities)
-			.values({ userId: otherUser.id, type: 'Event', name: 'Foreign event' })
+			.values({ storyId: otherUser.id, type: 'Event', name: 'Foreign event' })
 			.returning();
 		// Look up under the original user's scope — assertion should fail at
 		// the same "Entity not found" branch (scoped WHERE userId=...) rather

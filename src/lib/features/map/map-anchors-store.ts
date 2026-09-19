@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 // map_anchors store. Scoped per world_map — load(mapId) replaces the
 // current list. Mutations write-through and update locally.
 
@@ -50,7 +51,7 @@ function createMapAnchorsStore() {
 			const url = cursor
 				? `/api/maps/${mapId}/anchors?after=${encodeURIComponent(cursor)}`
 				: `/api/maps/${mapId}/anchors`;
-			const res = await fetch(url);
+			const res = await storyFetch(url);
 			if (stale()) return;
 			if (!res.ok) throw new Error(`Failed to load anchors: ${await errorMessage(res)}`);
 			const body = (await res.json()) as { rows: MapAnchor[]; next_cursor: string | null };
@@ -76,7 +77,7 @@ function createMapAnchorsStore() {
 			const url = cursor
 				? `/api/maps/${mapId}/anchors?after=${encodeURIComponent(cursor)}`
 				: `/api/maps/${mapId}/anchors`;
-			const res = await fetch(url);
+			const res = await storyFetch(url);
 			if (!res.ok) throw new Error(`Failed to load anchors: ${await errorMessage(res)}`);
 			const body = (await res.json()) as { rows: MapAnchor[]; next_cursor: string | null };
 			collected.push(...body.rows);
@@ -113,7 +114,7 @@ function createMapAnchorsStore() {
 	}
 
 	async function create(mapId: string, input: AnchorInput): Promise<MapAnchor> {
-		const res = await fetch(`/api/maps/${mapId}/anchors`, {
+		const res = await storyFetch(`/api/maps/${mapId}/anchors`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(input)
@@ -133,7 +134,7 @@ function createMapAnchorsStore() {
 		anchorId: string,
 		patch: Partial<AnchorInput>
 	): Promise<MapAnchor> {
-		const res = await fetch(`/api/maps/${mapId}/anchors/${anchorId}`, {
+		const res = await storyFetch(`/api/maps/${mapId}/anchors/${anchorId}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(patch)
@@ -151,7 +152,7 @@ function createMapAnchorsStore() {
 	}
 
 	async function remove(mapId: string, anchorId: string): Promise<void> {
-		const res = await fetch(`/api/maps/${mapId}/anchors/${anchorId}`, { method: 'DELETE' });
+		const res = await storyFetch(`/api/maps/${mapId}/anchors/${anchorId}`, { method: 'DELETE' });
 		if (!res.ok) throw new Error(`Failed to delete anchor: ${await errorMessage(res)}`);
 		if (lastLoadedMapId !== mapId) return;
 		store.update((rows) => rows.filter((r) => r.id !== anchorId));

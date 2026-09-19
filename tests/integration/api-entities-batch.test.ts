@@ -172,7 +172,7 @@ describe('POST /api/entities/batch — atomic multi-entity creation (D21)', () =
 	it('scene insert-between: a batch scene at an occupied position shifts the occupant up', async () => {
 		const [pre] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'Occupant', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'Occupant', parentId: acts.act1, position: 0 })
 			.returning();
 
 		const res = await batchRoute.POST(
@@ -197,11 +197,11 @@ describe('POST /api/entities/batch — atomic multi-entity creation (D21)', () =
 		// scenes changes m, so this interval's positions must shift.
 		const [s0] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'PreS0', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'PreS0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [ellie] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		await writeInterval(currentDb, {
 			entityId: ellie.id,
