@@ -25,3 +25,20 @@ it('waits for story mutations, blocks failed saves, and clears only an identical
 	await storyFetch('/api/entities/test', init);
 	await expect(flushPendingWrites()).resolves.toBeUndefined();
 });
+
+
+it('clears a failed multipart image replacement after a successful retry', async () => {
+	vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('Unavailable', { status: 503 }))
+		.mockResolvedValue(new Response('{}')));
+	const upload = () => {
+		const body = new FormData();
+		body.append('file', new Blob(['image']), 'map.png');
+		return { method: 'POST', body };
+	};
+	await storyFetch('/api/maps/one/upload-image', upload());
+	await expect(flushPendingWrites()).rejects.toThrow(/failed to save/);
+	await storyFetch('/api/maps/two/upload-image', upload());
+	await expect(flushPendingWrites()).rejects.toThrow(/failed to save/);
+	await storyFetch('/api/maps/one/upload-image', upload());
+	await expect(flushPendingWrites()).resolves.toBeUndefined();
+});

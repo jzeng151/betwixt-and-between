@@ -114,7 +114,8 @@ test('switching waits for an in-flight entity rename before leaving its story', 
 	expect(saved.name).toBe(`Saved name ${suffix}`);
 });
 
-test('switching flushes a graph position before its debounce timer fires', async ({ page, request }) => {
+for (const closeGraph of [false, true]) {
+test(`switching flushes ${closeGraph ? 'a closed' : 'an open'} graph position before its debounce timer fires`, async ({ page, request }) => {
 	const suffix = Date.now();
 	const target = await (await request.post('/api/stories', { data: { name: `Graph target ${suffix}` } })).json();
 	const entity = await (await request.post('/api/entities', { data: { type: 'Character', name: `Graph character ${suffix}` } })).json();
@@ -127,6 +128,7 @@ test('switching flushes a graph position before its debounce timer fires', async
 	await page.clock.pauseAt(new Date(Date.now() + 1000));
 	await node.press('ArrowRight');
 	expect((await (await request.get('/api/canvas-positions')).json()).find((p: any) => p.entityId === entity.id)).toBeUndefined();
+	if (closeGraph) await page.locator('.window[aria-label="Story Graph"]').getByRole('button', { name: 'Close', exact: true }).click();
 	await page.getByTitle('Settings', { exact: true }).click();
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 	await settings.getByRole('button', { name: 'Stories', exact: true }).click();
@@ -136,3 +138,5 @@ test('switching flushes a graph position before its debounce timer fires', async
 	expect(saved).toMatchObject({ entityId: entity.id, storyId: E2E_USER_ID });
 	expect(await (await request.get('/api/canvas-positions', { headers: { 'x-story-id': target.id } })).json()).toEqual([]);
 });
+
+}

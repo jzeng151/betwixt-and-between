@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { storyFetch } from '$lib/story-fetch.js';
   import { registerDirtyField, unregisterDirtyField } from '$lib/util/pending-commit.js';
+  import { trackWrite } from '$lib/stores/pending-writes.js';
 
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
@@ -301,7 +302,10 @@
       }));
     } };
     registerDirtyField(handle);
-    return () => unregisterDirtyField(handle);
+    return () => {
+      unregisterDirtyField(handle);
+      void trackWrite(handle.commitNow()).catch(() => {});
+    };
   });
   function onNodePositionChange(id: string, p: NodePosition) {
     initialPositions = { ...initialPositions, [id]: p };
