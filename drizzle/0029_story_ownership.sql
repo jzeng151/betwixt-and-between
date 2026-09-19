@@ -5,7 +5,6 @@ CREATE TABLE stories (
  created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX stories_user_id_idx ON stories (user_id);
-INSERT INTO stories (id, user_id, name) SELECT id, id, 'My story' FROM "user";
 --> statement-breakpoint
 CREATE FUNCTION create_default_story() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -15,6 +14,10 @@ END;
 $$;
 CREATE TRIGGER user_default_story AFTER INSERT ON "user"
  FOR EACH ROW EXECUTE FUNCTION create_default_story();
+-- Install the signup trigger before backfilling, so concurrent signups cannot
+-- land between the backfill and trigger creation without a default story.
+INSERT INTO stories (id, user_id, name) SELECT id, id, 'My story' FROM "user"
+ ON CONFLICT (id) DO NOTHING;
 --> statement-breakpoint
 -- Keep the physical user_id columns so the previous Worker remains compatible
 -- while this migration runs. The application now exposes them as storyId.
