@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { get } from 'svelte/store';
-import { failedWrites, flushPendingWrites, trackWrite } from '$lib/stores/pending-writes.js';
+import { failedWrites, flushPendingWrites, trackWrite, writeRetryKey } from '$lib/stores/pending-writes.js';
 
 afterEach(() => failedWrites.set([]));
 
@@ -43,3 +43,16 @@ it.each(['older succeeds', 'older fails'])(
     }
   }
 );
+
+it('creation retry identity ignores object key order but preserves source state and array order', () => {
+  const appearance = { theme: 'dark', roleColors: { Ally: '#abcdef', Rival: '#123456' } };
+  const reordered = { roleColors: { Rival: '#123456', Ally: '#abcdef' }, theme: 'dark' };
+  const key = writeRetryKey('preset', { name: 'Colors', appearance });
+  expect(writeRetryKey('preset', { appearance: reordered, name: 'Colors' })).toBe(key);
+  expect(writeRetryKey('preset', { name: 'Colors', appearance: { ...appearance, theme: 'light' } })).not.toBe(key);
+  const source = { name: 'Copy', profileId: 'A', preferences: { appearance } };
+  expect(writeRetryKey('profile', { ...source, profileId: 'B' })).not.toBe(writeRetryKey('profile', source));
+  expect(writeRetryKey('profile', { ...source, preferences: { appearance: { ...appearance, theme: 'light' } } }))
+    .not.toBe(writeRetryKey('profile', source));
+  expect(writeRetryKey('ordered', [1, 2])).not.toBe(writeRetryKey('ordered', [2, 1]));
+});

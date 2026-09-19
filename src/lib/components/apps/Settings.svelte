@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { trackWrite } from '$lib/stores/pending-writes.js';
+  import { trackWrite, writeRetryKey } from '$lib/stores/pending-writes.js';
   import AccountSettings from './AccountSettings.svelte';
   import StoryExport from './StoryExport.svelte';
   import { preferences, setPreference, getPreference } from '$lib/os/preferences-store.js';
@@ -154,7 +154,7 @@
     if (!name || busy) return;
     busy = true;
     try {
-      await trackWrite(createProfile(name), `settings:profile:create:${name}`);
+      await trackWrite(createProfile(name), writeRetryKey('settings:profile:create', { name, profileId: $preferencesProfileId, preferences: $preferences }));
       newProfileName = '';
       await loadProfiles();
       profilesError = null;
@@ -274,7 +274,7 @@
     if (!name || busy || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
     busy = true;
     try {
-      await trackWrite(createPresetRequest(name, appearance), `settings:preset:create:${JSON.stringify({ name, appearance })}`);
+      await trackWrite(createPresetRequest(name, appearance), writeRetryKey('settings:preset:create', { name, appearance }));
       newPresetName = '';
       await loadPresets();
       presetsError = null;
