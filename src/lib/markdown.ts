@@ -1,5 +1,5 @@
 import { Marked } from 'marked';
-import { decodeHTML } from 'entities';
+import { decodeHTMLStrict } from 'entities';
 
 export const markdown = new Marked({
 	gfm: true,
@@ -16,7 +16,7 @@ export const markdown = new Marked({
 });
 
 export function markdownHref(raw: string, autolink = false): string | undefined {
-	const href = autolink ? raw : decodeHTML(raw);
+	const href = autolink ? raw : decodeHTMLStrict(raw);
 	try {
 		const url = new URL(href);
 		if (['http:', 'https:', 'mailto:'].includes(url.protocol)) return url.href;

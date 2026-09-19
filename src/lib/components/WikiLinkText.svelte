@@ -4,21 +4,24 @@
 -->
 
 <script lang="ts">
+	import { parseWikiLinks } from '$lib/wiki-links.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { markdown, markdownHref } from '$lib/markdown.js';
-	import { decodeHTML } from 'entities';
+	import { decodeHTMLStrict } from 'entities';
 	import type { Token } from 'marked';
 	import EntityLink from './EntityLink.svelte';
 
 	interface Props {
 		body: string;
+		renderMarkdown?: boolean;
 		/** Rendered when `body` is empty/falsy. */
 		placeholder?: string;
 	}
-	const { body, placeholder = '—' }: Props = $props();
+	const { body, renderMarkdown = false, placeholder = '—' }: Props = $props();
 
 	const byName = $derived(new Map($entities.map((e) => [e.name.toLowerCase(), e])));
-	const tokens = $derived(markdown.lexer(body ?? ''));
+	const tokens = $derived(renderMarkdown ? markdown.lexer(body ?? '') : []);
+	const segments = $derived(renderMarkdown ? [] : parseWikiLinks(body ?? '', $entities));
 </script>
 
 {#snippet renderTokens(items: Token[], links = true)}
@@ -49,7 +52,7 @@
 		{:else if token.type === 'link' || token.type === 'image'}
 			{@const href = markdownHref(token.href, token.type === 'link' && token.autolink)}
 			{#if href && links}
-				<a {href} title={token.title ? decodeHTML(token.title) : undefined} target="_blank" rel="noopener noreferrer">{@render renderTokens(token.tokens ?? [], false)}</a>
+				<a {href} title={token.title ? decodeHTMLStrict(token.title) : undefined} target="_blank" rel="noopener noreferrer">{@render renderTokens(token.tokens ?? [], false)}</a>
 			{:else}{@render renderTokens(token.tokens ?? [], false)}{/if}
 		{:else if token.type === 'table'}
 			<div class="table-scroll"><table>
@@ -58,7 +61,7 @@
 			</table></div>
 		{:else if token.type === 'text' && token.tokens}
 			{@render renderTokens(token.tokens, links)}
-		{:else if token.type === 'text'}{decodeHTML(token.text)}
+		{:else if token.type === 'text'}{decodeHTMLStrict(token.text)}
 		{:else if token.type !== 'space' && token.type !== 'def'}{'text' in token ? token.text : token.raw}
 		{/if}
 	{/each}
@@ -66,11 +69,20 @@
 
 {#if !body}
 	<span class="wiki-link-empty">{placeholder}</span>
-{:else}
+{:else if renderMarkdown}
 	<div class="wiki-link-text">{@render renderTokens(tokens)}</div>
+{:else}
+	<span class="wiki-link-plain">
+		{#each segments as seg}
+			{#if seg.kind === 'text'}<span>{seg.text}</span>
+			{:else if seg.entity}<EntityLink id={seg.entity.id} name={seg.name} />
+			{:else}<span class="wiki-link-unknown" title="No entity named '{seg.name}'">{seg.raw}</span>{/if}
+		{/each}
+	</span>
 {/if}
 
 <style>
+	.wiki-link-plain { white-space: pre-wrap; overflow-wrap: anywhere; }
 	.wiki-link-text {
 		white-space: normal;
 		overflow-wrap: anywhere;
