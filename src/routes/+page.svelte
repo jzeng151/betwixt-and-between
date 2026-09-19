@@ -1,315 +1,348 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import MiniDesktop from '$lib/components/landing/MiniDesktop.svelte';
-
-  let activeSections = $state(new Set<string>());
-
-  onMount(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            activeSections.add(entry.target.id);
-            activeSections = new Set(activeSections);
-          }
-        }
-      },
-      { threshold: 0.5 }
-    );
-
-    const sections = document.querySelectorAll('.theatre-section[data-panel]');
-    for (const section of sections) {
-      observer.observe(section);
-    }
-
-    return () => observer.disconnect();
-  });
-
-  const sections = [
-    {
-      id: 'characters',
-      eyebrow: 'Characters',
-      heading: 'Know your cast',
-      body: 'Create rich character profiles. Track their relationships, aliases, and evolution across your story.',
-    },
-    {
-      id: 'graph',
-      eyebrow: 'Story Graph',
-      heading: 'See every connection',
-      body: 'Visualize the web of relationships between characters, locations, and events. No thread left dangling.',
-    },
-    {
-      id: 'timeline',
-      eyebrow: 'Timeline',
-      heading: 'Map the arc',
-      body: 'Organize events into acts and scenes. See cause and effect laid out in time.',
-    },
-    {
-      id: 'map',
-      eyebrow: 'World Map',
-      heading: 'Build your world',
-      body: 'Draw regions on an interactive map. Pin locations to geography, not just memory.',
-    },
-  ];
+	import daylightSection from '$lib/assets/daylight-story-section.webp';
+	import daylightSectionSmall from '$lib/assets/daylight-story-section-small.webp';
 </script>
 
 <svelte:head>
-  <title>betwixt-and-between — Worldbuilding toolkit for novelists</title>
-  <meta name="description" content="Characters, story graphs, timelines, and world maps — one workspace for your entire narrative." />
+	<title>Betwixt and Between — See the whole story</title>
+	<meta
+		name="description"
+		content="Characters, places, scenes, and events share one connected worldbuilding workspace."
+	/>
 </svelte:head>
 
-<a href="#intro" class="skip-link">Skip to content</a>
+<a href="#story" class="skip-link">Skip to content</a>
 
-<main class="landing">
-  <!-- Hero -->
-  <section id="intro" class="hero">
-    <div class="hero-inner">
-      <p class="hero-eyebrow">betwixt-and-between</p>
-      <h1 class="hero-heading">Your story,<br>fully mapped</h1>
-      <p class="hero-body">Characters, story graphs, timelines, and world maps — one workspace for your entire narrative.</p>
-      <a href="/app" class="cta-button">Start building</a>
-    </div>
-  </section>
+<main class="daylight">
 
-  <!-- Scroll theatre: sticky desktop stays within this wrapper -->
-  <div class="theatre-wrap">
-    <div class="sticky-desktop" aria-hidden="true">
-      <MiniDesktop activeSections={activeSections} />
-    </div>
+	<img class="section-image" src={daylightSection} srcset="{daylightSectionSmall} 800w, {daylightSection} 1672w" sizes="100vw" alt="" aria-hidden="true" />
+	<div class="wash" aria-hidden="true"></div>
 
-    {#each sections as section, i}
-      <section
-        id={section.id}
-        class="theatre-section"
-        data-panel={section.id}
-      >
-        <div class="theatre-inner" aria-labelledby="{section.id}-heading">
-          <p class="section-eyebrow">{section.eyebrow}</p>
-          <h2 id="{section.id}-heading" class="section-heading">{section.heading}</h2>
-          <p class="section-body">{section.body}</p>
-        </div>
-      </section>
-    {/each}
-  </div>
+	<header class="topbar">
+		<a class="wordmark" href="/">Betwixt &amp; Between</a>
+		<p>One structure <span aria-hidden="true">·</span> four views</p>
+	</header>
 
-  <!-- CTA -->
-  <section class="cta-section">
-    <h2 class="cta-heading">Ready to build your world?</h2>
-    <a href="/app" class="cta-button">Start building</a>
-  </section>
+	<section class="story" id="story" aria-labelledby="story-heading">
+		<h1 id="story-heading">See the whole<br />story in section.</h1>
+
+		<div class="connection" aria-label="Illustrative story connection">
+			<p>Illustrative story connection</p>
+			<div>
+				<strong>Elara Voss</strong>
+				<span>located at</span>
+				<strong>Ashenveil</strong>
+			</div>
+			<div class="sample-views">
+				<span>Story Graph</span><i aria-hidden="true">→</i>
+				<span>World Map</span><i aria-hidden="true">→</i>
+				<span>Act II Timeline</span>
+			</div>
+			<p class="sample-note">An example of a connected story, not a playable demo.</p>
+		</div>
+
+		<p class="intro">
+			Characters, places, scenes, and events share one connected structure. Move through the
+			graph, timeline, map, and wiki without rebuilding the same world four times.
+		</p>
+
+		<a class="primary-action" href="/app">Open the workspace</a>
+
+		<div class="question">
+			<h2>Hold a question in the light</h2>
+			<p>Who was in Ashenveil during the second act, and why?</p>
+		</div>
+
+		<div class="views">
+			<span>Story Graph</span>
+			<span>Timeline</span>
+			<span>World Map</span>
+			<span>Wiki</span>
+		</div>
+	</section>
+
+	<p class="section-mark">Section A–A <span aria-hidden="true">·</span> East Gate <span aria-hidden="true">·</span> 08:12</p>
 </main>
 
 <style>
-  .skip-link {
-    position: absolute;
-    top: -100%;
-    left: 0;
-    background: var(--color-surface);
-    color: var(--color-text);
-    padding: 8px 16px;
-    z-index: 100;
-    font-family: var(--font-ui);
-    font-size: 14px;
-  }
+	.daylight :global(::selection) {
+		background: #dca536;
+		color: #1f211d;
+	}
 
-  .skip-link:focus {
-    top: 0;
-  }
+	.skip-link {
+		position: fixed;
+		z-index: 20;
+		top: 12px;
+		left: 12px;
+		padding: 10px 14px;
+		background: #20221e;
+		color: #f3efe4;
+		font: 600 12px/1 'Inter', sans-serif;
+		transform: translateY(-180%);
+	}
 
-  .landing {
-    background: var(--color-desktop);
-    color: var(--color-text);
-    min-height: 100vh;
-  }
+	.skip-link:focus {
+		transform: translateY(0);
+	}
 
-  /* Hero */
-  .hero {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 0 24px;
-  }
+	.daylight {
+		position: relative;
+		isolation: isolate;
+		min-height: 100svh;
+		overflow: hidden;
+		background: #eeece4;
+		color: #20211d;
+	}
 
-  .hero-inner {
-    max-width: 600px;
-  }
+	.section-image,
+	.wash {
+		position: absolute;
+		z-index: -2;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+	}
 
-  .hero-eyebrow {
-    font-family: var(--font-ui);
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: var(--color-accent);
-    margin-bottom: 16px;
-  }
+	.section-image {
+		object-fit: cover;
+		object-position: center;
+	}
 
-  .hero-heading {
-    font-family: var(--font-display);
-    font-size: clamp(36px, 6vw, 56px);
-    font-weight: 400;
-    line-height: 1.1;
-    margin-bottom: 20px;
-  }
+	.wash {
+		z-index: -1;
+		background: linear-gradient(90deg, rgba(239, 237, 229, 0.78) 0%, rgba(239, 237, 229, 0.3) 45%, transparent 68%);
+	}
 
-  .hero-body {
-    font-family: var(--font-ui);
-    font-size: 16px;
-    line-height: 1.6;
-    color: var(--color-text-muted);
-    margin-bottom: 32px;
-  }
+	.topbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		height: 70px;
+		padding: 0 4vw;
+		border-bottom: 1px solid rgba(30, 31, 28, 0.24);
+	}
 
-  /* CTA button */
-  .cta-button {
-    display: inline-block;
-    background: var(--color-accent);
-    color: var(--color-desktop);
-    font-family: var(--font-ui);
-    font-size: 16px;
-    font-weight: 600;
-    padding: 12px 28px;
-    border-radius: 6px;
-    text-decoration: none;
-    transition: opacity 0.2s ease;
-  }
+	.wordmark,
+	.connection p,
+	.connection span,
+	.question h2,
+	.section-mark {
+		font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+		font-weight: 600;
+		text-transform: uppercase;
+	}
 
-  .cta-button:hover {
-    opacity: 0.9;
-  }
+	.wordmark {
+		color: inherit;
+		font-size: 17px;
+		letter-spacing: 0.06em;
+		text-decoration: none;
+	}
 
-  .cta-button:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
-  }
+	.topbar p {
+		font: 600 11px/1 'Inter', sans-serif;
+		letter-spacing: 0.15em;
+		text-transform: uppercase;
+	}
 
-  /* Theatre */
-  .theatre-wrap {
-    position: relative;
-  }
+	.story {
+		width: min(42rem, 48vw);
+		padding: clamp(52px, 8vh, 96px) 0 44px 4vw;
+	}
 
-  .theatre-section {
-    min-height: 80vh;
-    display: flex;
-    align-items: center;
-    padding: 80px 10vw;
-  }
+	h1 {
+		max-width: 670px;
+		margin: 0 0 26px;
+		font: italic 600 clamp(3.8rem, 7vw, 6rem) / 0.87 'Barlow Condensed', 'Arial Narrow', sans-serif;
+		letter-spacing: -0.03em;
+		text-transform: uppercase;
+		text-wrap: balance;
+	}
 
-  .theatre-inner {
-    max-width: 380px;
-    width: 100%;
-  }
+	.connection {
+		max-width: 460px;
+		margin-bottom: 24px;
+		padding: 11px 0;
+		border-block: 1px solid rgba(30, 31, 28, 0.34);
+	}
 
-  .section-eyebrow {
-    font-family: var(--font-ui);
-    font-size: 9px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: var(--color-accent);
-    margin-bottom: 12px;
-  }
+	.connection p {
+		margin-bottom: 5px;
+		font-size: 11px;
+		letter-spacing: 0.13em;
+		opacity: 0.72;
+	}
 
-  .section-heading {
-    font-family: var(--font-display);
-    font-size: clamp(28px, 4vw, 36px);
-    font-weight: 400;
-    line-height: 1.15;
-    margin-bottom: 16px;
-  }
+	.connection div {
+		display: flex;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 4px 8px;
+	}
 
-  .section-body {
-    font-family: var(--font-ui);
-    font-size: 15px;
-    line-height: 1.6;
-    color: var(--color-text-muted);
-  }
+	.connection div {
+		margin-bottom: 4px;
+	}
 
-  /* Sticky desktop: hidden on mobile */
-  .sticky-desktop {
-    display: none;
-  }
+	.connection strong {
+		font-weight: 700;
+	}
 
-  /* Desktop: sticky mini-desktop centered, copy alternates sides */
-  @media (min-width: 960px) {
-    .theatre-section:nth-of-type(odd) {
-      justify-content: flex-start;
-      padding: 60px 4vw 60px 8vw;
-    }
+	.connection div > span {
+		font-size: 11px;
+		letter-spacing: 0.08em;
+	}
 
-    .theatre-section:nth-of-type(even) {
-      justify-content: flex-end;
-      padding: 60px 8vw 60px 4vw;
-    }
+	.connection .sample-views {
+		font-size: 12px;
+		opacity: 0.76;
+	}
 
-    .sticky-desktop {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      position: sticky;
-      top: 0;
-      height: 0;
-      overflow: visible;
-      pointer-events: none;
-      z-index: 1;
-    }
+	.connection i {
+		font-style: normal;
+	}
 
-    .sticky-desktop > :global(*) {
-      width: 40vw;
-      max-width: 560px;
-      position: relative;
-      top: 40vh;
-      transform: translateY(-50%);
-    }
-  }
+	.connection .sample-note {
+		margin: 10px 0 0;
+		font: 400 12px/1.5 'Inter', sans-serif;
+		letter-spacing: normal;
+		text-transform: none;
+		opacity: 1;
+	}
 
-  /* CTA */
-  .cta-section {
-    min-height: 60vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 80px 24px;
-    position: relative;
-    z-index: 2;
-  }
+	.intro {
+		max-width: 440px;
+		margin-bottom: 28px;
+		font: 400 15px/1.65 'Inter', sans-serif;
+	}
 
-  .cta-heading {
-    font-family: var(--font-display);
-    font-size: clamp(28px, 4vw, 40px);
-    font-weight: 400;
-    margin-bottom: 24px;
-  }
+	.primary-action {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 48px;
+		padding: 0 20px;
+		background: #21231f;
+		border: 1px solid #21231f;
+		color: #f4f0e5;
+		font: 700 14px/1 'Inter', sans-serif;
+		text-decoration: none;
+		transition: background 180ms ease, color 180ms ease, transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+	}
 
-  /* Reduced motion */
-  @media (prefers-reduced-motion: reduce) {
-    :global(.mini-window) {
-      transition: none !important;
-      opacity: 1 !important;
-      transform: none !important;
-    }
+	.primary-action:hover {
+		background: #d9a53c;
+		color: #20211d;
+		transform: translateY(-2px);
+	}
 
-    :global(.mini-graph),
-    :global(.mini-timeline),
-    :global(.mini-map) {
-      transition: none !important;
-      opacity: 1 !important;
-    }
+	.primary-action:active {
+		transform: translateY(1px);
+	}
 
-    :global(.mini-graph .edge),
-    :global(.mini-graph .node),
-    :global(.mini-graph .label),
-    :global(.mini-timeline .bar),
-    :global(.mini-map .region),
-    :global(.mini-map .pin) {
-      transition: none !important;
-      opacity: 1 !important;
-      transform: none !important;
-      stroke-dashoffset: 0 !important;
-    }
-  }
+	.question {
+		max-width: 460px;
+		margin-top: 40px;
+		padding-top: 16px;
+		border-top: 1px solid rgba(30, 31, 28, 0.34);
+	}
+
+	.question h2 {
+		margin-bottom: 5px;
+		font-size: 13px;
+		letter-spacing: 0.1em;
+	}
+
+	.question p {
+		font: 400 13px/1.55 'Inter', sans-serif;
+	}
+
+	.views {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px 18px;
+		margin-top: 16px;
+		font: 500 12px/1.4 'Inter', sans-serif;
+	}
+
+	.section-mark {
+		position: absolute;
+		right: 3vw;
+		bottom: 30px;
+		padding: 10px 12px;
+		background: rgba(239, 237, 229, 0.88);
+		font-size: 11px;
+		letter-spacing: 0.13em;
+		text-transform: uppercase;
+	}
+
+	:global(.daylight a:focus-visible) {
+		outline: 3px solid #a8710f !important;
+		outline-offset: 4px;
+	}
+
+	@media (max-width: 800px) {
+		.daylight {
+			min-height: 100svh;
+			overflow: visible;
+		}
+
+		.section-image {
+			position: fixed;
+			object-position: 66% center;
+			opacity: 0.34;
+		}
+
+		.wash {
+			position: fixed;
+			background: rgba(239, 237, 229, 0.55);
+		}
+
+		.topbar {
+			height: 60px;
+			padding-inline: 20px;
+		}
+
+		.topbar p {
+			font-size: 9px;
+		}
+
+		.story {
+			width: auto;
+			padding: 48px 20px;
+		}
+
+		h1 {
+			font-size: clamp(3.2rem, 15vw, 5rem);
+		}
+
+		.intro {
+			font-weight: 500;
+		}
+
+		.section-mark {
+			display: none;
+		}
+	}
+
+	@media (max-width: 430px) {
+		.topbar p {
+			display: none;
+		}
+
+		.story {
+			padding-top: 38px;
+		}
+
+		.connection .sample-views {
+			gap: 4px 6px;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.primary-action {
+			transition: none;
+		}
+	}
 </style>
