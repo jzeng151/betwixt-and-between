@@ -24,6 +24,7 @@
 -->
 
 <script lang="ts">
+	import { failedWrites } from '$lib/stores/pending-writes.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { relationships } from '$lib/stores/relationships.js';
 	import type { Entity } from '$lib/stores/entities.js';
@@ -113,6 +114,7 @@
 	let focused = $state(false);
 	let saveError = $state<string | null>(null);
 	let lastAttempt = $state<string | null>(null);
+	const retryKey = $derived(`entity:${entityId}:data:${field}`);
 
 	$effect(() => {
 		if (!focused && lastAttempt === null) draft = currentValue;
@@ -137,7 +139,7 @@
 				try {
 					await entities.updateEntity(entityId, {
 						data: { ...existing, [field]: value }
-					});
+					}, retryKey);
 					lastAttempt = null;
 				} catch (err) {
 					saveError = (err as Error).message || 'Save failed';
@@ -165,7 +167,7 @@
 		try {
 			await entities.updateEntity(entityId, {
 				data: { ...existing, [field]: value }
-			});
+			}, retryKey);
 			lastAttempt = null;
 		} catch (err) {
 			saveError = (err as Error).message || 'Save failed';
@@ -180,7 +182,7 @@
 		try {
 			await entities.updateEntity(entityId, {
 				data: { ...existing, [field]: value }
-			});
+			}, retryKey);
 			lastAttempt = null;
 		} catch (err) {
 			saveError = (err as Error).message || 'Save failed';
@@ -250,6 +252,7 @@
 
 	function onTextKeydown(e: KeyboardEvent, allowEnter: boolean) {
 		if (e.key === 'Escape') {
+			failedWrites.update((errors) => errors.filter((failure) => failure.retryKey !== retryKey));
 			lastAttempt = null;
 			saveError = null;
 			draft = currentValue;
@@ -269,7 +272,7 @@
 		try {
 			await entities.updateEntity(entityId, {
 				data: { ...existing, [field]: value }
-			});
+			}, retryKey);
 			saveError = null;
 			lastAttempt = null;
 		} catch (err) {

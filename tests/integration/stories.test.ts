@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createTestDb, seedTestUser } from '../helpers/test-db.js';
 import { stories, entities, worldMaps, mapAnchors } from '../../src/lib/server/db/schema.js';
 import * as storyRoute from '../../src/routes/api/stories/+server.js';
@@ -72,4 +72,14 @@ it('exports all owned stories using version 2 without another account or its sto
 	expect(exported.version).toBe(2);
 	expect(exported.tables.stories.map((s: any) => s.id).sort()).toEqual([user.id, second].sort());
 	expect(exported.tables.entities.map((e: any) => e.name).sort()).toEqual(['First', 'Second']);
+});
+
+
+it('provisions the original story on concurrent loads without a signup trigger', async () => {
+	await db.execute(sql`DROP TRIGGER user_default_story ON "user"`);
+	user = await seedTestUser(db, { email: 'schema-push@example.com' });
+	expect(await db.select().from(stories).where(eq(stories.userId, user.id))).toEqual([]);
+	await Promise.all([entityRoute.GET(event()), entityRoute.GET(event())]);
+	expect(await db.select({ id: stories.id, userId: stories.userId }).from(stories).where(eq(stories.userId, user.id)))
+		.toEqual([{ id: user.id, userId: user.id }]);
 });

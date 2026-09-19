@@ -140,3 +140,60 @@ test(`switching flushes ${closeGraph ? 'a closed' : 'an open'} graph position be
 });
 
 }
+
+for (const action of ['replace', 'discard'] as const) {
+	test(`${action} a failed field edit permits switching without acknowledging a stale error`, async ({ page, request }) => {
+		const suffix = Date.now();
+		const target = await (await request.post('/api/stories', { data: { name: `Field target ${suffix}` } })).json();
+		const entity = await (await request.post('/api/entities', { data: { type: 'Character', name: `Field character ${suffix}`, data: { body: 'Saved body' } } })).json();
+		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+		await page.goto('/app');
+		await page.getByTitle('Wiki', { exact: true }).click();
+		const wiki = page.locator('.window[aria-label="Wiki"]');
+		await wiki.locator('.entry', { hasText: entity.name }).click();
+		await wiki.locator('.mode-toggle').click();
+		const body = wiki.locator('.entity-detail-body textarea.field-textarea');
+		let fail = true;
+		await page.route(`**/api/entities/${entity.id}`, route => fail && route.request().method() === 'PATCH'
+			? route.fulfill({ status: 503, body: 'Unavailable' }) : route.continue());
+		await body.fill('Failed value A');
+		await body.blur();
+		await expect(wiki.locator('.entity-detail-body .field-error')).toBeVisible();
+		fail = false;
+		if (action === 'replace') { await body.fill('Saved value B'); await body.blur(); }
+		else { await body.focus(); await body.press('Escape'); }
+		await expect(wiki.locator('.entity-detail-body .field-error')).toHaveCount(0);
+		await page.getByTitle('Settings', { exact: true }).click();
+		const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+		await settings.getByRole('button', { name: 'Stories', exact: true }).click();
+		await settings.getByRole('button', { name: `Open ${target.name}`, exact: true }).click();
+		await expect(page).toHaveURL(new RegExp(`story=${target.id}`));
+		const saved = (await (await request.get('/api/entities')).json()).find((e: any) => e.id === entity.id);
+		expect(saved.data.body).toBe(action === 'replace' ? 'Saved value B' : 'Saved body');
+	});
+}
+
+test('switching flushes a timeline width change before its debounce timer fires', async ({ page, request }) => {
+	const suffix = Date.now();
+	const source = await (await request.post('/api/stories', { data: { name: `Timeline source ${suffix}` } })).json();
+	const target = await (await request.post('/api/stories', { data: { name: `Timeline target ${suffix}` } })).json();
+	const headers = { 'x-story-id': source.id };
+	const left = await (await request.post('/api/entities', { headers, data: { type: 'Act', name: 'Left act', position: 0, data: { timelineWeight: 1 } } })).json();
+	await request.post('/api/entities', { headers, data: { type: 'Act', name: 'Right act', position: 1, data: { timelineWeight: 1 } } });
+	await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+	await page.goto(`/app?story=${source.id}`);
+	await page.getByTitle('Timeline', { exact: true }).click();
+	const resize = page.getByRole('slider', { name: 'Width of Left act relative to Right act', exact: true });
+	await expect(resize).toBeAttached();
+	await page.clock.install();
+	await page.clock.pauseAt(new Date(Date.now() + 1000));
+	await resize.press('ArrowRight');
+	const read = async () => (await (await request.get('/api/entities', { headers })).json()).find((e: any) => e.id === left.id);
+	expect((await read()).data.timelineWeight).toBe(1);
+	await page.getByTitle('Settings', { exact: true }).click();
+	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+	await settings.getByRole('button', { name: 'Stories', exact: true }).click();
+	await settings.getByRole('button', { name: `Open ${target.name}`, exact: true }).click();
+	await expect(page).toHaveURL(new RegExp(`story=${target.id}`));
+	expect((await read()).data.timelineWeight).toBeCloseTo(1.05);
+});

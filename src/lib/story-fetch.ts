@@ -1,7 +1,7 @@
 import { trackWrite } from './stores/pending-writes.js';
 
 /** Capture the story from this document, so another tab cannot redirect a write. */
-export function storyFetch(input: string, init?: RequestInit, requiredWrite = true): Promise<Response> {
+export function storyFetch(input: string, init?: RequestInit, write: { required?: boolean; retryKey?: symbol | string } = {}): Promise<Response> {
 	const id = typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('story');
 	if (id) {
 		const url = new URL(input, window.location.href);
@@ -12,11 +12,17 @@ export function storyFetch(input: string, init?: RequestInit, requiredWrite = tr
 	}
 	const request = init === undefined ? fetch(input) : fetch(input, init);
 	const method = init?.method?.toUpperCase() ?? 'GET';
-	if (requiredWrite && method !== 'GET' && method !== 'HEAD') {
-		// JSON retries must match their payload. Multipart uploads replace the
-		// same map image, so success at that endpoint replaces its failed attempt.
-		// ponytail: add explicit operation keys if opaque create writes are introduced.
-		const key = JSON.stringify([id, method, input, typeof init?.body === 'string' ? init.body : null]);
+	if (write.required !== false && method !== 'GET' && method !== 'HEAD') {
+		let payload: unknown = typeof init?.body === 'string' ? init.body : null;
+		if (typeof payload === 'string' && (method === 'PATCH' || method === 'PUT')) {
+			try {
+				const fields = JSON.parse(payload);
+				// A later replacement of the same fields supersedes a failed value.
+				// Canvas PUTs share an endpoint, so retain their entity selector.
+				payload = [Object.keys(fields).sort(), method === 'PUT' ? fields.entityId : null];
+			} catch { /* Keep malformed bodies distinct; the API reports validation errors. */ }
+		}
+		const key = write.retryKey ?? JSON.stringify([id, method, input, payload]);
 		void trackWrite(request.then(response => {
 			if (!response.ok && !(method === 'DELETE' && response.status === 404)) {
 				throw new Error(`Could not save a story change (${response.status}). Retry the change or review it in Account.`);

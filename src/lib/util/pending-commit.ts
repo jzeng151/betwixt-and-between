@@ -1,4 +1,4 @@
-/** Drafts and queued graph saves drain before navigation changes their context.
+/** Drafts and queued saves drain before navigation changes their context.
  * Story switching requires every commit to succeed before leaving the document. */
 
 export interface EditableFieldHandle {

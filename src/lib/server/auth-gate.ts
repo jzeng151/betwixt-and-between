@@ -65,8 +65,15 @@ export async function getStoryId(event: RequestEvent): Promise<string> {
 	const userId = getUserId(event);
 	const id = event.request?.headers?.get('x-story-id') ?? event.url?.searchParams.get('story') ?? userId;
 	if (!isUuid(id)) error(400, 'Invalid story id');
-	const [story] = await event.locals.db.select({ id: stories.id }).from(stories)
+	let [story] = await event.locals.db.select({ id: stories.id }).from(stories)
 		.where(and(eq(stories.id, id), eq(stories.userId, userId)));
+	if (!story && id === userId) {
+		// Schema-pushed dev databases lack migration triggers. Provision only
+		// the authenticated account's original story, including concurrent loads.
+		await event.locals.db.insert(stories).values({ id, userId, name: 'My story' }).onConflictDoNothing();
+		[story] = await event.locals.db.select({ id: stories.id }).from(stories)
+			.where(and(eq(stories.id, id), eq(stories.userId, userId)));
+	}
 	if (!story) error(404, 'Story not found');
 	return story.id;
 }

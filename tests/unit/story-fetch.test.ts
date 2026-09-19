@@ -59,3 +59,25 @@ it('closing a focused graph keeps cleanup scoped without letting its failure blo
 	await Promise.resolve();
 	await expect(flushPendingWrites()).resolves.toBeUndefined();
 });
+
+
+it('a saved replacement retires the old value without clearing a different field', async () => {
+	vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('Unavailable', { status: 503 })));
+	await storyFetch('/api/entities/one', { method: 'PATCH', body: JSON.stringify({ name: 'A' }) });
+	vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')));
+	await storyFetch('/api/entities/one', { method: 'PATCH', body: JSON.stringify({ data: {} }) });
+	await expect(flushPendingWrites()).rejects.toThrow();
+	await storyFetch('/api/entities/one', { method: 'PATCH', body: JSON.stringify({ name: 'B' }) });
+	await expect(flushPendingWrites()).resolves.toBeUndefined();
+});
+
+it('canvas replacements retire old coordinates only for the same entity', async () => {
+	const save = (entityId: string, x: number) => storyFetch('/api/canvas-positions', { method: 'PUT', body: JSON.stringify({ entityId, x }) });
+	vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('Unavailable', { status: 503 })));
+	await save('one', 10);
+	vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')));
+	await save('two', 20);
+	await expect(flushPendingWrites()).rejects.toThrow();
+	await save('one', 30);
+	await expect(flushPendingWrites()).resolves.toBeUndefined();
+});

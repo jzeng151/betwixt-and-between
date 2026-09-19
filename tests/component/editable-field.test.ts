@@ -63,6 +63,7 @@ const addRelationshipMock = createRelationshipMock;
 const removeRelationshipMock = deleteRelationshipMock;
 
 import { entities } from '../../src/lib/stores/entities.js';
+import { failedWrites } from '../../src/lib/stores/pending-writes.js';
 import { drainPendingCommit, _resetPendingCommitRegistry } from '../../src/lib/util/pending-commit.js';
 import EditableField from '../../src/lib/components/EditableField.svelte';
 
@@ -84,6 +85,7 @@ function seedEntity(
 
 beforeEach(async () => {
 	_resetPendingCommitRegistry();
+	failedWrites.set([]);
 	updateEntityMock.mockReset();
 	updateEntityMock.mockResolvedValue({});
 	addRelationshipMock.mockReset();
@@ -152,8 +154,10 @@ describe('EditableField — kind=textarea', () => {
 		await fireEvent.input(ta, { target: { value: 'Discard this' } });
 		await fireEvent.blur(ta);
 		await waitFor(() => expect(getByRole('button', { name: /retry/i })).toBeTruthy());
+		failedWrites.set([{ message: 'failed', retryKey: 'entity:act-1:data:synopsis' }, { message: 'other', retryKey: 'other' }]);
 		await fireEvent.keyDown(ta, { key: 'Escape' });
 		await drainPendingCommit(true);
+		expect(get(failedWrites)).toEqual([{ message: 'other', retryKey: 'other' }]);
 		expect(updateEntityMock).toHaveBeenCalledTimes(1);
 		expect(queryByRole('button', { name: /retry/i })).toBeNull();
 		expect(ta.value).toBe('Saved');

@@ -223,7 +223,8 @@ function createEntityStore() {
 			data?: unknown;
 			parentId?: string | null;
 			position?: number;
-		}
+		},
+		retryKey?: string
 	): Promise<Entity> {
 		const optimistic = patch;
 		const seq = ++updateSeq;
@@ -255,7 +256,7 @@ function createEntityStore() {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(patch)
-			});
+			}, { retryKey });
 			if (!res.ok) throw new Error(await res.text());
 			return (await res.json()) as Entity;
 		})();

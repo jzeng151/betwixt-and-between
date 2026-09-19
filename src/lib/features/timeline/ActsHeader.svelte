@@ -10,7 +10,9 @@
 <script lang="ts">
 	import { storyFetch } from '$lib/story-fetch.js';
 
-	import { onDestroy, tick } from 'svelte';
+	import { registerDirtyField, unregisterDirtyField } from '$lib/util/pending-commit.js';
+	import { trackWrite } from '$lib/stores/pending-writes.js';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { entities } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { refreshTimelineStores } from '$lib/features/timeline/loaders.js';
@@ -574,6 +576,8 @@
 	function commitWeights(updates: Record<string, number>) {
 		const request = weightCommitTail.then(() => onWeightCommit?.(updates));
 		weightCommitTail = request.catch(() => {});
+		// Requests report their own failures; retain queued work until it settles.
+		void trackWrite(weightCommitTail);
 	}
 	function flushKeyboardWeightCommit() {
 		if (keyboardWeightCommitTimer) clearTimeout(keyboardWeightCommitTimer);
@@ -581,7 +585,17 @@
 		if (pendingKeyboardWeightCommit) commitWeights(pendingKeyboardWeightCommit);
 		pendingKeyboardWeightCommit = null;
 	}
-	onDestroy(flushKeyboardWeightCommit);
+	onMount(() => {
+		const handle = { commitNow: async () => {
+			flushKeyboardWeightCommit();
+			await weightCommitTail;
+		} };
+		registerDirtyField(handle);
+		return () => {
+			unregisterDirtyField(handle);
+			flushKeyboardWeightCommit();
+		};
+	});
 </script>
 
 <div class="acts-header">
