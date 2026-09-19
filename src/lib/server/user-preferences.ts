@@ -260,11 +260,21 @@ export async function listProfiles(db: Db, storyId: string): Promise<ProfileSumm
  * "fork my current setup"), then ACTIVATE it atomically — the created profile
  * becomes active (design interaction-state contract). One transaction so the
  * copy + the active-swap commit together and never leave two active rows.
+ * An existing creation ID returns its profile without copying or activating again.
  */
-export async function createProfile(db: Db, storyId: string, name: string): Promise<ProfileSummary> {
+export async function createProfile(db: Db, storyId: string, name: string, profileId?: string): Promise<ProfileSummary> {
 	const profileName = validateDisplayName(name);
+	if (profileId !== undefined && !isUuid(profileId)) error(400, 'invalid profileId');
 	return await db.transaction(async (tx) => {
 		await lockStoryProfiles(tx, storyId);
+		if (profileId !== undefined) {
+			const [existing] = await tx.select().from(userPreferences)
+				.where(and(eq(userPreferences.storyId, storyId), eq(userPreferences.profileId, profileId)));
+			if (existing) {
+				if (existing.name !== profileName) error(409, 'profileId already exists with a different name');
+				return toSummary(existing);
+			}
+		}
 		const active = await getActivePreferences(tx, storyId);
 		// Bare .returning() (no column config): the Db union only exposes the
 		// zero-arg overload, so we read the full row and pick fields.
@@ -276,6 +286,7 @@ export async function createProfile(db: Db, storyId: string, name: string): Prom
 			// run the first-login reconcile and overwrite its saved data (codex).
 			.values({
 				storyId,
+				profileId,
 				name: profileName,
 				isActive: 0,
 				data: active.data,
@@ -357,18 +368,10 @@ export async function activateProfile(db: Db, storyId: string, profileId: string
 	});
 }
 
-/**
- * Serialize every per-story profile mutation by locking ALL of the user's
- * profile rows (FOR UPDATE) at the top of the transaction. Without this, two
- * concurrent activates of different profiles can each deactivate only the rows
- * that were active at THEIR statement snapshot, then both set their target
- * active — the partial unique index `user_preferences_one_active` aborts one
- * with a unique_violation (codex). It also makes the delete not-active guard
- * atomic against a concurrent activate of the same row. Mirrors the world_maps
- * `SELECT … FOR UPDATE` convention in world-map-v3.ts.
- */
+/** Lock the owning story so create/activate/delete serialize even before its first
+ * profile exists. */
 async function lockStoryProfiles(tx: Db, storyId: string): Promise<void> {
-	await tx.execute(sql`SELECT profile_id FROM user_preferences WHERE user_id = ${storyId} FOR UPDATE`);
+	await tx.execute(sql`SELECT id FROM stories WHERE id = ${storyId} FOR UPDATE`);
 }
 
 /** Deactivate-all → activate-target. Caller MUST have verified target exists

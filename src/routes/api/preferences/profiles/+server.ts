@@ -5,12 +5,14 @@
 //   creates the Default row on first access. getStoryId verifies ownership.
 //
 // POST /api/preferences/profiles
-//   Body: { name: string }
+//   Body: { name: string, profileId?: UUID }
 //   Creates a profile by COPYING the active profile's blob, then activates it
 //   (it becomes the active profile). Returns the new profile summary.
-//     200 — created; body: ProfileSummary
-//     400 — missing/empty/oversized name, malformed JSON
+//   Reusing profileId returns the existing profile without copying or activating again.
+//     200 — created or replayed; body: ProfileSummary
+//     400 — missing/empty/oversized name, invalid profileId, malformed JSON
 //     401 — unauthenticated
+//     409 — profileId exists with a different name
 //
 // Per-profile mutations (rename, delete, activate) live under [id]/.
 
@@ -27,7 +29,7 @@ export const GET: RequestHandler = async (event) => {
 
 export const POST: RequestHandler = async (event) => {
 	const storyId = await getStoryId(event);
-	let body: { name?: unknown };
+	let body: { name?: unknown; profileId?: unknown };
 	try {
 		body = (await event.request.json()) as typeof body;
 	} catch {
@@ -37,6 +39,6 @@ export const POST: RequestHandler = async (event) => {
 		error(400, 'request body must be a JSON object');
 	}
 	// createProfile validates the name (400) and copies+activates atomically.
-	const profile = await createProfile(event.locals.db, storyId, body.name as string);
+	const profile = await createProfile(event.locals.db, storyId, body.name as string, body.profileId as string | undefined);
 	return json(profile);
 };

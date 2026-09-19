@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { trackWrite, writeRetryKey } from '$lib/stores/pending-writes.js';
+  import { trackWrite, trackCreation, writeRetryKey } from '$lib/stores/pending-writes.js';
   import AccountSettings from './AccountSettings.svelte';
   import Stories from './Stories.svelte';
   import StoryExport from './StoryExport.svelte';
@@ -157,7 +157,7 @@
     try {
       // Editor toggles are local-only and do not change the profile copied by the server.
       const { editor: _editor, ...profilePreferences } = $preferences;
-      await trackWrite(createProfile(name), writeRetryKey('settings:profile:create', { name, profileId: $preferencesProfileId, preferences: profilePreferences }));
+      await trackCreation(writeRetryKey('settings:profile:create', { name, preferences: profilePreferences }), (id) => createProfile(name, id));
       newProfileName = '';
       await loadProfiles();
       profilesError = null;
@@ -277,7 +277,7 @@
     if (!name || busy || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
     busy = true;
     try {
-      await trackWrite(createPresetRequest(name, appearance), writeRetryKey('settings:preset:create', { name, appearance }));
+      await trackCreation(writeRetryKey('settings:preset:create', { name, appearance }), (id) => createPresetRequest(name, appearance, id));
       newPresetName = '';
       await loadPresets();
       presetsError = null;

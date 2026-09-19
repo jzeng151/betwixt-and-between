@@ -577,7 +577,7 @@ function assertSwitchHydrated(): void {
  * so the copied blob includes the user's latest edits, not a stale server base.
  * Returns the created profile summary.
  */
-export async function createProfile(name: string): Promise<ProfileSummary> {
+export async function createProfile(name: string, profileId?: string): Promise<ProfileSummary> {
 	// See switchProfile: refuse before the initial hydrate so the copy isn't taken
 	// from an un-reconciled server Default and local prefs aren't lost (codex).
 	requireHydrated();
@@ -590,7 +590,7 @@ export async function createProfile(name: string): Promise<ProfileSummary> {
 		const res = await fetchImpl('/api/preferences/profiles', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name })
+			body: JSON.stringify({ name, profileId })
 		});
 		await ensureOk(res, 'create profile failed').catch((e) => {
 			_status.set('error');

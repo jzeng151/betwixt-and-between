@@ -58,9 +58,11 @@ export async function createPreset(
 	db: Db,
 	storyId: string,
 	name: string,
-	appearance: unknown
+	appearance: unknown,
+	presetId?: string
 ): Promise<PresetSummary> {
 	const presetName = validateDisplayName(name);
+	if (presetId !== undefined && !isUuid(presetId)) error(400, 'invalid presetId');
 	if (!isPlainObject(appearance)) error(400, 'appearance must be an object');
 	validateAppearance(appearance);
 	// A preset is APPLIED as an exact replacement (buildApplyPresetPatch unsets the
@@ -77,10 +79,18 @@ export async function createPreset(
 	// returned on every Settings preset-list load (codex).
 	const size = JSON.stringify(appearance).length;
 	if (size > MAX_BLOB_BYTES) error(400, `preset appearance too large (${size} > ${MAX_BLOB_BYTES} bytes)`);
-	const [row] = await db
+	let [row] = await db
 		.insert(appearancePresets)
-		.values({ storyId, name: presetName, appearance: appearance as Record<string, unknown> })
+		.values({ storyId, presetId, name: presetName, appearance: appearance as Record<string, unknown> })
+		.onConflictDoNothing({ target: [appearancePresets.storyId, appearancePresets.presetId] })
 		.returning();
+	if (!row && presetId !== undefined) {
+		[row] = await db.select().from(appearancePresets).where(and(
+			eq(appearancePresets.storyId, storyId), eq(appearancePresets.presetId, presetId),
+			eq(appearancePresets.name, presetName), eq(appearancePresets.appearance, appearance as Record<string, unknown>)
+		));
+	}
+	if (!row) error(409, 'presetId already exists with different data');
 	return {
 		presetId: row.presetId,
 		name: row.name,

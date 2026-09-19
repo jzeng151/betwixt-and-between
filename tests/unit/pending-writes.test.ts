@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { get } from 'svelte/store';
-import { failedWrites, flushPendingWrites, trackWrite, writeRetryKey } from '$lib/stores/pending-writes.js';
+import { failedWrites, flushPendingWrites, trackWrite, trackCreation, writeRetryKey } from '$lib/stores/pending-writes.js';
 
 afterEach(() => failedWrites.set([]));
 
@@ -55,4 +55,21 @@ it('creation retry identity ignores object key order but preserves source state 
   expect(writeRetryKey('profile', { ...source, preferences: { appearance: { ...appearance, theme: 'light' } } }))
     .not.toBe(writeRetryKey('profile', source));
   expect(writeRetryKey('ordered', [1, 2])).not.toBe(writeRetryKey('ordered', [2, 1]));
+});
+
+it('creation retries share an ID and in-flight request, then retire the ID on success or acknowledgement', async () => {
+  const ids: string[] = [];
+  const pending = Promise.withResolvers<string>();
+  const first = trackCreation('new preset', (id) => { ids.push(id); return pending.promise; });
+  expect(trackCreation('new preset', () => { throw new Error('must share pending request'); })).toBe(first);
+  pending.reject(new Error('response lost'));
+  await expect(first).rejects.toThrow('response lost');
+  await trackCreation('new preset', async (id) => { ids.push(id); return 'saved'; });
+  expect(ids[1]).toBe(ids[0]);
+  await expect(flushPendingWrites()).resolves.toBeUndefined();
+  await expect(trackCreation('new preset', async (id) => { ids.push(id); throw new Error('next attempt'); })).rejects.toThrow();
+  expect(ids[2]).not.toBe(ids[0]);
+  failedWrites.set([]);
+  await trackCreation('new preset', async (id) => { ids.push(id); });
+  expect(ids[3]).not.toBe(ids[2]);
 });
