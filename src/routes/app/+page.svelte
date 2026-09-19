@@ -12,7 +12,8 @@
 
   let { data }: { data: PageData } = $props();
   const userId = $derived(data.user.id);
-  $effect(() => windowStore.startSession(userId));
+  const storyId = $derived(data.story.id);
+  $effect(() => windowStore.startSession(userId, storyId));
 
   let allowSmallScreen = $state(false);
   let loaded = false;
@@ -51,11 +52,13 @@
 
 <div class="app-shell" class:small-screen-accepted={allowSmallScreen}>
   <Desktop />
+  <div class="story-name" title="Switch or rename stories in Settings → Stories">{data.story.name}</div>
   <WindowManager />
   <Taskbar />
 </div>
 
 <style>
+  .story-name { position: absolute; top: 12px; left: 20px; color: var(--color-text-muted); max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
   .app-shell {
     height: 100vh;
     width: 100vw;

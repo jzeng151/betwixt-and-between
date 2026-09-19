@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 // map_events store. Append-only by design (no PATCH endpoint); "editing"
 // an event means delete + insert. Scoped per world_map like the anchors
 // store.
@@ -97,7 +98,7 @@ function createMapEventsStore() {
 			const url = cursor
 				? `/api/maps/${mapId}/events?after=${encodeURIComponent(cursor)}`
 				: `/api/maps/${mapId}/events`;
-			const res = await fetch(url);
+			const res = await storyFetch(url);
 			if (stale()) return;
 			if (!res.ok) throw new Error(`Failed to load events: ${await errorMessage(res)}`);
 			const body = (await res.json()) as { rows: MapEvent[]; next_cursor: string | null };
@@ -147,7 +148,7 @@ function createMapEventsStore() {
 		}
 		let res: Response;
 		try {
-			res = await fetch(`/api/maps/${mapId}/events`, {
+			res = await storyFetch(`/api/maps/${mapId}/events`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(input)
@@ -184,7 +185,7 @@ function createMapEventsStore() {
 	}
 
 	async function remove(mapId: string, eventId: string): Promise<void> {
-		const res = await fetch(`/api/maps/${mapId}/events/${eventId}`, { method: 'DELETE' });
+		const res = await storyFetch(`/api/maps/${mapId}/events/${eventId}`, { method: 'DELETE' });
 		if (!res.ok) throw new Error(`Failed to delete event: ${await errorMessage(res)}`);
 		if (lastLoadedMapId !== mapId) return;
 		store.update((rows) => rows.filter((r) => r.id !== eventId));
@@ -233,7 +234,7 @@ function createMapEventsStore() {
 
 		let res: Response;
 		try {
-			res = await fetch(`/api/maps/${mapId}/events/undo`, { method: 'POST' });
+			res = await storyFetch(`/api/maps/${mapId}/events/undo`, { method: 'POST' });
 		} catch (err) {
 			rollback();
 			throw err;
@@ -335,7 +336,7 @@ function createMapEventsStore() {
 		// behavior stays explicit.
 		let res: Response;
 		try {
-			res = await fetch(`/api/maps/${mapId}/events`, {
+			res = await storyFetch(`/api/maps/${mapId}/events`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -376,7 +377,7 @@ function createMapEventsStore() {
 			const url = cursor
 				? `/api/maps/${mapId}/events?after=${encodeURIComponent(cursor)}`
 				: `/api/maps/${mapId}/events`;
-			const res = await fetch(url);
+			const res = await storyFetch(url);
 			if (!res.ok) throw new Error(`Failed to load events: ${await errorMessage(res)}`);
 			const body = (await res.json()) as { rows: MapEvent[]; next_cursor: string | null };
 			collected.push(...body.rows);

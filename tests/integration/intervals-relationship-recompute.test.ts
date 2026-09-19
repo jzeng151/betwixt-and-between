@@ -15,8 +15,8 @@ import { recomputeAllIntervals, writeInterval } from '../../src/lib/server/inter
 type Db = Awaited<ReturnType<typeof createTestDb>>;
 
 async function seedTwoActs(db: Db, userId: string) {
-	const [act0] = await db.insert(entities).values({ userId, type: 'Act', name: 'Act 0', position: 0 }).returning();
-	const [act1] = await db.insert(entities).values({ userId, type: 'Act', name: 'Act 1', position: 1 }).returning();
+	const [act0] = await db.insert(entities).values({ storyId: userId, type: 'Act', name: 'Act 0', position: 0 }).returning();
+	const [act1] = await db.insert(entities).values({ storyId: userId, type: 'Act', name: 'Act 1', position: 1 }).returning();
 	return { act0: act0.id, act1: act1.id };
 }
 
@@ -35,15 +35,15 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 		act0 = acts.act0;
 		act1 = acts.act1;
 
-		const [c] = await db.insert(entities).values({ userId, type: 'Character', name: 'Alice' }).returning();
+		const [c] = await db.insert(entities).values({ storyId: userId, type: 'Character', name: 'Alice' }).returning();
 		alice = c.id;
 	});
 
 	it('reorder acts → recomputeAllIntervals updates relationship start_position', async () => {
-		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [bob] = await db.insert(entities).values({ storyId: userId, type: 'Character', name: 'Bob' }).returning();
 
 		// Temporal relationship anchored to act0 (position 0 → startPosition = 0.0)
-		await db.insert(relationships).values({ userId,
+		await db.insert(relationships).values({ storyId: userId,
 			fromId: alice,
 			toId: bob.id,
 			type: 'rivals',
@@ -89,12 +89,12 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 		// recomputeAllIntervals must clear those positions so the edge reverts to
 		// timeless — otherwise isCausalEdgeClickable (which only checks
 		// startPosition != null) keeps it jumpable and leaks the deleted timing.
-		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [bob] = await db.insert(entities).values({ storyId: userId, type: 'Character', name: 'Bob' }).returning();
 
 		// Simulate the post-cascade state: caused_by scoped to act0 but its act
 		// FKs already nulled (as ON DELETE SET NULL would leave them), with the
 		// stale positions still present.
-		await db.insert(relationships).values({ userId,
+		await db.insert(relationships).values({ storyId: userId,
 			fromId: alice,
 			toId: bob.id,
 			type: 'caused_by',
@@ -118,11 +118,11 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 		// then has exactly one act anchor, which resolveRelationshipBounds rejects
 		// (both-or-neither) — that throw would abort the Act-delete transaction.
 		// recompute must instead revert the unscopable row to timeless.
-		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [bob] = await db.insert(entities).values({ storyId: userId, type: 'Character', name: 'Bob' }).returning();
 
 		// Post-cascade partial state: startAct nulled, endAct still act1, stale
 		// positions left behind.
-		await db.insert(relationships).values({ userId,
+		await db.insert(relationships).values({ storyId: userId,
 			fromId: alice,
 			toId: bob.id,
 			type: 'caused_by',
@@ -150,23 +150,23 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 		// positions; a row-by-row recompute would momentarily write one edge onto
 		// the other's still-current position and trip the unique index, aborting
 		// the reorder. The staged (two-phase) write must let the swap complete.
-		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [bob] = await db.insert(entities).values({ storyId: userId, type: 'Character', name: 'Bob' }).returning();
 		const [sceneA] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'A', parentId: act0, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'A', parentId: act0, position: 0 })
 			.returning();
 		const [sceneB] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'B', parentId: act0, position: 1 })
+			.values({ storyId: userId, type: 'Scene', name: 'B', parentId: act0, position: 1 })
 			.returning();
 
 		// act0 is index 0, two scenes → A occupies [0, 0.5), B occupies [0.5, 1).
-		const [relA] = await db.insert(relationships).values({ userId,
+		const [relA] = await db.insert(relationships).values({ storyId: userId,
 			fromId: alice, toId: bob.id, type: 'caused_by',
 			startActId: act0, startSceneId: sceneA.id, endActId: act0, endSceneId: sceneA.id,
 			startPosition: 0.0, endPosition: 0.5
 		}).returning();
-		const [relB] = await db.insert(relationships).values({ userId,
+		const [relB] = await db.insert(relationships).values({ storyId: userId,
 			fromId: alice, toId: bob.id, type: 'caused_by',
 			startActId: act0, startSceneId: sceneB.id, endActId: act0, endSceneId: sceneB.id,
 			startPosition: 0.5, endPosition: 1.0
@@ -187,13 +187,13 @@ describe('recomputeAllIntervals — cascades to temporal relationships', () => {
 	});
 
 	it('CRITICAL regression: transaction failure rolls back both interval and relationship positions', async () => {
-		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [bob] = await db.insert(entities).values({ storyId: userId, type: 'Character', name: 'Bob' }).returning();
 
 		// Interval for alice anchored to act0
 		await writeInterval(db, { entityId: alice, startActId: act0, endActId: act0 }, userId);
 
 		// Temporal relationship anchored to act0
-		await db.insert(relationships).values({ userId,
+		await db.insert(relationships).values({ storyId: userId,
 			fromId: alice,
 			toId: bob.id,
 			type: 'rivals',

@@ -46,11 +46,11 @@ describe('/api/relationships POST (non-hijack)', () => {
 		userId = _user.id;
 		const [a] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Alice' })
+			.values({ storyId: userId, type: 'Character', name: 'Alice' })
 			.returning();
 		const [b] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Bob' })
+			.values({ storyId: userId, type: 'Character', name: 'Bob' })
 			.returning();
 		alice = a.id;
 		bob = b.id;
@@ -124,20 +124,20 @@ describe('/api/relationships POST (non-hijack)', () => {
 		// entities. Multi-edge of DIFFERENT types between same pair is still
 		// allowed; multi-edge of the same type from same from-entity to
 		// DIFFERENT to-entities is also allowed (different to_id).
-		await currentDb.insert(relationships).values({ userId,
+		await currentDb.insert(relationships).values({ storyId: userId,
 			fromId: alice,
 			toId: bob,
 			type: 'allied_with'
 		});
 		await expect(
-			currentDb.insert(relationships).values({ userId,
+			currentDb.insert(relationships).values({ storyId: userId,
 				fromId: alice,
 				toId: bob,
 				type: 'allied_with'
 			})
 		).rejects.toThrow();
 		// But a different type between same pair is allowed.
-		await currentDb.insert(relationships).values({ userId,
+		await currentDb.insert(relationships).values({ storyId: userId,
 			fromId: alice,
 			toId: bob,
 			type: 'rivals'
@@ -167,7 +167,7 @@ describe('/api/relationships GET', () => {
 		const acts = await seedActs(currentDb, userId);
 		const [ellie] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		await expect(
 			relRoute.POST(
@@ -179,18 +179,18 @@ describe('/api/relationships GET', () => {
 	it('filters by fromId query param', async () => {
 		const [a] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'A' })
+			.values({ storyId: userId, type: 'Character', name: 'A' })
 			.returning();
 		const [b] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'B' })
+			.values({ storyId: userId, type: 'Character', name: 'B' })
 			.returning();
 		const [c] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'C' })
+			.values({ storyId: userId, type: 'Character', name: 'C' })
 			.returning();
-		await currentDb.insert(relationships).values({ userId, fromId: a.id, toId: b.id, type: 'rivals' });
-		await currentDb.insert(relationships).values({ userId, fromId: c.id, toId: b.id, type: 'rivals' });
+		await currentDb.insert(relationships).values({ storyId: userId, fromId: a.id, toId: b.id, type: 'rivals' });
+		await currentDb.insert(relationships).values({ storyId: userId, fromId: c.id, toId: b.id, type: 'rivals' });
 
 		const url = new URL(`http://localhost/api/relationships?fromId=${a.id}`);
 		const res = await relRoute.GET(mkEvent({ url }));
@@ -210,15 +210,15 @@ describe('/api/relationships/[id] DELETE', () => {
 	it('deletes a real relationship and returns 204', async () => {
 		const [a] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'A' })
+			.values({ storyId: userId, type: 'Character', name: 'A' })
 			.returning();
 		const [b] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'B' })
+			.values({ storyId: userId, type: 'Character', name: 'B' })
 			.returning();
 		const [rel] = await currentDb
 			.insert(relationships)
-			.values({ userId, fromId: a.id, toId: b.id, type: 'rivals' })
+			.values({ storyId: userId, fromId: a.id, toId: b.id, type: 'rivals' })
 			.returning();
 
 		const res = await relIdRoute.DELETE(mkEvent({ params: { id: rel.id } }));

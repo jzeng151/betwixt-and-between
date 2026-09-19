@@ -63,6 +63,8 @@ const addRelationshipMock = createRelationshipMock;
 const removeRelationshipMock = deleteRelationshipMock;
 
 import { entities } from '../../src/lib/stores/entities.js';
+import { failedWrites } from '../../src/lib/stores/pending-writes.js';
+import { drainPendingCommit, _resetPendingCommitRegistry } from '../../src/lib/util/pending-commit.js';
 import EditableField from '../../src/lib/components/EditableField.svelte';
 
 const entitiesWritable = entities as unknown as ReturnType<typeof writable<Entity[]>>;
@@ -82,6 +84,8 @@ function seedEntity(
 }
 
 beforeEach(async () => {
+	_resetPendingCommitRegistry();
+	failedWrites.set([]);
 	updateEntityMock.mockReset();
 	updateEntityMock.mockResolvedValue({});
 	addRelationshipMock.mockReset();
@@ -140,9 +144,29 @@ describe('EditableField — kind=textarea', () => {
 		expect(updateEntityMock).not.toHaveBeenCalled();
 	});
 
+	it('Escape discards a failed draft so switching cannot retry the cancelled text', async () => {
+		seedEntity({ id: 'act-1', name: 'A', data: { synopsis: 'Saved' } });
+		updateEntityMock.mockRejectedValue(new Error('server'));
+		const { container, getByRole, queryByRole } = render(EditableField, {
+			props: { entityId: 'act-1', field: 'synopsis', kind: 'textarea' }
+		});
+		const ta = container.querySelector('textarea')!;
+		await fireEvent.input(ta, { target: { value: 'Discard this' } });
+		await fireEvent.blur(ta);
+		await waitFor(() => expect(getByRole('button', { name: /retry/i })).toBeTruthy());
+		failedWrites.set([{ message: 'failed', retryKey: 'entity:act-1:data:synopsis' }, { message: 'other', retryKey: 'other' }]);
+		await fireEvent.keyDown(ta, { key: 'Escape' });
+		await drainPendingCommit(true);
+		expect(get(failedWrites)).toEqual([{ message: 'other', retryKey: 'other' }]);
+		expect(updateEntityMock).toHaveBeenCalledTimes(1);
+		expect(queryByRole('button', { name: /retry/i })).toBeNull();
+		expect(ta.value).toBe('Saved');
+	});
+
 	it('shows Retry button on PATCH failure and re-fires the PATCH with the same value', async () => {
 		seedEntity({ id: 'act-1', name: 'A', data: { synopsis: '' } });
 		updateEntityMock
+			.mockRejectedValueOnce(new Error('server'))
 			.mockRejectedValueOnce(new Error('server'))
 			.mockResolvedValueOnce({});
 
@@ -155,9 +179,11 @@ describe('EditableField — kind=textarea', () => {
 
 		const retry = await waitFor(() => getByRole('button', { name: /retry/i }));
 		expect(retry).toBeTruthy();
-		await fireEvent.click(retry);
+		expect(ta.value).toBe('attempt-1');
+		await expect(drainPendingCommit(true)).rejects.toThrow('server');
+		await fireEvent.click(await waitFor(() => getByRole('button', { name: /retry/i })));
 
-		await waitFor(() => expect(updateEntityMock).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(updateEntityMock).toHaveBeenCalledTimes(3));
 		expect(updateEntityMock.mock.calls[1][1].data.synopsis).toBe('attempt-1');
 	});
 });

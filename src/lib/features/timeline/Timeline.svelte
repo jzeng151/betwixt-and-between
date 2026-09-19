@@ -164,7 +164,7 @@
 					const existing = e.data ?? {};
 					await entities.updateEntity(id, {
 						data: { ...existing, timelineWeight: weight }
-					});
+					}, `entity:${id}:data:timelineWeight`);
 				})
 			);
 		} catch (err) {

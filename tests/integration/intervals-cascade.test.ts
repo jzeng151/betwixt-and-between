@@ -36,12 +36,12 @@ describe('cascade behavior on entity deletion', () => {
 		acts = await seedActs(db, userId);
 		const [a] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = a.id;
 		const [b] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Damien' })
+			.values({ storyId: userId, type: 'Character', name: 'Damien' })
 			.returning();
 		damien = b.id;
 	});
@@ -67,7 +67,7 @@ describe('cascade behavior on entity deletion', () => {
 		for (let k = 0; k < 3; k++) {
 			const [s] = await db
 				.insert(entities)
-				.values({ userId, type: 'Scene', name: `S${k}`, parentId: acts.act1, position: k })
+				.values({ storyId: userId, type: 'Scene', name: `S${k}`, parentId: acts.act1, position: k })
 				.returning();
 			sceneIds.push(s.id);
 		}
@@ -127,11 +127,11 @@ describe('cascade behavior on entity deletion', () => {
 	it('deleting a Scene SETs NULL on intervals scene FKs (interval row preserved)', async () => {
 		const [s0] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ storyId: userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 
 		await writeInterval(db, {

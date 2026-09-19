@@ -61,7 +61,7 @@ describe('world_maps invariant: location_id polymorphic FK type alignment', () =
 	});
 
 	it('map unlinked (location_id NULL) is clean', async () => {
-		await db.insert(worldMaps).values({ userId, name: 'Unlinked Map' });
+		await db.insert(worldMaps).values({ storyId: userId, name: 'Unlinked Map' });
 		const violations = await findViolations(db);
 		expect(violations).toEqual([]);
 	});
@@ -69,9 +69,9 @@ describe('world_maps invariant: location_id polymorphic FK type alignment', () =
 	it('map linked to a Location entity is clean', async () => {
 		const [loc] = await db
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Gondor' })
+			.values({ storyId: userId, type: 'Location', name: 'Gondor' })
 			.returning();
-		await db.insert(worldMaps).values({ userId, name: 'Gondor map', locationId: loc.id });
+		await db.insert(worldMaps).values({ storyId: userId, name: 'Gondor map', locationId: loc.id });
 		const violations = await findViolations(db);
 		expect(violations).toEqual([]);
 	});
@@ -80,9 +80,9 @@ describe('world_maps invariant: location_id polymorphic FK type alignment', () =
 		// Plant a bad row directly. The write layer would reject this; we go around it.
 		const [character] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Frodo' })
+			.values({ storyId: userId, type: 'Character', name: 'Frodo' })
 			.returning();
-		await db.insert(worldMaps).values({ userId, name: 'Bad map', locationId: character.id });
+		await db.insert(worldMaps).values({ storyId: userId, name: 'Bad map', locationId: character.id });
 
 		const violations = await findViolations(db);
 		expect(violations).toHaveLength(1);
@@ -92,11 +92,11 @@ describe('world_maps invariant: location_id polymorphic FK type alignment', () =
 	it('SET NULL fires when the linked Location is deleted and stamps location_inactive_at', async () => {
 		const [loc] = await db
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Doomed City' })
+			.values({ storyId: userId, type: 'Location', name: 'Doomed City' })
 			.returning();
 		const [map] = await db
 			.insert(worldMaps)
-			.values({ userId, name: 'Doomed', locationId: loc.id })
+			.values({ storyId: userId, name: 'Doomed', locationId: loc.id })
 			.returning();
 		expect(map.locationInactiveAt).toBeNull();
 
@@ -114,11 +114,11 @@ describe('world_maps invariant: location_id polymorphic FK type alignment', () =
 	it('trigger clears location_inactive_at when a previously orphaned map is re-linked', async () => {
 		const [loc1] = await db
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'First' })
+			.values({ storyId: userId, type: 'Location', name: 'First' })
 			.returning();
 		const [map] = await db
 			.insert(worldMaps)
-			.values({ userId, name: 'Roamer', locationId: loc1.id })
+			.values({ storyId: userId, name: 'Roamer', locationId: loc1.id })
 			.returning();
 		await db.delete(entities).where(eq(entities.id, loc1.id));
 		const [orphaned] = await db.select().from(worldMaps).where(eq(worldMaps.id, map.id));
@@ -126,7 +126,7 @@ describe('world_maps invariant: location_id polymorphic FK type alignment', () =
 
 		const [loc2] = await db
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Second' })
+			.values({ storyId: userId, type: 'Location', name: 'Second' })
 			.returning();
 		await db.update(worldMaps).set({ locationId: loc2.id }).where(eq(worldMaps.id, map.id));
 

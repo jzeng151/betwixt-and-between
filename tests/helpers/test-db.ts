@@ -77,15 +77,15 @@ export async function seedActs(db: TestDb, userId?: string) {
 	const { entities } = await import('../../src/lib/server/db/schema.js');
 	const [act0] = await db
 		.insert(entities)
-		.values({ userId: userId ?? null, type: 'Act', name: 'Act 0', position: 0 })
+		.values({ storyId: userId ?? null, type: 'Act', name: 'Act 0', position: 0 })
 		.returning();
 	const [act1] = await db
 		.insert(entities)
-		.values({ userId: userId ?? null, type: 'Act', name: 'Act 1', position: 1 })
+		.values({ storyId: userId ?? null, type: 'Act', name: 'Act 1', position: 1 })
 		.returning();
 	const [act2] = await db
 		.insert(entities)
-		.values({ userId: userId ?? null, type: 'Act', name: 'Act 2', position: 2 })
+		.values({ storyId: userId ?? null, type: 'Act', name: 'Act 2', position: 2 })
 		.returning();
 	return { act0: act0.id, act1: act1.id, act2: act2.id };
 }

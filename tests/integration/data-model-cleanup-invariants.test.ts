@@ -144,11 +144,11 @@ describe('drizzle/0011_data_model_cleanup.sql', () => {
 		userId = u.id;
 		const [a] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Alice' })
+			.values({ storyId: userId, type: 'Character', name: 'Alice' })
 			.returning();
 		const [b] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Bob' })
+			.values({ storyId: userId, type: 'Character', name: 'Bob' })
 			.returning();
 		alice = a.id;
 		bob = b.id;
@@ -333,7 +333,7 @@ describe('drizzle/0011_data_model_cleanup.sql', () => {
 		// app layer to seed pre-migration shape).
 		const [act] = await db
 			.insert(entities)
-			.values({ userId, type: 'Act', name: 'Act 1', position: 0 })
+			.values({ storyId: userId, type: 'Act', name: 'Act 1', position: 0 })
 			.returning();
 		// relationships_position_order CHECK requires either both
 		// start_position + end_position NULL, or both non-NULL with

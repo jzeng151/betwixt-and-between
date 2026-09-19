@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 import { get, writable } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
 import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
@@ -69,7 +70,7 @@ function createEntityStore() {
 		const generation = ++loadGeneration;
 		entityLoadStatus.set('loading');
 		const request = (async () => {
-			const res = await fetch('/api/entities');
+			const res = await storyFetch('/api/entities');
 			if (!res.ok) throw new Error(`entities.load failed: ${res.status} ${await res.text()}`);
 			const data: Entity[] = await res.json();
 			if (generation !== loadGeneration) return;
@@ -163,7 +164,7 @@ function createEntityStore() {
 		if (options?.parentId !== undefined) body.parentId = options.parentId;
 		if (options?.position !== undefined) body.position = options.position;
 
-		const res = await fetch('/api/entities', {
+		const res = await storyFetch('/api/entities', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body)
@@ -194,7 +195,7 @@ function createEntityStore() {
 			position?: number | null;
 		}>
 	): Promise<Entity[]> {
-		const res = await fetch('/api/entities/batch', {
+		const res = await storyFetch('/api/entities/batch', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ entities: items })
@@ -222,7 +223,8 @@ function createEntityStore() {
 			data?: unknown;
 			parentId?: string | null;
 			position?: number;
-		}
+		},
+		retryKey?: string
 	): Promise<Entity> {
 		const optimistic = patch;
 		const seq = ++updateSeq;
@@ -250,11 +252,11 @@ function createEntityStore() {
 		const prior = updateChains.get(id) ?? Promise.resolve();
 		const run = (async () => {
 			await prior.catch(() => {});
-			const res = await fetch(`/api/entities/${id}`, {
+			const res = await storyFetch(`/api/entities/${id}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(patch)
-			});
+			}, { retryKey });
 			if (!res.ok) throw new Error(await res.text());
 			return (await res.json()) as Entity;
 		})();
@@ -318,7 +320,7 @@ function createEntityStore() {
 		update((all) => all.filter((e) => e.id !== id));
 		let res: Response;
 		try {
-			res = await fetch(`/api/entities/${id}`, { method: 'DELETE' });
+			res = await storyFetch(`/api/entities/${id}`, { method: 'DELETE' });
 		} catch (err) {
 			// Network error before any response — recover the optimistic remove.
 			await rollbackSnapshot();

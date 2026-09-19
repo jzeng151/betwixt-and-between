@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 // Client-side helper for the Slice 1b projection pipeline.
 //
 //   server-only fetchProjectionContext (DB cross-user JOIN)
@@ -54,7 +55,7 @@ export function toProjectionContext(payload: ProjectionContextPayload): Projecti
 export async function fetchProjectionContextForMap(
 	mapId: string
 ): Promise<ProjectionContext> {
-	const res = await fetch(`/api/maps/${mapId}/projection-context`);
+	const res = await storyFetch(`/api/maps/${mapId}/projection-context`);
 	if (!res.ok) {
 		throw new Error(`Failed to load projection context: ${await errorMessage(res)}`);
 	}

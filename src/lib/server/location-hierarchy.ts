@@ -39,14 +39,14 @@ type DB = {
 
 /**
  * Validate a proposed `part_of` relationship from `fromId` to `toId` owned by
- * `userId`. Throws SvelteKit error(400) on any invariant violation.
+ * `storyId`. Throws SvelteKit error(400) on any invariant violation.
  *
  * `excludingRelId` skips a specific relationship row during the single-parent
  * check — used by PATCH so updating the same row doesn't trip its own existence.
  */
 export async function assertPartOfInvariants(
 	db: unknown,
-	userId: string,
+	storyId: string,
 	fromId: string,
 	toId: string,
 	excludingRelId: string | null = null
@@ -64,7 +64,7 @@ export async function assertPartOfInvariants(
 	const typed = (db as DB)
 		.select({ id: entities.id, type: entities.type })
 		.from(entities)
-		.where(and(eq(entities.userId, userId), inArray(entities.id, [fromId, toId])));
+		.where(and(eq(entities.storyId, storyId), inArray(entities.id, [fromId, toId])));
 	const endpoints = (await typed) as Array<{ id: string; type: string }>;
 	const byId = new Map(endpoints.map((row) => [row.id, row.type]));
 
@@ -87,7 +87,7 @@ export async function assertPartOfInvariants(
 		})
 		.from(relationships)
 		.where(
-			and(eq(relationships.userId, userId), eq(relationships.type, 'part_of'))
+			and(eq(relationships.storyId, storyId), eq(relationships.type, 'part_of'))
 		)) as Array<{ id: string; fromId: string; toId: string }>;
 
 	// Single-parent: the child must not already have another outgoing part_of edge.
@@ -136,7 +136,7 @@ export async function assertPartOfInvariants(
  */
 export async function removeImpliedPartOf(
 	db: unknown,
-	userId: string,
+	storyId: string,
 	fromId: string | null | undefined,
 	toId: string | null | undefined
 ): Promise<void> {
@@ -164,7 +164,7 @@ export async function removeImpliedPartOf(
 		CROSS JOIN LATERAL jsonb_array_elements(
 			COALESCE(ma.state_jsonb->'regions', '[]'::jsonb)
 		) AS r
-		WHERE wm.user_id = ${userId}
+		WHERE wm.user_id = ${storyId}
 			AND wm.location_id = ${toId}
 			AND r->>'locationId' = ${fromId}
 			AND ma.t_position = '-Infinity'::float8
@@ -179,7 +179,7 @@ export async function removeImpliedPartOf(
 		.delete(relationships)
 		.where(
 			and(
-				eq(relationships.userId, userId),
+				eq(relationships.storyId, storyId),
 				eq(relationships.fromId, fromId),
 				eq(relationships.toId, toId),
 				eq(relationships.type, 'part_of')
@@ -199,7 +199,7 @@ export async function removeImpliedPartOf(
  */
 export async function ensurePartOf(
 	db: unknown,
-	userId: string,
+	storyId: string,
 	fromId: string | null | undefined,
 	toId: string | null | undefined
 ): Promise<void> {
@@ -210,7 +210,7 @@ export async function ensurePartOf(
 		.from(relationships)
 		.where(
 			and(
-				eq(relationships.userId, userId),
+				eq(relationships.storyId, storyId),
 				eq(relationships.fromId, fromId),
 				eq(relationships.type, 'part_of')
 			)
@@ -219,7 +219,7 @@ export async function ensurePartOf(
 	if (existing.length > 0 && existing[0].toId === toId) return;
 
 	if (existing.length > 0) {
-		await assertPartOfInvariants(db, userId, fromId, toId, existing[0].id);
+		await assertPartOfInvariants(db, storyId, fromId, toId, existing[0].id);
 		await (db as DB)
 			.update(relationships)
 			.set({
@@ -235,9 +235,9 @@ export async function ensurePartOf(
 		return;
 	}
 
-	await assertPartOfInvariants(db, userId, fromId, toId);
+	await assertPartOfInvariants(db, storyId, fromId, toId);
 	await (db as DB).insert(relationships).values({
-		userId,
+		storyId,
 		fromId,
 		toId,
 		type: 'part_of',

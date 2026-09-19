@@ -16,12 +16,12 @@
 //     200 — deleted; body { ok: true }
 
 import { json, error } from '@sveltejs/kit';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { renameProfile, deleteProfile } from '$lib/server/user-preferences.js';
 import type { RequestHandler } from './$types';
 
 export const PATCH: RequestHandler = async (event) => {
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	let body: { name?: unknown };
 	try {
 		body = (await event.request.json()) as typeof body;
@@ -33,7 +33,7 @@ export const PATCH: RequestHandler = async (event) => {
 	}
 	const profile = await renameProfile(
 		event.locals.db,
-		userId,
+		storyId,
 		event.params.id,
 		body.name as string
 	);
@@ -41,7 +41,7 @@ export const PATCH: RequestHandler = async (event) => {
 };
 
 export const DELETE: RequestHandler = async (event) => {
-	const userId = getUserId(event);
-	await deleteProfile(event.locals.db, userId, event.params.id);
+	const storyId = await getStoryId(event);
+	await deleteProfile(event.locals.db, storyId, event.params.id);
 	return json({ ok: true });
 };

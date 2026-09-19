@@ -13,7 +13,7 @@
 // caused_by rows with fromId = X. `caused_by` is NOT cycle-checked at write, so
 // the BFS carries a visited-set guard (a → b → a must terminate).
 //
-// Cross-user defense (CLAUDE.md): the change-event read is scoped through
+// Cross-story defense (CLAUDE.md): the change-event read is scoped through
 // world_maps.user_id (assertMapOwnership); every ancestry hop inner-joins the
 // cause endpoint to entities.user_id, so a foreign-owned ancestor is never
 // returned and the walk simply stops at the ownership boundary. This is one
@@ -40,16 +40,16 @@ type AncestryHop = {
 
 /**
  * Trace the causal provenance of a region's state at time `t`. See module
- * header. Pure read; scoped to `userId` on both the map and every ancestry hop.
+ * header. Pure read; scoped to `storyId` on both the map and every ancestry hop.
  */
 export async function traceRegionProvenance(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	regionId: string,
 	t: number
 ): Promise<ProvenanceResult> {
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 
 	// 1) The latest recorded ownership claim for this region ≤ T: the most recent
 	// live transfer_region event whose payload region_id matches. NOTE this is
@@ -84,13 +84,13 @@ export async function traceRegionProvenance(
 		.select({ id: entities.id, name: entities.name })
 		.from(entities)
 		.where(
-			and(eq(entities.id, change.sourceEventId), eq(entities.userId, userId), eq(entities.type, 'Event'))
+			and(eq(entities.id, change.sourceEventId), eq(entities.storyId, storyId), eq(entities.type, 'Event'))
 		);
 	if (!sourceEvent) return { status: 'no-cause' };
 
 	// 3) Walk the caused_by ancestry in two phases. Two gates on each edge:
 	//    - ownership (relationships.user_id AND entities.user_id) — an imported /
-	//      cross-user edge or ancestor is excluded → walk stops at the boundary;
+	//      cross-story edge or ancestor is excluded → walk stops at the boundary;
 	//    - reveal (revealedAtPosition) — a link not yet revealed to the reader at T
 	//      is treated as not-yet-existing, so the walk never surfaces a hidden
 	//      cause's name or story-time (mirrors the map render's spoiler posture).
@@ -125,8 +125,8 @@ export async function traceRegionProvenance(
 				and(
 					eq(relationships.type, 'caused_by'),
 					eq(relationships.fromId, node),
-					eq(relationships.userId, userId),
-					eq(entities.userId, userId)
+					eq(relationships.storyId, storyId),
+					eq(entities.storyId, storyId)
 				)
 			);
 		const edges: AdjEdge[] = [];
@@ -255,10 +255,10 @@ export async function traceRegionProvenance(
 // Local copy of the ownership guard (world-map-v3.ts's is module-private). Keeps
 // the provenance read scoped to world_maps.user_id without widening that file's
 // export surface.
-async function assertMapOwnership(db: Db, userId: string, worldMapId: string): Promise<void> {
+async function assertMapOwnership(db: Db, storyId: string, worldMapId: string): Promise<void> {
 	const [row] = await db
 		.select({ id: worldMaps.id })
 		.from(worldMaps)
-		.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.userId, userId)));
+		.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.storyId, storyId)));
 	if (!row) error(404, 'Map not found');
 }

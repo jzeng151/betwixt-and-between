@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { storyFetch } from '$lib/story-fetch.js';
+  import { registerDirtyField, unregisterDirtyField } from '$lib/util/pending-commit.js';
+  import { trackWrite } from '$lib/stores/pending-writes.js';
+
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { preferences } from '$lib/os/preferences-store.js';
@@ -288,28 +292,41 @@
   // when two drags completed within 500 ms. Per-node map preserves the
   // coalescing semantic for rapid re-drags of the SAME node while never
   // canceling a different node's pending PUT.
-  const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const saveTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; commit: () => Promise<Response> }>();
+  onMount(() => {
+    const handle = { commitNow: async () => {
+      await layoutLock;
+      await Promise.all([...saveTimers.values()].map(({ timer, commit }) => {
+        clearTimeout(timer);
+        return commit();
+      }));
+    } };
+    registerDirtyField(handle);
+    return () => {
+      unregisterDirtyField(handle);
+      // storyFetch records request failures; track the queued work without duplicating them.
+      void trackWrite(handle.commitNow().catch(() => {}));
+    };
+  });
   function onNodePositionChange(id: string, p: NodePosition) {
     initialPositions = { ...initialPositions, [id]: p };
     const existing = saveTimers.get(id);
-    if (existing) clearTimeout(existing);
-    saveTimers.set(
-      id,
-      setTimeout(() => {
-        saveTimers.delete(id);
-        fetch('/api/canvas-positions', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            entityId: id,
-            x: Math.round(p.x),
-            y: Math.round(p.y),
-            width: Math.round(p.w),
-            height: Math.round(p.h)
-          })
-        });
-      }, 500)
-    );
+    if (existing) clearTimeout(existing.timer);
+    const commit = () => {
+      saveTimers.delete(id);
+      return storyFetch('/api/canvas-positions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entityId: id,
+          x: Math.round(p.x),
+          y: Math.round(p.y),
+          width: Math.round(p.w),
+          height: Math.round(p.h)
+        })
+      });
+    };
+    saveTimers.set(id, { timer: setTimeout(() => void commit().catch(() => {}), 500), commit });
   }
 
   // ── Layout-by-type (StoryGraph variant of FG's C5) ────────────────────────
@@ -378,7 +395,7 @@
         // saved.
         await Promise.all(
           newPositions.map((np) =>
-            fetch('/api/canvas-positions', {
+            storyFetch('/api/canvas-positions', {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({

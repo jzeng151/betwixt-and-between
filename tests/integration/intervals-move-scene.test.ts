@@ -37,7 +37,7 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -45,7 +45,7 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 	it("updates the scene's parent_id and position", async () => {
 		const [s] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
 			.returning();
 
 		await moveSceneToAct(db, s.id, acts.act2, 0, userId);
@@ -58,7 +58,7 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 	it('updates start_act_id on intervals where start_scene_id = thisScene', async () => {
 		const [s] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
 			.returning();
 
 		// Ellie anchored at scene s on both ends.
@@ -84,14 +84,14 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 		// the relationship act FKs (like it does for intervals/placements) so the
 		// caused_by edge survives the cross-act move and recomputes cleanly.
 		const { relationships } = await import('../../src/lib/server/db/schema.js');
-		const [bob] = await db.insert(entities).values({ userId, type: 'Character', name: 'Bob' }).returning();
+		const [bob] = await db.insert(entities).values({ storyId: userId, type: 'Character', name: 'Bob' }).returning();
 		const [s] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
 			.returning();
 
 		// caused_by scoped to scene s on both ends, anchored to act1.
-		await db.insert(relationships).values({ userId,
+		await db.insert(relationships).values({ storyId: userId,
 			fromId: ellie,
 			toId: bob.id,
 			type: 'caused_by',
@@ -119,11 +119,11 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 	it('updates end_act_id on intervals where end_scene_id = thisScene', async () => {
 		const [sStart] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'SStart', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'SStart', parentId: acts.act1, position: 0 })
 			.returning();
 		const [sEnd] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'SEnd', parentId: acts.act1, position: 1 })
+			.values({ storyId: userId, type: 'Scene', name: 'SEnd', parentId: acts.act1, position: 1 })
 			.returning();
 
 		await writeInterval(db, {
@@ -149,17 +149,17 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 		// whose interval-positions depend on m.
 		const [s0Old] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'OldS0', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'OldS0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [sMove] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'Mover', parentId: acts.act1, position: 1 })
+			.values({ storyId: userId, type: 'Scene', name: 'Mover', parentId: acts.act1, position: 1 })
 			.returning();
 
 		// One existing scene in target act2.
 		const [s0New] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'NewS0', parentId: acts.act2, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'NewS0', parentId: acts.act2, position: 0 })
 			.returning();
 
 		// Interval anchored to s0Old (still in act1 after the move).
@@ -173,7 +173,7 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 		// Interval anchored to s0New (still in act2 after the move).
 		const [damienE] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Damien' })
+			.values({ storyId: userId, type: 'Character', name: 'Damien' })
 			.returning();
 		await writeInterval(db, {
 			entityId: damienE.id,
@@ -218,7 +218,7 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 	it('atomic in db.transaction: failure rolls back parent_id update', async () => {
 		const [s] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
 			.returning();
 
 		// Pass an invalid newActId — should throw without persisting parent_id.
@@ -234,7 +234,7 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 	it('rejects when newActId points to a non-Act entity', async () => {
 		const [s] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
 			.returning();
 
 		await expect(
@@ -246,20 +246,20 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 		// 3 existing scenes in act2 (positions 0, 1, 2).
 		const [tA] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'TA', parentId: acts.act2, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'TA', parentId: acts.act2, position: 0 })
 			.returning();
 		const [tB] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'TB', parentId: acts.act2, position: 1 })
+			.values({ storyId: userId, type: 'Scene', name: 'TB', parentId: acts.act2, position: 1 })
 			.returning();
 		const [tC] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'TC', parentId: acts.act2, position: 2 })
+			.values({ storyId: userId, type: 'Scene', name: 'TC', parentId: acts.act2, position: 2 })
 			.returning();
 
 		const [sMove] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'Mover', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'Mover', parentId: acts.act1, position: 0 })
 			.returning();
 
 		// Insert at position 1 in act2 — tB and tC should bump.
@@ -295,16 +295,16 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 		// The shared seedActs already gives us act0/act1/act2 at those positions.
 		const [scene3] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'Scene 3', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'Scene 3', parentId: acts.act1, position: 0 })
 			.returning();
-		await db.insert(entities).values({ userId, type: 'Scene', name: 'Scene 4', parentId: acts.act1, position: 1 });
-		await db.insert(entities).values({ userId, type: 'Scene', name: 'Scene 5', parentId: acts.act2, position: 0 });
-		await db.insert(entities).values({ userId, type: 'Scene', name: 'Scene 6', parentId: acts.act2, position: 1 });
+		await db.insert(entities).values({ storyId: userId, type: 'Scene', name: 'Scene 4', parentId: acts.act1, position: 1 });
+		await db.insert(entities).values({ storyId: userId, type: 'Scene', name: 'Scene 5', parentId: acts.act2, position: 0 });
+		await db.insert(entities).values({ storyId: userId, type: 'Scene', name: 'Scene 6', parentId: acts.act2, position: 1 });
 
 		const actsBefore = await db
 			.select()
 			.from(entities)
-			.where(and(eq(entities.userId, userId), eq(entities.type, 'Act')));
+			.where(and(eq(entities.storyId, userId), eq(entities.type, 'Act')));
 		expect(actsBefore).toHaveLength(3);
 
 		// PATCH /api/entities/{Scene3.id} body {"parentId": Act III.id, "position": 2}
@@ -314,7 +314,7 @@ describe('moveSceneToAct — T3-pulled-in', () => {
 		const actsAfter = await db
 			.select()
 			.from(entities)
-			.where(and(eq(entities.userId, userId), eq(entities.type, 'Act')));
+			.where(and(eq(entities.storyId, userId), eq(entities.type, 'Act')));
 		expect(actsAfter).toHaveLength(3);
 	});
 });

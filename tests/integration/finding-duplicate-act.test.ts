@@ -49,7 +49,7 @@ async function countActs(): Promise<number> {
 	const rows = await currentDb
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.userId, userId), eq(entities.type, 'Act')));
+		.where(and(eq(entities.storyId, userId), eq(entities.type, 'Act')));
 	return rows.length;
 }
 
@@ -100,7 +100,7 @@ describe('finding: duplicate Act on cross-act Scene move (via PATCH)', () => {
 		const [moved] = await currentDb
 			.select()
 			.from(entities)
-			.where(and(eq(entities.userId, userId), eq(entities.id, s2a.id)));
+			.where(and(eq(entities.storyId, userId), eq(entities.id, s2a.id)));
 		expect(moved.parentId).toBe(a3.id);
 		expect(moved.position).toBe(2);
 	});

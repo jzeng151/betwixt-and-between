@@ -48,18 +48,18 @@ describe('auth isolation: /api/relationships', () => {
 
 		const [f] = await currentDb
 			.insert(entities)
-			.values({ userId: userA, type: 'Character', name: 'A-from' })
+			.values({ storyId: userA, type: 'Character', name: 'A-from' })
 			.returning();
 		aFrom = f.id;
 		const [t] = await currentDb
 			.insert(entities)
-			.values({ userId: userA, type: 'Character', name: 'A-to' })
+			.values({ storyId: userA, type: 'Character', name: 'A-to' })
 			.returning();
 		aTo = t.id;
 
 		const [rel] = await currentDb
 			.insert(relationships)
-			.values({ userId: userA, fromId: aFrom, toId: aTo, type: 'allied_with' })
+			.values({ storyId: userA, fromId: aFrom, toId: aTo, type: 'allied_with' })
 			.returning();
 		aRelId = rel.id;
 	});

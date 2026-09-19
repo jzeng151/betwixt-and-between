@@ -59,7 +59,7 @@ describe('auth isolation: /api/entities', () => {
 		actsA = await seedActs(currentDb, userA);
 		const [c] = await currentDb
 			.insert(entities)
-			.values({ userId: userA, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userA, type: 'Character', name: 'Ellie' })
 			.returning();
 		entA = c.id;
 	});
@@ -73,7 +73,7 @@ describe('auth isolation: /api/entities', () => {
 		const res = await entitiesRoute.GET(mkEvent(userA));
 		const rows = await readJson(res);
 		expect(rows.length).toBeGreaterThan(0);
-		expect(rows.every((r: { userId: string }) => r.userId === userA)).toBe(true);
+		expect(rows.every((r: { storyId: string }) => r.storyId === userA)).toBe(true);
 	});
 
 	it('user B GET single returns 404 (not 403 — no existence leak)', async () => {
@@ -132,7 +132,7 @@ describe('auth isolation: /api/entities', () => {
 		const bRows = await currentDb
 			.select()
 			.from(entities)
-			.where(and(eq(entities.userId, userB), eq(entities.type, 'Act')));
+			.where(and(eq(entities.storyId, userB), eq(entities.type, 'Act')));
 		const bByName: Record<string, number | null> = {};
 		for (const r of bRows) bByName[r.name] = r.position;
 		expect(bByName['Act 0']).toBe(0);
@@ -143,7 +143,7 @@ describe('auth isolation: /api/entities', () => {
 		const aRows = await currentDb
 			.select()
 			.from(entities)
-			.where(and(eq(entities.userId, userA), eq(entities.type, 'Act')));
+			.where(and(eq(entities.storyId, userA), eq(entities.type, 'Act')));
 		const aByName: Record<string, number | null> = {};
 		for (const r of aRows) aByName[r.name] = r.position;
 		expect(aByName['Act 0']).toBe(0);
@@ -159,7 +159,7 @@ describe('auth isolation: /api/entities', () => {
 		const actsB = await seedActs(currentDb, userB);
 		const [bChar] = await currentDb
 			.insert(entities)
-			.values({ userId: userB, type: 'Character', name: 'B-char' })
+			.values({ storyId: userB, type: 'Character', name: 'B-char' })
 			.returning();
 		await writeInterval(
 			currentDb,
@@ -181,7 +181,7 @@ describe('auth isolation: /api/entities', () => {
 		const bIntervals = await currentDb
 			.select()
 			.from(intervals)
-			.where(eq(intervals.userId, userB));
+			.where(eq(intervals.storyId, userB));
 		expect(bIntervals).toHaveLength(1);
 		expect(bIntervals[0].startActId).toBe(actsB.act0);
 		expect(bIntervals[0].endActId).toBe(actsB.act1);
@@ -198,7 +198,7 @@ describe('auth isolation: /api/entities', () => {
 		const [preEntities] = await currentDb
 			.select({ c: count() })
 			.from(entities)
-			.where(eq(entities.userId, userA));
+			.where(eq(entities.storyId, userA));
 		expect(preEntities.c).toBeGreaterThan(0);
 
 		// Delete user A directly.
@@ -208,13 +208,13 @@ describe('auth isolation: /api/entities', () => {
 		const [postEntities] = await currentDb
 			.select({ c: count() })
 			.from(entities)
-			.where(eq(entities.userId, userA));
+			.where(eq(entities.storyId, userA));
 		expect(postEntities.c).toBe(0);
 
 		const [postIntervals] = await currentDb
 			.select({ c: count() })
 			.from(intervals)
-			.where(eq(intervals.userId, userA));
+			.where(eq(intervals.storyId, userA));
 		expect(postIntervals.c).toBe(0);
 	});
 });

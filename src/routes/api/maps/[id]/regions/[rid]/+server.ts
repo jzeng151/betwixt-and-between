@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { worldMaps, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isSelfIntersecting } from '$lib/server/validation.js';
 import { ensurePartOf, removeImpliedPartOf } from '$lib/server/location-hierarchy.js';
@@ -10,30 +10,30 @@ import {
 	fanOutRegionGeometryUpdate
 } from '$lib/server/anchor-region-write-through.js';
 import {
-	readBaselineRegionsForUser,
+	readBaselineRegionsForStory,
 	type AnchorRegionRow
 } from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 /**
  * Slice 2 D2 PR-B/PR-C: region ownership reads from baseline anchor JSON
- * via readBaselineRegionsForUser (which scopes through world_maps.user_id).
+ * via readBaselineRegionsForStory (which scopes through world_maps.story_id).
  * Cross-user access returns 404 (no existence leak).
  */
 async function assertOwnedRegion(
 	db: App.Locals['db'],
 	mapId: string,
 	regionId: string,
-	userId: string
+	storyId: string
 ): Promise<AnchorRegionRow | null> {
-	const rows = await readBaselineRegionsForUser(db, userId, mapId);
+	const rows = await readBaselineRegionsForStory(db, storyId, mapId);
 	return rows.find((r) => r.id === regionId) ?? null;
 }
 
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
-	const region = await assertOwnedRegion(db, event.params.id, event.params.rid, userId);
+	const storyId = await getStoryId(event);
+	const region = await assertOwnedRegion(db, event.params.id, event.params.rid, storyId);
 	if (!region) error(404, 'Region not found');
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -57,7 +57,7 @@ export const PATCH: RequestHandler = async (event) => {
 			.where(
 				and(
 					eq(entities.id, body.locationId),
-					eq(entities.userId, userId),
+					eq(entities.storyId, storyId),
 					eq(entities.type, 'Location')
 				)
 			);
@@ -104,7 +104,7 @@ export const PATCH: RequestHandler = async (event) => {
 			await fanOutRegionGeometryUpdate(
 				tx,
 				event.params.id!,
-				userId,
+				storyId,
 				event.params.rid!,
 				{
 					polygon: patch.polygon,
@@ -120,10 +120,10 @@ export const PATCH: RequestHandler = async (event) => {
 					.from(worldMaps)
 					.where(eq(worldMaps.id, event.params.id));
 				if (parentMap?.locationId && region.locationId) {
-					await removeImpliedPartOf(tx, userId, region.locationId, parentMap.locationId);
+					await removeImpliedPartOf(tx, storyId, region.locationId, parentMap.locationId);
 				}
 				if (parentMap?.locationId && typeof patch.locationId === 'string') {
-					await ensurePartOf(tx, userId, patch.locationId, parentMap.locationId);
+					await ensurePartOf(tx, storyId, patch.locationId, parentMap.locationId);
 				}
 			}
 
@@ -145,8 +145,8 @@ export const PATCH: RequestHandler = async (event) => {
 
 export const DELETE: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
-	const region = await assertOwnedRegion(db, event.params.id, event.params.rid, userId);
+	const storyId = await getStoryId(event);
+	const region = await assertOwnedRegion(db, event.params.id, event.params.rid, storyId);
 	if (!region) error(404, 'Region not found');
 
 	// Anchor DELETE + implied edge cleanup are atomic. Order: anchor delete
@@ -154,14 +154,14 @@ export const DELETE: RequestHandler = async (event) => {
 	// JSON — if we removed the edge first and the anchor delete failed,
 	// we'd have a stranded region whose implied edge was already gone.
 	await db.transaction(async (tx) => {
-		await fanOutRegionDelete(tx, event.params.id!, userId, event.params.rid!);
+		await fanOutRegionDelete(tx, event.params.id!, storyId, event.params.rid!);
 		if (region.locationId) {
 			const [parentMap] = await tx
 				.select({ locationId: worldMaps.locationId })
 				.from(worldMaps)
 				.where(eq(worldMaps.id, event.params.id));
 			if (parentMap?.locationId) {
-				await removeImpliedPartOf(tx, userId, region.locationId, parentMap.locationId);
+				await removeImpliedPartOf(tx, storyId, region.locationId, parentMap.locationId);
 			}
 		}
 	});

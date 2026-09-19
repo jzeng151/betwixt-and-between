@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 // Factions store. Loaded once on map mount; mutations are write-through
 // (server first, then update local store). Behaves like worldMaps + the
 // other map-scoped stores in this folder.
@@ -7,7 +8,7 @@ import { errorMessage } from '$lib/util/api-error-message.js';
 
 export type Faction = {
 	id: string;
-	userId: string | null;
+	storyId: string | null;
 	name: string;
 	color: string;
 	styleJsonb: Record<string, unknown> | null;
@@ -37,7 +38,7 @@ function createFactionStore() {
 			const url = cursor
 				? `/api/factions?after=${encodeURIComponent(cursor)}`
 				: '/api/factions';
-			const res = await fetch(url);
+			const res = await storyFetch(url);
 			if (!res.ok) throw new Error(`Failed to load factions: ${await errorMessage(res)}`);
 			const body = (await res.json()) as { rows: Faction[]; next_cursor: string | null };
 			collected.push(...body.rows);
@@ -47,7 +48,7 @@ function createFactionStore() {
 	}
 
 	async function create(input: FactionInput): Promise<Faction> {
-		const res = await fetch('/api/factions', {
+		const res = await storyFetch('/api/factions', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(input)
@@ -59,7 +60,7 @@ function createFactionStore() {
 	}
 
 	async function update(id: string, patch: Partial<FactionInput>): Promise<Faction> {
-		const res = await fetch(`/api/factions/${id}`, {
+		const res = await storyFetch(`/api/factions/${id}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(patch)
@@ -71,14 +72,14 @@ function createFactionStore() {
 	}
 
 	async function countDependents(id: string): Promise<number> {
-		const res = await fetch(`/api/factions/${id}/dependents`);
+		const res = await storyFetch(`/api/factions/${id}/dependents`);
 		if (!res.ok) throw new Error(`Failed to count dependents: ${await errorMessage(res)}`);
 		const result = (await res.json()) as { dependentEventCount: number };
 		return result.dependentEventCount;
 	}
 
 	async function remove(id: string): Promise<void> {
-		const res = await fetch(`/api/factions/${id}`, { method: 'DELETE' });
+		const res = await storyFetch(`/api/factions/${id}`, { method: 'DELETE' });
 		if (!res.ok) throw new Error(`Failed to delete faction: ${await errorMessage(res)}`);
 		store.update((rows) => rows.filter((r) => r.id !== id));
 	}

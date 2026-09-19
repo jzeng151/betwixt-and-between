@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
-import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
+import { getStoryId, assertParentOwned } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isExclusionViolation, isUniqueViolation } from '$lib/server/pg-errors.js';
 import {
@@ -19,11 +19,11 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const rows = await db
 		.select()
 		.from(entities)
-		.where(eq(entities.userId, userId))
+		.where(eq(entities.storyId, storyId))
 		.orderBy(desc(entities.createdAt));
 	return json(rows);
 };
@@ -38,7 +38,7 @@ export const GET: RequestHandler = async (event) => {
  */
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const body = (await readJson(event)) as any;
 	const { type, name, data, parentId, position } = body;
@@ -68,7 +68,7 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	if (typeof parentId === 'string') {
-		await assertParentOwned(db, userId, parentId);
+		await assertParentOwned(db, storyId, parentId);
 	}
 
 	// Insert-between cascade for Acts wrapped in a transaction so the sibling
@@ -78,7 +78,7 @@ export const POST: RequestHandler = async (event) => {
 	// insert-between shifts indices identically to a reorder, but the
 	// pre-fix POST handler called recomputeAllIntervals WITHOUT a snapshot —
 	// anchors/events were silently skipped while intervals were rewritten).
-	// userId in WHERE: critical for multi-tenant isolation.
+	// storyId in WHERE: critical for multi-tenant isolation.
 	let created: typeof entities.$inferSelect;
 	try {
 		created = await db.transaction(async (tx) => {
@@ -100,7 +100,7 @@ export const POST: RequestHandler = async (event) => {
 					})
 					.where(
 						and(
-							eq(entities.userId, userId),
+							eq(entities.storyId, storyId),
 							eq(entities.type, 'Scene'),
 							eq(entities.parentId, parentId),
 							sql`${entities.position} >= ${position}`
@@ -114,7 +114,7 @@ export const POST: RequestHandler = async (event) => {
 					.from(entities)
 					.where(
 						and(
-							eq(entities.userId, userId),
+							eq(entities.storyId, storyId),
 							eq(entities.type, 'Act'),
 							isNull(entities.parentId),
 							sql`${entities.position} >= ${position}`
@@ -122,7 +122,7 @@ export const POST: RequestHandler = async (event) => {
 					);
 				if (existingAtOrAfter.length > 0) {
 					didActInsertBetween = true;
-					preSnapshot = await snapshotActOrdering(tx, userId);
+					preSnapshot = await snapshotActOrdering(tx, storyId);
 					await tx
 						.update(entities)
 						.set({
@@ -130,7 +130,7 @@ export const POST: RequestHandler = async (event) => {
 						})
 						.where(
 							and(
-								eq(entities.userId, userId),
+								eq(entities.storyId, storyId),
 								eq(entities.type, 'Act'),
 								isNull(entities.parentId),
 								sql`${entities.position} >= ${position}`
@@ -142,7 +142,7 @@ export const POST: RequestHandler = async (event) => {
 			const [row] = await tx
 				.insert(entities)
 				.values({
-					userId,
+					storyId,
 					type,
 					name: name.trim(),
 					data: (data ?? {}) as Record<string, unknown>,
@@ -152,10 +152,10 @@ export const POST: RequestHandler = async (event) => {
 				.returning();
 
 			if (type === 'Scene' && row.parentId) {
-				await recomputeIntervalsForAct(tx, row.parentId, userId);
+				await recomputeIntervalsForAct(tx, row.parentId, storyId);
 			}
 			if (didActInsertBetween) {
-				await recomputeAllIntervals(tx, userId, preSnapshot);
+				await recomputeAllIntervals(tx, storyId, preSnapshot);
 			}
 
 			return row;

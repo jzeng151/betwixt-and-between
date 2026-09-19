@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 import { writable } from 'svelte/store';
 import type { RelationshipType } from '$lib/server/db/schema.js';
 
@@ -33,7 +34,7 @@ function createRelationshipStore() {
 
 	async function load() {
 		const seq = ++loadSeq;
-		const res = await fetch('/api/relationships');
+		const res = await storyFetch('/api/relationships');
 		if (!res.ok) throw new Error(`relationships.load failed: ${res.status} ${await res.text()}`);
 		const data: Relationship[] = await res.json();
 		if (seq !== loadSeq) return; // a newer load() (or mutation) superseded this — drop it
@@ -47,7 +48,7 @@ function createRelationshipStore() {
 		label?: string,
 		opts?: { startActId?: string; endActId?: string; revealedAtPosition?: number | null }
 	): Promise<Relationship> {
-		const res = await fetch('/api/relationships', {
+		const res = await storyFetch('/api/relationships', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ fromId, toId, type, label: label ?? null, ...opts })
@@ -71,7 +72,7 @@ function createRelationshipStore() {
 			revealedAtPosition?: number | null;
 		}
 	): Promise<Relationship> {
-		const res = await fetch(`/api/relationships/${id}`, {
+		const res = await storyFetch(`/api/relationships/${id}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(fields)
@@ -88,7 +89,7 @@ function createRelationshipStore() {
 		update((all) => all.filter((r) => r.id !== id));
 		let res: Response;
 		try {
-			res = await fetch(`/api/relationships/${id}`, { method: 'DELETE' });
+			res = await storyFetch(`/api/relationships/${id}`, { method: 'DELETE' });
 		} catch (err) {
 			// Network error before any response — recover the optimistic remove.
 			await load();

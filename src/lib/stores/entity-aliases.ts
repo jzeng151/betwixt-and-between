@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 import { writable } from 'svelte/store';
 
 export const entityAliasesLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -20,7 +21,7 @@ function createEntityAliasStore() {
 		const loadGeneration = ++generation;
 		entityAliasesLoadStatus.set('loading');
 		const request = (async () => {
-			const res = await fetch('/api/entity-aliases');
+			const res = await storyFetch('/api/entity-aliases');
 			if (!res.ok) throw new Error(await res.text());
 			const data: EntityAlias[] = await res.json();
 			if (loadGeneration !== generation) return;
@@ -42,7 +43,7 @@ function createEntityAliasStore() {
 		aliasEntityId: string,
 		revealedAtPosition?: number | null
 	): Promise<EntityAlias> {
-		const res = await fetch('/api/entity-aliases', {
+		const res = await storyFetch('/api/entity-aliases', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ primaryEntityId, aliasEntityId, revealedAtPosition: revealedAtPosition ?? null })

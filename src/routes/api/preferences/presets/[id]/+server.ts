@@ -8,12 +8,12 @@
 //     401 — unauthenticated
 
 import { json } from '@sveltejs/kit';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { deletePreset } from '$lib/server/appearance-presets.js';
 import type { RequestHandler } from './$types';
 
 export const DELETE: RequestHandler = async (event) => {
-	const userId = getUserId(event);
-	await deletePreset(event.locals.db, userId, event.params.id);
+	const storyId = await getStoryId(event);
+	await deletePreset(event.locals.db, storyId, event.params.id);
 	return json({ ok: true });
 };

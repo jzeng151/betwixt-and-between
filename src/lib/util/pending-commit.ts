@@ -1,26 +1,5 @@
-/**
- * Pending-commit registry — dirty-draft tracker used by chip-click
- * navigation to drain in-flight EditableField textareas BEFORE swapping
- * EntityDetail context.
- *
- * Background: the Wiki app's wiki-nav context (slice 7) lets an
- * EntityLink chip click swap the Wiki content area to another entity.
- * EditableField commits drafts on blur. If a user is editing a Body
- * textarea and clicks a chip, the navigate-then-blur sequence runs
- * commit AFTER the EntityDetail unmounts — at which point the textarea
- * reference is stale, the entity context is wrong, and the draft can
- * be silently lost or PATCHed against the new entity.
- *
- * Solution: each EditableField with a dirty draft registers itself
- * here while focused. Before navigating, EntityLink calls
- * drainPendingCommit() — every registered handle's commitNow() runs
- * to completion (settling the PATCH against the still-mounted entity)
- * before the await resolves.
- *
- * The registry is a Set of opaque handles, not DOM-mediated, so it
- * survives Svelte 5 component-tree topology changes and is unit-testable
- * in jsdom without actual focus/blur events.
- */
+/** Drafts and queued saves drain before navigation changes their context.
+ * Story switching requires every commit to succeed before leaving the document. */
 
 export interface EditableFieldHandle {
 	/** Commits the current draft (if dirty) to the entity store and
@@ -39,14 +18,15 @@ export function unregisterDirtyField(handle: EditableFieldHandle): void {
 	REGISTRY.delete(handle);
 }
 
-/** Awaits every currently-registered handle's commitNow() in parallel.
- *  Returns once all settle (resolved or rejected). Failures are
- *  swallowed — the navigation must proceed regardless; surfaced errors
- *  appear in the source EditableField via its own saveError state. */
-export async function drainPendingCommit(): Promise<void> {
+/** Entity-link navigation tolerates failures; story switching requires success. */
+export async function drainPendingCommit(requireSuccess = false): Promise<void> {
 	if (REGISTRY.size === 0) return;
 	const handles = [...REGISTRY];
-	await Promise.allSettled(handles.map((h) => h.commitNow()));
+	const results = await Promise.allSettled(handles.map((h) => h.commitNow()));
+	if (requireSuccess) {
+		const failed = results.find((result) => result.status === 'rejected');
+		if (failed?.status === 'rejected') throw failed.reason;
+	}
 }
 
 /** Test helper: clear all registered handles. */

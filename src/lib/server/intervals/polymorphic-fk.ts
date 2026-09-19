@@ -26,12 +26,12 @@ async function assertEntityType(
 	db: Db,
 	id: string,
 	expected: schema.EntityType,
-	userId: string
+	storyId: string
 ): Promise<void> {
 	const [row] = await db
 		.select({ id: entities.id, type: entities.type })
 		.from(entities)
-		.where(and(eq(entities.id, id), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, id), eq(entities.storyId, storyId)));
 	if (!row) throw new Error(`Entity not found: ${id}`);
 	if (row.type !== expected) {
 		throw new Error(
@@ -53,22 +53,22 @@ async function assertEntityType(
 export async function validateFKTypes(
 	db: Db,
 	input: WriteIntervalInput,
-	userId: string
+	storyId: string
 ): Promise<void> {
 	const [entity] = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.id, input.entityId), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, input.entityId), eq(entities.storyId, storyId)));
 	if (!entity) throw new Error(`entity_id not found: ${input.entityId}`);
 
-	await assertEntityType(db, input.startActId, 'Act', userId);
-	await assertEntityType(db, input.endActId, 'Act', userId);
-	if (input.startSceneId) await assertEntityType(db, input.startSceneId, 'Scene', userId);
-	if (input.endSceneId) await assertEntityType(db, input.endSceneId, 'Scene', userId);
+	await assertEntityType(db, input.startActId, 'Act', storyId);
+	await assertEntityType(db, input.endActId, 'Act', storyId);
+	if (input.startSceneId) await assertEntityType(db, input.startSceneId, 'Scene', storyId);
+	if (input.endSceneId) await assertEntityType(db, input.endSceneId, 'Scene', storyId);
 }
 
 /**
- * Assert that `id` is an entity of type='Event' owned by `userId`. Used to
+ * Assert that `id` is an entity of type='Event' owned by `storyId`. Used to
  * enforce the polymorphic FK invariant on `map_events.source_event_id`
  * (World Map v3, Slice 1a) at the application layer — Postgres cannot
  * CHECK a column's referent type cleanly. Same pattern as the start_act_id /
@@ -82,7 +82,7 @@ export async function validateFKTypes(
 export async function assertSourceEventIdIsEvent(
 	db: Db,
 	id: string,
-	userId: string
+	storyId: string
 ): Promise<void> {
-	await assertEntityType(db, id, 'Event', userId);
+	await assertEntityType(db, id, 'Event', storyId);
 }

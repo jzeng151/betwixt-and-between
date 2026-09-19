@@ -19,6 +19,7 @@
  * and retry — no lost update (server-side correctness is in user-preferences.ts).
  */
 
+import { storyFetch } from '../story-fetch.js';
 import { get, writable, type Readable } from 'svelte/store';
 import { failedWrites } from '../stores/pending-writes.js';
 import {
@@ -46,7 +47,8 @@ interface PendingPatch {
 }
 
 // ── module state ──────────────────────────────────────────────────────────
-let fetchImpl: typeof fetch = (...args) => globalThis.fetch(...args);
+let fetchImpl: (input: string, init?: RequestInit) => Promise<Response> =
+	(input, init) => storyFetch(input, init, { required: false });
 let debounceMs = 400;
 let serverVersion = 0; // 0 = not hydrated / anonymous (no server writes)
 // The active profile id the current serverVersion/blob belong to (Phase 3, F2).

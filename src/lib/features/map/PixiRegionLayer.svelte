@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { storyFetch } from '$lib/story-fetch.js';
+
 	// Pixi-side region renderer — Slice 1b PR 2 commit 4 (the demo unlock)
 	// plus commit 6 right-click → Change owner UX.
 	//
@@ -411,7 +413,7 @@
 		if (t === null) return;
 		provenance = { regionId, loading: true, error: null, result: null };
 		try {
-			const res = await fetch(
+			const res = await storyFetch(
 				`/api/maps/${mapId}/provenance?regionId=${encodeURIComponent(regionId)}&t=${t}`
 			);
 			if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);

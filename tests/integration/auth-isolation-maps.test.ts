@@ -63,7 +63,7 @@ describe('auth isolation: /api/maps', () => {
 		userB = (await seedTestUser(currentDb, { email: 'b@t.com' })).id;
 		const [m] = await currentDb
 			.insert(worldMaps)
-			.values({ userId: userA, name: 'A map' })
+			.values({ storyId: userA, name: 'A map' })
 			.returning();
 		aMapId = m.id;
 		const r = await seedRegionWithAnchorBackfill(currentDb, {

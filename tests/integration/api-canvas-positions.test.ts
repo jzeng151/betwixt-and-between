@@ -49,7 +49,7 @@ describe('/api/canvas-positions GET', () => {
 	it('returns inserted rows', async () => {
 		const [e] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'A' })
+			.values({ storyId: userId, type: 'Character', name: 'A' })
 			.returning();
 		await route.PUT(mkEvent({ body: { entityId: e.id, x: 10, y: 20 } }));
 
@@ -69,7 +69,7 @@ describe('/api/canvas-positions PUT', () => {
 		userId = _user.id;
 		const [e] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		entityId = e.id;
 	});

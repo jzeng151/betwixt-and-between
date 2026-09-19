@@ -64,7 +64,7 @@ const { POST: POST_BATCH } = await import('../../src/routes/api/entities/batch/+
 async function seedCharacter(name: string): Promise<string> {
 	const [row] = await db
 		.insert(entities)
-		.values({ userId, type: 'Character', name })
+		.values({ storyId: userId, type: 'Character', name })
 		.returning();
 	return row.id;
 }
@@ -72,7 +72,7 @@ async function seedCharacter(name: string): Promise<string> {
 async function seedScene(parentId: string, name: string, position: number): Promise<string> {
 	const [row] = await db
 		.insert(entities)
-		.values({ userId, type: 'Scene', name, parentId, position })
+		.values({ storyId: userId, type: 'Scene', name, parentId, position })
 		.returning();
 	return row.id;
 }
@@ -406,14 +406,14 @@ describe('WM — moveSceneToAct reanchors scene-anchored world_map variants (cod
 		const scene = await seedScene(acts.act0, 'S', 0);
 		const [location] = await db
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Gondor' })
+			.values({ storyId: userId, type: 'Location', name: 'Gondor' })
 			.returning();
 
 		// Variant scene-anchored to S, the single scene of act0 → spans [0, 1).
 		const [variant] = await db
 			.insert(worldMaps)
 			.values({
-				userId,
+				storyId: userId,
 				name: 'Gondor — during S',
 				locationId: location.id,
 				startActId: acts.act0,
@@ -538,7 +538,7 @@ describe('NTE-PARITY — generic entity routes apply the roomy note cap to Notes
 	it('PATCH /api/entities/[id] applies the note cap when the existing row is a Note', async () => {
 		const [note] = await db
 			.insert(entities)
-			.values({ userId, type: 'Note', name: 'Backstory', data: { body: '' } })
+			.values({ storyId: userId, type: 'Note', name: 'Backstory', data: { body: '' } })
 			.returning();
 		const res = await PATCH_ENTITY(
 			mkEvent({ params: { id: note.id }, body: { data: bigNoteData } })
@@ -579,12 +579,12 @@ describe('INV — scene reorder swap-normalizes inverted bounds across all sibli
 		const { acts, s0, s1 } = await seedTwoSceneAct();
 		const [location] = await db
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Gondor' })
+			.values({ storyId: userId, type: 'Location', name: 'Gondor' })
 			.returning();
 		const [variant] = await db
 			.insert(worldMaps)
 			.values({
-				userId,
+				storyId: userId,
 				name: 'Gondor — S0..S1',
 				locationId: location.id,
 				startActId: acts.act0,
@@ -611,7 +611,7 @@ describe('INV — scene reorder swap-normalizes inverted bounds across all sibli
 		const [edge] = await db
 			.insert(relationships)
 			.values({
-				userId,
+				storyId: userId,
 				fromId: ellie,
 				toId: damien,
 				type: 'other',
@@ -638,7 +638,7 @@ describe('INV — scene reorder swap-normalizes inverted bounds across all sibli
 		const [placement] = await db
 			.insert(mapPlacements)
 			.values({
-				userId,
+				storyId: userId,
 				placeableId: ellie,
 				x: 0.5,
 				y: 0.5,
@@ -670,7 +670,7 @@ describe('EXCL-409 — a recompute that overlaps two same-Location variants retu
 		const s3 = await seedScene(acts.act0, 'S3', 3);
 		const [location] = await db
 			.insert(entities)
-			.values({ userId, type: 'Location', name: 'Gondor' })
+			.values({ storyId: userId, type: 'Location', name: 'Gondor' })
 			.returning();
 
 		// Two adjacent, non-overlapping variants for the SAME location: V1 [s0..s1]
@@ -678,7 +678,7 @@ describe('EXCL-409 — a recompute that overlaps two same-Location variants retu
 		const [v1] = await db
 			.insert(worldMaps)
 			.values({
-				userId,
+				storyId: userId,
 				name: 'V1',
 				locationId: location.id,
 				startActId: acts.act0,
@@ -692,7 +692,7 @@ describe('EXCL-409 — a recompute that overlaps two same-Location variants retu
 		const [v2] = await db
 			.insert(worldMaps)
 			.values({
-				userId,
+				storyId: userId,
 				name: 'V2',
 				locationId: location.id,
 				startActId: acts.act0,

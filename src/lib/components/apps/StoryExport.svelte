@@ -30,7 +30,7 @@
 </script>
 
 <h2>Export story data</h2>
-<p>Download the saved story data and preferences for this account as a JSON file.</p>
+<p>Download the saved data from all stories and preferences for this account as a JSON file.</p>
 <p>Finish saving edits before downloading. Unsaved drafts are not included. Uploaded and external images remain links, and importing this file is not yet supported.</p>
 <button type="button" disabled={downloading} onclick={download}>{downloading ? 'Preparing download…' : 'Download saved data'}</button>
 {#if error}<p class="error" role="alert">{error}</p>{/if}

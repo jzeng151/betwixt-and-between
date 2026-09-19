@@ -88,15 +88,17 @@ export function resolvePaletteVars(appearance: Appearance | undefined): Record<s
  */
 export function serializePaletteCookie(
 	appearance: Appearance | undefined,
-	ownerUserId?: string | null
+	ownerUserId?: string | null,
+	storyId?: string | null
 ): string {
-	const payload: { t: string; v: Record<string, string>; u?: string } = {
+	const payload: { t: string; v: Record<string, string>; u?: string; s?: string } = {
 		t: appearance?.theme === 'light' ? 'l' : 'd',
 		v: resolvePaletteVars(appearance)
 	};
 	// Tag the cookie with the signed-in user so the SSR hook can scope it to the
 	// current account (codex P1, SSR half). Omitted when anonymous / unknown.
 	if (ownerUserId) payload.u = ownerUserId;
+	if (storyId) payload.s = storyId;
 	return JSON.stringify(payload);
 }
 

@@ -56,7 +56,7 @@
 			// Stamp the signed-in user so the SSR hook scopes this cookie to the
 			// current account (codex P1, SSR half). $preferencesUserId re-fires this
 			// effect when it resolves post-hydrate, replacing any pre-hydrate value.
-			const value = encodeURIComponent(serializePaletteCookie(appearance, ownerId));
+			const value = encodeURIComponent(serializePaletteCookie(appearance, ownerId, new URL(location.href).searchParams.get('story') ?? ownerId));
 			// `secure` only on an https origin: browsers drop Secure cookies on http,
 			// which silently breaks the SSR anti-FOUC palette. Gate on the page's
 			// actual protocol rather than the DEV build flag — a production build

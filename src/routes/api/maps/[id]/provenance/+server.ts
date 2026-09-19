@@ -1,5 +1,5 @@
 import { error, json } from '@sveltejs/kit';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { traceRegionProvenance } from '$lib/server/world-map-v3-provenance.js';
 import type { RequestHandler } from './$types';
 
@@ -11,7 +11,7 @@ import type { RequestHandler } from './$types';
 // both the map and every ancestry hop (see traceRegionProvenance).
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const regionId = event.url.searchParams.get('regionId');
 	const tRaw = event.url.searchParams.get('t');
 	if (!regionId) error(400, 'regionId is required');
@@ -21,5 +21,5 @@ export const GET: RequestHandler = async (event) => {
 	if (tRaw === null || tRaw === '') error(400, 't is required');
 	const t = Number(tRaw);
 	if (!Number.isFinite(t)) error(400, 't must be a finite number');
-	return json(await traceRegionProvenance(db, userId, event.params.id, regionId, t));
+	return json(await traceRegionProvenance(db, storyId, event.params.id, regionId, t));
 };

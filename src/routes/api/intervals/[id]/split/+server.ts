@@ -1,12 +1,12 @@
 import { json, error } from '@sveltejs/kit';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { splitInterval } from '$lib/server/intervals.js';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const body = await readJson(event);
 	const atPosition = body.atPosition ?? body.at_position;
 	if (typeof atPosition !== 'number' || !Number.isFinite(atPosition)) {
@@ -19,7 +19,7 @@ export const POST: RequestHandler = async (event) => {
 	// guards against.
 	try {
 		const { left, right } = await db.transaction(async (tx) =>
-			splitInterval(tx, event.params.id, atPosition, userId)
+			splitInterval(tx, event.params.id, atPosition, storyId)
 		);
 		return json({ left, right });
 	} catch (err) {

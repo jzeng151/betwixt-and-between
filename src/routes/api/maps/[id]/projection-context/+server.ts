@@ -7,8 +7,8 @@
 // pure projectState resolve faction colors and lazy-GC orphan regions
 // without ever importing server-only code.
 //
-// Cross-user invariant (CLAUDE.md): mapRegions has no user_id column;
-// scope must JOIN through worldMaps.user_id. fetchProjectionContext does
+// Cross-user invariant (CLAUDE.md): mapRegions has no story_id column;
+// scope must JOIN through worldMaps.story_id. fetchProjectionContext does
 // the join. The map-existence pre-check below is defense-in-depth — a
 // non-owning user hits 404 instead of an empty-payload 200 that would
 // leak the bare fact "this map id exists for someone."
@@ -16,14 +16,14 @@
 import { json, error } from '@sveltejs/kit';
 import { worldMaps } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { fetchProjectionContext } from '$lib/server/projection-context.js';
 import { isUuid } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 
 	// Codex P2 on PR #55: feeding a malformed param into a UUID-typed
 	// predicate raises a Postgres `invalid input syntax for type uuid`
@@ -36,10 +36,10 @@ export const GET: RequestHandler = async (event) => {
 	const [map] = await db
 		.select({ id: worldMaps.id })
 		.from(worldMaps)
-		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.storyId, storyId)));
 	if (!map) error(404, 'Map not found');
 
-	const ctx = await fetchProjectionContext(db, event.params.id!, userId);
+	const ctx = await fetchProjectionContext(db, event.params.id!, storyId);
 
 	// Serialize Map / Set to plain JSON shapes. Client reconstructs into
 	// Map / Set on receive (use-projection.ts in commit 3c). The shape is

@@ -39,7 +39,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -89,7 +89,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 	it('moveSceneToAct composes inside db.transaction', async () => {
 		const [s] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
 			.returning();
 
 		await db.transaction(async (tx) => {
@@ -146,7 +146,7 @@ describe('Interval helpers — transaction threading and atomicity (D17/17A)', (
 	it('rollback: failure mid-moveSceneToAct leaves scene + intervals untouched', async () => {
 		const [s] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S', parentId: acts.act1, position: 0 })
 			.returning();
 		await writeInterval(db, {
 			entityId: ellie,

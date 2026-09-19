@@ -41,12 +41,12 @@ export async function assertNoOverlap(
 	startPosition: number,
 	endPosition: number,
 	excludeId: string | undefined,
-	userId: string
+	storyId: string
 ): Promise<void> {
 	const existing = await db
 		.select()
 		.from(intervals)
-		.where(and(eq(intervals.entityId, entityId), eq(intervals.userId, userId)));
+		.where(and(eq(intervals.entityId, entityId), eq(intervals.storyId, storyId)));
 
 	for (const row of existing) {
 		if (excludeId && row.id === excludeId) continue;

@@ -208,3 +208,15 @@ it('retains an already-failed rename until the user acknowledges it', async () =
 	failedWrites.set([]);
 	await expect(flushPendingWrites()).resolves.toBeUndefined();
 });
+
+
+it('tracks a failed folder creation once and a successful retry clears it', async () => {
+	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse({}, false, 503));
+	await expect(notesStore.createFolder('Retry folder')).rejects.toThrow();
+	expect(get(failedWrites)).toHaveLength(1);
+	await expect(flushPendingWrites()).rejects.toThrow(/failed to save/);
+	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse({ id: 'retry-folder', name: 'Retry folder' }));
+	await notesStore.createFolder('Retry folder');
+	await expect(flushPendingWrites()).resolves.toBeUndefined();
+	expect(get(failedWrites)).toHaveLength(0);
+});

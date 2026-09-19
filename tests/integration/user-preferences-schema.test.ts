@@ -20,17 +20,17 @@ type Db = Awaited<ReturnType<typeof createTestDb>>;
 
 describe('0024 user_preferences — schema invariants', () => {
 	let db: Db;
-	let userId: string;
+	let storyId: string;
 
 	beforeEach(async () => {
 		db = await createTestDb();
-		userId = (await seedTestUser(db)).id;
+		storyId = (await seedTestUser(db)).id;
 	});
 
 	it('applies the migration and new rows pick up defaults', async () => {
 		const [row] = await db
 			.insert(userPreferences)
-			.values({ userId, name: 'Default' })
+			.values({ storyId, name: 'Default' })
 			.returning();
 		expect(row.name).toBe('Default');
 		expect(row.isActive).toBe(1);
@@ -42,19 +42,19 @@ describe('0024 user_preferences — schema invariants', () => {
 	});
 
 	it('rejects a second is_active=1 row for the same user (partial unique)', async () => {
-		await db.insert(userPreferences).values({ userId, name: 'Default' });
+		await db.insert(userPreferences).values({ storyId, name: 'Default' });
 		// Different profile_id (PK differs) — the rejection must come from the
 		// partial unique index user_preferences_one_active, not the PK.
 		await expect(
-			db.insert(userPreferences).values({ userId, name: 'Second active' })
+			db.insert(userPreferences).values({ storyId, name: 'Second active' })
 		).rejects.toThrow();
 	});
 
 	it('allows each user their own active row (constraint is per-user)', async () => {
 		const otherUserId = (await seedTestUser(db, { email: 'other@test.com' })).id;
-		await db.insert(userPreferences).values({ userId, name: 'Default' });
+		await db.insert(userPreferences).values({ storyId, name: 'Default' });
 		await expect(
-			db.insert(userPreferences).values({ userId: otherUserId, name: 'Default' })
+			db.insert(userPreferences).values({ storyId: otherUserId, name: 'Default' })
 		).resolves.toBeDefined();
 		const active = await db
 			.select()
@@ -64,14 +64,14 @@ describe('0024 user_preferences — schema invariants', () => {
 	});
 
 	it('allows a user to hold inactive rows alongside the active one (profiles groundwork)', async () => {
-		await db.insert(userPreferences).values({ userId, name: 'Default' });
+		await db.insert(userPreferences).values({ storyId, name: 'Default' });
 		await expect(
-			db.insert(userPreferences).values({ userId, name: 'Map work', isActive: 0 })
+			db.insert(userPreferences).values({ storyId, name: 'Map work', isActive: 0 })
 		).resolves.toBeDefined();
 		const rows = await db
 			.select()
 			.from(userPreferences)
-			.where(eq(userPreferences.userId, userId));
+			.where(eq(userPreferences.storyId, storyId));
 		expect(rows).toHaveLength(2);
 		expect(rows.filter((r) => r.isActive === 1)).toHaveLength(1);
 	});
@@ -79,7 +79,7 @@ describe('0024 user_preferences — schema invariants', () => {
 	it('bump_updated_at fires on UPDATE; version is NOT auto-bumped by the trigger', async () => {
 		const [row] = await db
 			.insert(userPreferences)
-			.values({ userId, name: 'Default' })
+			.values({ storyId, name: 'Default' })
 			.returning();
 		const before = row.updatedAt.getTime();
 
@@ -90,7 +90,7 @@ describe('0024 user_preferences — schema invariants', () => {
 			.update(userPreferences)
 			.set({ data: { appearance: { theme: 'light' } } })
 			.where(
-				and(eq(userPreferences.userId, userId), eq(userPreferences.profileId, row.profileId))
+				and(eq(userPreferences.storyId, storyId), eq(userPreferences.profileId, row.profileId))
 			)
 			.returning();
 
