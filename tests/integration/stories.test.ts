@@ -38,6 +38,22 @@ it('creates the default story, lists only owned stories, and validates creation 
 	await expect(storyRoute.GET({ locals: { user: null } } as any)).rejects.toMatchObject({ status: 401 });
 });
 
+it('replays concurrent owned story creation, including at the limit, without exposing another account', async () => {
+	const id = crypto.randomUUID();
+	const create = (body: unknown) => storyRoute.POST(event(undefined, body));
+	const copies = await Promise.all([create({ id, name: 'Retry' }), create({ id, name: 'Retry' })]);
+	for (const copy of copies) expect(await copy.json()).toMatchObject({ id, name: 'Retry', userId: user.id });
+	expect(await db.select().from(stories).where(eq(stories.id, id))).toHaveLength(1);
+	await expect(create({ id, name: 'Different' })).rejects.toMatchObject({ status: 409 });
+	await expect(create({ id: 'bad', name: 'Invalid' })).rejects.toMatchObject({ status: 400 });
+	const other = await seedTestUser(db, { email: 'story-replay-other@example.com' });
+	await expect(create({ id: other.id, name: 'My story' })).rejects.toMatchObject({ status: 409 });
+	expect((await db.select().from(stories).where(eq(stories.id, other.id)))[0].userId).toBe(other.id);
+	await db.insert(stories).values(Array.from({ length: 97 }, (_, i) => ({ userId: user.id, name: `Filler ${i}` })));
+	expect(await (await create({ id: id.toUpperCase(), name: 'Retry' })).json()).toMatchObject({ id });
+	await expect(create({ id: crypto.randomUUID(), name: 'One too many' })).rejects.toMatchObject({ status: 409 });
+});
+
 it('isolates reads, writes, deletes and parent/alias links between stories in one account', async () => {
 	const first = await (await entityRoute.POST(event(undefined, { type: 'Character', name: 'First' }))).json();
 	const next = await (await entityRoute.POST(event(second, { type: 'Character', name: 'Second', storyId: user.id }))).json();
