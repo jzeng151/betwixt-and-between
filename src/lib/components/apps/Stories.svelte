@@ -32,7 +32,7 @@
 	onMount(load);
 
 	async function save(create: boolean) {
-		if (busy) return;
+		if (busy || loading) return;
 		busy = true;
 		error = '';
 		try {
@@ -76,7 +76,7 @@
 <p>Stories keep data and open windows separate. Appearance profiles are shared.</p>
 <form onsubmit={(event) => { event.preventDefault(); void save(true); }}>
 	<label for="new-story-name">New story name</label>
-	<div class="row"><input id="new-story-name" bind:value={newName} required maxlength="100" disabled={busy} /><button disabled={busy || !newName.trim()}>Create story</button></div>
+	<div class="row"><input id="new-story-name" bind:value={newName} required maxlength="100" disabled={busy || loading} /><button disabled={busy || loading || !newName.trim()}>Create story</button></div>
 </form>
 {#if loading}<p role="status">Loading stories...</p>
 {:else}
@@ -85,7 +85,7 @@
 
 <form onsubmit={(event) => { event.preventDefault(); void save(false); }}>
 	<label for="story-name">Current story name</label>
-	<div class="row"><input id="story-name" bind:value={name} required maxlength="100" disabled={busy} /><button disabled={busy || !name.trim() || name.trim() === current.name}>Rename</button></div>
+	<div class="row"><input id="story-name" bind:value={name} required maxlength="100" disabled={busy || loading} /><button disabled={busy || loading || !name.trim() || name.trim() === current.name}>Rename</button></div>
 </form>
 <p>Switching saves pending changes in this tab. Other tabs keep their current story. Existing data is in your first story.</p>
 {#if error}<p role="alert" class="error">{error}</p>{#if !stories.length}<button onclick={load} disabled={busy || loading}>Retry loading stories</button>{/if}{/if}

@@ -19,7 +19,18 @@ test('creates and renames stories, isolates two tabs, and restores each story wo
 	await expect(other.locator('.entry', { hasText: original })).toBeVisible();
 	await page.getByTitle('Settings', { exact: true }).click();
 	const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+	let releaseList!: () => void;
+	const listGate = new Promise<void>(resolve => { releaseList = resolve; });
+	await page.route('**/api/stories', async route => {
+		await listGate;
+		await route.continue();
+	}, { times: 1 });
 	await settings.getByRole('button', { name: 'Stories', exact: true }).click();
+	await expect(settings.getByRole('status')).toHaveText('Loading stories...');
+	await expect(settings.getByLabel('New story name')).toBeDisabled();
+	await expect(settings.getByLabel('Current story name')).toBeDisabled();
+	await expect(settings.getByRole('button', { name: 'Create story', exact: true })).toBeDisabled();
+	releaseList();
 	await settings.getByLabel('New story name').fill(storyName);
 	await settings.getByRole('button', { name: 'Create story', exact: true }).click();
 	const historyLength = await page.evaluate(() => history.length);
