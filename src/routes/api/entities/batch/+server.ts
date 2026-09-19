@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { and, eq, sql } from 'drizzle-orm';
 import { entities } from '$lib/server/db/schema.js';
 import { EntityType } from '$lib/server/db/schema.js';
-import { getUserId, assertParentsOwned } from '$lib/server/auth-gate.js';
+import { getStoryId, assertParentsOwned } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isExclusionViolation, isUniqueViolation } from '$lib/server/pg-errors.js';
 import { recomputeIntervalsForAct } from '$lib/server/intervals.js';
@@ -26,7 +26,7 @@ import type { RequestHandler } from './$types';
  */
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const body = (await readJson(event)) as any;
 	const items = body?.entities;
@@ -74,7 +74,7 @@ export const POST: RequestHandler = async (event) => {
 				.filter((p: unknown): p is string => typeof p === 'string')
 		)
 	);
-	await assertParentsOwned(db, userId, parentIds);
+	await assertParentsOwned(db, storyId, parentIds);
 
 	// Insert + recompute in a single transaction (WM3 design doc atomicity).
 	// A mid-batch FK violation must leave NO partial inserts behind. No
@@ -102,7 +102,7 @@ export const POST: RequestHandler = async (event) => {
 						.set({ position: sql`${entities.position} + 1` as unknown as number })
 						.where(
 							and(
-								eq(entities.userId, userId),
+								eq(entities.storyId, storyId),
 								eq(entities.type, 'Scene'),
 								eq(entities.parentId, item.parentId),
 								sql`${entities.position} >= ${item.position}`
@@ -112,7 +112,7 @@ export const POST: RequestHandler = async (event) => {
 				const [row] = await tx
 					.insert(entities)
 					.values({
-						userId,
+						storyId,
 						type: item.type,
 						name: item.name.trim(),
 						data: (item.data ?? {}) as Record<string, unknown>,
@@ -126,7 +126,7 @@ export const POST: RequestHandler = async (event) => {
 				}
 			}
 			for (const actId of affectedParentActs) {
-				await recomputeIntervalsForAct(tx, actId, userId);
+				await recomputeIntervalsForAct(tx, actId, storyId);
 			}
 			return rows;
 		});

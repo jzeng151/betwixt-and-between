@@ -22,7 +22,7 @@
 	interface Props {
 		value: StyleOverride;
 		inherited: ResolvedStyle;
-		onChange: (next: StyleOverride) => void;
+		onChange: (next: StyleOverride, field: keyof StyleOverride) => void;
 	}
 	let { value, inherited, onChange }: Props = $props();
 
@@ -57,17 +57,13 @@
 		iconDraft = value.icon ?? '';
 	});
 
-	function emit(next: StyleOverride) {
-		onChange(next);
-	}
-
 	// Set or clear a single key, dropping undefined keys so the override only
 	// carries what the user explicitly set.
 	function setKey<K extends keyof StyleOverride>(key: K, v: StyleOverride[K] | undefined) {
 		const next: StyleOverride = { ...value };
 		if (v === undefined) delete next[key];
 		else next[key] = v;
-		emit(next);
+		onChange(next, key);
 	}
 
 	// The marker renderer (PixiPlacementLayer.parseHex) draws only opaque RGB:

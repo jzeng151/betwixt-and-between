@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { entities, mapAnchors, worldMaps } from '$lib/server/db/schema.js';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import {
 	recomputeAllIntervals,
 	recomputeIntervalsForAct,
@@ -21,11 +21,11 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const [entity] = await db
 		.select()
 		.from(entities)
-		.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, event.params.id), eq(entities.storyId, storyId)));
 	if (!entity) error(404, 'Entity not found');
 	return json(entity);
 };
@@ -39,7 +39,7 @@ export const GET: RequestHandler = async (event) => {
  */
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const body = await readJson(event);
 	const { name, data, parentId, position } = body as {
 		name?: string;
@@ -61,7 +61,7 @@ export const PATCH: RequestHandler = async (event) => {
 	const [entity] = await db
 		.select()
 		.from(entities)
-		.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, event.params.id), eq(entities.storyId, storyId)));
 	if (!entity) error(404, 'Entity not found');
 
 	// updated_at is maintained by the bump_updated_at BEFORE UPDATE trigger
@@ -96,17 +96,17 @@ export const PATCH: RequestHandler = async (event) => {
 		const { moveSceneToAct } = await import('$lib/server/intervals.js');
 		const newPos = typeof position === 'number' ? position : 0;
 		const refreshed = await db.transaction(async (tx) => {
-			await moveSceneToAct(tx, event.params.id, parentId as string, newPos, userId);
+			await moveSceneToAct(tx, event.params.id, parentId as string, newPos, storyId);
 			if (name !== undefined || data !== undefined) {
 				await tx
 					.update(entities)
 					.set(updates)
-					.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)));
+					.where(and(eq(entities.id, event.params.id), eq(entities.storyId, storyId)));
 			}
 			const [row] = await tx
 				.select()
 				.from(entities)
-				.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)));
+				.where(and(eq(entities.id, event.params.id), eq(entities.storyId, storyId)));
 			return row;
 		}).catch((err) => {
 			if ((err as { status?: number }).status) throw err;
@@ -132,7 +132,7 @@ export const PATCH: RequestHandler = async (event) => {
 	}
 
 	// Position change — cascade siblings if same parent context (D18/12A).
-	// userId in WHERE: critical — User A's reorder must not bump User B's
+	// storyId in WHERE: critical — User A's reorder must not bump User B's
 	// siblings (especially for Acts where parentId is null).
 	//
 	// Whole block runs inside db.transaction for cascade atomicity (WM3 design
@@ -153,15 +153,15 @@ export const PATCH: RequestHandler = async (event) => {
 		let preSnapshot: Awaited<ReturnType<typeof snapshotActOrdering>> | undefined;
 
 		if (willPositionCascade && entity.type === 'Act') {
-			preSnapshot = await snapshotActOrdering(tx, userId);
+			preSnapshot = await snapshotActOrdering(tx, storyId);
 		}
 
 		if (willPositionCascade) {
 			const oldPos = entity.position;
 			const siblingFilter =
 				entity.type === 'Act'
-					? and(eq(entities.userId, userId), eq(entities.type, 'Act'), isNull(entities.parentId))
-					: and(eq(entities.userId, userId), eq(entities.type, 'Scene'), eq(entities.parentId, entity.parentId!));
+					? and(eq(entities.storyId, storyId), eq(entities.type, 'Act'), isNull(entities.parentId))
+					: and(eq(entities.storyId, storyId), eq(entities.type, 'Scene'), eq(entities.parentId, entity.parentId!));
 
 			if (oldPos === null) {
 				// Position was null — treat as appending at the end. Just set it.
@@ -198,14 +198,14 @@ export const PATCH: RequestHandler = async (event) => {
 		const [row] = await tx
 			.update(entities)
 			.set(updates)
-			.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)))
+			.where(and(eq(entities.id, event.params.id), eq(entities.storyId, storyId)))
 			.returning();
 
 		if (willPositionCascade) {
 			if (entity.type === 'Act') {
-				await recomputeAllIntervals(tx, userId, preSnapshot);
+				await recomputeAllIntervals(tx, storyId, preSnapshot);
 			} else if (entity.type === 'Scene' && entity.parentId) {
-				await recomputeIntervalsForAct(tx, entity.parentId, userId);
+				await recomputeIntervalsForAct(tx, entity.parentId, storyId);
 			}
 		}
 
@@ -235,11 +235,11 @@ export const PATCH: RequestHandler = async (event) => {
  */
 export const DELETE: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const [entity] = await db
 		.select()
 		.from(entities)
-		.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, event.params.id), eq(entities.storyId, storyId)));
 	if (!entity) error(404, 'Entity not found');
 
 	const moveScenesTo = event.url.searchParams.get('moveScenesTo');
@@ -253,7 +253,7 @@ export const DELETE: RequestHandler = async (event) => {
 		const [target] = await db
 			.select()
 			.from(entities)
-			.where(and(eq(entities.id, moveScenesTo), eq(entities.userId, userId)));
+			.where(and(eq(entities.id, moveScenesTo), eq(entities.storyId, storyId)));
 		if (!target) {
 			error(400, `moveScenesTo target not found: ${moveScenesTo}`);
 		}
@@ -270,7 +270,7 @@ export const DELETE: RequestHandler = async (event) => {
 	// unchanged — semantic drift accepted, U12 revisit in Slice 2).
 	await db.transaction(async (tx) => {
 		const preSnapshot =
-			entity.type === 'Act' ? await snapshotActOrdering(tx, userId) : undefined;
+			entity.type === 'Act' ? await snapshotActOrdering(tx, storyId) : undefined;
 
 		// Ids of scenes reparented to moveScenesTo (consumed by the rescope
 		// block below — an interval side anchored to one of these scenes now
@@ -283,12 +283,12 @@ export const DELETE: RequestHandler = async (event) => {
 			const sourceScenes = await tx
 				.select()
 				.from(entities)
-				.where(and(eq(entities.userId, userId), eq(entities.type, 'Scene'), eq(entities.parentId, event.params.id)))
+				.where(and(eq(entities.storyId, storyId), eq(entities.type, 'Scene'), eq(entities.parentId, event.params.id)))
 				.orderBy(entities.position, entities.createdAt);
 			const targetScenes = await tx
 				.select({ id: entities.id })
 				.from(entities)
-				.where(and(eq(entities.userId, userId), eq(entities.type, 'Scene'), eq(entities.parentId, moveScenesTo)));
+				.where(and(eq(entities.storyId, storyId), eq(entities.type, 'Scene'), eq(entities.parentId, moveScenesTo)));
 			const offset = targetScenes.length;
 
 			// Reparent each scene (per-row: each gets a distinct position).
@@ -298,7 +298,7 @@ export const DELETE: RequestHandler = async (event) => {
 				await tx
 					.update(entities)
 					.set({ parentId: moveScenesTo, position: offset + i })
-					.where(and(eq(entities.id, scene.id), eq(entities.userId, userId)));
+					.where(and(eq(entities.id, scene.id), eq(entities.storyId, storyId)));
 			}
 
 			// Re-anchor interval + relationship act FKs for the moved scenes
@@ -315,19 +315,19 @@ export const DELETE: RequestHandler = async (event) => {
 					await tx
 						.update(intervalsTable)
 						.set({ startActId: moveScenesTo })
-						.where(and(inArray(intervalsTable.startSceneId, sceneIds), eq(intervalsTable.userId, userId)));
+						.where(and(inArray(intervalsTable.startSceneId, sceneIds), eq(intervalsTable.storyId, storyId)));
 					await tx
 						.update(intervalsTable)
 						.set({ endActId: moveScenesTo })
-						.where(and(inArray(intervalsTable.endSceneId, sceneIds), eq(intervalsTable.userId, userId)));
+						.where(and(inArray(intervalsTable.endSceneId, sceneIds), eq(intervalsTable.storyId, storyId)));
 					await tx
 						.update(relationshipsTable)
 						.set({ startActId: moveScenesTo })
-						.where(and(inArray(relationshipsTable.startSceneId, sceneIds), eq(relationshipsTable.userId, userId)));
+						.where(and(inArray(relationshipsTable.startSceneId, sceneIds), eq(relationshipsTable.storyId, storyId)));
 					await tx
 						.update(relationshipsTable)
 						.set({ endActId: moveScenesTo })
-						.where(and(inArray(relationshipsTable.endSceneId, sceneIds), eq(relationshipsTable.userId, userId)));
+						.where(and(inArray(relationshipsTable.endSceneId, sceneIds), eq(relationshipsTable.storyId, storyId)));
 				}
 				// NOTE (2026-06 review): map_placements + world_maps variants scene-
 				// anchored to a moved scene are deliberately NOT reanchored here. Their
@@ -350,7 +350,7 @@ export const DELETE: RequestHandler = async (event) => {
 			const allActs = await tx
 				.select({ id: entities.id, position: entities.position, createdAt: entities.createdAt })
 				.from(entities)
-				.where(and(eq(entities.userId, userId), eq(entities.type, 'Act'), isNull(entities.parentId)))
+				.where(and(eq(entities.storyId, storyId), eq(entities.type, 'Act'), isNull(entities.parentId)))
 				.orderBy(entities.position, entities.createdAt);
 			const deletedIdx = allActs.findIndex((a) => a.id === event.params.id);
 			if (deletedIdx >= 0 && allActs.length > 1) {
@@ -362,7 +362,7 @@ export const DELETE: RequestHandler = async (event) => {
 					.from(intervalsTable)
 					.where(
 						and(
-							eq(intervalsTable.userId, userId),
+							eq(intervalsTable.storyId, storyId),
 							or(
 								eq(intervalsTable.startActId, event.params.id),
 								eq(intervalsTable.endActId, event.params.id)
@@ -386,7 +386,7 @@ export const DELETE: RequestHandler = async (event) => {
 					if (startInDeleted && endInDeleted) {
 						await tx
 							.delete(intervalsTable)
-							.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
+							.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.storyId, storyId)));
 						continue;
 					}
 
@@ -406,11 +406,11 @@ export const DELETE: RequestHandler = async (event) => {
 									endSceneId: null,
 									endPosition: targetPostIdx + 1
 								})
-								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
+								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.storyId, storyId)));
 						} else if (!prevAct) {
 							await tx
 								.delete(intervalsTable)
-								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
+								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.storyId, storyId)));
 							continue;
 						} else {
 							/* See full comment in pre-tx version: ordered-list index, not stored
@@ -424,7 +424,7 @@ export const DELETE: RequestHandler = async (event) => {
 									endSceneId: null,
 									endPosition: newEndPos
 								})
-								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
+								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.storyId, storyId)));
 						}
 					}
 
@@ -440,11 +440,11 @@ export const DELETE: RequestHandler = async (event) => {
 									startSceneId: null,
 									startPosition: targetPostIdx
 								})
-								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
+								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.storyId, storyId)));
 						} else if (!nextAct) {
 							await tx
 								.delete(intervalsTable)
-								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
+								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.storyId, storyId)));
 							continue;
 						} else {
 							/* nextAct's pre-delete index = deletedIdx+1; post-delete it shifts down
@@ -458,7 +458,7 @@ export const DELETE: RequestHandler = async (event) => {
 									startSceneId: null,
 									startPosition: newStartPos
 								})
-								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.userId, userId)));
+								.where(and(eq(intervalsTable.id, iv.id), eq(intervalsTable.storyId, storyId)));
 						}
 					}
 				}
@@ -471,7 +471,7 @@ export const DELETE: RequestHandler = async (event) => {
 		// `map_regions.location_id ON DELETE SET NULL` handled this. Post-
 		// T6 anchor JSON is a free-form string blob with no FK; deleting
 		// a Location without this scrub leaves stale ids in canonical
-		// state. Scoped via world_maps.user_id so a cross-user run of
+		// state. Scoped via world_maps.story_id so a cross-user run of
 		// this helper can't touch foreign data.
 		if (entity.type === 'Location') {
 			// codex PR review iter 9: region writes now store the DB-canonical
@@ -503,7 +503,7 @@ export const DELETE: RequestHandler = async (event) => {
 				)
 				FROM ${worldMaps}
 				WHERE ${mapAnchors.worldMapId} = ${worldMaps.id}
-					AND ${worldMaps.userId} = ${userId}
+					AND ${worldMaps.storyId} = ${storyId}
 					AND state_jsonb->'regions' @> ${`[{"locationId":"${canonicalId}"}]`}::jsonb
 			`);
 		}
@@ -511,13 +511,13 @@ export const DELETE: RequestHandler = async (event) => {
 		// FK CASCADE removes remaining scenes and any fully-contained intervals already deleted above.
 		await tx
 			.delete(entities)
-			.where(and(eq(entities.id, event.params.id), eq(entities.userId, userId)));
+			.where(and(eq(entities.id, event.params.id), eq(entities.storyId, storyId)));
 
 		// Recompute survivors. Act delete shifts every act's index; recompute all.
 		if (entity.type === 'Act') {
-			await recomputeAllIntervals(tx, userId, preSnapshot);
+			await recomputeAllIntervals(tx, storyId, preSnapshot);
 		} else if (entity.type === 'Scene' && entity.parentId) {
-			await recomputeIntervalsForAct(tx, entity.parentId, userId);
+			await recomputeIntervalsForAct(tx, entity.parentId, storyId);
 		}
 	}).catch((err) => {
 		if ((err as { status?: number }).status) throw err;

@@ -25,65 +25,65 @@ async function expectStatus(p: Promise<unknown>, status: number) {
 
 describe('Phase 3 presets', () => {
 	let db: TestDb;
-	let userId: string;
+	let storyId: string;
 	beforeEach(async () => {
 		db = await createTestDb();
-		userId = (await seedTestUser(db)).id;
+		storyId = (await seedTestUser(db)).id;
 	});
 
 	it('lists built-ins with no user rows initially', async () => {
-		const { builtins, user } = await listPresets(db, userId);
+		const { builtins, user } = await listPresets(db, storyId);
 		expect(user).toHaveLength(0);
 		expect(builtins.map((p) => p.name)).toContain('High Contrast');
 		expect(builtins.every((p) => p.builtin)).toBe(true);
 	});
 
 	it('creates a user preset and lists it', async () => {
-		const created = await createPreset(db, userId, 'My Theme', {
+		const created = await createPreset(db, storyId, 'My Theme', {
 			theme: 'dark',
 			accentColor: '#abcdef',
 			entityTypeColors: { Character: '#123456' }
 		});
 		expect(created).toMatchObject({ name: 'My Theme', builtin: false });
-		const { user } = await listPresets(db, userId);
+		const { user } = await listPresets(db, storyId);
 		expect(user).toHaveLength(1);
 		expect(user[0].appearance).toMatchObject({ accentColor: '#abcdef' });
 	});
 
 	it('rejects an invalid appearance (bad hex / unknown key / non-object)', async () => {
-		await expectStatus(createPreset(db, userId, 'bad', { accentColor: 'not-a-hex' }), 400);
+		await expectStatus(createPreset(db, storyId, 'bad', { accentColor: 'not-a-hex' }), 400);
 		await expectStatus(
-			createPreset(db, userId, 'bad', { entityTypeColors: { Nope: '#ffffff' } }),
+			createPreset(db, storyId, 'bad', { entityTypeColors: { Nope: '#ffffff' } }),
 			400
 		);
-		await expectStatus(createPreset(db, userId, 'bad', 42 as unknown), 400);
-		await expectStatus(createPreset(db, userId, '   ', { theme: 'dark' }), 400);
+		await expectStatus(createPreset(db, storyId, 'bad', 42 as unknown), 400);
+		await expectStatus(createPreset(db, storyId, '   ', { theme: 'dark' }), 400);
 	});
 
 	it('requires theme and accentColor (preset is applied as an exact replacement) (codex PR #69)', async () => {
-		await expectStatus(createPreset(db, userId, 'no-accent', { theme: 'dark' }), 400);
-		await expectStatus(createPreset(db, userId, 'no-theme', { accentColor: '#abcdef' }), 400);
+		await expectStatus(createPreset(db, storyId, 'no-accent', { theme: 'dark' }), 400);
+		await expectStatus(createPreset(db, storyId, 'no-theme', { accentColor: '#abcdef' }), 400);
 	});
 
 	it('deletes a user preset; built-in ids are not deletable', async () => {
-		const created = await createPreset(db, userId, 'Tmp', { theme: 'light', accentColor: '#abcdef' });
-		await deletePreset(db, userId, created.presetId);
-		expect((await listPresets(db, userId)).user).toHaveLength(0);
+		const created = await createPreset(db, storyId, 'Tmp', { theme: 'light', accentColor: '#abcdef' });
+		await deletePreset(db, storyId, created.presetId);
+		expect((await listPresets(db, storyId)).user).toHaveLength(0);
 		// Built-in id is not a uuid → 400; a random uuid → 404.
-		await expectStatus(deletePreset(db, userId, 'builtin:high-contrast'), 400);
-		await expectStatus(deletePreset(db, userId, crypto.randomUUID()), 404);
+		await expectStatus(deletePreset(db, storyId, 'builtin:high-contrast'), 400);
+		await expectStatus(deletePreset(db, storyId, crypto.randomUUID()), 404);
 	});
 
 	it('rejects an oversized appearance payload (codex PR #69)', async () => {
 		// validateAppearance ignores unknown top-level keys, so the size guard is
 		// what stops a client bloating its preset rows (loaded on every list).
 		const huge = { theme: 'dark', accentColor: '#abcdef', junk: 'x'.repeat(70_000) } as unknown;
-		await expectStatus(createPreset(db, userId, 'big', huge), 400);
-		expect((await listPresets(db, userId)).user).toHaveLength(0);
+		await expectStatus(createPreset(db, storyId, 'big', huge), 400);
+		expect((await listPresets(db, storyId)).user).toHaveLength(0);
 	});
 
 	it('presets are user-scoped', async () => {
-		const created = await createPreset(db, userId, 'Mine', { theme: 'dark', accentColor: '#abcdef' });
+		const created = await createPreset(db, storyId, 'Mine', { theme: 'dark', accentColor: '#abcdef' });
 		const otherId = (await seedTestUser(db, { email: 'b@t.com' })).id;
 		expect((await listPresets(db, otherId)).user).toHaveLength(0);
 		await expectStatus(deletePreset(db, otherId, created.presetId), 404);
@@ -91,10 +91,10 @@ describe('Phase 3 presets', () => {
 
 	it('apply changes ONLY appearance.* — graph/windows/editor survive (F1)', async () => {
 		// Seed a profile with customised appearance + the other sections.
-		const v1 = (await getActivePreferences(db, userId)).version;
+		const v1 = (await getActivePreferences(db, storyId)).version;
 		const r = await patchPreferences(
 			db,
-			userId,
+			storyId,
 			{
 				set: {
 					appearance: {
@@ -116,7 +116,7 @@ describe('Phase 3 presets', () => {
 		};
 		const active = r.data.appearance as Appearance;
 		const patch = buildApplyPresetPatch(active, preset);
-		const applied = await patchPreferences(db, userId, patch, r.version);
+		const applied = await patchPreferences(db, storyId, patch, r.version);
 
 		// appearance is exactly the preset (Character dropped, Location replaced).
 		expect(applied.data.appearance).toEqual(preset);

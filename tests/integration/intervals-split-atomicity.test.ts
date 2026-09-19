@@ -37,7 +37,7 @@ describe('splitInterval atomicity under tx rollback', () => {
 		acts = await seedActs(db, userId);
 		const [e] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = e.id;
 	});

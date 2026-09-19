@@ -48,11 +48,11 @@ describe('/api/intervals GET', () => {
 		acts = await seedActs(currentDb, userId);
 		const [e] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		const [b] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Bob' })
+			.values({ storyId: userId, type: 'Character', name: 'Bob' })
 			.returning();
 		ellie = e.id;
 		bob = b.id;
@@ -117,7 +117,7 @@ describe('/api/intervals POST', () => {
 		acts = await seedActs(currentDb, userId);
 		const [e] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = e.id;
 	});
@@ -182,7 +182,7 @@ describe('/api/intervals/[id] GET/PATCH/DELETE', () => {
 		acts = await seedActs(currentDb, userId);
 		const [e] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = e.id;
 		const created = await readJson(

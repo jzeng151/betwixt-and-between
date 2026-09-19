@@ -1,8 +1,8 @@
 // Server-only helper: fetch the ProjectionContext for a given (worldMapId,
-// userId) pair, with the cross-user defenses baked into the SQL.
+// storyId) pair, with the cross-story defenses baked into the SQL.
 //
 // Why this file exists: src/lib/features/map/projection.ts is a PURE
-// function — it must remain client-importable and DB-free. The cross-user
+// function — it must remain client-importable and DB-free. The cross-story
 // invariant ("skip faction_id not owned by world_maps.user_id" — see
 // docs/plans/world-map-v3-design.md § Slice 1a clarifications, outside-voice
 // codex #9) requires a DB query, so it lives here under src/lib/server/.
@@ -19,7 +19,7 @@ import type {
 	AllowedFaction,
 	ProjectionContext
 } from '$lib/features/map/projection.js';
-import { readBaselineRegionsForUser } from './world-map-v3.js';
+import { readBaselineRegionsForStory } from './world-map-v3.js';
 
 // Loose-typed db param so this works for both the production postgres-js
 // driver and PGlite test instances; Drizzle's runtime API is identical
@@ -30,18 +30,18 @@ type AnyDb = any;
 export async function fetchProjectionContext(
 	db: AnyDb,
 	worldMapId: string,
-	userId: string
+	storyId: string
 ): Promise<ProjectionContext> {
 	const factionRows: Array<{ id: string; color: string }> = await db
 		.select({ id: factions.id, color: factions.color })
 		.from(factions)
-		.where(eq(factions.userId, userId));
+		.where(eq(factions.storyId, storyId));
 
 	// Slice 2 D2 PR-B: allowedRegions now reads from baseline anchor JSON
-	// via readBaselineRegionsForUser (cross-user-scoped via JOIN through
+	// via readBaselineRegionsForStory (cross-story-scoped via JOIN through
 	// world_maps.user_id). Same set of region ids as the old map_regions
 	// query post-T4 backfill invariant.
-	const regionRows = await readBaselineRegionsForUser(db, userId, worldMapId);
+	const regionRows = await readBaselineRegionsForStory(db, storyId, worldMapId);
 
 	const allowedFactions = new Map<string, AllowedFaction>();
 	for (const row of factionRows) {

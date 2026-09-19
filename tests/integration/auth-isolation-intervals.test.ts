@@ -48,7 +48,7 @@ describe('auth isolation: /api/intervals', () => {
 		actsA = await seedActs(currentDb, userA);
 		const [c] = await currentDb
 			.insert(entities)
-			.values({ userId: userA, type: 'Character', name: 'A-char' })
+			.values({ storyId: userA, type: 'Character', name: 'A-char' })
 			.returning();
 		aChar = c.id;
 		const created = await writeInterval(
@@ -105,11 +105,11 @@ describe('auth isolation: /api/intervals', () => {
 		const actsB = await seedActs(currentDb, userB);
 		const [bChar] = await currentDb
 			.insert(entities)
-			.values({ userId: userB, type: 'Character', name: 'B-char' })
+			.values({ storyId: userB, type: 'Character', name: 'B-char' })
 			.returning();
 		const [bScene] = await currentDb
 			.insert(entities)
-			.values({ userId: userB, type: 'Scene', name: 'B-S0', parentId: actsB.act1, position: 0 })
+			.values({ storyId: userB, type: 'Scene', name: 'B-S0', parentId: actsB.act1, position: 0 })
 			.returning();
 		await writeInterval(
 			currentDb,
@@ -126,7 +126,7 @@ describe('auth isolation: /api/intervals', () => {
 		// User A: seed scene + interval, then move scene.
 		const [aScene] = await currentDb
 			.insert(entities)
-			.values({ userId: userA, type: 'Scene', name: 'A-S0', parentId: actsA.act1, position: 0 })
+			.values({ storyId: userA, type: 'Scene', name: 'A-S0', parentId: actsA.act1, position: 0 })
 			.returning();
 		await writeInterval(
 			currentDb,
@@ -145,7 +145,7 @@ describe('auth isolation: /api/intervals', () => {
 		const bRows = await currentDb
 			.select()
 			.from(intervals)
-			.where(eq(intervals.userId, userB));
+			.where(eq(intervals.storyId, userB));
 		expect(bRows).toHaveLength(1);
 		expect(bRows[0].startActId).toBe(actsB.act1);
 		expect(bRows[0].startSceneId).toBe(bScene.id);

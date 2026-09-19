@@ -1,17 +1,17 @@
 import { json, error } from '@sveltejs/kit';
 import { entities } from '$lib/server/db/schema.js';
 import { and, eq, sql, or } from 'drizzle-orm';
-import { getUserId, assertParentOwned } from '$lib/server/auth-gate.js';
+import { getStoryId, assertParentOwned } from '$lib/server/auth-gate.js';
 import { validateNoteDataSize } from '$lib/server/style-validation.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const folderId = event.url.searchParams.get('folderId');
 
 	const conditions = [
-		eq(entities.userId, userId),
+		eq(entities.storyId, storyId),
 		eq(entities.type, 'Note'),
 		or(
 			sql`(${entities.data}->>'isFolder')::boolean IS NOT TRUE`,
@@ -34,7 +34,7 @@ export const GET: RequestHandler = async (event) => {
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const body = await event.request.json();
 	const { name, body: noteBody, parentId, position } = body as {
 		name?: string;
@@ -50,12 +50,12 @@ export const POST: RequestHandler = async (event) => {
 	const noteData = { body: noteBody ?? '' };
 	validateNoteDataSize(noteData, 'note.body');
 
-	await assertParentOwned(db, userId, parentId ?? null);
+	await assertParentOwned(db, storyId, parentId ?? null);
 
 	const [created] = await db
 		.insert(entities)
 		.values({
-			userId,
+			storyId,
 			type: 'Note',
 			name: name.trim(),
 			data: noteData,

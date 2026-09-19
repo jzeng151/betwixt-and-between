@@ -72,13 +72,13 @@ describe('auth isolation: World Map v3 endpoints', () => {
 
 		const [map] = await currentDb
 			.insert(worldMaps)
-			.values({ userId: userA, name: 'A map' })
+			.values({ storyId: userA, name: 'A map' })
 			.returning();
 		aMapId = map.id;
 
 		const [faction] = await currentDb
 			.insert(factions)
-			.values({ userId: userA, name: 'A faction', color: '#aa0000' })
+			.values({ storyId: userA, name: 'A faction', color: '#aa0000' })
 			.returning();
 		aFactionId = faction.id;
 
@@ -216,7 +216,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 	it('user A POST event referencing user B faction returns 400', async () => {
 		const [bFaction] = await currentDb
 			.insert(factions)
-			.values({ userId: userB, name: 'B faction', color: '#0000bb' })
+			.values({ storyId: userB, name: 'B faction', color: '#0000bb' })
 			.returning();
 
 		await expect(
@@ -238,7 +238,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 	it('rejects source_event_id pointing at a non-Event entity', async () => {
 		const [location] = await currentDb
 			.insert(entities)
-			.values({ userId: userA, type: 'Location', name: 'Castle' })
+			.values({ storyId: userA, type: 'Location', name: 'Castle' })
 			.returning();
 
 		await expect(
@@ -259,7 +259,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 	it('rejects source_event_id pointing at another user Event', async () => {
 		const [bEvent] = await currentDb
 			.insert(entities)
-			.values({ userId: userB, type: 'Event', name: 'B coronation' })
+			.values({ storyId: userB, type: 'Event', name: 'B coronation' })
 			.returning();
 
 		await expect(
@@ -308,7 +308,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 	it('user A POST event referencing user B region returns 400', async () => {
 		const [bMap] = await currentDb
 			.insert(worldMaps)
-			.values({ userId: userB, name: 'B map' })
+			.values({ storyId: userB, name: 'B map' })
 			.returning();
 		const bRegion = await seedRegionWithAnchorBackfill(currentDb, {
 			mapId: bMap.id,
@@ -342,7 +342,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 	it('user A POST anchor referencing user B region returns 400', async () => {
 		const [bMap] = await currentDb
 			.insert(worldMaps)
-			.values({ userId: userB, name: 'B map for anchor test' })
+			.values({ storyId: userB, name: 'B map for anchor test' })
 			.returning();
 		const bRegion = await seedRegionWithAnchorBackfill(currentDb, {
 			mapId: bMap.id,
@@ -373,7 +373,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 	it('user A POST anchor referencing user B faction returns 400', async () => {
 		const [bFaction] = await currentDb
 			.insert(factions)
-			.values({ userId: userB, name: 'B faction for anchor test', color: '#0000bb' })
+			.values({ storyId: userB, name: 'B faction for anchor test', color: '#0000bb' })
 			.returning();
 
 		await expect(
@@ -753,7 +753,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 	it('GET projection-context: user A does NOT see user B\'s factions', async () => {
 		const [bFaction] = await currentDb
 			.insert(factions)
-			.values({ userId: userB, name: 'B faction', color: '#0000bb' })
+			.values({ storyId: userB, name: 'B faction', color: '#0000bb' })
 			.returning();
 
 		const res = await projectionContextRoute.GET(
@@ -772,7 +772,7 @@ describe('auth isolation: World Map v3 endpoints', () => {
 		// scopes through worldMaps.user_id so cross-map ids stay scoped.
 		const [bMap] = await currentDb
 			.insert(worldMaps)
-			.values({ userId: userB, name: 'B map' })
+			.values({ storyId: userB, name: 'B map' })
 			.returning();
 		const bRegion = await seedRegionWithAnchorBackfill(currentDb, {
 			mapId: bMap.id,

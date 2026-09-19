@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import { trackWrite } from '$lib/stores/pending-writes.js';
   import AccountSettings from './AccountSettings.svelte';
+  import Stories from './Stories.svelte';
   import StoryExport from './StoryExport.svelte';
   import { preferences, setPreference, getPreference } from '$lib/os/preferences-store.js';
   import {
@@ -343,11 +344,14 @@
       Profiles
     </button>
     <button class="sidebar-item" class:active={activeSection === 'account'} disabled={busy} onclick={() => (activeSection = 'account')}>Account</button>
+    <button class="sidebar-item" class:active={activeSection === 'stories'} disabled={busy} onclick={() => (activeSection = 'stories')}>Stories</button>
     <button class="sidebar-item" class:active={activeSection === 'export'} disabled={busy} onclick={() => (activeSection = 'export')}>Export</button>
   </nav>
   <div class="panel">
     {#if activeSection === 'account'}
       <AccountSettings user={$page.data.user} />
+    {:else if activeSection === 'stories'}
+      <Stories />
     {:else if activeSection === 'export'}
       <StoryExport />
     {:else if activeSection === 'appearance'}
@@ -512,7 +516,7 @@
       <h2>Profiles</h2>
       <p class="setting-helper">
         Profiles save colors, graph preferences, and window defaults.
-        All profiles share the same story data.
+        Profiles belong to the current story. Switch stories in the Stories section.
       </p>
 
       <div class="setting-group">

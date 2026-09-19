@@ -35,7 +35,7 @@ describe('splitInterval — D7/5b A', () => {
 		acts = await seedActs(db, userId);
 		const [c] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		ellie = c.id;
 	});
@@ -223,11 +223,11 @@ describe('splitInterval — D7/5b A', () => {
 		// Plant 2 scenes in act1.
 		const [s0] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 'S0', parentId: acts.act1, position: 0 })
 			.returning();
 		const [s1] = await db
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
+			.values({ storyId: userId, type: 'Scene', name: 'S1', parentId: acts.act1, position: 1 })
 			.returning();
 
 		// Ellie covers all of act1 → [1, 2).

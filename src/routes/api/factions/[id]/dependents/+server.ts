@@ -4,13 +4,13 @@
 // keeps DELETE consistent with the project's 204-no-body convention.
 
 import { json } from '@sveltejs/kit';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { countFactionDependents } from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
-	const count = await countFactionDependents(db, userId, event.params.id);
+	const storyId = await getStoryId(event);
+	const count = await countFactionDependents(db, storyId, event.params.id);
 	return json({ dependentEventCount: count });
 };

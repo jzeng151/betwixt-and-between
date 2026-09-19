@@ -1,5 +1,5 @@
+import { storyFetch } from '$lib/story-fetch.js';
 import { get, writable } from 'svelte/store';
-import { trackWrite } from './pending-writes.js';
 
 type NoteFolder = {
 	id: string;
@@ -83,7 +83,7 @@ function createNotesStore() {
 	}
 
 	async function loadFolders(): Promise<void> {
-		const res = await fetch('/api/notes/folders');
+		const res = await storyFetch('/api/notes/folders');
 		if (!res.ok) throw new Error('Failed to load folders');
 		const data = await res.json();
 		const mapped: NoteFolder[] = data.map((r: Record<string, unknown>) => ({
@@ -103,7 +103,7 @@ function createNotesStore() {
 		if (request !== entryLoadRequest) return;
 		const startedVersion = version;
 		const url = folderId ? `/api/notes/entries?folderId=${folderId}` : '/api/notes/entries';
-		const res = await fetch(url);
+		const res = await storyFetch(url);
 		if (!res.ok) throw new Error('Failed to load entries');
 		const data = await res.json();
 		if (request !== entryLoadRequest) return;
@@ -132,7 +132,7 @@ function createNotesStore() {
 	}
 
 	async function createFolder(name: string): Promise<NoteFolder> {
-		const res = await fetch('/api/notes/folders', {
+		const res = await storyFetch('/api/notes/folders', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name })
@@ -150,7 +150,7 @@ function createNotesStore() {
 	}
 
 	async function renameFolder(id: string, name: string): Promise<void> {
-		const res = await fetch(`/api/notes/folders/${id}`, {
+		const res = await storyFetch(`/api/notes/folders/${id}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name })
@@ -163,7 +163,7 @@ function createNotesStore() {
 	async function deleteFolder(id: string): Promise<void> {
 		const entryIds = get(entries).filter((entry) => entry.folderId === id).map((entry) => entry.id);
 		await Promise.all(entryIds.map((entryId) => flushDrafts(entryId)));
-		const res = await fetch(`/api/notes/folders/${id}`, { method: 'DELETE' });
+		const res = await storyFetch(`/api/notes/folders/${id}`, { method: 'DELETE' });
 		if (!res.ok && res.status !== 404) throw new Error('Failed to delete folder');
 		for (const entryId of entryIds) {
 			drafts.delete(entryId);
@@ -176,7 +176,7 @@ function createNotesStore() {
 	}
 
 	async function createEntry(name: string, folderId: string | null): Promise<NoteEntry> {
-		const res = await fetch('/api/notes/entries', {
+		const res = await storyFetch('/api/notes/entries', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name, body: '', parentId: folderId })
@@ -201,7 +201,7 @@ function createNotesStore() {
 		if (updates.body !== undefined) payload.body = updates.body;
 		if (updates.folderId !== undefined) payload.folderId = updates.folderId;
 
-		const res = await fetch(`/api/notes/entries/${id}`, {
+		const res = await storyFetch(`/api/notes/entries/${id}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload)
@@ -225,7 +225,7 @@ function createNotesStore() {
 
 	async function deleteEntry(id: string): Promise<void> {
 		await flushDrafts(id);
-		const res = await fetch(`/api/notes/entries/${id}`, { method: 'DELETE' });
+		const res = await storyFetch(`/api/notes/entries/${id}`, { method: 'DELETE' });
 		if (!res.ok && res.status !== 404) throw new Error('Failed to delete entry');
 		drafts.delete(id);
 		saveErrors.delete(id);
@@ -243,12 +243,12 @@ function createNotesStore() {
 		flushDrafts,
 		loadFolders,
 		loadEntries,
-		createFolder: (...args: Parameters<typeof createFolder>) => trackWrite(createFolder(...args)),
-		renameFolder: (...args: Parameters<typeof renameFolder>) => trackWrite(renameFolder(...args)),
-		deleteFolder: (...args: Parameters<typeof deleteFolder>) => trackWrite(deleteFolder(...args)),
-		createEntry: (...args: Parameters<typeof createEntry>) => trackWrite(createEntry(...args)),
-		updateEntry: (...args: Parameters<typeof updateEntry>) => trackWrite(updateEntry(...args)),
-		deleteEntry: (...args: Parameters<typeof deleteEntry>) => trackWrite(deleteEntry(...args))
+		createFolder,
+		renameFolder,
+		deleteFolder,
+		createEntry,
+		updateEntry,
+		deleteEntry
 	};
 }
 

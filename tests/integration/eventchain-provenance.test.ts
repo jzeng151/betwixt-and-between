@@ -25,7 +25,7 @@ describe('Causal Cartography — traceRegionProvenance (Slice 5 PR-E / D6)', () 
 	let mapId: string;
 
 	async function event(name: string): Promise<string> {
-		const [e] = await db.insert(entities).values({ userId, type: 'Event', name }).returning();
+		const [e] = await db.insert(entities).values({ storyId: userId, type: 'Event', name }).returning();
 		return e.id;
 	}
 	async function causedBy(
@@ -38,7 +38,7 @@ describe('Causal Cartography — traceRegionProvenance (Slice 5 PR-E / D6)', () 
 		// so a scoped edge carries an endPosition too; the walk reads startPosition.
 		const endPosition = startPosition === null ? null : startPosition + 0.25;
 		await db.insert(relationships).values({
-			userId,
+			storyId: userId,
 			fromId: effect,
 			toId: cause,
 			type: 'caused_by',
@@ -67,7 +67,7 @@ describe('Causal Cartography — traceRegionProvenance (Slice 5 PR-E / D6)', () 
 	beforeEach(async () => {
 		db = await createTestDb();
 		userId = (await seedTestUser(db)).id;
-		[mapId] = (await db.insert(worldMaps).values({ userId, name: 'Map' }).returning()).map((m) => m.id);
+		[mapId] = (await db.insert(worldMaps).values({ storyId: userId, name: 'Map' }).returning()).map((m) => m.id);
 	});
 
 	it('linear chain: source → mid → root returns the root as earliest, ordered, with jump position', async () => {
@@ -109,11 +109,11 @@ describe('Causal Cartography — traceRegionProvenance (Slice 5 PR-E / D6)', () 
 		// A caused_by edge into an Event owned by another user.
 		const [foreign] = await db
 			.insert(entities)
-			.values({ userId: otherUserId, type: 'Event', name: 'Foreign cause' })
+			.values({ storyId: otherUserId, type: 'Event', name: 'Foreign cause' })
 			.returning();
 		await db
 			.insert(relationships)
-			.values({ userId, fromId: source, toId: foreign.id, type: 'caused_by' });
+			.values({ storyId: userId, fromId: source, toId: foreign.id, type: 'caused_by' });
 		await transferRegion(source);
 
 		const r = await traceRegionProvenance(db, userId, mapId, REGION, 10);
@@ -286,7 +286,7 @@ describe('Causal Cartography — traceRegionProvenance (Slice 5 PR-E / D6)', () 
 		// (imported / null-user style). entities.userId scoping alone would let this
 		// through; the relationships.userId predicate must drop it.
 		await db.insert(relationships).values({
-			userId: otherUserId,
+			storyId: otherUserId,
 			fromId: source,
 			toId: ghostCause,
 			type: 'caused_by'

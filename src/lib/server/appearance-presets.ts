@@ -1,7 +1,7 @@
 /**
  * Server chokepoint for `appearance_presets` (Settings customization Phase 3,
  * T10). Mirrors user-preferences.ts: every read/write of a user's presets goes
- * through here so the cross-user scope (rows keyed by session-derived userId)
+ * through here so the cross-story scope (rows keyed by ownership-checked storyId)
  * and the appearance validation live in one place.
  *
  * Presets are appearance-ONLY and immutable except delete — there is no rename
@@ -29,7 +29,7 @@ export interface PresetList {
 }
 
 /** Built-ins + the user's saved preset rows. Built-ins are constants, not rows. */
-export async function listPresets(db: Db, userId: string): Promise<PresetList> {
+export async function listPresets(db: Db, storyId: string): Promise<PresetList> {
 	const rows = await db
 		.select({
 			presetId: appearancePresets.presetId,
@@ -37,7 +37,7 @@ export async function listPresets(db: Db, userId: string): Promise<PresetList> {
 			appearance: appearancePresets.appearance
 		})
 		.from(appearancePresets)
-		.where(eq(appearancePresets.userId, userId))
+		.where(eq(appearancePresets.storyId, storyId))
 		.orderBy(appearancePresets.createdAt);
 	const user = rows.map((r) => ({
 		presetId: r.presetId,
@@ -56,7 +56,7 @@ export async function listPresets(db: Db, userId: string): Promise<PresetList> {
  */
 export async function createPreset(
 	db: Db,
-	userId: string,
+	storyId: string,
 	name: string,
 	appearance: unknown
 ): Promise<PresetSummary> {
@@ -79,7 +79,7 @@ export async function createPreset(
 	if (size > MAX_BLOB_BYTES) error(400, `preset appearance too large (${size} > ${MAX_BLOB_BYTES} bytes)`);
 	const [row] = await db
 		.insert(appearancePresets)
-		.values({ userId, name: presetName, appearance: appearance as Record<string, unknown> })
+		.values({ storyId, name: presetName, appearance: appearance as Record<string, unknown> })
 		.returning();
 	return {
 		presetId: row.presetId,
@@ -93,11 +93,11 @@ export async function createPreset(
  * Delete a user preset. Built-in ids are `builtin:*` sentinels, not uuids, so a
  * delete of one fails the uuid guard with 400 — built-ins are not deletable.
  */
-export async function deletePreset(db: Db, userId: string, presetId: string): Promise<void> {
+export async function deletePreset(db: Db, storyId: string, presetId: string): Promise<void> {
 	if (!isUuid(presetId)) error(400, 'invalid presetId');
 	const deleted = await db
 		.delete(appearancePresets)
-		.where(and(eq(appearancePresets.userId, userId), eq(appearancePresets.presetId, presetId)))
+		.where(and(eq(appearancePresets.storyId, storyId), eq(appearancePresets.presetId, presetId)))
 		.returning();
 	if (deleted.length === 0) error(404, 'preset not found');
 }

@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { worldMaps, mapAnchors } from '$lib/server/db/schema.js';
 import { and, eq, sql } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { ensureNeutralFaction, readBaselineRegions } from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
@@ -38,19 +38,19 @@ import type { RequestHandler } from './$types';
  */
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 
 	const [source] = await db
 		.select()
 		.from(worldMaps)
-		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.userId, userId)));
+		.where(and(eq(worldMaps.id, event.params.id), eq(worldMaps.storyId, storyId)));
 	if (!source) error(404, 'Map not found');
 
 	const result = await db.transaction(async (tx) => {
 		const [clone] = await tx
 			.insert(worldMaps)
 			.values({
-				userId,
+				storyId,
 				name: `${source.name} (copy)`,
 				baseImageUrl: source.baseImageUrl,
 				width: source.width,
@@ -89,7 +89,7 @@ export const POST: RequestHandler = async (event) => {
 		// Slice 2 D1: anchor regions[] carry faction_id (defaulting to the
 		// user's Neutral faction) instead of color. ensureNeutralFaction is
 		// idempotent.
-		const neutralFactionId = await ensureNeutralFaction(tx, userId);
+		const neutralFactionId = await ensureNeutralFaction(tx, storyId);
 
 		await tx.insert(mapAnchors).values({
 			worldMapId: clone.id,

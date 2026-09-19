@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 /**
  * Client-side store for /api/map-placements. Mirrors the world-map.ts store
  * shape (writable list + load/create/update/delete + JSON-error surfacing).
@@ -50,7 +51,7 @@ function createPlacementsStore() {
 		if (filters?.placeableId) params.set('placeableId', filters.placeableId);
 		if (filters?.mapId) params.set('mapId', filters.mapId);
 		const qs = params.toString();
-		const res = await fetch(`/api/map-placements${qs ? `?${qs}` : ''}`);
+		const res = await storyFetch(`/api/map-placements${qs ? `?${qs}` : ''}`);
 		if (!res.ok) throw new Error('Failed to load placements');
 		const data: MapPlacement[] = await res.json();
 		if (token !== loadToken) return;
@@ -63,7 +64,7 @@ function createPlacementsStore() {
 		// the new row instead of merging it into a list it doesn't belong to —
 		// the next load() of the original context will pick it up server-side.
 		const token = loadToken;
-		const res = await fetch('/api/map-placements', {
+		const res = await storyFetch('/api/map-placements', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload)
@@ -76,7 +77,7 @@ function createPlacementsStore() {
 		return created;
 	}
 
-	async function update(id: string, payload: UpdatePlacementPayload): Promise<MapPlacement> {
+	async function update(id: string, payload: UpdatePlacementPayload, retryKey?: string): Promise<MapPlacement> {
 		// Optimistic merge: apply the payload to the matching row before the
 		// PATCH resolves so consumers — and the NEXT edit's merge base — see the
 		// change immediately. Without this, rapid multi-field edits from the
@@ -102,11 +103,11 @@ function createPlacementsStore() {
 		const prior = updateChains.get(id) ?? Promise.resolve();
 		const run = (async () => {
 			await prior.catch(() => {});
-			const res = await fetch(`/api/map-placements/${id}`, {
+			const res = await storyFetch(`/api/map-placements/${id}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload)
-			});
+			}, { retryKey });
 			if (!res.ok) throw new Error(await errorMessage(res));
 			return (await res.json()) as MapPlacement;
 		})();
@@ -140,7 +141,7 @@ function createPlacementsStore() {
 	}
 
 	async function remove(id: string): Promise<void> {
-		const res = await fetch(`/api/map-placements/${id}`, { method: 'DELETE' });
+		const res = await storyFetch(`/api/map-placements/${id}`, { method: 'DELETE' });
 		if (!res.ok) throw new Error(await errorMessage(res));
 		placements.update((all) => all.filter((p) => p.id !== id));
 	}
@@ -161,7 +162,7 @@ function createPlacementsStore() {
 		if (filters?.placeableId) params.set('placeableId', filters.placeableId);
 		if (filters?.mapId) params.set('mapId', filters.mapId);
 		const qs = params.toString();
-		const res = await fetch(`/api/map-placements${qs ? `?${qs}` : ''}`);
+		const res = await storyFetch(`/api/map-placements${qs ? `?${qs}` : ''}`);
 		if (!res.ok) throw new Error('Failed to load placements');
 		return (await res.json()) as MapPlacement[];
 	}

@@ -9,12 +9,12 @@
 //     401 — unauthenticated
 
 import { json } from '@sveltejs/kit';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { activateProfile } from '$lib/server/user-preferences.js';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
-	const userId = getUserId(event);
-	await activateProfile(event.locals.db, userId, event.params.id);
+	const storyId = await getStoryId(event);
+	await activateProfile(event.locals.db, storyId, event.params.id);
 	return json({ ok: true });
 };

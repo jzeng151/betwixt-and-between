@@ -6,25 +6,25 @@
  * docs/adr/0003-premise-4-position-math.md → "Dual-write invariant strategy".
  *
  * **Multi-tenant scoping (T8b S5', 2026-05-08):** every public function takes
- * a `userId` and scopes every SELECT/UPDATE/DELETE/INSERT by it. Cross-user
- * reads return empty; cross-user updates affect zero rows. Callers must pass
- * `getUserId(event)` from the route handler.
+ * a `storyId` and scopes every SELECT/UPDATE/DELETE/INSERT by it. Cross-story
+ * reads return empty; cross-story updates affect zero rows. Callers must pass
+ * `await getStoryId(event)` from the route handler.
  *
  * Four primary surfaces:
  *
- *   1. writeInterval(db, input, userId)
+ *   1. writeInterval(db, input, storyId)
  *      Chokepoint for INSERT. Validates polymorphic FK types, validates
- *      positions match FK derivation, stamps userId on the new row.
+ *      positions match FK derivation, stamps storyId on the new row.
  *
- *   2. updateInterval(db, id, patch, userId)
+ *   2. updateInterval(db, id, patch, storyId)
  *      Chokepoint for UPDATE. Same validation surface as writeInterval plus
  *      same-entity overlap → union merge with absorbed-row reporting.
  *
- *   3. splitInterval(db, id, atPosition, userId)
+ *   3. splitInterval(db, id, atPosition, storyId)
  *      Split a multi-act interval at an internal position. Resolves FKs from
  *      the split position via the timeline-helpers pure math.
  *
- *   4. moveSceneToAct(db, sceneId, newActId, newPosition, userId)
+ *   4. moveSceneToAct(db, sceneId, newActId, newPosition, storyId)
  *      Reparent a Scene and rewrite the act FKs on every interval anchored
  *      to it; cascade the position bump on target-act siblings; recompute
  *      both the old and new parent acts.
@@ -74,9 +74,9 @@ import {
 export async function writeInterval(
 	db: Db,
 	input: WriteIntervalInput,
-	userId: string
+	storyId: string
 ): Promise<typeof intervals.$inferSelect> {
-	await validateFKTypes(db, input, userId);
+	await validateFKTypes(db, input, storyId);
 
 	// Normalize: ensure startSceneId points to the lower-index scene.
 	// Client may send scenes in visual order rather than story-time (createdAt) order.
@@ -87,15 +87,15 @@ export async function writeInterval(
 		normalized.endSceneId &&
 		normalized.startSceneId !== normalized.endSceneId
 	) {
-		const startInfo = await sceneIndexOf(db, normalized.startSceneId, userId);
-		const endInfo = await sceneIndexOf(db, normalized.endSceneId, userId);
+		const startInfo = await sceneIndexOf(db, normalized.startSceneId, storyId);
+		const endInfo = await sceneIndexOf(db, normalized.endSceneId, storyId);
 		if (startInfo.sceneIndex > endInfo.sceneIndex) {
 			normalized.startSceneId = input.endSceneId;
 			normalized.endSceneId = input.startSceneId;
 		}
 	}
 
-	const derived = await computeIntervalPositions(db, normalized, userId);
+	const derived = await computeIntervalPositions(db, normalized, storyId);
 
 	if (input.startPosition !== undefined) {
 		if (Math.abs(input.startPosition - derived.startPosition) > POSITION_EPSILON) {
@@ -115,12 +115,12 @@ export async function writeInterval(
 	/* Same-entity overlap rejection (docs/adr/0003-premise-4-position-math.md →
 	   "Half-open convention" — adjacent intervals must be non-overlapping by
 	   construction). Must run after position derivation, before the insert. */
-	await assertNoOverlap(db, normalized.entityId, derived.startPosition, derived.endPosition, undefined, userId);
+	await assertNoOverlap(db, normalized.entityId, derived.startPosition, derived.endPosition, undefined, storyId);
 
 	const [created] = await db
 		.insert(intervals)
 		.values({
-			userId,
+			storyId: storyId,
 			entityId: normalized.entityId,
 			startActId: normalized.startActId,
 			startSceneId: normalized.startSceneId ?? null,
@@ -141,9 +141,9 @@ export async function updateInterval(
 	db: Db,
 	id: string,
 	patch: Partial<WriteIntervalInput>,
-	userId: string
+	storyId: string
 ): Promise<UpdateIntervalResult> {
-	const [existing] = await db.select().from(intervals).where(and(eq(intervals.id, id), eq(intervals.userId, userId)));
+	const [existing] = await db.select().from(intervals).where(and(eq(intervals.id, id), eq(intervals.storyId, storyId)));
 	if (!existing) throw new Error(`Interval not found: ${id}`);
 
 	const mergedStartActId = patch.startActId ?? existing.startActId;
@@ -179,8 +179,8 @@ export async function updateInterval(
 		endPosition: endPosOverride
 	};
 
-	await validateFKTypes(db, merged, userId);
-	const derived = await computeIntervalPositions(db, merged, userId);
+	await validateFKTypes(db, merged, storyId);
+	const derived = await computeIntervalPositions(db, merged, storyId);
 
 	if (patch.startPosition !== undefined) {
 		if (Math.abs(patch.startPosition - derived.startPosition) > POSITION_EPSILON) {
@@ -205,7 +205,7 @@ export async function updateInterval(
 	const sameEntity = await db
 		.select()
 		.from(intervals)
-		.where(and(eq(intervals.entityId, merged.entityId), eq(intervals.userId, userId)));
+		.where(and(eq(intervals.entityId, merged.entityId), eq(intervals.storyId, storyId)));
 	const overlappers = sameEntity.filter(
 		(row) =>
 			row.id !== id &&
@@ -259,10 +259,10 @@ export async function updateInterval(
 		unionEndSceneId = rightmost.sceneId;
 
 		// Delete the absorbed siblings before the update so the unique-
-		// row-per-entity-position invariant holds. userId in WHERE is defense-
-		// in-depth — overlappers were already filtered by userId above.
+		// row-per-entity-position invariant holds. storyId in WHERE is defense-
+		// in-depth — overlappers were already filtered by storyId above.
 		for (const row of overlappers) {
-			await db.delete(intervals).where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
+			await db.delete(intervals).where(and(eq(intervals.id, row.id), eq(intervals.storyId, storyId)));
 			absorbed.push(row.id);
 		}
 	}
@@ -278,7 +278,7 @@ export async function updateInterval(
 			startPosition: unionStart,
 			endPosition: unionEnd,
 		})
-		.where(and(eq(intervals.id, id), eq(intervals.userId, userId)))
+		.where(and(eq(intervals.id, id), eq(intervals.storyId, storyId)))
 		.returning();
 	return { updated, absorbed };
 }
@@ -310,9 +310,9 @@ export async function splitInterval(
 	db: Db,
 	intervalId: string,
 	atPosition: number,
-	userId: string
+	storyId: string
 ): Promise<{ left: typeof intervals.$inferSelect; right: typeof intervals.$inferSelect }> {
-	const [existing] = await db.select().from(intervals).where(and(eq(intervals.id, intervalId), eq(intervals.userId, userId)));
+	const [existing] = await db.select().from(intervals).where(and(eq(intervals.id, intervalId), eq(intervals.storyId, storyId)));
 	if (!existing) throw new Error(`Interval not found: ${intervalId}`);
 
 	if (atPosition <= existing.startPosition + POSITION_EPSILON) {
@@ -329,12 +329,12 @@ export async function splitInterval(
 	const actRows = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.userId, userId), eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.where(and(eq(entities.storyId, storyId), eq(entities.type, 'Act'), isNull(entities.parentId)))
 		.orderBy(entities.position, entities.createdAt);
 	const sceneRows = await db
 		.select({ id: entities.id, parentId: entities.parentId })
 		.from(entities)
-		.where(and(eq(entities.userId, userId), eq(entities.type, 'Scene')))
+		.where(and(eq(entities.storyId, storyId), eq(entities.type, 'Scene')))
 		.orderBy(entities.position, entities.createdAt);
 	const scenesByActId = new Map<string, { id: string }[]>();
 	for (const s of sceneRows) {
@@ -364,13 +364,13 @@ export async function splitInterval(
 			endSceneId: leftEndFKs.endSceneId,
 			endPosition: leftEndFKs.endPosition
 		})
-		.where(and(eq(intervals.id, intervalId), eq(intervals.userId, userId)))
+		.where(and(eq(intervals.id, intervalId), eq(intervals.storyId, storyId)))
 		.returning();
 
 	const [right] = await db
 		.insert(intervals)
 		.values({
-			userId,
+			storyId: storyId,
 			entityId: existing.entityId,
 			startActId: rightStartFKs.startActId,
 			startSceneId: rightStartFKs.startSceneId,
@@ -416,9 +416,9 @@ export async function moveSceneToAct(
 	sceneId: string,
 	newActId: string,
 	newPosition: number,
-	userId: string
+	storyId: string
 ): Promise<void> {
-	const [scene] = await db.select().from(entities).where(and(eq(entities.id, sceneId), eq(entities.userId, userId)));
+	const [scene] = await db.select().from(entities).where(and(eq(entities.id, sceneId), eq(entities.storyId, storyId)));
 	if (!scene) throw new Error(`Scene not found: ${sceneId}`);
 	if (scene.type !== 'Scene') {
 		throw new Error(`Entity ${sceneId} has type='${scene.type}', expected 'Scene'`);
@@ -427,7 +427,7 @@ export async function moveSceneToAct(
 		throw new Error(`Scene ${sceneId} has no parent_id`);
 	}
 
-	const [target] = await db.select().from(entities).where(and(eq(entities.id, newActId), eq(entities.userId, userId)));
+	const [target] = await db.select().from(entities).where(and(eq(entities.id, newActId), eq(entities.storyId, storyId)));
 	if (!target) throw new Error(`Target act not found: ${newActId}`);
 	if (target.type !== 'Act') {
 		throw new Error(`Target ${newActId} has type='${target.type}', expected 'Act'`);
@@ -442,7 +442,7 @@ export async function moveSceneToAct(
 		})
 		.where(
 			and(
-				eq(entities.userId, userId),
+				eq(entities.storyId, storyId),
 				eq(entities.type, 'Scene'),
 				eq(entities.parentId, newActId),
 				sql`${entities.position} >= ${newPosition}`
@@ -455,20 +455,20 @@ export async function moveSceneToAct(
 			parentId: newActId,
 			position: newPosition,
 		})
-		.where(and(eq(entities.id, sceneId), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, sceneId), eq(entities.storyId, storyId)));
 
 	await db
 		.update(intervals)
 		.set({
 			startActId: newActId,
 		})
-		.where(and(eq(intervals.startSceneId, sceneId), eq(intervals.userId, userId)));
+		.where(and(eq(intervals.startSceneId, sceneId), eq(intervals.storyId, storyId)));
 	await db
 		.update(intervals)
 		.set({
 			endActId: newActId,
 		})
-		.where(and(eq(intervals.endSceneId, sceneId), eq(intervals.userId, userId)));
+		.where(and(eq(intervals.endSceneId, sceneId), eq(intervals.storyId, storyId)));
 
 	// Mirror the act-FK rewrite onto map_placements anchored to this scene
 	// (Step 4, Codex #2). A placement whose start/end_scene_id is this scene
@@ -478,11 +478,11 @@ export async function moveSceneToAct(
 	await db
 		.update(mapPlacementsTbl)
 		.set({ startActId: newActId })
-		.where(and(eq(mapPlacementsTbl.startSceneId, sceneId), eq(mapPlacementsTbl.userId, userId)));
+		.where(and(eq(mapPlacementsTbl.startSceneId, sceneId), eq(mapPlacementsTbl.storyId, storyId)));
 	await db
 		.update(mapPlacementsTbl)
 		.set({ endActId: newActId })
-		.where(and(eq(mapPlacementsTbl.endSceneId, sceneId), eq(mapPlacementsTbl.userId, userId)));
+		.where(and(eq(mapPlacementsTbl.endSceneId, sceneId), eq(mapPlacementsTbl.storyId, storyId)));
 
 	// Mirror the act-FK rewrite onto relationships scoped to this scene (Codex
 	// P1, Slice 5 PR-D). A caused_by edge anchored to this scene keeps its old
@@ -493,11 +493,11 @@ export async function moveSceneToAct(
 	await db
 		.update(relationshipsTbl)
 		.set({ startActId: newActId })
-		.where(and(eq(relationshipsTbl.startSceneId, sceneId), eq(relationshipsTbl.userId, userId)));
+		.where(and(eq(relationshipsTbl.startSceneId, sceneId), eq(relationshipsTbl.storyId, storyId)));
 	await db
 		.update(relationshipsTbl)
 		.set({ endActId: newActId })
-		.where(and(eq(relationshipsTbl.endSceneId, sceneId), eq(relationshipsTbl.userId, userId)));
+		.where(and(eq(relationshipsTbl.endSceneId, sceneId), eq(relationshipsTbl.storyId, storyId)));
 
 	// Mirror the act-FK rewrite onto world_maps variants scoped to this scene
 	// (2026-06 review — the prior placements/relationships fix missed world_maps).
@@ -510,14 +510,14 @@ export async function moveSceneToAct(
 	await db
 		.update(worldMapsTbl)
 		.set({ startActId: newActId })
-		.where(and(eq(worldMapsTbl.startSceneId, sceneId), eq(worldMapsTbl.userId, userId)));
+		.where(and(eq(worldMapsTbl.startSceneId, sceneId), eq(worldMapsTbl.storyId, storyId)));
 	await db
 		.update(worldMapsTbl)
 		.set({ endActId: newActId })
-		.where(and(eq(worldMapsTbl.endSceneId, sceneId), eq(worldMapsTbl.userId, userId)));
+		.where(and(eq(worldMapsTbl.endSceneId, sceneId), eq(worldMapsTbl.storyId, storyId)));
 
 	if (oldActId !== newActId) {
-		await recomputeIntervalsForAct(db, oldActId, userId);
+		await recomputeIntervalsForAct(db, oldActId, storyId);
 	}
-	await recomputeIntervalsForAct(db, newActId, userId);
+	await recomputeIntervalsForAct(db, newActId, storyId);
 }

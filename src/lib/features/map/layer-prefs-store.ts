@@ -1,3 +1,4 @@
+import { storyFetch } from '$lib/story-fetch.js';
 // Slice 3 E2 — layer visibility client store.
 //
 // Holds per-map layer visibility prefs as a Map<LayerKey, boolean>.
@@ -49,7 +50,7 @@ function createLayerPrefsStore() {
 		state.set({ mapId: null, prefs: new Map(), status: 'loading' });
 		let res: Response;
 		try {
-			res = await fetch(
+			res = await storyFetch(
 				`/api/world-map-layer-prefs?worldMapId=${encodeURIComponent(mapId)}`
 			);
 		} catch (err) {
@@ -101,7 +102,7 @@ function createLayerPrefsStore() {
 		});
 		const token = loadToken;
 		try {
-			const res = await fetch('/api/world-map-layer-prefs', {
+			const res = await storyFetch('/api/world-map-layer-prefs', {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -142,7 +143,7 @@ function createLayerPrefsStore() {
 		// empty → defaults. So: 404 → empty; any other failure → throw, which fails the
 		// cycle bundle (prefetchCycle → cycleFailed → hold + retry next Play) (Codex PR
 		// #72 #859).
-		const res = await fetch(`/api/world-map-layer-prefs?worldMapId=${encodeURIComponent(mapId)}`);
+		const res = await storyFetch(`/api/world-map-layer-prefs?worldMapId=${encodeURIComponent(mapId)}`);
 		if (res.status === 404) return prefs;
 		if (!res.ok) throw new Error(`Failed to prefetch layer prefs: ${res.status}`);
 		const rows = (await res.json()) as RawPref[];

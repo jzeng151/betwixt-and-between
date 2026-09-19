@@ -1,18 +1,18 @@
 import { json, error } from '@sveltejs/kit';
 import { entityAliases, entities } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import type { RequestHandler } from './$types';
 
 /**
- * entityAliases has no direct userId column — scoped via JOIN on
- * primaryEntityId → entities.userId. This keeps the schema lean (alias rows
+ * entityAliases has no direct storyId column — scoped via JOIN on
+ * primaryEntityId → entities.storyId. This keeps the schema lean (alias rows
  * inherit ownership from their primary) at the cost of needing JOINs in every
  * query here. T8b S5'.
  */
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const primaryEntityId = event.url.searchParams.get('primaryEntityId');
 
 	const baseQuery = db
@@ -29,18 +29,18 @@ export const GET: RequestHandler = async (event) => {
 	const rows = primaryEntityId
 		? await baseQuery.where(
 				and(
-					eq(entities.userId, userId),
+					eq(entities.storyId, storyId),
 					eq(entityAliases.primaryEntityId, primaryEntityId)
 				)
 			)
-		: await baseQuery.where(eq(entities.userId, userId));
+		: await baseQuery.where(eq(entities.storyId, storyId));
 
 	return json(rows);
 };
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const body = await event.request.json();
 	const { primaryEntityId, aliasEntityId, revealedAtPosition } = body;
 
@@ -55,13 +55,13 @@ export const POST: RequestHandler = async (event) => {
 	const [primary] = await db
 		.select()
 		.from(entities)
-		.where(and(eq(entities.id, primaryEntityId), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, primaryEntityId), eq(entities.storyId, storyId)));
 	if (!primary) error(400, 'primaryEntityId entity not found');
 
 	const [alias] = await db
 		.select()
 		.from(entities)
-		.where(and(eq(entities.id, aliasEntityId), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, aliasEntityId), eq(entities.storyId, storyId)));
 	if (!alias) error(400, 'aliasEntityId entity not found');
 
 	if (primary.type !== alias.type) {

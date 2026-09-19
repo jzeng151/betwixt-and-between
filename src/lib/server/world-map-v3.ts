@@ -1,8 +1,8 @@
 // World Map v3 server chokepoints — anchors, events, factions.
 //
 // Every write that touches map_anchors / map_events / factions MUST go
-// through these functions so the cross-user invariant (CLAUDE.md: "a
-// missing JOIN is a cross-user data leak") and the polymorphic FK
+// through these functions so the cross-story invariant (CLAUDE.md: "a
+// missing JOIN is a cross-story data leak") and the polymorphic FK
 // invariant on map_events.source_event_id (CLAUDE.md → "Polymorphic FK
 // invariants") are enforced at exactly one place. API handlers call into
 // here; tests pin the regression class via tests/integration/auth-isolation-*
@@ -146,20 +146,20 @@ export async function readBaselineRegions(
 }
 
 /**
- * Cross-user-safe variant: scopes through world_maps.user_id so callers
+ * Cross-story-safe variant: scopes through world_maps.user_id so callers
  * that aren't already gated by an ownership assert can use this safely.
- * Returns empty array on cross-user attempt (no existence leak).
+ * Returns empty array on cross-story attempt (no existence leak).
  */
-export async function readBaselineRegionsForUser(
+export async function readBaselineRegionsForStory(
 	db: AnyDbOrTx,
-	userId: string,
+	storyId: string,
 	worldMapId: string
 ): Promise<AnchorRegionRow[]> {
 	const [anchor] = await db
 		.select({ stateJsonb: mapAnchors.stateJsonb })
 		.from(mapAnchors)
 		.innerJoin(worldMaps, eq(mapAnchors.worldMapId, worldMaps.id))
-		.where(and(eq(mapAnchors.worldMapId, worldMapId), eq(worldMaps.userId, userId)))
+		.where(and(eq(mapAnchors.worldMapId, worldMapId), eq(worldMaps.storyId, storyId)))
 		.orderBy(asc(mapAnchors.tPosition), asc(mapAnchors.createdAt), asc(mapAnchors.id))
 		.limit(1);
 	if (!anchor) return [];
@@ -196,11 +196,11 @@ export const NEUTRAL_FACTION_NAME = 'Neutral';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyTx = any;
-export async function ensureNeutralFaction(tx: AnyTx, userId: string): Promise<string> {
+export async function ensureNeutralFaction(tx: AnyTx, storyId: string): Promise<string> {
 	const [existing] = await tx
 		.select({ id: factions.id })
 		.from(factions)
-		.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+		.where(and(eq(factions.storyId, storyId), eq(factions.isSystem, true)));
 	if (existing) return existing.id;
 	// codex PR review: try/catch on the INSERT doesn't recover inside a
 	// surrounding transaction — PG aborts the entire tx on the unique
@@ -213,7 +213,7 @@ export async function ensureNeutralFaction(tx: AnyTx, userId: string): Promise<s
 	await tx
 		.insert(factions)
 		.values({
-			userId,
+			storyId,
 			name: NEUTRAL_FACTION_NAME,
 			color: NEUTRAL_FACTION_COLOR,
 			isSystem: true
@@ -222,7 +222,7 @@ export async function ensureNeutralFaction(tx: AnyTx, userId: string): Promise<s
 	const [row] = await tx
 		.select({ id: factions.id })
 		.from(factions)
-		.where(and(eq(factions.userId, userId), eq(factions.isSystem, true)));
+		.where(and(eq(factions.storyId, storyId), eq(factions.isSystem, true)));
 	if (!row) error(500, 'ensureNeutralFaction: row missing after INSERT');
 	return row.id;
 }
@@ -244,7 +244,7 @@ function validateFactionInput(input: Partial<FactionInput>): void {
 
 export async function createFaction(
 	db: Db,
-	userId: string,
+	storyId: string,
 	input: FactionInput
 ): Promise<typeof factions.$inferSelect> {
 	assertObjectBody(input);
@@ -252,7 +252,7 @@ export async function createFaction(
 	const [row] = await db
 		.insert(factions)
 		.values({
-			userId,
+			storyId,
 			name: input.name.trim(),
 			color: input.color,
 			styleJsonb: input.styleJsonb ?? null
@@ -263,7 +263,7 @@ export async function createFaction(
 
 export async function updateFaction(
 	db: Db,
-	userId: string,
+	storyId: string,
 	factionId: string,
 	patch: Partial<FactionInput>
 ): Promise<typeof factions.$inferSelect> {
@@ -302,7 +302,7 @@ export async function updateFaction(
 	const [row] = await db
 		.update(factions)
 		.set(updates)
-		.where(and(eq(factions.id, factionId), eq(factions.userId, userId)))
+		.where(and(eq(factions.id, factionId), eq(factions.storyId, storyId)))
 		.returning();
 	if (!row) error(404, 'Faction not found');
 	return row;
@@ -317,14 +317,14 @@ export async function updateFaction(
  */
 export async function deleteFaction(
 	db: Db,
-	userId: string,
+	storyId: string,
 	factionId: string
 ): Promise<void> {
 	assertUuid(factionId, 'faction id');
 	const [existing] = await db
 		.select({ id: factions.id, isSystem: factions.isSystem })
 		.from(factions)
-		.where(and(eq(factions.id, factionId), eq(factions.userId, userId)));
+		.where(and(eq(factions.id, factionId), eq(factions.storyId, storyId)));
 	if (!existing) error(404, 'Faction not found');
 	// Slice 2 D1: the per-user Neutral faction is the fallback ownership
 	// target for un-faction-ed regions. Allowing delete would orphan every
@@ -333,7 +333,7 @@ export async function deleteFaction(
 	// here, but rejecting at the helper is the user-facing message.
 	if (existing.isSystem) error(422, 'Cannot delete the system Neutral faction');
 
-	await db.delete(factions).where(and(eq(factions.id, factionId), eq(factions.userId, userId)));
+	await db.delete(factions).where(and(eq(factions.id, factionId), eq(factions.storyId, storyId)));
 }
 
 /**
@@ -341,20 +341,20 @@ export async function deleteFaction(
  * via payload_jsonb.new_faction_id. Surfaced by GET /api/factions/[id]/dependents
  * so the UI can show "deleting will leave N events with ownership-unknown"
  * before calling DELETE. JOIN through world_maps.user_id is defense in depth
- * — validateEventPayload rejects cross-user faction refs at write time, so
+ * — validateEventPayload rejects cross-story faction refs at write time, so
  * payloads referencing this faction on another user's map shouldn't exist;
  * the JOIN ensures the count stays scoped if that invariant ever breaks.
  */
 export async function countFactionDependents(
 	db: Db,
-	userId: string,
+	storyId: string,
 	factionId: string
 ): Promise<number> {
 	assertUuid(factionId, 'faction id');
 	const [existing] = await db
 		.select({ id: factions.id })
 		.from(factions)
-		.where(and(eq(factions.id, factionId), eq(factions.userId, userId)));
+		.where(and(eq(factions.id, factionId), eq(factions.storyId, storyId)));
 	if (!existing) error(404, 'Faction not found');
 
 	const [{ count }] = await db
@@ -363,7 +363,7 @@ export async function countFactionDependents(
 		.innerJoin(worldMaps, eq(mapEvents.worldMapId, worldMaps.id))
 		.where(
 			and(
-				eq(worldMaps.userId, userId),
+				eq(worldMaps.storyId, storyId),
 				eq(mapEvents.kind, 'transfer_region'),
 				// Slice 2 D3 (T7): undone events don't count as dependents —
 				// they no longer affect projection.
@@ -376,12 +376,12 @@ export async function countFactionDependents(
 
 // ── Map ownership gate ──────────────────────────────────────────────────────
 
-async function assertMapOwnership(db: Db, userId: string, worldMapId: string): Promise<void> {
+async function assertMapOwnership(db: Db, storyId: string, worldMapId: string): Promise<void> {
 	assertUuid(worldMapId, 'map id');
 	const [row] = await db
 		.select({ id: worldMaps.id })
 		.from(worldMaps)
-		.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.userId, userId)));
+		.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.storyId, storyId)));
 	if (!row) error(404, 'Map not found');
 }
 
@@ -395,10 +395,10 @@ async function assertMapOwnership(db: Db, userId: string, worldMapId: string): P
 //
 //   2. Ownership: every regions[].region_id must reference a row on THIS
 //      world map, and every regions[].faction_id must reference a faction
-//      owned by this user. Closes the same cross-user gap the event
+//      owned by this user. Closes the same cross-story gap the event
 //      validator closes: an attacker authenticated as user A POSTing an
 //      anchor whose regions[].region_id is user B's region uuid would
-//      otherwise persist a cross-user identifier into A's map_anchors row.
+//      otherwise persist a cross-story identifier into A's map_anchors row.
 //      Lazy GC at render is a second line of defense; rejecting at write
 //      is the better invariant.
 //
@@ -460,7 +460,7 @@ function validateAnchorStateShape(state: unknown): asserts state is AnchorState 
 
 async function validateAnchorStateOwnership(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	state: AnchorState
 ): Promise<void> {
@@ -503,7 +503,7 @@ async function validateAnchorStateOwnership(
 		const rows = await db
 			.select({ id: factions.id })
 			.from(factions)
-			.where(and(inArray(factions.id, [...factionIds]), eq(factions.userId, userId)));
+			.where(and(inArray(factions.id, [...factionIds]), eq(factions.storyId, storyId)));
 		const found = new Set(rows.map((r) => r.id));
 		for (const id of factionIds) {
 			if (!found.has(id)) error(400, `faction_id ${id} not owned by caller`);
@@ -570,11 +570,11 @@ async function loadGridDims(db: Db, worldMapId: string): Promise<{ x: number; y:
 
 export async function createMapAnchor(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	input: AnchorInput
 ): Promise<typeof mapAnchors.$inferSelect> {
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 	assertObjectBody(input);
 	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition) || input.tPosition < 0) {
 		// Note: '-Infinity' sentinel is created by the 0012 backfill, not by
@@ -586,7 +586,7 @@ export async function createMapAnchor(
 		error(400, 'tPosition must be a finite number >= 0');
 	}
 	validateAnchorStateShape(input.stateJsonb);
-	await validateAnchorStateOwnership(db, userId, worldMapId, input.stateJsonb);
+	await validateAnchorStateOwnership(db, storyId, worldMapId, input.stateJsonb);
 
 	// Slice 3 invariant: every map_anchors.state_jsonb has the cells key.
 	// Client-authored anchor snapshots (right-click "snapshot world state
@@ -599,7 +599,7 @@ export async function createMapAnchor(
 	for (const stroke of input.stateJsonb.strokes ?? []) {
 		applyPaintStroke(sanitizedStrokes, stroke);
 	}
-	const normalizedStrokes = await normalizeStrokeLayerIds(db, userId, worldMapId, sanitizedStrokes);
+	const normalizedStrokes = await normalizeStrokeLayerIds(db, storyId, worldMapId, sanitizedStrokes);
 	const normalizedState: AnchorState = {
 		...input.stateJsonb,
 		cells: input.stateJsonb.cells ?? [],
@@ -673,12 +673,12 @@ function isUniqueViolation(err: unknown): boolean {
 
 export async function updateMapAnchor(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	anchorId: string,
 	patch: Partial<AnchorInput>
 ): Promise<typeof mapAnchors.$inferSelect> {
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 	assertUuid(anchorId, 'anchor id');
 	assertObjectBody(patch);
 
@@ -708,7 +708,7 @@ export async function updateMapAnchor(
 	}
 	if ('stateJsonb' in patch) {
 		validateAnchorStateShape(patch.stateJsonb);
-		await validateAnchorStateOwnership(db, userId, worldMapId, patch.stateJsonb as AnchorState);
+		await validateAnchorStateOwnership(db, storyId, worldMapId, patch.stateJsonb as AnchorState);
 		// Slice 3 invariant: cells key must be present. PATCH callers can
 		// omit it; default to [] to match createMapAnchor's normalization.
 		// WM3 Slice A: strokes sanitized through applyPaintStroke (same gate as
@@ -718,7 +718,7 @@ export async function updateMapAnchor(
 		for (const stroke of incoming.strokes ?? []) {
 			applyPaintStroke(sanitizedStrokes, stroke);
 		}
-		const patchedStrokes = await normalizeStrokeLayerIds(db, userId, worldMapId, sanitizedStrokes);
+		const patchedStrokes = await normalizeStrokeLayerIds(db, storyId, worldMapId, sanitizedStrokes);
 		updates.stateJsonb = { ...incoming, cells: incoming.cells ?? [], strokes: patchedStrokes };
 		// codex P2: client-write boundary — validate cell shape/biome/bounds.
 		const grid = await loadGridDims(db, worldMapId);
@@ -783,11 +783,11 @@ export async function updateMapAnchor(
 
 export async function deleteMapAnchor(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	anchorId: string
 ): Promise<void> {
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 	assertUuid(anchorId, 'anchor id');
 	// Slice 2 D2 PR-C hardening (codex review): see updateMapAnchor's
 	// matching guard. Deleting the baseline anchor (t_position = -Infinity)
@@ -835,7 +835,7 @@ export type EventInput = {
 
 async function validateEventPayload(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	kind: EventKind,
 	payload: unknown,
@@ -849,12 +849,12 @@ async function validateEventPayload(
 		assertUuid(p.region_id, 'transfer_region payload.region_id');
 		assertUuid(p.new_faction_id, 'transfer_region payload.new_faction_id');
 		// Verify the region belongs to THIS world map (which is already
-		// scoped to userId via assertMapOwnership upstream). Without this
+		// scoped to storyId via assertMapOwnership upstream). Without this
 		// check, an attacker authenticated as user A could POST a
 		// transfer_region whose region_id is user B's region uuid, leaking
-		// a cross-user identifier into A's map_events rows. The renderer's
+		// a cross-story identifier into A's map_events rows. The renderer's
 		// lazy GC would drop it at render time, but the row would persist
-		// as a probing oracle. Reject at write — cross-user references
+		// as a probing oracle. Reject at write — cross-story references
 		// must never reach the DB.
 		// Slice 2 D2 PR-B: existence check reads from baseline anchor JSON.
 		const baselineRegions = await readBaselineRegions(db, worldMapId);
@@ -866,7 +866,7 @@ async function validateEventPayload(
 		const [faction] = await db
 			.select({ id: factions.id })
 			.from(factions)
-			.where(and(eq(factions.id, p.new_faction_id), eq(factions.userId, userId)));
+			.where(and(eq(factions.id, p.new_faction_id), eq(factions.storyId, storyId)));
 		if (!faction) error(400, 'new_faction_id not found');
 	}
 	if (kind === 'paint_cells') {
@@ -889,7 +889,7 @@ async function validateEventPayload(
 		}
 		// Grid bounds come from world_maps.grid_cells_x/y (Slice 3 T1';
 		// drizzle/0018). assertMapOwnership upstream guarantees this map
-		// belongs to userId, so the single-row read is safe.
+		// belongs to storyId, so the single-row read is safe.
 		const [map] = await db
 			.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY })
 			.from(worldMaps)
@@ -904,10 +904,10 @@ async function validateEventPayload(
 		}
 	}
 	if (kind === 'paint_stroke') {
-		await validatePaintStrokePayload(db, userId, worldMapId, payload);
+		await validatePaintStrokePayload(db, storyId, worldMapId, payload);
 	}
 	if (kind === 'move_entity') {
-		await validateMoveEntityPayload(db, userId, worldMapId, payload, tPosition);
+		await validateMoveEntityPayload(db, storyId, worldMapId, payload, tPosition);
 	}
 }
 
@@ -915,7 +915,7 @@ async function validateEventPayload(
 // bounds/shape guards: an unbounded freeform path[] is a storage/DoS vector
 // (eng-review test surface). textureKey is gated by mode against the GENERATED
 // key sets (eng-review §4 — no runtime manifest read on the Worker): fill keys
-// are terrain tiles, stamp keys are Objects/ sprites. No cross-user scoping on
+// are terrain tiles, stamp keys are Objects/ sprites. No cross-story scoping on
 // the key — sprites are static app assets; the write site scopes through
 // world_maps.user_id like every map_events write (there is no per-stroke user
 // field to forge). Coords are normalized [0,1] (not grid cells), so the
@@ -926,7 +926,7 @@ async function validateEventPayload(
 // same posture as transfer_region.region_id).
 async function validatePaintStrokePayload(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	payload: unknown
 ): Promise<void> {
@@ -1022,24 +1022,24 @@ async function validatePaintStrokePayload(
 		if (typeof p.layerId !== 'string' || p.layerId.length === 0 || p.layerId.length > ART_LAYER_ID_MAX) {
 			error(400, `paint_stroke payload.layerId must be a non-empty string ≤ ${ART_LAYER_ID_MAX} chars`);
 		}
-		const layerIds = await loadArtLayerIds(db, userId, worldMapId);
+		const layerIds = await loadArtLayerIds(db, storyId, worldMapId);
 		if (!layerIds.has(p.layerId)) {
 			error(400, 'paint_stroke payload.layerId not found on this map');
 		}
 	}
 }
 
-// F27: scope the read by userId, not id alone. assertMapOwnership upstream
+// F27: scope the read by storyId, not id alone. assertMapOwnership upstream
 // already 404s a foreign map before we get here, so this is defense-in-
-// depth per the project's "a missing user_id scope is a cross-user leak"
+// depth per the project's "a missing user_id scope is a cross-story leak"
 // invariant — the validator must not carry the ownership assumption in a
 // comment only. (F24: the !map branch is therefore upstream-shadowed today,
 // but kept as a real scope guard rather than a dead 404.)
-async function loadArtLayerIds(db: Db, userId: string, worldMapId: string): Promise<Set<string>> {
+async function loadArtLayerIds(db: Db, storyId: string, worldMapId: string): Promise<Set<string>> {
 	const [map] = await db
 		.select({ artLayersJsonb: worldMaps.artLayersJsonb })
 		.from(worldMaps)
-		.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.userId, userId)));
+		.where(and(eq(worldMaps.id, worldMapId), eq(worldMaps.storyId, storyId)));
 	if (!map) error(404, 'world_map not found');
 	const layers = Array.isArray(map.artLayersJsonb)
 		? (map.artLayersJsonb as Array<{ id?: unknown }>)
@@ -1061,11 +1061,11 @@ async function loadArtLayerIds(db: Db, userId: string, worldMapId: string): Prom
 // which broke snapshotting any map containing a since-deleted painted layer
 // (Codex review). Normalize instead: drop orphaned erase strokes, rebase
 // orphaned fill/stamp strokes, leave layered strokes untouched. Strokes with a
-// LIVE layerId keep it; cross-user/forged layer references can't occur because
+// LIVE layerId keep it; cross-story/forged layer references can't occur because
 // loadArtLayerIds is scoped by world_maps.user_id (F27).
 async function normalizeStrokeLayerIds(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	strokes: StoredStroke[]
 ): Promise<StoredStroke[]> {
@@ -1074,7 +1074,7 @@ async function normalizeStrokeLayerIds(
 		if (s.layerId !== undefined) referenced.add(s.layerId);
 	}
 	if (referenced.size === 0) return strokes;
-	const layerIds = await loadArtLayerIds(db, userId, worldMapId);
+	const layerIds = await loadArtLayerIds(db, storyId, worldMapId);
 	const out: StoredStroke[] = [];
 	for (const s of strokes) {
 		if (s.layerId === undefined || layerIds.has(s.layerId)) {
@@ -1090,8 +1090,8 @@ async function normalizeStrokeLayerIds(
 
 // Slice 4 PR-F (D5) — move_entity payload validator.
 //
-// Cross-user / cross-scope guard (PR-F D-PRF-8, the CLAUDE.md "missing JOIN is a
-// cross-user leak" class): a placement is LOCATION-scoped, not map-scoped.
+// Cross-story / cross-scope guard (PR-F D-PRF-8, the CLAUDE.md "missing JOIN is a
+// cross-story leak" class): a placement is LOCATION-scoped, not map-scoped.
 // `map_placements.map_id` is a write-time hint (ON DELETE SET NULL), NOT the
 // identity key — WorldMap loads placements by `world_maps.location_id`
 // (WorldMap.svelte `placementsStore.load({ locationId })`). So the moving
@@ -1106,7 +1106,7 @@ async function normalizeStrokeLayerIds(
 // the projection never has to fold a keyframe for an inactive placement.
 async function validateMoveEntityPayload(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	payload: unknown,
 	tPosition: number
@@ -1133,7 +1133,7 @@ async function validateMoveEntityPayload(
 	}
 
 	// Resolve the active map's location. assertMapOwnership upstream already
-	// proved worldMapId belongs to userId, so this single-row read is safe.
+	// proved worldMapId belongs to storyId, so this single-row read is safe.
 	const [map] = await db
 		.select({ locationId: worldMaps.locationId })
 		.from(worldMaps)
@@ -1155,7 +1155,7 @@ async function validateMoveEntityPayload(
 		.where(
 			and(
 				eq(mapPlacements.id, p.placement_id),
-				eq(mapPlacements.userId, userId),
+				eq(mapPlacements.storyId, storyId),
 				eq(mapPlacements.locationId, map.locationId)
 			)
 		);
@@ -1175,11 +1175,11 @@ async function validateMoveEntityPayload(
 
 export async function createMapEvent(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	input: EventInput
 ): Promise<typeof mapEvents.$inferSelect & { invalidatedAnchorIds: string[] }> {
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 	assertObjectBody(input);
 	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition) || input.tPosition < 0) {
 		// t >= 0 parity with createMapAnchor's A1 guard (the A1 audit added the
@@ -1195,7 +1195,7 @@ export async function createMapEvent(
 	if (!EVENT_KINDS.includes(input.kind)) {
 		error(400, `Unknown event kind: ${input.kind}`);
 	}
-	await validateEventPayload(db, userId, worldMapId, input.kind, input.payloadJsonb, input.tPosition);
+	await validateEventPayload(db, storyId, worldMapId, input.kind, input.payloadJsonb, input.tPosition);
 
 	// source_event_id: explicit type check, not a truthy check. Codex PR54#2:
 	// `if (input.sourceEventId)` would skip validation for the empty string,
@@ -1216,7 +1216,7 @@ export async function createMapEvent(
 		// invariant violation is client input, not internal failure — convert
 		// to 400 so the API contract stays clean.
 		try {
-			await assertSourceEventIdIsEvent(db, input.sourceEventId, userId);
+			await assertSourceEventIdIsEvent(db, input.sourceEventId, storyId);
 		} catch (err) {
 			const msg = (err as Error).message ?? 'source_event_id is invalid';
 			if (/Entity not found|Polymorphic FK violation/.test(msg)) {
@@ -1245,7 +1245,7 @@ export async function createMapEvent(
 	// with SELECT FOR UPDATE on the world_maps row. Two concurrent
 	// paint_cells POSTs serialize on the lock; both see consistent counts.
 	return await db.transaction(async (tx) => {
-		// Lock the parent world_maps row. Cross-user safety: assertMapOwnership
+		// Lock the parent world_maps row. Cross-story safety: assertMapOwnership
 		// upstream already restricts to user-owned maps, so this is only a
 		// concurrency control between the same user's own writes.
 		await tx.execute(sql`SELECT id FROM world_maps WHERE id = ${worldMapId} FOR UPDATE`);
@@ -1668,11 +1668,11 @@ async function invalidateSyntheticAnchorsAtOrAfter(
 
 export async function deleteMapEvent(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	eventId: string
 ): Promise<void> {
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 	assertUuid(eventId, 'event id');
 	// codex review P2: D3 (T7) introduced undoneAt for audit-preserving
 	// soft-delete. Hard-delete via this endpoint defeats the invariant —
@@ -1728,17 +1728,17 @@ export async function deleteMapEvent(
  * redo with a FRESH command_id (the original is consumed; new POSTs are
  * a new logical command).
  *
- * Cross-user: ownership of the map is asserted via assertMapOwnership;
+ * Cross-story: ownership of the map is asserted via assertMapOwnership;
  * attempts against another user's map surface as 404.
  *
  * Empty stack: 422 with "No events to undo".
  */
 export async function undoLatestMapEvent(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string
 ): Promise<(typeof mapEvents.$inferSelect)[]> {
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 
 	// /review adversarial #1 — wrap the 4-statement undo sequence in a
 	// transaction with SELECT FOR UPDATE on world_maps. Mirrors the
@@ -1849,7 +1849,7 @@ export async function undoLatestMapEvent(
 //
 // world_map_layer_prefs is per-user-per-map visibility for the
 // background/grid/terrain/regions/placements layers. The table FK is
-// only on user.id and world_maps.id; the cross-user ownership
+// only on user.id and world_maps.id; the cross-story ownership
 // invariant (user_id must match world_maps.user_id) lives here, in
 // the upsert helper. Every write goes through this function; direct
 // DB inserts from anywhere else are a CLAUDE.md violation.
@@ -1860,16 +1860,16 @@ export async function undoLatestMapEvent(
 
 export async function listWorldMapLayerPrefs(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string
 ): Promise<(typeof worldMapLayerPrefs.$inferSelect)[]> {
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 	return await db
 		.select()
 		.from(worldMapLayerPrefs)
 		.where(
 			and(
-				eq(worldMapLayerPrefs.userId, userId),
+				eq(worldMapLayerPrefs.storyId, storyId),
 				eq(worldMapLayerPrefs.worldMapId, worldMapId)
 			)
 		);
@@ -1877,15 +1877,15 @@ export async function listWorldMapLayerPrefs(
 
 export async function upsertWorldMapLayerPref(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	layerKey: string,
 	visible: 0 | 1
 ): Promise<typeof worldMapLayerPrefs.$inferSelect> {
-	// Cross-user invariant — codex outside-voice #15. The schema accepts
+	// Cross-story invariant — codex outside-voice #15. The schema accepts
 	// (userA, mapB-owned-by-userB) inserts; the helper rejects them via
 	// assertMapOwnership which 404s on non-owned maps.
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 	if (typeof layerKey !== 'string' || layerKey.length === 0 || layerKey.length > 64) {
 		error(400, 'layerKey must be a non-empty string ≤ 64 chars');
 	}
@@ -1894,10 +1894,10 @@ export async function upsertWorldMapLayerPref(
 	}
 	const [row] = await db
 		.insert(worldMapLayerPrefs)
-		.values({ userId, worldMapId, layerKey, visible })
+		.values({ storyId, worldMapId, layerKey, visible })
 		.onConflictDoUpdate({
 			target: [
-				worldMapLayerPrefs.userId,
+				worldMapLayerPrefs.storyId,
 				worldMapLayerPrefs.worldMapId,
 				worldMapLayerPrefs.layerKey
 			],
@@ -2081,7 +2081,7 @@ export type ListOptions = {
 
 export async function listFactions(
 	db: Db,
-	userId: string,
+	storyId: string,
 	opts: ListOptions = {}
 ): Promise<ListResponse<typeof factions.$inferSelect>> {
 	const limit = clampLimit(opts.limit);
@@ -2092,7 +2092,7 @@ export async function listFactions(
 	const rows = await db
 		.select()
 		.from(factions)
-		.where(cursorClause ? and(eq(factions.userId, userId), cursorClause) : eq(factions.userId, userId))
+		.where(cursorClause ? and(eq(factions.storyId, storyId), cursorClause) : eq(factions.storyId, storyId))
 		.orderBy(asc(factions.createdAt), asc(factions.id))
 		.limit(limit + 1);
 	const hasMore = rows.length > limit;
@@ -2107,11 +2107,11 @@ export async function listFactions(
 
 export async function listMapAnchors(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	opts: ListOptions = {}
 ): Promise<ListResponse<typeof mapAnchors.$inferSelect>> {
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 	const limit = clampLimit(opts.limit);
 	const cursor = opts.after ? decodeTPosCursor(opts.after) : null;
 	const cursorClause = cursor
@@ -2143,11 +2143,11 @@ export async function listMapAnchors(
 
 export async function listMapEvents(
 	db: Db,
-	userId: string,
+	storyId: string,
 	worldMapId: string,
 	opts: ListOptions = {}
 ): Promise<ListResponse<typeof mapEvents.$inferSelect>> {
-	await assertMapOwnership(db, userId, worldMapId);
+	await assertMapOwnership(db, storyId, worldMapId);
 	const limit = clampLimit(opts.limit);
 	const cursor = opts.after ? decodeTPosCursor(opts.after) : null;
 	const cursorClause = cursor

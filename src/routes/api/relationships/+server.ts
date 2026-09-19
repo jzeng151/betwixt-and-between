@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { relationships, entities } from '$lib/server/db/schema.js';
 import { RelationshipType } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isPgError } from '$lib/server/pg-errors.js';
 import { resolveRelationshipBounds } from '$lib/server/intervals.js';
@@ -11,11 +11,11 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const rows = await db
 		.select()
 		.from(relationships)
-		.where(eq(relationships.userId, userId));
+		.where(eq(relationships.storyId, storyId));
 	const fromId = event.url.searchParams.get('fromId');
 	const toId = event.url.searchParams.get('toId');
 	const filtered = rows.filter(
@@ -26,7 +26,7 @@ export const GET: RequestHandler = async (event) => {
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	// readJson → a non-object body is a clean 400, not a destructure 500 (2026-06
 	// review — parity with the entity/interval/region routes' body parsing).
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -44,17 +44,17 @@ export const POST: RequestHandler = async (event) => {
 	const [from] = await db
 		.select()
 		.from(entities)
-		.where(and(eq(entities.id, fromId), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, fromId), eq(entities.storyId, storyId)));
 	if (!from) error(400, 'fromId entity not found');
 
 	const [to] = await db
 		.select()
 		.from(entities)
-		.where(and(eq(entities.id, toId), eq(entities.userId, userId)));
+		.where(and(eq(entities.id, toId), eq(entities.storyId, storyId)));
 	if (!to) error(400, 'toId entity not found');
 
 	if (type === 'part_of') {
-		await assertPartOfInvariants(db, userId, fromId, toId);
+		await assertPartOfInvariants(db, storyId, fromId, toId);
 	}
 
 	// Scenes are children of acts — a scene FK without its parent act FK is
@@ -78,7 +78,7 @@ export const POST: RequestHandler = async (event) => {
 				endActId: normalizedEndActId,
 				endSceneId: normalizedEndSceneId
 			},
-			userId
+			storyId
 		);
 		startPosition = bounds.startPosition;
 		endPosition = bounds.endPosition;
@@ -96,7 +96,7 @@ export const POST: RequestHandler = async (event) => {
 		[created] = await db
 			.insert(relationships)
 			.values({
-				userId,
+				storyId,
 				fromId,
 				toId,
 				type,

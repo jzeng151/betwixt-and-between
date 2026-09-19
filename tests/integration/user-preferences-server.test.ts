@@ -20,14 +20,14 @@ async function expectStatus(p: Promise<unknown>, status: number) {
 
 describe('T2 getActivePreferences', () => {
 	let db: Db;
-	let userId: string;
+	let storyId: string;
 	beforeEach(async () => {
 		db = await createTestDb();
-		userId = (await seedTestUser(db)).id;
+		storyId = (await seedTestUser(db)).id;
 	});
 
 	it('lazily creates a Default row on first access (v1, empty data)', async () => {
-		const a = await getActivePreferences(db, userId);
+		const a = await getActivePreferences(db, storyId);
 		expect(a.name).toBe('Default');
 		expect(a.version).toBe(1);
 		expect(a.data).toEqual({});
@@ -35,21 +35,21 @@ describe('T2 getActivePreferences', () => {
 	});
 
 	it('marks initialized:false on a fresh row, true after the first PATCH', async () => {
-		const fresh = await getActivePreferences(db, userId);
+		const fresh = await getActivePreferences(db, storyId);
 		expect(fresh.initialized).toBe(false);
 
-		await patchPreferences(db, userId, { set: { appearance: { theme: 'light' } } }, fresh.version);
+		await patchPreferences(db, storyId, { set: { appearance: { theme: 'light' } } }, fresh.version);
 
-		const after = await getActivePreferences(db, userId);
+		const after = await getActivePreferences(db, storyId);
 		expect(after.initialized).toBe(true);
 	});
 
 	it('keeps initialized true (marker not bumped) across later PATCHes', async () => {
-		const fresh = await getActivePreferences(db, userId);
-		await patchPreferences(db, userId, { set: { appearance: { theme: 'light' } } }, fresh.version);
+		const fresh = await getActivePreferences(db, storyId);
+		await patchPreferences(db, storyId, { set: { appearance: { theme: 'light' } } }, fresh.version);
 		const r = await patchPreferences(
 			db,
-			userId,
+			storyId,
 			{ set: { appearance: { accentColor: '#abcdef' } } },
 			2
 		);
@@ -57,16 +57,16 @@ describe('T2 getActivePreferences', () => {
 	});
 
 	it('returns the same row on repeat access (no duplicate active rows)', async () => {
-		const a = await getActivePreferences(db, userId);
-		const b = await getActivePreferences(db, userId);
+		const a = await getActivePreferences(db, storyId);
+		const b = await getActivePreferences(db, storyId);
 		expect(b.profileId).toBe(a.profileId);
 	});
 
 	it('is race-safe: concurrent first-access resolves to one active row', async () => {
 		const [a, b, c] = await Promise.all([
-			getActivePreferences(db, userId),
-			getActivePreferences(db, userId),
-			getActivePreferences(db, userId)
+			getActivePreferences(db, storyId),
+			getActivePreferences(db, storyId),
+			getActivePreferences(db, storyId)
 		]);
 		expect(a.profileId).toBe(b.profileId);
 		expect(b.profileId).toBe(c.profileId);
@@ -75,17 +75,17 @@ describe('T2 getActivePreferences', () => {
 
 describe('T2 patchPreferences — merge + unset', () => {
 	let db: Db;
-	let userId: string;
+	let storyId: string;
 	beforeEach(async () => {
 		db = await createTestDb();
-		userId = (await seedTestUser(db)).id;
-		await getActivePreferences(db, userId); // ensure v1 Default exists
+		storyId = (await seedTestUser(db)).id;
+		await getActivePreferences(db, storyId); // ensure v1 Default exists
 	});
 
 	it('deep-merges set and bumps version', async () => {
 		const r = await patchPreferences(
 			db,
-			userId,
+			storyId,
 			{ set: { appearance: { theme: 'light' } } },
 			1
 		);
@@ -96,13 +96,13 @@ describe('T2 patchPreferences — merge + unset', () => {
 	it('unset deletes a dotted path (reset to default)', async () => {
 		await patchPreferences(
 			db,
-			userId,
+			storyId,
 			{ set: { appearance: { entityTypeColors: { Character: '#ff0000', Location: '#00ff00' } } } },
 			1
 		);
 		const r = await patchPreferences(
 			db,
-			userId,
+			storyId,
 			{ unset: ['appearance.entityTypeColors.Character'] },
 			2
 		);
@@ -113,7 +113,7 @@ describe('T2 patchPreferences — merge + unset', () => {
 	it('strips prototype-pollution keys from set', async () => {
 		const r = await patchPreferences(
 			db,
-			userId,
+			storyId,
 			{ set: { __proto__: { polluted: true }, appearance: { theme: 'light' } } as any },
 			1
 		);
@@ -124,35 +124,35 @@ describe('T2 patchPreferences — merge + unset', () => {
 
 describe('T2 patchPreferences — Approach-B concurrency matrix (5A)', () => {
 	let db: Db;
-	let userId: string;
+	let storyId: string;
 	beforeEach(async () => {
 		db = await createTestDb();
-		userId = (await seedTestUser(db)).id;
-		await getActivePreferences(db, userId);
+		storyId = (await seedTestUser(db)).id;
+		await getActivePreferences(db, storyId);
 	});
 
 	it('stale clientVersion → 409', async () => {
-		await patchPreferences(db, userId, { set: { appearance: { theme: 'light' } } }, 1); // → v2
+		await patchPreferences(db, storyId, { set: { appearance: { theme: 'light' } } }, 1); // → v2
 		await expectStatus(
-			patchPreferences(db, userId, { set: { appearance: { accentColor: '#abcdef' } } }, 1),
+			patchPreferences(db, storyId, { set: { appearance: { accentColor: '#abcdef' } } }, 1),
 			409
 		);
 	});
 
 	it('reconcile-and-retry after 409 → no lost update, version monotonic', async () => {
 		// Client A writes theme at v1 → v2.
-		await patchPreferences(db, userId, { set: { appearance: { theme: 'light' } } }, 1);
+		await patchPreferences(db, storyId, { set: { appearance: { theme: 'light' } } }, 1);
 		// Client B (still v1) writes accent → stale → 409.
 		await expectStatus(
-			patchPreferences(db, userId, { set: { appearance: { accentColor: '#abcdef' } } }, 1),
+			patchPreferences(db, storyId, { set: { appearance: { accentColor: '#abcdef' } } }, 1),
 			409
 		);
 		// B reconciles: re-fetch fresh base (v2), re-apply its pending patch, retry.
-		const fresh = await getActivePreferences(db, userId);
+		const fresh = await getActivePreferences(db, storyId);
 		expect(fresh.version).toBe(2);
 		const afterB = await patchPreferences(
 			db,
-			userId,
+			storyId,
 			{ set: { appearance: { accentColor: '#abcdef' } } },
 			fresh.version
 		);
@@ -162,13 +162,13 @@ describe('T2 patchPreferences — Approach-B concurrency matrix (5A)', () => {
 	});
 
 	it('different-subtree concurrent writes both land after reconciliation', async () => {
-		await patchPreferences(db, userId, { set: { editor: { linkPreviewEnabled: false } } }, 1); // v2
+		await patchPreferences(db, storyId, { set: { editor: { linkPreviewEnabled: false } } }, 1); // v2
 		// second writer at stale v1 → 409, then reconciles at v2
 		await expectStatus(
-			patchPreferences(db, userId, { set: { appearance: { theme: 'light' } } }, 1),
+			patchPreferences(db, storyId, { set: { appearance: { theme: 'light' } } }, 1),
 			409
 		);
-		const r = await patchPreferences(db, userId, { set: { appearance: { theme: 'light' } } }, 2);
+		const r = await patchPreferences(db, storyId, { set: { appearance: { theme: 'light' } } }, 2);
 		expect(r.data).toMatchObject({
 			editor: { linkPreviewEnabled: false },
 			appearance: { theme: 'light' }
@@ -178,7 +178,7 @@ describe('T2 patchPreferences — Approach-B concurrency matrix (5A)', () => {
 	it('version increments monotonically across N writes', async () => {
 		let v = 1;
 		for (const theme of ['light', 'dark', 'light', 'dark'] as const) {
-			const r = await patchPreferences(db, userId, { set: { appearance: { theme } } }, v);
+			const r = await patchPreferences(db, storyId, { set: { appearance: { theme } } }, v);
 			v = r.version;
 		}
 		expect(v).toBe(5);
@@ -187,16 +187,16 @@ describe('T2 patchPreferences — Approach-B concurrency matrix (5A)', () => {
 
 describe('T2 patchPreferences — validation', () => {
 	let db: Db;
-	let userId: string;
+	let storyId: string;
 	beforeEach(async () => {
 		db = await createTestDb();
-		userId = (await seedTestUser(db)).id;
-		await getActivePreferences(db, userId);
+		storyId = (await seedTestUser(db)).id;
+		await getActivePreferences(db, storyId);
 	});
 
 	it('rejects a non-hex color value (400)', async () => {
 		await expectStatus(
-			patchPreferences(db, userId, { set: { appearance: { accentColor: 'not-a-color' } } }, 1),
+			patchPreferences(db, storyId, { set: { appearance: { accentColor: 'not-a-color' } } }, 1),
 			400
 		);
 	});
@@ -205,7 +205,7 @@ describe('T2 patchPreferences — validation', () => {
 		await expectStatus(
 			patchPreferences(
 				db,
-				userId,
+				storyId,
 				{ set: { appearance: { entityTypeColors: { Bogus: '#ffffff' } } } },
 				1
 			),
@@ -214,17 +214,17 @@ describe('T2 patchPreferences — validation', () => {
 	});
 
 	it('rejects an unsafe unset path (400)', async () => {
-		await expectStatus(patchPreferences(db, userId, { unset: ['__proto__.x'] }, 1), 400);
+		await expectStatus(patchPreferences(db, storyId, { unset: ['__proto__.x'] }, 1), 400);
 	});
 
 	it('rejects a too-new schemaVersion (400) so it cannot brick hydrate (codex)', async () => {
-		await expectStatus(patchPreferences(db, userId, { set: { schemaVersion: 999 } }, 1), 400);
-		await expectStatus(patchPreferences(db, userId, { set: { schemaVersion: 0 } }, 1), 400);
-		await expectStatus(patchPreferences(db, userId, { set: { schemaVersion: 1.5 } }, 1), 400);
+		await expectStatus(patchPreferences(db, storyId, { set: { schemaVersion: 999 } }, 1), 400);
+		await expectStatus(patchPreferences(db, storyId, { set: { schemaVersion: 0 } }, 1), 400);
+		await expectStatus(patchPreferences(db, storyId, { set: { schemaVersion: 1.5 } }, 1), 400);
 	});
 
 	it('accepts the current schemaVersion stamp', async () => {
-		const r = await patchPreferences(db, userId, { set: { schemaVersion: 4 } }, 1);
+		const r = await patchPreferences(db, storyId, { set: { schemaVersion: 4 } }, 1);
 		expect(r.version).toBe(2);
 	});
 
@@ -232,7 +232,7 @@ describe('T2 patchPreferences — validation', () => {
 		await expectStatus(
 			patchPreferences(
 				db,
-				userId,
+				storyId,
 				{ set: { editor: { huge: 'x'.repeat(70_000) } } as any },
 				1
 			),
@@ -241,13 +241,13 @@ describe('T2 patchPreferences — validation', () => {
 	});
 
 	it('rejects a stale-shaped patch with no set or unset (400)', async () => {
-		await expectStatus(patchPreferences(db, userId, {}, 1), 400);
+		await expectStatus(patchPreferences(db, storyId, {}, 1), 400);
 	});
 
 	it('accepts valid per-type / per-role color maps', async () => {
 		const r = await patchPreferences(
 			db,
-			userId,
+			storyId,
 			{
 				set: {
 					appearance: {
@@ -266,7 +266,7 @@ describe('T2 patchPreferences — validation', () => {
 	it('accepts valid graph toggle defaults', async () => {
 		const r = await patchPreferences(
 			db,
-			userId,
+			storyId,
 			{ set: { graph: { hardFilter: false, showGhostTrails: true } } },
 			1
 		);
@@ -275,14 +275,14 @@ describe('T2 patchPreferences — validation', () => {
 
 	it('rejects a non-boolean graph toggle (400)', async () => {
 		await expectStatus(
-			patchPreferences(db, userId, { set: { graph: { showGhostTrails: 'yes' } } } as any, 1),
+			patchPreferences(db, storyId, { set: { graph: { showGhostTrails: 'yes' } } } as any, 1),
 			400
 		);
 	});
 
 	it('validates graph even when appearance is absent (A3 — above early-return)', async () => {
 		await expectStatus(
-			patchPreferences(db, userId, { set: { graph: { hardFilter: 1 } } } as any, 1),
+			patchPreferences(db, storyId, { set: { graph: { hardFilter: 1 } } } as any, 1),
 			400
 		);
 	});
@@ -290,7 +290,7 @@ describe('T2 patchPreferences — validation', () => {
 	it('accepts valid window geometry defaults', async () => {
 		const r = await patchPreferences(
 			db,
-			userId,
+			storyId,
 			{ set: { windows: { defaults: { 'world-map': { width: 1200, height: 800, x: 40, y: 40 } } } } },
 			1
 		);
@@ -301,7 +301,7 @@ describe('T2 patchPreferences — validation', () => {
 		await expectStatus(
 			patchPreferences(
 				db,
-				userId,
+				storyId,
 				{ set: { windows: { defaults: { 'world-map': { width: Number.NaN, height: 800 } } } } } as any,
 				1
 			),
@@ -313,7 +313,7 @@ describe('T2 patchPreferences — validation', () => {
 		await expectStatus(
 			patchPreferences(
 				db,
-				userId,
+				storyId,
 				{ set: { windows: { defaults: { 'not-an-app': { width: 100, height: 100 } } } } } as any,
 				1
 			),
@@ -325,7 +325,7 @@ describe('T2 patchPreferences — validation', () => {
 		await expectStatus(
 			patchPreferences(
 				db,
-				userId,
+				storyId,
 				{ set: { windows: { defaults: { wiki: { x: 10, y: 10 } } } } } as any,
 				1
 			),

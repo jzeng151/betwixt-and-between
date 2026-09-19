@@ -25,8 +25,8 @@
  * importing from `$lib/server/intervals.js`. The split is invisible to them.
  *
  * **Multi-tenant scoping (T8b S5', 2026-05-08):** every public function takes
- * a `userId` and scopes every SELECT/UPDATE/DELETE/INSERT by it. Cross-user
- * reads return empty; cross-user updates affect zero rows. Callers must pass
+ * a `storyId` and scopes every SELECT/UPDATE/DELETE/INSERT by it. Cross-story
+ * reads return empty; cross-story updates affect zero rows. Callers must pass
  * `getUserId(event)` from the route handler.
  *
  * Math (docs/adr/0003-premise-4-position-math.md → "The math"):

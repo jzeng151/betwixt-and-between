@@ -48,7 +48,7 @@ async function readJson(res: Response): Promise<any> {
 async function makeEntity(name = 'A'): Promise<string> {
 	const [e] = await currentDb
 		.insert(entities)
-		.values({ userId, type: 'Character', name })
+		.values({ storyId: userId, type: 'Character', name })
 		.returning();
 	return e.id;
 }

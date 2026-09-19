@@ -160,13 +160,13 @@
 		entity ? (entity.data as Record<string, unknown>)?.is_asset !== false : true
 	);
 
-	async function persistStyle(next: StyleOverride) {
+	async function persistStyle(next: StyleOverride, field: keyof StyleOverride) {
 		if (!entity) return;
 		const data = { ...(entity.data as Record<string, unknown>) };
 		// Drop the key entirely when the override is empty so it inherits.
 		if (Object.keys(next).length === 0) delete data.style;
 		else data.style = next;
-		await entities.updateEntity(entity.id, { data });
+		await entities.updateEntity(entity.id, { data }, `entity:${entity.id}:data:style.${field}`);
 	}
 
 	async function setInPalette(v: boolean) {
@@ -175,7 +175,7 @@
 		// Default is true → omit the key when shown; persist `false` to opt out.
 		if (v) delete data.is_asset;
 		else data.is_asset = false;
-		await entities.updateEntity(entity.id, { data });
+		await entities.updateEntity(entity.id, { data }, `entity:${entity.id}:data:is_asset`);
 	}
 
 	async function rename(newName: string) {

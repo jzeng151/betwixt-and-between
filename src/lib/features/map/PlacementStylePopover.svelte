@@ -57,11 +57,11 @@
 		(placeable.data as Record<string, unknown>)?.is_asset !== false
 	);
 
-	async function persistStyle(next: StyleOverride) {
+	async function persistStyle(next: StyleOverride, field: keyof StyleOverride) {
 		const data = { ...(placement.data ?? {}) };
 		if (Object.keys(next).length === 0) delete data.style;
 		else data.style = next;
-		await mapPlacements.update(placement.id, { data });
+		await mapPlacements.update(placement.id, { data }, `placement:${placement.id}:data:style.${field}`);
 		onPersisted?.(); // post-PATCH → parent re-invalidates the Location's cycle bundles
 	}
 
@@ -69,7 +69,7 @@
 		const data = { ...(placeable.data as Record<string, unknown>) };
 		if (v) delete data.is_asset; // default true
 		else data.is_asset = false;
-		await entities.updateEntity(placeable.id, { data });
+		await entities.updateEntity(placeable.id, { data }, `entity:${placeable.id}:data:is_asset`);
 	}
 
 	$effect(() => {

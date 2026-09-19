@@ -38,7 +38,7 @@ const PLACEABLE_TYPE_SET = new Set<string>(PlaceableEntityType);
 
 export async function assertPlaceableId(
 	db: unknown,
-	userId: string,
+	storyId: string,
 	placeableId: string | null | undefined
 ): Promise<void> {
 	if (placeableId === null || placeableId === undefined) {
@@ -49,7 +49,7 @@ export async function assertPlaceableId(
 	const rows = (await (db as SelectableDB)
 		.select({ type: entities.type })
 		.from(entities)
-		.where(and(eq(entities.id, placeableId), eq(entities.userId, userId)))) as Array<{
+		.where(and(eq(entities.id, placeableId), eq(entities.storyId, storyId)))) as Array<{
 		type: string;
 	}>;
 
@@ -64,7 +64,7 @@ export async function assertPlaceableId(
 
 export async function assertPlacementLocationId(
 	db: unknown,
-	userId: string,
+	storyId: string,
 	locationId: string | null | undefined
 ): Promise<void> {
 	if (locationId === null || locationId === undefined) return;
@@ -73,7 +73,7 @@ export async function assertPlacementLocationId(
 	const rows = (await (db as SelectableDB)
 		.select({ type: entities.type })
 		.from(entities)
-		.where(and(eq(entities.id, locationId), eq(entities.userId, userId)))) as Array<{
+		.where(and(eq(entities.id, locationId), eq(entities.storyId, storyId)))) as Array<{
 		type: string;
 	}>;
 
@@ -85,7 +85,7 @@ export async function assertPlacementLocationId(
 
 export async function assertPlacementMapId(
 	db: unknown,
-	userId: string,
+	storyId: string,
 	mapId: string | null | undefined
 ): Promise<void> {
 	if (mapId === null || mapId === undefined) return;
@@ -94,7 +94,7 @@ export async function assertPlacementMapId(
 	const rows = (await (db as SelectableDB)
 		.select({ id: worldMaps.id })
 		.from(worldMaps)
-		.where(and(eq(worldMaps.id, mapId), eq(worldMaps.userId, userId)))) as Array<{ id: string }>;
+		.where(and(eq(worldMaps.id, mapId), eq(worldMaps.storyId, storyId)))) as Array<{ id: string }>;
 
 	if (rows.length === 0) error(400, 'map_id does not reference an existing world_map');
 }
@@ -113,7 +113,7 @@ export interface PlacementVariantBoundsInput {
  */
 export async function assertPlacementVariantBounds(
 	db: unknown,
-	userId: string,
+	storyId: string,
 	input: PlacementVariantBoundsInput
 ): Promise<void> {
 	const checks: Array<{ id: string | null | undefined; expected: 'Act' | 'Scene'; column: string }> = [
@@ -130,7 +130,7 @@ export async function assertPlacementVariantBounds(
 		const rows = (await (db as SelectableDB)
 			.select({ type: entities.type })
 			.from(entities)
-			.where(and(eq(entities.id, check.id), eq(entities.userId, userId)))) as Array<{
+			.where(and(eq(entities.id, check.id), eq(entities.storyId, storyId)))) as Array<{
 			type: string;
 		}>;
 
@@ -149,7 +149,7 @@ export async function assertPlacementVariantBounds(
 export async function resolvePlacementBounds(
 	db: Parameters<typeof resolveRelationshipBounds>[0],
 	input: PlacementVariantBoundsInput,
-	userId: string
+	storyId: string
 ): Promise<{ startPosition: number | null; endPosition: number | null }> {
 	return resolveRelationshipBounds(
 		db,
@@ -159,7 +159,7 @@ export async function resolvePlacementBounds(
 			endActId: input.endActId ?? null,
 			endSceneId: input.endSceneId ?? null
 		},
-		userId
+		storyId
 	);
 }
 
@@ -178,7 +178,7 @@ export async function resolvePlacementBounds(
  */
 export async function recomputePlacementBoundsAll(
 	db: Parameters<typeof resolveRelationshipBounds>[0],
-	userId: string,
+	storyId: string,
 	// Optional act/scene index cache from the calling cascade (2026-06 perf
 	// audit) — without it every scene-anchored row costs several extra queries.
 	cache?: Parameters<typeof resolveRelationshipBounds>[3]
@@ -188,7 +188,7 @@ export async function recomputePlacementBoundsAll(
 		.from(mapPlacements)
 		.where(
 			and(
-				eq(mapPlacements.userId, userId),
+				eq(mapPlacements.storyId, storyId),
 				sql`(${mapPlacements.startActId} IS NOT NULL OR ${mapPlacements.endActId} IS NOT NULL OR ${mapPlacements.startPosition} IS NOT NULL OR ${mapPlacements.endPosition} IS NOT NULL)`
 			)
 		)) as Array<{
@@ -233,7 +233,7 @@ export async function recomputePlacementBoundsAll(
 						endActId: row.endActId,
 						endSceneId: row.endSceneId
 					},
-					userId,
+					storyId,
 					cache
 				);
 				startPosition = resolved.startPosition;
@@ -289,7 +289,7 @@ export async function recomputePlacementBoundsAll(
 			})
 				.update(mapPlacements)
 				.set(updates)
-				.where(and(eq(mapPlacements.id, row.id), eq(mapPlacements.userId, userId)));
+				.where(and(eq(mapPlacements.id, row.id), eq(mapPlacements.storyId, storyId)));
 			updated++;
 		} catch (err) {
 			throw new Error(

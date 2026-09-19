@@ -44,11 +44,11 @@ import {
 // FK-derivation cache + lookups
 // =============================================================================
 
-async function buildRecomputeCache(db: Db, userId: string): Promise<RecomputeCache> {
+async function buildRecomputeCache(db: Db, storyId: string): Promise<RecomputeCache> {
 	const acts = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.userId, userId), eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.where(and(eq(entities.storyId, storyId), eq(entities.type, 'Act'), isNull(entities.parentId)))
 		.orderBy(entities.position, entities.createdAt);
 	const actIndex = new Map<string, number>();
 	acts.forEach((a, i) => actIndex.set(a.id, i));
@@ -56,7 +56,7 @@ async function buildRecomputeCache(db: Db, userId: string): Promise<RecomputeCac
 	const allScenes = await db
 		.select({ id: entities.id, parentId: entities.parentId })
 		.from(entities)
-		.where(and(eq(entities.userId, userId), eq(entities.type, 'Scene')))
+		.where(and(eq(entities.storyId, storyId), eq(entities.type, 'Scene')))
 		.orderBy(entities.position, entities.createdAt);
 	const byAct = new Map<string, string[]>();
 	for (const s of allScenes) {
@@ -92,17 +92,17 @@ function sceneInfoFromCache(
 	return info;
 }
 
-export async function actIndexOf(db: Db, actId: string, userId: string): Promise<number> {
+export async function actIndexOf(db: Db, actId: string, storyId: string): Promise<number> {
 	const ordered = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.userId, userId), eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.where(and(eq(entities.storyId, storyId), eq(entities.type, 'Act'), isNull(entities.parentId)))
 		.orderBy(entities.position, entities.createdAt);
 
 	const idx = ordered.findIndex((row) => row.id === actId);
 	if (idx === -1) {
 		// Differentiate "not an Act" from "Act with parent_id set" for better errors.
-		const [maybe] = await db.select().from(entities).where(and(eq(entities.id, actId), eq(entities.userId, userId)));
+		const [maybe] = await db.select().from(entities).where(and(eq(entities.id, actId), eq(entities.storyId, storyId)));
 		if (!maybe) throw new Error(`Act not found: ${actId}`);
 		if (maybe.type !== 'Act')
 			throw new Error(
@@ -122,15 +122,15 @@ export async function actIndexOf(db: Db, actId: string, userId: string): Promise
 export async function sceneIndexOf(
 	db: Db,
 	sceneId: string,
-	userId: string
+	storyId: string
 ): Promise<{ sceneIndex: number; sceneCount: number; parentActId: string }> {
-	const [scene] = await db.select().from(entities).where(and(eq(entities.id, sceneId), eq(entities.userId, userId)));
+	const [scene] = await db.select().from(entities).where(and(eq(entities.id, sceneId), eq(entities.storyId, storyId)));
 	if (!scene) throw new Error(`Scene not found: ${sceneId}`);
 	if (scene.type !== 'Scene')
 		throw new Error(`Entity ${sceneId} has type='${scene.type}', expected 'Scene'`);
 	if (!scene.parentId) throw new Error(`Scene ${sceneId} has no parent_id`);
 
-	const [parent] = await db.select().from(entities).where(and(eq(entities.id, scene.parentId), eq(entities.userId, userId)));
+	const [parent] = await db.select().from(entities).where(and(eq(entities.id, scene.parentId), eq(entities.storyId, storyId)));
 	if (!parent) throw new Error(`Scene ${sceneId} parent ${scene.parentId} not found`);
 	if (parent.type !== 'Act')
 		throw new Error(
@@ -140,7 +140,7 @@ export async function sceneIndexOf(
 	const siblings = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.userId, userId), eq(entities.type, 'Scene'), eq(entities.parentId, scene.parentId)))
+		.where(and(eq(entities.storyId, storyId), eq(entities.type, 'Scene'), eq(entities.parentId, scene.parentId)))
 		.orderBy(entities.position, entities.createdAt);
 
 	const k = siblings.findIndex((row) => row.id === sceneId);
@@ -167,18 +167,18 @@ export async function sceneIndexOf(
 export async function computeIntervalPositions(
 	db: Db,
 	input: ComputeIntervalPositionsInput,
-	userId: string,
+	storyId: string,
 	cache?: RecomputeCache
 ): Promise<ComputeIntervalPositionsResult> {
 	let startPosition: number;
 	let endPosition: number;
 
 	const lookupAct = async (actId: string): Promise<number> =>
-		cache ? actIndexFromCache(cache, actId) : actIndexOf(db, actId, userId);
+		cache ? actIndexFromCache(cache, actId) : actIndexOf(db, actId, storyId);
 	const lookupScene = async (
 		sceneId: string
 	): Promise<{ sceneIndex: number; sceneCount: number; parentActId: string }> =>
-		cache ? sceneInfoFromCache(cache, sceneId) : sceneIndexOf(db, sceneId, userId);
+		cache ? sceneInfoFromCache(cache, sceneId) : sceneIndexOf(db, sceneId, storyId);
 
 	if (input.startSceneId) {
 		const { sceneIndex, sceneCount, parentActId } = await lookupScene(input.startSceneId);
@@ -388,7 +388,7 @@ const fmtPos = (n: number): string => String(Number(n.toFixed(3)));
  * the Act elsewhere) instead of an opaque failure. 409 matches the 23505 → 409
  * conflict translation the routes already use for the duplicate-bounds case.
  */
-async function assertSwapsNoOverlap(db: Db, userId: string, swaps: SwapCheck[]): Promise<void> {
+async function assertSwapsNoOverlap(db: Db, storyId: string, swaps: SwapCheck[]): Promise<void> {
 	for (const s of swaps) {
 		// Half-open overlap: [a1, a2) ∩ [b1, b2) ≠ ∅ iff a1 < b2 AND b1 < a2.
 		const siblings = await db
@@ -398,7 +398,7 @@ async function assertSwapsNoOverlap(db: Db, userId: string, swaps: SwapCheck[]):
 				endPosition: intervals.endPosition
 			})
 			.from(intervals)
-			.where(and(eq(intervals.entityId, s.entityId), eq(intervals.userId, userId)));
+			.where(and(eq(intervals.entityId, s.entityId), eq(intervals.storyId, storyId)));
 		const clash = siblings.find(
 			(row) => row.id !== s.id && s.start < row.endPosition && row.startPosition < s.end
 		);
@@ -407,7 +407,7 @@ async function assertSwapsNoOverlap(db: Db, userId: string, swaps: SwapCheck[]):
 		const [ent] = await db
 			.select({ name: entities.name })
 			.from(entities)
-			.where(and(eq(entities.id, s.entityId), eq(entities.userId, userId)));
+			.where(and(eq(entities.id, s.entityId), eq(entities.storyId, storyId)));
 		const who = ent?.name ? `"${ent.name}"` : 'this entity';
 		error(
 			409,
@@ -430,20 +430,20 @@ async function assertSwapsNoOverlap(db: Db, userId: string, swaps: SwapCheck[]):
  *
  * Only writes rows whose positions actually changed.
  */
-export async function recomputeIntervalsForAct(db: Db, actId: string, userId: string): Promise<number> {
+export async function recomputeIntervalsForAct(db: Db, actId: string, storyId: string): Promise<number> {
 	const affected = await db
 		.select()
 		.from(intervals)
 		.where(
 			and(
-				eq(intervals.userId, userId),
+				eq(intervals.storyId, storyId),
 				sql`(${intervals.startActId} = ${actId} OR ${intervals.endActId} = ${actId})`
 			)
 		);
 
 	// One-shot act + scene index maps so each row resolves FKs in O(1)
 	// instead of issuing 2-4 DB queries (D20/16A).
-	const cache = await buildRecomputeCache(db, userId);
+	const cache = await buildRecomputeCache(db, storyId);
 
 	let updated = 0;
 	const swaps: SwapCheck[] = [];
@@ -468,11 +468,11 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 				endPosition: newEnd,
 				...(swapped ?? {})
 			})
-			.where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
+			.where(and(eq(intervals.id, row.id), eq(intervals.storyId, storyId)));
 		if (swapped) swaps.push({ id: row.id, entityId: row.entityId, start: newStart, end: newEnd });
 		updated++;
 	}
-	await assertSwapsNoOverlap(db, userId, swaps);
+	await assertSwapsNoOverlap(db, storyId, swaps);
 
 	// Scene-anchored map_placements also need their derived positions refreshed
 	// after a scene-within-act mutation (Step 4, Codex #2). Coarse: walk the
@@ -481,7 +481,7 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 	// above is threaded through so each row resolves FKs in O(1) instead of
 	// re-querying acts/scenes per row (2026-06 perf audit).
 	const { recomputePlacementBoundsAll } = await import('../map-placements.js');
-	await recomputePlacementBoundsAll(db, userId, cache);
+	await recomputePlacementBoundsAll(db, storyId, cache);
 
 	// Scene-anchored relationships (caused_by scope) carry the same derived
 	// start/end positions and must refresh on a scene-within-act mutation too.
@@ -489,7 +489,7 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 	// jump-to-cause click, so a stale value now scrubs the playhead to the
 	// wrong story-time. Coarse walk, same short-circuit-on-no-drift contract
 	// as the placement recompute above.
-	await recomputeRelationshipBoundsAll(db, userId, cache);
+	await recomputeRelationshipBoundsAll(db, storyId, cache);
 
 	// Scene-anchored world_map variants depend on the scene's index/count within
 	// its act, so they drift on a scene-within-act mutation exactly like the
@@ -499,7 +499,7 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
 	// reorder (2026-06 review). Same coarse walk; runs in the caller's tx so the
 	// world_maps DEFERRABLE EXCLUDE tolerates transient overlaps until commit.
 	const { recomputeWorldMapVariantsAll } = await import('../world-maps.js');
-	await recomputeWorldMapVariantsAll(db, userId, cache);
+	await recomputeWorldMapVariantsAll(db, storyId, cache);
 
 	return updated;
 }
@@ -525,11 +525,11 @@ export async function recomputeIntervalsForAct(db: Db, actId: string, userId: st
  */
 export type ActOrderingSnapshot = Map<number, string>;
 
-export async function snapshotActOrdering(db: Db, userId: string): Promise<ActOrderingSnapshot> {
+export async function snapshotActOrdering(db: Db, storyId: string): Promise<ActOrderingSnapshot> {
 	const acts = await db
 		.select({ id: entities.id })
 		.from(entities)
-		.where(and(eq(entities.userId, userId), eq(entities.type, 'Act'), isNull(entities.parentId)))
+		.where(and(eq(entities.storyId, storyId), eq(entities.type, 'Act'), isNull(entities.parentId)))
 		.orderBy(entities.position, entities.createdAt);
 	const snap: ActOrderingSnapshot = new Map();
 	acts.forEach((a, i) => snap.set(i, a.id));
@@ -538,12 +538,12 @@ export async function snapshotActOrdering(db: Db, userId: string): Promise<ActOr
 
 export async function recomputeAllIntervals(
 	db: Db,
-	userId: string,
+	storyId: string,
 	preSnapshot?: ActOrderingSnapshot
 ): Promise<number> {
-	const all = await db.select().from(intervals).where(eq(intervals.userId, userId));
+	const all = await db.select().from(intervals).where(eq(intervals.storyId, storyId));
 	// Build one-shot FK cache (D20/16A).
-	const cache = await buildRecomputeCache(db, userId);
+	const cache = await buildRecomputeCache(db, storyId);
 	let updated = 0;
 	const swaps: SwapCheck[] = [];
 
@@ -572,7 +572,7 @@ export async function recomputeAllIntervals(
 					endPosition: newEnd,
 					...(swapped ?? {})
 				})
-				.where(and(eq(intervals.id, row.id), eq(intervals.userId, userId)));
+				.where(and(eq(intervals.id, row.id), eq(intervals.storyId, storyId)));
 			if (swapped)
 				swaps.push({ id: row.id, entityId: row.entityId, start: newStart, end: newEnd });
 			updated++;
@@ -584,31 +584,31 @@ export async function recomputeAllIntervals(
 	}
 	// Roll back the whole cascade if any swap-normalized row now overlaps a
 	// sibling of the same entity (2026-06 audit follow-up — see assertSwapsNoOverlap).
-	await assertSwapsNoOverlap(db, userId, swaps);
+	await assertSwapsNoOverlap(db, storyId, swaps);
 
 	// Also recompute temporal relationship bounds in the same transaction so
 	// act-reorder cascades are atomic (Phase 1B Lane A, 2026-05-02). The cache
 	// built above is threaded through every walk below (2026-06 perf audit) so
 	// no walk re-queries acts/scenes per row or rebuilds the cache.
-	await recomputeRelationshipBoundsAll(db, userId, cache);
+	await recomputeRelationshipBoundsAll(db, storyId, cache);
 
 	// World-map variant bounds piggyback on the same cascade (M11 design lock).
 	// Imported lazily to break the world-maps.ts → intervals.ts dependency cycle.
 	const { recomputeWorldMapVariantsAll } = await import('../world-maps.js');
-	await recomputeWorldMapVariantsAll(db, userId, cache);
+	await recomputeWorldMapVariantsAll(db, storyId, cache);
 
 	// Map-placement bounds piggyback on the same cascade (M11 — Step 4).
 	// Same lazy-import dance to break the map-placements.ts → intervals.ts cycle.
 	const { recomputePlacementBoundsAll } = await import('../map-placements.js');
-	await recomputePlacementBoundsAll(db, userId, cache);
+	await recomputePlacementBoundsAll(db, storyId, cache);
 
 	// World Map v3 — anchor + event t_position recompute. Only fires when the
 	// caller supplied a pre-cascade Act-ordering snapshot (i.e., Act reorders
 	// and Act deletes). Scene reorders within an Act don't shift any Act
 	// index, so they never need this. See snapshotActOrdering docstring.
 	if (preSnapshot) {
-		await recomputeMapAnchors(db, userId, preSnapshot, cache);
-		await recomputeMapEvents(db, userId, preSnapshot, cache);
+		await recomputeMapAnchors(db, storyId, preSnapshot, cache);
+		await recomputeMapEvents(db, storyId, preSnapshot, cache);
 	}
 
 	return updated;
@@ -631,7 +631,7 @@ export async function recomputeAllIntervals(
 export async function resolveRelationshipBounds(
 	db: Db,
 	input: RelationshipBoundsInput,
-	userId: string,
+	storyId: string,
 	cache?: RecomputeCache
 ): Promise<RelationshipBoundsResult> {
 	if (!input.startActId && !input.endActId) {
@@ -653,7 +653,7 @@ export async function resolveRelationshipBounds(
 			endActId: input.endActId,
 			endSceneId: input.endSceneId ?? null
 		},
-		userId,
+		storyId,
 		cache
 	);
 	return { startPosition: derived.startPosition, endPosition: derived.endPosition };
@@ -685,11 +685,11 @@ export async function resolveRelationshipBounds(
 export async function resolveRelationshipBoundsSwapNormalized(
 	db: Db,
 	input: RelationshipBoundsInput,
-	userId: string,
+	storyId: string,
 	cache?: RecomputeCache
 ): Promise<RelationshipBoundsResult & { swappedFks: SwappedFks | null }> {
 	try {
-		const direct = await resolveRelationshipBounds(db, input, userId, cache);
+		const direct = await resolveRelationshipBounds(db, input, storyId, cache);
 		return { startPosition: direct.startPosition, endPosition: direct.endPosition, swappedFks: null };
 	} catch (directErr) {
 		let swapped: RelationshipBoundsResult;
@@ -702,7 +702,7 @@ export async function resolveRelationshipBoundsSwapNormalized(
 					endActId: input.startActId ?? null,
 					endSceneId: input.startSceneId ?? null
 				},
-				userId,
+				storyId,
 				cache
 			);
 		} catch {
@@ -731,7 +731,7 @@ export async function resolveRelationshipBoundsSwapNormalized(
  */
 async function recomputeRelationshipBoundsAll(
 	db: Db,
-	userId: string,
+	storyId: string,
 	providedCache?: RecomputeCache
 ): Promise<number> {
 	// Two row classes need a visit:
@@ -748,14 +748,14 @@ async function recomputeRelationshipBoundsAll(
 		.from(relationships)
 		.where(
 			and(
-				eq(relationships.userId, userId),
+				eq(relationships.storyId, storyId),
 				sql`(${relationships.startActId} IS NOT NULL OR ${relationships.endActId} IS NOT NULL OR ${relationships.startPosition} IS NOT NULL OR ${relationships.endPosition} IS NOT NULL)`
 			)
 		);
 
 	if (rows.length === 0) return 0;
 
-	const cache = providedCache ?? (await buildRecomputeCache(db, userId));
+	const cache = providedCache ?? (await buildRecomputeCache(db, storyId));
 
 	// Compute first, write after, so the position writes can be staged
 	// swap-safely (see below). Two outcome buckets:
@@ -796,7 +796,7 @@ async function recomputeRelationshipBoundsAll(
 					endActId: row.endActId,
 					endSceneId: row.endSceneId
 				},
-				userId,
+				storyId,
 				cache
 			);
 			const { startPosition, endPosition, swappedFks } = resolved;
@@ -839,7 +839,7 @@ async function recomputeRelationshipBoundsAll(
 				startPosition: null,
 				endPosition: null
 			})
-			.where(and(eq(relationships.id, id), eq(relationships.userId, userId)));
+			.where(and(eq(relationships.id, id), eq(relationships.storyId, storyId)));
 	}
 
 	// Position writes are swap-safe. A scene reorder can map two same-endpoint,
@@ -857,7 +857,7 @@ async function recomputeRelationshipBoundsAll(
 			await db
 				.update(relationships)
 				.set({ startPosition: -(i + 1) })
-				.where(and(eq(relationships.id, sets[i].id), eq(relationships.userId, userId)));
+				.where(and(eq(relationships.id, sets[i].id), eq(relationships.storyId, storyId)));
 		}
 		for (const s of sets) {
 			await db
@@ -869,7 +869,7 @@ async function recomputeRelationshipBoundsAll(
 					// (start FK ↔ start_position) after an inversion was normalized.
 					...(s.swappedFks ?? {})
 				})
-				.where(and(eq(relationships.id, s.id), eq(relationships.userId, userId)));
+				.where(and(eq(relationships.id, s.id), eq(relationships.storyId, storyId)));
 		}
 	}
 
@@ -912,7 +912,7 @@ async function recomputeRelationshipBoundsAll(
 //                 `floor(t)` outside the snapshot entirely (no oldIdx
 //                 mapping). Leave unchanged.
 //
-// Cross-user scoping: queries scope through worldMaps.userId via JOIN +
+// Cross-story scoping: queries scope through worldMaps.storyId via JOIN +
 // inArray defense-in-depth per CLAUDE.md. `map_anchors` and `map_events`
 // carry no user_id.
 // =============================================================================
@@ -937,19 +937,19 @@ function classifyTPosition(
 	return { kind: 'reproject', newT: newIdx + frac };
 }
 
-// Defense-in-depth helper. The SELECT JOIN through worldMaps.userId scopes
+// Defense-in-depth helper. The SELECT JOIN through worldMaps.storyId scopes
 // reads correctly, but the per-row UPDATE targets only by id — relying on the
 // caller to keep both inside the same transaction. If a future caller invokes
 // recomputeAllIntervals on `db` outside a tx (or someone refactors the SELECT
-// JOIN away), the UPDATE alone would not block a cross-user write. Pre-
+// JOIN away), the UPDATE alone would not block a cross-story write. Pre-
 // collecting userMapIds and gating the UPDATE with inArray(...) makes the
 // scoping self-enforcing — the UPDATE physically cannot touch another user's
 // rows even if the SELECT becomes stale or unscoped.
-async function loadUserMapIds(db: Db, userId: string): Promise<string[]> {
+async function loadUserMapIds(db: Db, storyId: string): Promise<string[]> {
 	const maps = await db
 		.select({ id: worldMaps.id })
 		.from(worldMaps)
-		.where(eq(worldMaps.userId, userId));
+		.where(eq(worldMaps.storyId, storyId));
 	return maps.map((m) => m.id);
 }
 
@@ -993,11 +993,11 @@ export function chunked<T>(arr: T[], size: number): T[][] {
 
 async function recomputeMapAnchors(
 	db: Db,
-	userId: string,
+	storyId: string,
 	preSnapshot: ActOrderingSnapshot,
 	cache: RecomputeCache
 ): Promise<number> {
-	const userMapIds = await loadUserMapIds(db, userId);
+	const userMapIds = await loadUserMapIds(db, storyId);
 	if (userMapIds.length === 0) return 0;
 	const rows = await db
 		.select({ id: mapAnchors.id, tPosition: mapAnchors.tPosition })
@@ -1079,7 +1079,7 @@ async function recomputeMapAnchors(
 			FROM (VALUES ${parkValues}) AS v(id, t_position), ${worldMaps}
 			WHERE ${mapAnchors.id} = v.id
 				AND ${mapAnchors.worldMapId} = ${worldMaps.id}
-				AND ${worldMaps.userId} = ${userId}
+				AND ${worldMaps.storyId} = ${storyId}
 		`);
 	}
 	// Phase 2: write final values (chunked). All to-be-updated rows are parked at
@@ -1096,7 +1096,7 @@ async function recomputeMapAnchors(
 			FROM (VALUES ${finalValues}) AS v(id, t_position), ${worldMaps}
 			WHERE ${mapAnchors.id} = v.id
 				AND ${mapAnchors.worldMapId} = ${worldMaps.id}
-				AND ${worldMaps.userId} = ${userId}
+				AND ${worldMaps.storyId} = ${storyId}
 		`);
 	}
 	return updates.length;
@@ -1104,11 +1104,11 @@ async function recomputeMapAnchors(
 
 async function recomputeMapEvents(
 	db: Db,
-	userId: string,
+	storyId: string,
 	preSnapshot: ActOrderingSnapshot,
 	cache: RecomputeCache
 ): Promise<number> {
-	const userMapIds = await loadUserMapIds(db, userId);
+	const userMapIds = await loadUserMapIds(db, storyId);
 	if (userMapIds.length === 0) return 0;
 	const rows = await db
 		.select({ id: mapEvents.id, tPosition: mapEvents.tPosition })
@@ -1160,7 +1160,7 @@ async function recomputeMapEvents(
 			FROM (VALUES ${eventValues}) AS v(id, t_position), ${worldMaps}
 			WHERE ${mapEvents.id} = v.id
 				AND ${mapEvents.worldMapId} = ${worldMaps.id}
-				AND ${worldMaps.userId} = ${userId}
+				AND ${worldMaps.storyId} = ${storyId}
 		`);
 	}
 	return updates.length;

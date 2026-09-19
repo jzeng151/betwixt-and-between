@@ -2,7 +2,7 @@
  * Server chokepoint for user_preferences (Settings customization Phase 1, T2).
  *
  * Every read/write of a user's preference blob goes through here so the
- * cross-user invariant (rows scoped by session-derived userId), the
+ * cross-story invariant (rows scoped by ownership-checked storyId), the
  * Approach-B optimistic concurrency, and the value validation live in exactly
  * one place. The API handlers (T3) call into these; the client store (T4) is
  * the only consumer.
@@ -66,13 +66,13 @@ export interface ActivePreferences {
  * unique index user_preferences_one_active, so two concurrent first-requests
  * resolve to the same single active row instead of duplicating (codex).
  */
-export async function getActivePreferences(db: Db, userId: string): Promise<ActivePreferences> {
-	const found = await selectActive(db, userId);
+export async function getActivePreferences(db: Db, storyId: string): Promise<ActivePreferences> {
+	const found = await selectActive(db, storyId);
 	if (found) return found;
 
-	await db.insert(userPreferences).values({ userId, name: 'Default' }).onConflictDoNothing();
+	await db.insert(userPreferences).values({ storyId, name: 'Default' }).onConflictDoNothing();
 
-	const created = await selectActive(db, userId);
+	const created = await selectActive(db, storyId);
 	if (!created) {
 		// Should be unreachable: the row either existed, we created it, or a
 		// racing request created it (DO NOTHING) and it's now selectable.
@@ -81,7 +81,7 @@ export async function getActivePreferences(db: Db, userId: string): Promise<Acti
 	return created;
 }
 
-async function selectActive(db: Db, userId: string): Promise<ActivePreferences | null> {
+async function selectActive(db: Db, storyId: string): Promise<ActivePreferences | null> {
 	const [row] = await db
 		.select({
 			profileId: userPreferences.profileId,
@@ -91,7 +91,7 @@ async function selectActive(db: Db, userId: string): Promise<ActivePreferences |
 			initializedFromClientAt: userPreferences.initializedFromClientAt
 		})
 		.from(userPreferences)
-		.where(and(eq(userPreferences.userId, userId), eq(userPreferences.isActive, 1)))
+		.where(and(eq(userPreferences.storyId, storyId), eq(userPreferences.isActive, 1)))
 		.limit(1);
 	if (!row) return null;
 	return {
@@ -110,22 +110,22 @@ async function selectActive(db: Db, userId: string): Promise<ActivePreferences |
  */
 export async function patchPreferences(
 	db: Db,
-	userId: string,
+	storyId: string,
 	patch: PreferencesPatch,
 	clientVersion: number,
 	expectedProfileId?: string
 ): Promise<ActivePreferences> {
 	validatePatchShape(patch, clientVersion);
 
-	// Run the read-check-write under the per-user profile lock so the F2 check is
+	// Run the read-check-write under the per-story profile lock so the F2 check is
 	// ATOMIC with the write: without it a concurrent activate (another tab) between
 	// the active read and the UPDATE would let the write land on the now-inactive
 	// old profile (the UPDATE keys on active.profileId, not is_active), silently
 	// succeeding against stale state instead of returning the profile-change 409
 	// (codex). The lock serializes against activate/create/delete.
 	return await db.transaction(async (tx) => {
-		await lockUserProfiles(tx, userId);
-		const active = await getActivePreferences(tx, userId);
+		await lockStoryProfiles(tx, storyId);
+		const active = await getActivePreferences(tx, storyId);
 
 		// F2 (profile-switch concurrency): a patch authored against one profile must
 		// never land on another after the user switches the active profile mid-flight.
@@ -140,7 +140,7 @@ export async function patchPreferences(
 			const all = await tx
 				.select({ profileId: userPreferences.profileId })
 				.from(userPreferences)
-				.where(eq(userPreferences.userId, userId));
+				.where(eq(userPreferences.storyId, storyId));
 			if (all.length > 1) {
 				error(400, 'profileId required to write when multiple profiles exist');
 			}
@@ -167,7 +167,7 @@ export async function patchPreferences(
 			})
 			.where(
 				and(
-					eq(userPreferences.userId, userId),
+					eq(userPreferences.storyId, storyId),
 					eq(userPreferences.profileId, active.profileId),
 					eq(userPreferences.version, clientVersion)
 				)
@@ -197,7 +197,7 @@ export async function patchPreferences(
 //
 // The table was profile-shaped from Phase 1 day one: (user_id, profile_id) PK +
 // the is_active 0/1 flag + the partial unique index user_preferences_one_active
-// ("at most one active row per user"). So profiles are "allow N rows + a
+// ("at most one active row per story"). So profiles are "allow N rows + a
 // switcher" with NO schema migration.
 //
 // ACTIVATE is the load-bearing operation. The design proposed a single
@@ -238,10 +238,10 @@ function toSummary(row: {
 }
 
 /** List a user's profiles, oldest first (so "Default" leads). */
-export async function listProfiles(db: Db, userId: string): Promise<ProfileSummary[]> {
+export async function listProfiles(db: Db, storyId: string): Promise<ProfileSummary[]> {
 	// Ensure the lazy Default row exists so a brand-new user sees one profile,
 	// not an empty list (mirrors getActivePreferences' lazy-create contract).
-	await getActivePreferences(db, userId);
+	await getActivePreferences(db, storyId);
 	const rows = await db
 		.select({
 			profileId: userPreferences.profileId,
@@ -250,7 +250,7 @@ export async function listProfiles(db: Db, userId: string): Promise<ProfileSumma
 			version: userPreferences.version
 		})
 		.from(userPreferences)
-		.where(eq(userPreferences.userId, userId))
+		.where(eq(userPreferences.storyId, storyId))
 		.orderBy(userPreferences.createdAt);
 	return rows.map(toSummary);
 }
@@ -261,11 +261,11 @@ export async function listProfiles(db: Db, userId: string): Promise<ProfileSumma
  * becomes active (design interaction-state contract). One transaction so the
  * copy + the active-swap commit together and never leave two active rows.
  */
-export async function createProfile(db: Db, userId: string, name: string): Promise<ProfileSummary> {
+export async function createProfile(db: Db, storyId: string, name: string): Promise<ProfileSummary> {
 	const profileName = validateDisplayName(name);
 	return await db.transaction(async (tx) => {
-		await lockUserProfiles(tx, userId);
-		const active = await getActivePreferences(tx, userId);
+		await lockStoryProfiles(tx, storyId);
+		const active = await getActivePreferences(tx, storyId);
 		// Bare .returning() (no column config): the Db union only exposes the
 		// zero-arg overload, so we read the full row and pick fields.
 		const [inserted] = await tx
@@ -275,14 +275,14 @@ export async function createProfile(db: Db, userId: string, name: string): Promi
 			// copied profile reads back initialized:false and a later hydrate would
 			// run the first-login reconcile and overwrite its saved data (codex).
 			.values({
-				userId,
+				storyId,
 				name: profileName,
 				isActive: 0,
 				data: active.data,
 				initializedFromClientAt: sql`now()`
 			})
 			.returning();
-		await activateInTx(tx, userId, inserted.profileId);
+		await activateInTx(tx, storyId, inserted.profileId);
 		return { profileId: inserted.profileId, name: profileName, isActive: true, version: inserted.version };
 	});
 }
@@ -290,7 +290,7 @@ export async function createProfile(db: Db, userId: string, name: string): Promi
 /** Rename a profile. 404 if it isn't the caller's. */
 export async function renameProfile(
 	db: Db,
-	userId: string,
+	storyId: string,
 	profileId: string,
 	name: string
 ): Promise<ProfileSummary> {
@@ -299,7 +299,7 @@ export async function renameProfile(
 	const updated = await db
 		.update(userPreferences)
 		.set({ name: profileName })
-		.where(and(eq(userPreferences.userId, userId), eq(userPreferences.profileId, profileId)))
+		.where(and(eq(userPreferences.storyId, storyId), eq(userPreferences.profileId, profileId)))
 		.returning();
 	if (updated.length === 0) error(404, 'profile not found');
 	return toSummary(updated[0]);
@@ -309,14 +309,14 @@ export async function renameProfile(
  * Delete a profile. Guards (server-enforced): cannot delete the ACTIVE profile
  * (switch first) and cannot delete the LAST profile (a user always has ≥1).
  */
-export async function deleteProfile(db: Db, userId: string, profileId: string): Promise<void> {
+export async function deleteProfile(db: Db, storyId: string, profileId: string): Promise<void> {
 	if (!isUuid(profileId)) error(400, 'invalid profileId');
 	await db.transaction(async (tx) => {
-		await lockUserProfiles(tx, userId);
+		await lockStoryProfiles(tx, storyId);
 		const rows = await tx
 			.select({ profileId: userPreferences.profileId, isActive: userPreferences.isActive })
 			.from(userPreferences)
-			.where(eq(userPreferences.userId, userId));
+			.where(eq(userPreferences.storyId, storyId));
 		const target = rows.find((r) => r.profileId === profileId);
 		if (!target) error(404, 'profile not found');
 		if (target.isActive === 1) error(409, 'cannot delete the active profile; switch first');
@@ -328,7 +328,7 @@ export async function deleteProfile(db: Db, userId: string, profileId: string): 
 			.delete(userPreferences)
 			.where(
 				and(
-					eq(userPreferences.userId, userId),
+					eq(userPreferences.storyId, storyId),
 					eq(userPreferences.profileId, profileId),
 					eq(userPreferences.isActive, 0)
 				)
@@ -343,22 +343,22 @@ export async function deleteProfile(db: Db, userId: string, profileId: string): 
  * leave the user with zero active rows (the partial unique index enforces
  * at-most-one, not at-least-one — F2-adjacent).
  */
-export async function activateProfile(db: Db, userId: string, profileId: string): Promise<void> {
+export async function activateProfile(db: Db, storyId: string, profileId: string): Promise<void> {
 	if (!isUuid(profileId)) error(400, 'invalid profileId');
 	await db.transaction(async (tx) => {
-		await lockUserProfiles(tx, userId);
+		await lockStoryProfiles(tx, storyId);
 		const [target] = await tx
 			.select({ profileId: userPreferences.profileId })
 			.from(userPreferences)
-			.where(and(eq(userPreferences.userId, userId), eq(userPreferences.profileId, profileId)))
+			.where(and(eq(userPreferences.storyId, storyId), eq(userPreferences.profileId, profileId)))
 			.limit(1);
 		if (!target) error(404, 'profile not found');
-		await activateInTx(tx, userId, profileId);
+		await activateInTx(tx, storyId, profileId);
 	});
 }
 
 /**
- * Serialize every per-user profile mutation by locking ALL of the user's
+ * Serialize every per-story profile mutation by locking ALL of the user's
  * profile rows (FOR UPDATE) at the top of the transaction. Without this, two
  * concurrent activates of different profiles can each deactivate only the rows
  * that were active at THEIR statement snapshot, then both set their target
@@ -367,21 +367,21 @@ export async function activateProfile(db: Db, userId: string, profileId: string)
  * atomic against a concurrent activate of the same row. Mirrors the world_maps
  * `SELECT … FOR UPDATE` convention in world-map-v3.ts.
  */
-async function lockUserProfiles(tx: Db, userId: string): Promise<void> {
-	await tx.execute(sql`SELECT profile_id FROM user_preferences WHERE user_id = ${userId} FOR UPDATE`);
+async function lockStoryProfiles(tx: Db, storyId: string): Promise<void> {
+	await tx.execute(sql`SELECT profile_id FROM user_preferences WHERE user_id = ${storyId} FOR UPDATE`);
 }
 
 /** Deactivate-all → activate-target. Caller MUST have verified target exists
- *  and MUST hold the per-user profile lock (lockUserProfiles). */
-async function activateInTx(tx: Db, userId: string, profileId: string): Promise<void> {
+ *  and MUST hold the per-story profile lock (lockStoryProfiles). */
+async function activateInTx(tx: Db, storyId: string, profileId: string): Promise<void> {
 	await tx
 		.update(userPreferences)
 		.set({ isActive: 0 })
-		.where(and(eq(userPreferences.userId, userId), eq(userPreferences.isActive, 1)));
+		.where(and(eq(userPreferences.storyId, storyId), eq(userPreferences.isActive, 1)));
 	await tx
 		.update(userPreferences)
 		.set({ isActive: 1 })
-		.where(and(eq(userPreferences.userId, userId), eq(userPreferences.profileId, profileId)));
+		.where(and(eq(userPreferences.storyId, storyId), eq(userPreferences.profileId, profileId)));
 }
 
 // ── validation ──────────────────────────────────────────────────────────────

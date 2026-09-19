@@ -56,7 +56,7 @@ async function readJson(res: Response): Promise<any> {
 async function seedLocation(name = 'Gondor') {
 	const [loc] = await currentDb
 		.insert(entities)
-		.values({ userId, type: 'Location', name })
+		.values({ storyId: userId, type: 'Location', name })
 		.returning();
 	return loc;
 }
@@ -64,7 +64,7 @@ async function seedLocation(name = 'Gondor') {
 async function seedCharacter(name = 'Frodo') {
 	const [c] = await currentDb
 		.insert(entities)
-		.values({ userId, type: 'Character', name })
+		.values({ storyId: userId, type: 'Character', name })
 		.returning();
 	return c;
 }
@@ -72,7 +72,7 @@ async function seedCharacter(name = 'Frodo') {
 async function seedMap(name = 'Map', locationId: string | null = null) {
 	const [m] = await currentDb
 		.insert(worldMaps)
-		.values({ userId, name, locationId, baseImageUrl: '/x.png', width: 1000, height: 800 })
+		.values({ storyId: userId, name, locationId, baseImageUrl: '/x.png', width: 1000, height: 800 })
 		.returning();
 	return m;
 }
@@ -120,7 +120,7 @@ describe('POST /api/map-placements', () => {
 		for (const type of ['Artifact', 'Item'] as const) {
 			const [e] = await currentDb
 				.insert(entities)
-				.values({ userId, type, name: `New ${type}` })
+				.values({ storyId: userId, type, name: `New ${type}` })
 				.returning();
 			const res = await CREATE_PLACEMENT(
 				mkEvent({ body: { placeableId: e.id, x: 0.5, y: 0.5 } })
@@ -244,7 +244,7 @@ describe('PATCH + DELETE /api/map-placements/[id]', () => {
 		const ch = await seedCharacter();
 		const [scene] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 's0', parentId: acts.act0, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 's0', parentId: acts.act0, position: 0 })
 			.returning();
 		const created = await readJson(
 			await CREATE_PLACEMENT(
@@ -310,7 +310,7 @@ describe('cascade behavior', () => {
 		const rows = await currentDb
 			.select()
 			.from(mapPlacements)
-			.where(eq(mapPlacements.userId, userId));
+			.where(eq(mapPlacements.storyId, userId));
 		expect(rows).toHaveLength(0);
 	});
 
@@ -377,15 +377,15 @@ describe('M11 — placement bounds recompute on Act reorder', () => {
 			await tx
 				.update(entities)
 				.set({ position: 99 })
-				.where(and(eq(entities.id, acts.act0), eq(entities.userId, userId)));
+				.where(and(eq(entities.id, acts.act0), eq(entities.storyId, userId)));
 			await tx
 				.update(entities)
 				.set({ position: 0 })
-				.where(and(eq(entities.id, acts.act2), eq(entities.userId, userId)));
+				.where(and(eq(entities.id, acts.act2), eq(entities.storyId, userId)));
 			await tx
 				.update(entities)
 				.set({ position: 2 })
-				.where(and(eq(entities.id, acts.act0), eq(entities.userId, userId)));
+				.where(and(eq(entities.id, acts.act0), eq(entities.storyId, userId)));
 			await recomputeAllIntervals(tx, userId);
 		});
 
@@ -403,7 +403,7 @@ describe('M11 — placement bounds recompute on Act reorder', () => {
 		const ch = await seedCharacter();
 		const [sceneInAct0] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 's0', parentId: acts.act0, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 's0', parentId: acts.act0, position: 0 })
 			.returning();
 
 		const created = await readJson(
@@ -444,7 +444,7 @@ describe('POST/PATCH invalid bounds surface as 400 (Codex #1)', () => {
 		// Scene's parent is act0 but the placement anchors to act1 — mismatch.
 		const [sceneInAct0] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Scene', name: 's0', parentId: acts.act0, position: 0 })
+			.values({ storyId: userId, type: 'Scene', name: 's0', parentId: acts.act0, position: 0 })
 			.returning();
 		await expect(
 			CREATE_PLACEMENT(

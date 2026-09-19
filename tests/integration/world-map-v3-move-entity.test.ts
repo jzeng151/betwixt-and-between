@@ -69,7 +69,7 @@ async function newEntity(
 ): Promise<string> {
 	const [e] = await db
 		.insert(schema.entities)
-		.values({ userId: uid, type, name: `${type}-${crypto.randomUUID()}` })
+		.values({ storyId: uid, type, name: `${type}-${crypto.randomUUID()}` })
 		.returning();
 	return e.id;
 }
@@ -89,7 +89,7 @@ beforeEach(async () => {
 	locationId = await newEntity(userId, 'Location');
 	const [m] = await db
 		.insert(schema.worldMaps)
-		.values({ userId, name: 'M', locationId })
+		.values({ storyId: userId, name: 'M', locationId })
 		.returning();
 	worldMapId = m.id;
 
@@ -102,7 +102,7 @@ beforeEach(async () => {
 	placeableId = await newEntity(userId, 'Character');
 	const [p] = await db
 		.insert(schema.mapPlacements)
-		.values({ id: crypto.randomUUID(), userId, placeableId, locationId, mapId: worldMapId, x: 0.5, y: 0.5 })
+		.values({ id: crypto.randomUUID(), storyId: userId, placeableId, locationId, mapId: worldMapId, x: 0.5, y: 0.5 })
 		.returning();
 	placementId = p.id;
 });
@@ -194,7 +194,7 @@ describe('move_entity validator — cross-scope (D-PRF-8)', () => {
 		const otherLocation = await newEntity(userId, 'Location');
 		const [foreign] = await db
 			.insert(schema.mapPlacements)
-			.values({ id: crypto.randomUUID(), userId, placeableId, locationId: otherLocation, x: 0.5, y: 0.5 })
+			.values({ id: crypto.randomUUID(), storyId: userId, placeableId, locationId: otherLocation, x: 0.5, y: 0.5 })
 			.returning();
 		await expect(
 			createMapEvent(serverDb(), userId, worldMapId, {
@@ -210,7 +210,7 @@ describe('move_entity validator — cross-scope (D-PRF-8)', () => {
 		// validator scopes on (location_id AND user_id), so this must fail.
 		const [foreign] = await db
 			.insert(schema.mapPlacements)
-			.values({ id: crypto.randomUUID(), userId: otherUserId, placeableId, locationId, x: 0.5, y: 0.5 })
+			.values({ id: crypto.randomUUID(), storyId: otherUserId, placeableId, locationId, x: 0.5, y: 0.5 })
 			.returning();
 		await expect(
 			createMapEvent(serverDb(), userId, worldMapId, {
@@ -224,7 +224,7 @@ describe('move_entity validator — cross-scope (D-PRF-8)', () => {
 	it('rejects when the map has no linked location', async () => {
 		const [noLocMap] = await db
 			.insert(schema.worldMaps)
-			.values({ userId, name: 'NoLoc' })
+			.values({ storyId: userId, name: 'NoLoc' })
 			.returning();
 		await expect(
 			createMapEvent(serverDb(), userId, noLocMap.id, {
@@ -244,7 +244,7 @@ describe('move_entity validator — window (D-PRF-9)', () => {
 			.insert(schema.mapPlacements)
 			.values({
 				id: crypto.randomUUID(),
-				userId,
+				storyId: userId,
 				placeableId,
 				locationId,
 				x: 0.5,

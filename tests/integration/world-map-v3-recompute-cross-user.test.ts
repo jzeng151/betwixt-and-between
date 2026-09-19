@@ -34,11 +34,11 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		// One world_map per user.
 		const [mapA] = await db
 			.insert(worldMaps)
-			.values({ userId: userA.id, name: 'Map A' })
+			.values({ storyId: userA.id, name: 'Map A' })
 			.returning();
 		const [mapB] = await db
 			.insert(worldMaps)
-			.values({ userId: userB.id, name: 'Map B' })
+			.values({ storyId: userB.id, name: 'Map B' })
 			.returning();
 
 		// Place one anchor + one event in each user's map at the SAME t_position
@@ -88,11 +88,11 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		await db
 			.update(entities)
 			.set({ position: 1 })
-			.where(and(eq(entities.id, actsA.act2), eq(entities.userId, userA.id)));
+			.where(and(eq(entities.id, actsA.act2), eq(entities.storyId, userA.id)));
 		await db
 			.update(entities)
 			.set({ position: 2 })
-			.where(and(eq(entities.id, actsA.act1), eq(entities.userId, userA.id)));
+			.where(and(eq(entities.id, actsA.act1), eq(entities.storyId, userA.id)));
 
 		await recomputeAllIntervals(db, userA.id, preSnapshot);
 
@@ -125,7 +125,7 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		const userBActs = await db
 			.select()
 			.from(entities)
-			.where(and(eq(entities.userId, userB.id), eq(entities.type, 'Act')));
+			.where(and(eq(entities.storyId, userB.id), eq(entities.type, 'Act')));
 		expect(userBActs.find((a) => a.id === actsB.act0)?.position).toBe(0);
 		expect(userBActs.find((a) => a.id === actsB.act1)?.position).toBe(1);
 		expect(userBActs.find((a) => a.id === actsB.act2)?.position).toBe(2);
@@ -144,7 +144,7 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		const acts = await seedActs(db, user.id);
 		const [map] = await db
 			.insert(worldMaps)
-			.values({ userId: user.id, name: 'Swap Map' })
+			.values({ storyId: user.id, name: 'Swap Map' })
 			.returning();
 		const [anchorAct1] = await db
 			.insert(mapAnchors)
@@ -168,11 +168,11 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		await db
 			.update(entities)
 			.set({ position: 1 })
-			.where(and(eq(entities.id, acts.act2), eq(entities.userId, user.id)));
+			.where(and(eq(entities.id, acts.act2), eq(entities.storyId, user.id)));
 		await db
 			.update(entities)
 			.set({ position: 2 })
-			.where(and(eq(entities.id, acts.act1), eq(entities.userId, user.id)));
+			.where(and(eq(entities.id, acts.act1), eq(entities.storyId, user.id)));
 
 		// Pre-fix this throws "duplicate key value violates unique constraint
 		// map_anchors_world_map_id_t_position_uniq" and the entire cascade
@@ -209,7 +209,7 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		const acts = await seedActs(db, user.id);
 		const [map] = await db
 			.insert(worldMaps)
-			.values({ userId: user.id, name: 'Delete Map' })
+			.values({ storyId: user.id, name: 'Delete Map' })
 			.returning();
 		const [anchorInDeletedAct] = await db
 			.insert(mapAnchors)
@@ -233,13 +233,13 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		const preSnapshot = await snapshotActOrdering(db, user.id);
 		await db
 			.delete(entities)
-			.where(and(eq(entities.id, acts.act1), eq(entities.userId, user.id)));
+			.where(and(eq(entities.id, acts.act1), eq(entities.storyId, user.id)));
 		// Shift Act 2 down to position 1 (matches what the entity DELETE
 		// cascade in the route handler does implicitly via the recompute).
 		await db
 			.update(entities)
 			.set({ position: 1 })
-			.where(and(eq(entities.id, acts.act2), eq(entities.userId, user.id)));
+			.where(and(eq(entities.id, acts.act2), eq(entities.storyId, user.id)));
 
 		await expect(recomputeAllIntervals(db, user.id, preSnapshot)).resolves.not.toThrow();
 
@@ -271,7 +271,7 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		const acts = await seedActs(db, user.id);
 		const [map] = await db
 			.insert(worldMaps)
-			.values({ userId: user.id, name: 'Dense Map' })
+			.values({ storyId: user.id, name: 'Dense Map' })
 			.returning();
 		// Four anchors in Act 1 at dense fractional positions. After a
 		// 1↔2 swap each one needs to reproject from 1.X to 2.X. With the
@@ -296,11 +296,11 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		await db
 			.update(entities)
 			.set({ position: 1 })
-			.where(and(eq(entities.id, acts.act2), eq(entities.userId, user.id)));
+			.where(and(eq(entities.id, acts.act2), eq(entities.storyId, user.id)));
 		await db
 			.update(entities)
 			.set({ position: 2 })
-			.where(and(eq(entities.id, acts.act1), eq(entities.userId, user.id)));
+			.where(and(eq(entities.id, acts.act1), eq(entities.storyId, user.id)));
 
 		await expect(recomputeAllIntervals(db, user.id, preSnapshot)).resolves.not.toThrow();
 
@@ -328,7 +328,7 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		const acts = await seedActs(db, user.id);
 		const [map] = await db
 			.insert(worldMaps)
-			.values({ userId: user.id, name: 'Insert Map' })
+			.values({ storyId: user.id, name: 'Insert Map' })
 			.returning();
 		const [anchor] = await db
 			.insert(mapAnchors)
@@ -374,7 +374,7 @@ describe('World Map v3 recompute — cross-user JOIN scoping', () => {
 		const [act1After] = await db
 			.select()
 			.from(entities)
-			.where(and(eq(entities.id, acts.act1), eq(entities.userId, user.id)));
+			.where(and(eq(entities.id, acts.act1), eq(entities.storyId, user.id)));
 		expect(act1After.position).toBe(2);
 	});
 });

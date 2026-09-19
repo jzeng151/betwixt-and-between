@@ -1,12 +1,7 @@
 // Settings customization Phase 1 — user preferences API (T3).
 //
-// GET /api/preferences
-//   Returns the current user's ACTIVE preference blob + version. Lazily
-//   creates the Default profile on first access. The user is derived from the
-//   session (getUserId) — there is NO user selector in the URL/body, so a
-//   cross-user read is structurally impossible (codex outside-voice: cross-user
-//   coverage belongs in helper tests, not as a public-API behavior). 401 when
-//   unauthenticated.
+// GET /api/preferences returns the selected story's active profile. Ownership
+// is checked by getStoryId; new stories lazily receive a Default profile.
 //
 // PATCH /api/preferences
 //   Body: { set?: object, unset?: string[], version: number }
@@ -23,14 +18,14 @@
 // Profile create/switch/delete arrives with workspace profiles (Phase 3).
 
 import { json, error } from '@sveltejs/kit';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId, getUserId } from '$lib/server/auth-gate.js';
 import { getActivePreferences, patchPreferences } from '$lib/server/user-preferences.js';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
-	const active = await getActivePreferences(db, userId);
+	const storyId = await getStoryId(event);
+	const active = await getActivePreferences(db, storyId);
 	// `initialized` lets the client distinguish a freshly lazy-created row (never
 	// written) from one that already holds the user's prefs — the first-login
 	// reconcile signal (T4, codex). `userId` lets the client scope its localStorage
@@ -41,7 +36,8 @@ export const GET: RequestHandler = async (event) => {
 		data: active.data,
 		version: active.version,
 		initialized: active.initialized,
-		userId,
+		userId: getUserId(event),
+		storyId,
 		// profileId lets the client stamp its pending PATCHes with the profile they
 		// were authored against (F2) — a write authored before a profile switch is
 		// rejected (409) rather than landing on the newly-active profile.
@@ -51,7 +47,7 @@ export const GET: RequestHandler = async (event) => {
 
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	// Malformed JSON (or a non-object literal like `null`/`42`) must surface as
 	// the contract's 400, not an unhandled 500 — patchPreferences can only run its
 	// 400 validation once we have an object to read set/unset/version from (codex).
@@ -74,7 +70,7 @@ export const PATCH: RequestHandler = async (event) => {
 	// landing on the wrong profile after a switch (F2) — mismatch → 409.
 	const result = await patchPreferences(
 		db,
-		userId,
+		storyId,
 		{ set: body.set, unset: body.unset },
 		body.version as number,
 		body.profileId

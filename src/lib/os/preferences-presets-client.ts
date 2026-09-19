@@ -1,3 +1,4 @@
+import { storyFetch as fetch } from '../story-fetch.js';
 /**
  * Client-side fetch helpers + apply wiring for appearance presets (Settings
  * customization Phase 3, T10 — D2 UI).
@@ -28,7 +29,7 @@ export async function createPresetRequest(
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name, appearance })
-		}),
+		}, { required: false }),
 		'save preset failed'
 	);
 	return (await res.json()) as PresetSummary;
@@ -36,7 +37,7 @@ export async function createPresetRequest(
 
 export async function deletePresetRequest(presetId: string): Promise<void> {
 	await ensureOk(
-		await fetch(`/api/preferences/presets/${encodeURIComponent(presetId)}`, { method: 'DELETE' }),
+		await fetch(`/api/preferences/presets/${encodeURIComponent(presetId)}`, { method: 'DELETE' }, { required: false }),
 		'delete preset failed'
 	);
 }

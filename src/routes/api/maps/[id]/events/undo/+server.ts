@@ -14,13 +14,13 @@
 //   grouped strokes redo with a fresh command_id assigned by the client.
 
 import { json } from '@sveltejs/kit';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { undoLatestMapEvent } from '$lib/server/world-map-v3.js';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
-	const undone = await undoLatestMapEvent(db, userId, event.params.id);
+	const storyId = await getStoryId(event);
+	const undone = await undoLatestMapEvent(db, storyId, event.params.id);
 	return json(undone);
 };

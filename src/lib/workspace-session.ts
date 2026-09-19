@@ -41,10 +41,9 @@ async function saveWorkspace(id: string) {
 	await ready;
 	// Wait for every category even when one fails, so cancellation cannot expose
 	// editing while an older write can still overwrite a new edit.
-	const writes = await Promise.allSettled([flushPendingWrites(), notesStore.flushDrafts()]);
-	const preferences = await Promise.allSettled([flushPendingPreferences()]);
+	const writes = await Promise.allSettled([notesStore.flushDrafts(), flushPendingPreferences()]);
 	await flushPendingWrites();
-	for (const result of [...writes, ...preferences]) {
+	for (const result of writes) {
 		if (result.status === 'rejected') throw result.reason;
 		if (result.value === false) throw new Error("Couldn't save your notes. Retry saving in Notes before signing out.");
 	}

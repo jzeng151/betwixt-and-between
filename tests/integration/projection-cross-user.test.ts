@@ -47,7 +47,7 @@ describe('projection cross-user lazy GC (Δ1a-C)', () => {
 		// color we want to confirm never reaches User A's renderer).
 		const [mapA] = await db
 			.insert(worldMaps)
-			.values({ userId: userA.id, name: 'Map A' })
+			.values({ storyId: userA.id, name: 'Map A' })
 			.returning();
 		// Slice 2 D2 PR-B: also backfill into baseline anchor JSON since
 		// validation + projection-context reads now consume that source.
@@ -61,11 +61,11 @@ describe('projection cross-user lazy GC (Δ1a-C)', () => {
 		});
 		const [factionA] = await db
 			.insert(factions)
-			.values({ userId: userA.id, name: 'A-faction', color: '#aa0000' })
+			.values({ storyId: userA.id, name: 'A-faction', color: '#aa0000' })
 			.returning();
 		const [factionB] = await db
 			.insert(factions)
-			.values({ userId: userB.id, name: 'B-faction', color: '#0000bb' })
+			.values({ storyId: userB.id, name: 'B-faction', color: '#0000bb' })
 			.returning();
 
 		// Anchor on User A's map references User A's faction (legit).
@@ -147,11 +147,11 @@ describe('projection cross-user lazy GC (Δ1a-C)', () => {
 
 		const [mapA] = await db
 			.insert(worldMaps)
-			.values({ userId: userA.id, name: 'Map A' })
+			.values({ storyId: userA.id, name: 'Map A' })
 			.returning();
 		const [mapB] = await db
 			.insert(worldMaps)
-			.values({ userId: userB.id, name: 'Map B' })
+			.values({ storyId: userB.id, name: 'Map B' })
 			.returning();
 		const regionB = await seedRegionWithAnchorBackfill(db, {
 			mapId: mapB.id,
@@ -196,6 +196,6 @@ describe('projection cross-user lazy GC (Δ1a-C)', () => {
 
 		// Sanity that mapB exists in the seed so the test isn't vacuous.
 		const [foundB] = await db.select().from(worldMaps).where(eq(worldMaps.id, mapB.id));
-		expect(foundB.userId).toBe(userB.id);
+		expect(foundB.storyId).toBe(userB.id);
 	});
 });

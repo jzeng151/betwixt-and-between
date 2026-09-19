@@ -55,7 +55,7 @@ async function readJson(res: Response): Promise<any> {
 async function seedLocation(db: typeof currentDb, name: string) {
 	const [l] = await db
 		.insert(entities)
-		.values({ userId, type: 'Location', name })
+		.values({ storyId: userId, type: 'Location', name })
 		.returning();
 	return l.id;
 }
@@ -307,7 +307,7 @@ describe('part_of relationship validation', () => {
 		loc3 = await seedLocation(currentDb, 'Minas Tirith');
 		const [c] = await currentDb
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Aragorn' })
+			.values({ storyId: userId, type: 'Character', name: 'Aragorn' })
 			.returning();
 		character = c.id;
 	});

@@ -10,7 +10,7 @@
 import { json, error } from '@sveltejs/kit';
 import { mapPlacements } from '$lib/server/db/schema.js';
 import { and, eq } from 'drizzle-orm';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isPgError } from '$lib/server/pg-errors.js';
 import {
@@ -25,18 +25,18 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const [row] = await db
 		.select()
 		.from(mapPlacements)
-		.where(and(eq(mapPlacements.id, event.params.id), eq(mapPlacements.userId, userId)));
+		.where(and(eq(mapPlacements.id, event.params.id), eq(mapPlacements.storyId, storyId)));
 	if (!row) error(404, 'Placement not found');
 	return json(row);
 };
 
 export const PATCH: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const body = (await readJson(event)) as any;
 
@@ -45,21 +45,21 @@ export const PATCH: RequestHandler = async (event) => {
 			const [existing] = await tx
 				.select()
 				.from(mapPlacements)
-				.where(and(eq(mapPlacements.id, event.params.id), eq(mapPlacements.userId, userId)));
+				.where(and(eq(mapPlacements.id, event.params.id), eq(mapPlacements.storyId, storyId)));
 			if (!existing) error(404, 'Placement not found');
 
 			const updates: Record<string, unknown> = {};
 
 			if ('placeableId' in body) {
-				await assertPlaceableId(tx, userId, body.placeableId);
+				await assertPlaceableId(tx, storyId, body.placeableId);
 				updates.placeableId = body.placeableId;
 			}
 			if ('locationId' in body) {
-				await assertPlacementLocationId(tx, userId, body.locationId);
+				await assertPlacementLocationId(tx, storyId, body.locationId);
 				updates.locationId = body.locationId ?? null;
 			}
 			if ('mapId' in body) {
-				await assertPlacementMapId(tx, userId, body.mapId);
+				await assertPlacementMapId(tx, storyId, body.mapId);
 				updates.mapId = body.mapId ?? null;
 			}
 			if ('x' in body) {
@@ -111,7 +111,7 @@ export const PATCH: RequestHandler = async (event) => {
 							? (body.endSceneId ?? null)
 							: existing.endSceneId;
 
-				await assertPlacementVariantBounds(tx, userId, {
+				await assertPlacementVariantBounds(tx, storyId, {
 					startActId: mergedStartActId,
 					startSceneId: mergedStartSceneId,
 					endActId: mergedEndActId,
@@ -131,7 +131,7 @@ export const PATCH: RequestHandler = async (event) => {
 								endActId: mergedEndActId,
 								endSceneId: mergedEndSceneId
 							},
-							userId
+							storyId
 						);
 					} catch (e) {
 						// Plain validation Errors → 400; a driver error (malformed-UUID
@@ -160,7 +160,7 @@ export const PATCH: RequestHandler = async (event) => {
 			const [updated] = await tx
 				.update(mapPlacements)
 				.set(updates)
-				.where(and(eq(mapPlacements.id, event.params.id), eq(mapPlacements.userId, userId)))
+				.where(and(eq(mapPlacements.id, event.params.id), eq(mapPlacements.storyId, storyId)))
 				.returning();
 
 			return json(updated);
@@ -181,10 +181,10 @@ export const PATCH: RequestHandler = async (event) => {
 
 export const DELETE: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const deleted = await db
 		.delete(mapPlacements)
-		.where(and(eq(mapPlacements.id, event.params.id), eq(mapPlacements.userId, userId)))
+		.where(and(eq(mapPlacements.id, event.params.id), eq(mapPlacements.storyId, storyId)))
 		.returning();
 	if (deleted.length === 0) error(404, 'Placement not found');
 	return new Response(null, { status: 204 });

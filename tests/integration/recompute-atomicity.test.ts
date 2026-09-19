@@ -50,7 +50,7 @@ describe('recomputeAllIntervals cascade atomicity (Δ1a-E)', () => {
 		//     mid-point, which Act-reorder will reproject).
 		const [ellie] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'Ellie' })
+			.values({ storyId: userId, type: 'Character', name: 'Ellie' })
 			.returning();
 		const interval = await writeInterval(
 			db,
@@ -59,7 +59,7 @@ describe('recomputeAllIntervals cascade atomicity (Δ1a-E)', () => {
 		);
 		const [map] = await db
 			.insert(worldMaps)
-			.values({ userId, name: 'M' })
+			.values({ storyId: userId, name: 'M' })
 			.returning();
 		const [anchor] = await db
 			.insert(mapAnchors)
@@ -90,11 +90,11 @@ describe('recomputeAllIntervals cascade atomicity (Δ1a-E)', () => {
 		await db
 			.update(entities)
 			.set({ position: 1 })
-			.where(and(eq(entities.id, acts.act2), eq(entities.userId, userId)));
+			.where(and(eq(entities.id, acts.act2), eq(entities.storyId, userId)));
 		await db
 			.update(entities)
 			.set({ position: 2 })
-			.where(and(eq(entities.id, acts.act1), eq(entities.userId, userId)));
+			.where(and(eq(entities.id, acts.act1), eq(entities.storyId, userId)));
 
 		// Run the cascade inside a tx that throws after recompute completes.
 		await expect(
@@ -131,7 +131,7 @@ describe('recomputeAllIntervals cascade atomicity (Δ1a-E)', () => {
 		// the success path with cross-user isolation as the focus).
 		const [ellie] = await db
 			.insert(entities)
-			.values({ userId, type: 'Character', name: 'E' })
+			.values({ storyId: userId, type: 'Character', name: 'E' })
 			.returning();
 		await writeInterval(
 			db,
@@ -140,7 +140,7 @@ describe('recomputeAllIntervals cascade atomicity (Δ1a-E)', () => {
 		);
 		const [map] = await db
 			.insert(worldMaps)
-			.values({ userId, name: 'M' })
+			.values({ storyId: userId, name: 'M' })
 			.returning();
 		const [anchor] = await db
 			.insert(mapAnchors)
@@ -155,11 +155,11 @@ describe('recomputeAllIntervals cascade atomicity (Δ1a-E)', () => {
 		await db
 			.update(entities)
 			.set({ position: 1 })
-			.where(and(eq(entities.id, acts.act2), eq(entities.userId, userId)));
+			.where(and(eq(entities.id, acts.act2), eq(entities.storyId, userId)));
 		await db
 			.update(entities)
 			.set({ position: 2 })
-			.where(and(eq(entities.id, acts.act1), eq(entities.userId, userId)));
+			.where(and(eq(entities.id, acts.act1), eq(entities.storyId, userId)));
 
 		await db.transaction(async (tx) => {
 			await recomputeAllIntervals(tx, userId, preSnapshot);

@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { and, eq } from 'drizzle-orm';
 import { intervals } from '$lib/server/db/schema.js';
-import { getUserId } from '$lib/server/auth-gate.js';
+import { getStoryId } from '$lib/server/auth-gate.js';
 import { readJson } from '$lib/server/read-json.js';
 import { isPgError } from '$lib/server/pg-errors.js';
 import { writeInterval } from '$lib/server/intervals.js';
@@ -9,27 +9,27 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	const entityId = event.url.searchParams.get('entity_id');
 	if (entityId) {
 		const rows = await db
 			.select()
 			.from(intervals)
-			.where(and(eq(intervals.entityId, entityId), eq(intervals.userId, userId)))
+			.where(and(eq(intervals.entityId, entityId), eq(intervals.storyId, storyId)))
 			.orderBy(intervals.startPosition);
 		return json(rows);
 	}
 	const rows = await db
 		.select()
 		.from(intervals)
-		.where(eq(intervals.userId, userId))
+		.where(eq(intervals.storyId, storyId))
 		.orderBy(intervals.startPosition);
 	return json(rows);
 };
 
 export const POST: RequestHandler = async (event) => {
 	const { db } = event.locals;
-	const userId = getUserId(event);
+	const storyId = await getStoryId(event);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const body = (await readJson(event)) as any;
 	const {
@@ -73,11 +73,11 @@ export const POST: RequestHandler = async (event) => {
 				startPosition: sPos,
 				endPosition: ePos
 			},
-			userId
+			storyId
 		);
 		return json(created, { status: 201 });
 	} catch (err) {
-		// writeInterval validates FKs against entities scoped by userId — cross-
+		// writeInterval validates FKs against entities scoped by storyId — cross-
 		// user FKs surface as "entity_id not found" (400). Position drift,
 		// scene-parent mismatch, polymorphic FK violations also raise here, all as
 		// plain Errors with safe, user-facing messages → keep them 400. A driver

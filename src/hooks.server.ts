@@ -137,7 +137,9 @@ const paletteHandle: Handle = async ({ event, resolve }) => {
 	// viewer's cookie must be unscoped. On mismatch we skip the no-flash inline and
 	// the client corrects on hydrate — a brief default-paint, never the wrong user.
 	const viewer = event.locals.user?.id ?? null;
-	const ownerOk = viewer != null ? parsed?.owner === viewer : parsed?.owner == null;
+	const storyId = event.url.searchParams.get('story') ?? viewer;
+	const ownerOk = (viewer != null ? parsed?.owner === viewer : parsed?.owner == null)
+		&& parsed?.storyId === storyId;
 	const css = ownerOk ? paletteCookieToCss(parsed) : '';
 	const isLight = ownerOk && parsed?.theme === 'light';
 	if (!css && !isLight) return resolve(event);
