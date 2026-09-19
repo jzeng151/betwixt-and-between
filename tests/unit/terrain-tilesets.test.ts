@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	loadTerrainManifest,
 	__resetTerrainManifestCache,
-	pickBaseTile,
 	firstBaseTile,
 	terrainCategories,
 	keyForUrl,
@@ -42,31 +41,6 @@ const MANIFEST_REAL: TerrainManifest = {
 		]
 	}
 };
-
-describe('pickBaseTile', () => {
-	it('is deterministic per (x,y) across calls', () => {
-		const a = pickBaseTile(MANIFEST, 'Grass', 4, 7);
-		const b = pickBaseTile(MANIFEST, 'Grass', 4, 7);
-		expect(a).toBe(b);
-		expect(MANIFEST.categories.Grass.base).toContain(a);
-	});
-
-	it('varies across cells (not all the same tile)', () => {
-		const picks = new Set<string | null>();
-		for (let x = 0; x < 8; x++) for (let y = 0; y < 8; y++) picks.add(pickBaseTile(MANIFEST, 'Grass', x, y));
-		expect(picks.size).toBeGreaterThan(1); // distributes across the 3 variants
-	});
-
-	it('returns null for unknown category or empty base (→ flat fallback)', () => {
-		expect(pickBaseTile(MANIFEST, 'Lava', 0, 0)).toBeNull(); // not in manifest
-		expect(pickBaseTile(MANIFEST, 'Empty', 0, 0)).toBeNull(); // no base tiles
-		expect(pickBaseTile(null, 'Grass', 0, 0)).toBeNull(); // no manifest
-	});
-
-	it('single-variant category always returns that tile', () => {
-		expect(pickBaseTile(MANIFEST, 'Sand', 3, 9)).toBe('/s1.png');
-	});
-});
 
 describe('firstBaseTile (coherent fill)', () => {
 	it('returns the first base tile for a category, null when none', () => {

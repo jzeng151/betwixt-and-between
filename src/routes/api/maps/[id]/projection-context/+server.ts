@@ -41,10 +41,7 @@ export const GET: RequestHandler = async (event) => {
 
 	const ctx = await fetchProjectionContext(db, event.params.id!, storyId);
 
-	// Serialize Map / Set to plain JSON shapes. Client reconstructs into
-	// Map / Set on receive (use-projection.ts in commit 3c). The shape is
-	// stable across the strangler-fig flag's lifetime — Slice 2 deletion
-	// doesn't change this endpoint.
+	// Serialize Map / Set to JSON arrays.
 	return json({
 		allowedFactions: Array.from(ctx.allowedFactions.values()),
 		allowedRegions: Array.from(ctx.allowedRegions)

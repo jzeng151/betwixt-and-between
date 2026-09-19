@@ -8,7 +8,7 @@
 	// flat color shows through (graceful fallback). Square grids only for now;
 	// hex tiling deferred (Fix-7) → hex cells keep the flat look underneath.
 	//
-	// Variant per cell is deterministic (pickBaseTile, Fix-6). Textures load via
+	// Each cell uses its stored texture key or the category fallback. Textures load via
 	// PIXI.Assets (cached); the first pass paints what's already cached and kicks
 	// a load for the rest, then bumps `texGen` to repaint once they're ready.
 	//
