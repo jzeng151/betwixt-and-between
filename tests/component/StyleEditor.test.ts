@@ -54,7 +54,7 @@ describe('StyleEditor — hex validation', () => {
 		const hex = container.querySelector('#se-color') as HTMLInputElement;
 		await fireEvent.input(hex, { target: { value: '#abcdef' } });
 		await fireEvent.blur(hex);
-		expect(onChange).toHaveBeenCalledWith({ color: '#abcdef' });
+		expect(onChange).toHaveBeenCalledWith({ color: '#abcdef' }, 'color');
 	});
 
 	it('rejects an alpha hex (4-/8-digit) and points at the opacity slider', async () => {
@@ -80,7 +80,7 @@ describe('StyleEditor — hex validation', () => {
 		const hex = container.querySelector('#se-color') as HTMLInputElement;
 		await fireEvent.input(hex, { target: { value: '' } });
 		await fireEvent.blur(hex);
-		expect(onChange).toHaveBeenCalledWith({});
+		expect(onChange).toHaveBeenCalledWith({}, 'color');
 	});
 });
 
@@ -94,7 +94,7 @@ describe('StyleEditor — icon (commits on blur)', () => {
 		await fireEvent.input(icon, { target: { value: 'https://x/i.png' } });
 		expect(onChange).not.toHaveBeenCalled(); // not committed mid-typing
 		await fireEvent.blur(icon);
-		expect(onChange).toHaveBeenCalledWith({ icon: 'https://x/i.png' });
+		expect(onChange).toHaveBeenCalledWith({ icon: 'https://x/i.png' }, 'icon');
 	});
 
 	it('empty icon on blur clears the override', async () => {
@@ -105,7 +105,7 @@ describe('StyleEditor — icon (commits on blur)', () => {
 		const icon = container.querySelector('#se-icon') as HTMLInputElement;
 		await fireEvent.input(icon, { target: { value: '' } });
 		await fireEvent.blur(icon);
-		expect(onChange).toHaveBeenCalledWith({});
+		expect(onChange).toHaveBeenCalledWith({}, 'icon');
 	});
 });
 
@@ -119,7 +119,7 @@ describe('StyleEditor — swatches & sliders', () => {
 		// the presets now source the palette instead of the old hardcoded blue).
 		const swatch = container.querySelector('.swatch') as HTMLButtonElement;
 		await fireEvent.click(swatch);
-		expect(onChange).toHaveBeenCalledWith({ color: ENTITY_TYPE_HEX.Character });
+		expect(onChange).toHaveBeenCalledWith({ color: ENTITY_TYPE_HEX.Character }, 'color');
 	});
 
 	it('scale slider emits the dragged value', async () => {
@@ -129,7 +129,7 @@ describe('StyleEditor — swatches & sliders', () => {
 		});
 		const scale = container.querySelector('#se-scale') as HTMLInputElement;
 		await fireEvent.input(scale, { target: { value: '3' } });
-		expect(onChange).toHaveBeenCalledWith({ scale: 3 });
+		expect(onChange).toHaveBeenCalledWith({ scale: 3 }, 'scale');
 	});
 
 	it('a field clear (↺) removes that key from the override', async () => {
@@ -141,6 +141,6 @@ describe('StyleEditor — swatches & sliders', () => {
 		const clears = Array.from(container.querySelectorAll('button.clear')) as HTMLButtonElement[];
 		// color clear + scale clear both present; click the last (scale).
 		await fireEvent.click(clears[clears.length - 1]);
-		expect(onChange).toHaveBeenCalledWith({ color: '#abcdef' });
+		expect(onChange).toHaveBeenCalledWith({ color: '#abcdef' }, 'scale');
 	});
 });
