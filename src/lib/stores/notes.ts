@@ -1,6 +1,5 @@
 import { storyFetch } from '$lib/story-fetch.js';
 import { get, writable } from 'svelte/store';
-import { trackWrite } from './pending-writes.js';
 
 type NoteFolder = {
 	id: string;
@@ -244,12 +243,12 @@ function createNotesStore() {
 		flushDrafts,
 		loadFolders,
 		loadEntries,
-		createFolder: (...args: Parameters<typeof createFolder>) => trackWrite(createFolder(...args)),
-		renameFolder: (...args: Parameters<typeof renameFolder>) => trackWrite(renameFolder(...args)),
-		deleteFolder: (...args: Parameters<typeof deleteFolder>) => trackWrite(deleteFolder(...args)),
-		createEntry: (...args: Parameters<typeof createEntry>) => trackWrite(createEntry(...args)),
-		updateEntry: (...args: Parameters<typeof updateEntry>) => trackWrite(updateEntry(...args)),
-		deleteEntry: (...args: Parameters<typeof deleteEntry>) => trackWrite(deleteEntry(...args))
+		createFolder,
+		renameFolder,
+		deleteFolder,
+		createEntry,
+		updateEntry,
+		deleteEntry
 	};
 }
 

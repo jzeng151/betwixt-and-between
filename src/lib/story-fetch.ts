@@ -1,7 +1,7 @@
 import { trackWrite } from './stores/pending-writes.js';
 
 /** Capture the story from this document, so another tab cannot redirect a write. */
-export function storyFetch(input: string, init?: RequestInit): Promise<Response> {
+export function storyFetch(input: string, init?: RequestInit, requiredWrite = true): Promise<Response> {
 	const id = typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('story');
 	if (id) {
 		const url = new URL(input, window.location.href);
@@ -12,7 +12,7 @@ export function storyFetch(input: string, init?: RequestInit): Promise<Response>
 	}
 	const request = init === undefined ? fetch(input) : fetch(input, init);
 	const method = init?.method?.toUpperCase() ?? 'GET';
-	if (method !== 'GET' && method !== 'HEAD') {
+	if (requiredWrite && method !== 'GET' && method !== 'HEAD') {
 		// JSON retries must match their payload. Multipart uploads replace the
 		// same map image, so success at that endpoint replaces its failed attempt.
 		// ponytail: add explicit operation keys if opaque create writes are introduced.

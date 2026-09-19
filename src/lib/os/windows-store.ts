@@ -333,7 +333,7 @@ function createWindowStore() {
 		// on explicit close (X button or Ctrl-W).
 		const w = get({ subscribe }).find((x) => x.id === id);
 		if (w?.appId === 'focused-graph' && typeof fetch !== 'undefined') {
-			void storyFetch(`/api/canvas-positions/window/${id}`, { method: 'DELETE' }).catch(() => {
+			void storyFetch(`/api/canvas-positions/window/${id}`, { method: 'DELETE' }, false).catch(() => {
 				// non-fatal — the row stays orphan, no user impact
 			});
 		}

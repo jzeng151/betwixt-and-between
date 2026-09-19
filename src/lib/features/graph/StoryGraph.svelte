@@ -304,7 +304,8 @@
     registerDirtyField(handle);
     return () => {
       unregisterDirtyField(handle);
-      void trackWrite(handle.commitNow()).catch(() => {});
+      // storyFetch records request failures; track the queued work without duplicating them.
+      void trackWrite(handle.commitNow().catch(() => {}));
     };
   });
   function onNodePositionChange(id: string, p: NodePosition) {

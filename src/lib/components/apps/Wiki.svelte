@@ -19,7 +19,6 @@
 	import type { EntityType } from '$lib/server/db/schema.js';
 	import { getEntityTypeColor } from '$lib/entity-type-colors.js';
 	import EntityDetail, { pendingEditMode } from '$lib/components/EntityDetail.svelte';
-	import { trackWrite } from '$lib/stores/pending-writes.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
 
 	interface Props {
@@ -57,7 +56,6 @@
 
 	let mounted = true;
 	onDestroy(() => { mounted = false; });
-	const creationKeys = { Character: Symbol(), Location: Symbol() };
 	let creating = $state(false);
 	let createError = $state('');
 	async function createEntry(type: 'Character' | 'Location') {
@@ -65,7 +63,7 @@
 		creating = true;
 		createError = '';
 		try {
-			const created = await trackWrite(entities.createEntity(type, `Untitled ${type}`), creationKeys[type]);
+			const created = await entities.createEntity(type, `Untitled ${type}`);
 			if (!mounted) return;
 			pendingEditMode.add(created.id);
 			navigate(created.id);

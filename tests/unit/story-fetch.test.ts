@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { windowStore } from '$lib/os/windows-store.js';
 import { storyFetch } from '$lib/story-fetch.js';
 import { failedWrites, flushPendingWrites } from '$lib/stores/pending-writes.js';
 
@@ -40,5 +41,21 @@ it('clears a failed multipart image replacement after a successful retry', async
 	await storyFetch('/api/maps/two/upload-image', upload());
 	await expect(flushPendingWrites()).rejects.toThrow(/failed to save/);
 	await storyFetch('/api/maps/one/upload-image', upload());
+	await expect(flushPendingWrites()).resolves.toBeUndefined();
+});
+
+
+it('closing a focused graph keeps cleanup scoped without letting its failure block switching', async () => {
+	const windows = [windowStore.open('focused-graph'), windowStore.open('focused-graph')];
+	vi.stubGlobal('window', { innerWidth: 1440, innerHeight: 1000, location: { href: 'http://localhost/app?story=second', origin: 'http://localhost' } });
+	const fetch = vi.fn().mockResolvedValue(new Response('Unavailable', { status: 503 }));
+	vi.stubGlobal('fetch', fetch);
+	windowStore.close(windows.shift()!);
+	await Promise.resolve();
+	expect(new Headers(fetch.mock.calls[0][1].headers).get('x-story-id')).toBe('second');
+	await expect(flushPendingWrites()).resolves.toBeUndefined();
+	fetch.mockRejectedValue(new Error('Network failure'));
+	windowStore.close(windows.shift()!);
+	await Promise.resolve();
 	await expect(flushPendingWrites()).resolves.toBeUndefined();
 });
