@@ -63,7 +63,9 @@
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
     "better-auth": "^1.6.9",
+    "entities": "8.1.0",
     "lucide-svelte": "^1.0.1",
+    "marked": "18.0.13",
     "pixi-viewport": "^6.0.3",
     "pixi.js": "8.18.1",
     "postgres": "^3.4.9"

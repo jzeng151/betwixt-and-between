@@ -246,7 +246,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 		await expect(bodySection.locator('.body-divider')).toBeVisible();
 	});
 
-	test('typing [[Name]] in Body and saving renders an entity chip in view mode', async ({
+	test('saving Markdown in Body preserves formatting and entity chips after reload', async ({
 		page,
 		request
 	}) => {
@@ -264,7 +264,7 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 		// Type into Body textarea. The body field is the textarea inside
 		// .entity-detail-body that doesn't have a label header.
 		const bodyTextarea = win.locator('.entity-detail-body textarea.field-textarea');
-		await bodyTextarea.fill('Aragorn rode with [[Boromir]] through Edoras.');
+		await bodyTextarea.fill('# Departure\n\nAragorn rode with **[[Boromir]]** through *Edoras*.\n\n- Bring supplies\n\n`[[Boromir]]`\n\n<script>window.markdownExecuted = true</script>');
 		await bodyTextarea.blur();
 
 		// Toggle back to view mode.
@@ -273,7 +273,16 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 		// Body view-mode renders WikiLinkText → EntityLink chip for Boromir.
 		const bodyView = win.locator('.entity-detail-body .readonly-textarea');
 		await expect(bodyView).toContainText('rode with');
-		await expect(bodyView.locator('.entity-chip-name', { hasText: 'Boromir' })).toBeVisible();
+		await expect(bodyView.locator('strong .entity-chip-name', { hasText: 'Boromir' })).toBeVisible();
+		await expect(bodyView.getByRole('heading', { name: 'Departure' })).toBeVisible();
+		await page.reload();
+		await expect(bodyView.getByRole('heading', { name: 'Departure' })).toBeVisible();
+		await expect(bodyView.locator('em')).toHaveText('Edoras');
+		await expect(bodyView.getByRole('listitem')).toHaveText('Bring supplies');
+		await expect(bodyView.locator('code')).toHaveText('[[Boromir]]');
+		await expect(bodyView.locator('script')).toHaveCount(0);
+		await bodyView.getByRole('button', { name: 'Boromir', exact: true }).click();
+		await expect(win.locator('.entity-detail-title-text')).toHaveText('Boromir');
 	});
 
 	test('clicking a [[Name]] chip in Body swaps Wiki content in-window (no new window)', async ({

@@ -357,7 +357,7 @@
 			</span>
 		{:else if kind === 'textarea'}
 			<div class="readonly-textarea">
-				<WikiLinkText body={String(currentValue ?? '')} placeholder={placeholder || '—'} />
+				<WikiLinkText renderMarkdown={field === 'body'} body={String(currentValue ?? '')} placeholder={placeholder || '—'} />
 			</div>
 		{:else}
 			<span class="readonly-text">

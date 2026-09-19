@@ -8,10 +8,12 @@ Click a character in the Story Graph and their wiki page opens. Click a location
 
 ## Features
 
+Entity body fields accept Markdown in edit mode and render it in view mode. Code spans and fenced blocks keep their contents literal. Raw HTML is displayed as text. Only absolute HTTP, HTTPS, and mailto links are clickable; Markdown images appear as links rather than loading remote images. The standalone Notes editor remains plain text.
+
 | Feature | What it does |
 |---|---|
 | **Story Graph** | Visual relationship map — characters, locations, events as nodes with typed edges (`allied_with`, `rivals`, `appears_in`, `caused_by`, etc.). |
-| **Wiki** | Plain text notes for any entity. Full preview, inline search, linked entity chips. |
+| **Wiki** | Markdown bodies with headings, emphasis, lists, tables, quotes, and code. `[[Entity]]` mentions remain clickable in view mode. |
 | **Timeline** | Acts, scenes, and events on a scrollable timeline. Expand rows to see nested detail. |
 | **World Map** | Paint terrain freehand, stack art on layers (blend mode + opacity), scatter object stamps, and let terrain change as the story plays. Polygon regions and placed characters/events sit on a zoomable canvas. |
 | **Window manager** | Every entity opens in its own floating window. Multiple windows of the same type stay open simultaneously. Taskbar groups them. |
