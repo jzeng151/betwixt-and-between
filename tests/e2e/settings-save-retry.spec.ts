@@ -10,10 +10,20 @@ test('successful Settings retries clear only their own failures, including after
 	const profile = await (await request.post('/api/preferences/profiles', { data: { name: `Retry profile ${suffix}` } })).json();
 	try {
 		await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
+		const hydrate = Promise.withResolvers<void>();
+		await page.route('**/api/preferences', async route => {
+			if (route.request().method() === 'GET') await hydrate.promise;
+			await route.continue();
+		});
 		await page.goto('/app');
 		await page.getByTitle('Settings', { exact: true }).click();
 		const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
 		await settings.getByRole('button', { name: 'Profiles', exact: true }).click();
+		await settings.getByPlaceholder('New profile name').fill('Wait for source preferences');
+		await expect(settings.getByRole('button', { name: 'New profile', exact: true })).toBeDisabled();
+		hydrate.resolve();
+		await expect(settings.getByRole('button', { name: 'New profile', exact: true })).toBeEnabled();
+		await settings.getByPlaceholder('New profile name').fill('');
 		let failRename = true;
 		let failPreset = true;
 		await page.route('**/api/preferences/profiles/*', route => failRename && route.request().method() === 'PATCH'

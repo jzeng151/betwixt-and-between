@@ -151,7 +151,7 @@
 
   async function createProfileFromInput() {
     const name = newProfileName.trim();
-    if (!name || busy) return;
+    if (!name || busy || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
     busy = true;
     try {
       await trackWrite(createProfile(name), writeRetryKey('settings:profile:create', { name, profileId: $preferencesProfileId, preferences: $preferences }));
@@ -574,7 +574,7 @@
           />
           <button
             class="action-btn"
-            disabled={!newProfileName.trim() || busy}
+            disabled={!newProfileName.trim() || busy || !$preferencesOwnershipResolved || !$preferencesProfileId}
             onclick={createProfileFromInput}
           >
             New profile
