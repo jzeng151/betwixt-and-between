@@ -154,7 +154,7 @@
     if (!name || busy) return;
     busy = true;
     try {
-      await trackWrite(createProfile(name), 'settings:profile:create');
+      await trackWrite(createProfile(name), `settings:profile:create:${name}`);
       newProfileName = '';
       await loadProfiles();
       profilesError = null;
@@ -274,7 +274,7 @@
     if (!name || busy || !$preferencesOwnershipResolved || !$preferencesProfileId) return;
     busy = true;
     try {
-      await trackWrite(createPresetRequest(name, appearance), 'settings:preset:create');
+      await trackWrite(createPresetRequest(name, appearance), `settings:preset:create:${JSON.stringify({ name, appearance })}`);
       newPresetName = '';
       await loadPresets();
       presetsError = null;

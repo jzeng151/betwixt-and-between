@@ -30,6 +30,22 @@ test('successful Settings retries clear only their own failures, including after
 		await settings.getByPlaceholder('New preset name').fill(presetName);
 		await settings.getByRole('button', { name: 'Save current', exact: true }).click();
 		await expect(settings.getByText('Preset unavailable', { exact: true })).toBeVisible();
+		failPreset = false;
+		await settings.getByPlaceholder('New preset name').fill(`${presetName} other`);
+		await settings.getByRole('button', { name: 'Save current', exact: true }).click();
+		await expect(settings.locator('.preset-row', { hasText: `${presetName} other` })).toBeVisible();
+		await settings.getByRole('button', { name: 'Account', exact: true }).click();
+		await expect(settings.getByText('Preset unavailable', { exact: true })).toBeVisible();
+		await settings.getByRole('button', { name: 'Appearance', exact: true }).click();
+		const wasDark = await settings.getByRole('radio', { name: 'Dark', exact: true }).isChecked();
+		await settings.getByRole('radio', { name: wasDark ? 'Light' : 'Dark', exact: true }).check();
+		await settings.getByPlaceholder('New preset name').fill(presetName);
+		await settings.getByRole('button', { name: 'Save current', exact: true }).click();
+		await expect(settings.locator('.preset-row', { hasText: presetName })).toHaveCount(2);
+		await settings.getByRole('button', { name: 'Account', exact: true }).click();
+		await expect(settings.getByText('Preset unavailable', { exact: true })).toBeVisible();
+		await settings.getByRole('button', { name: 'Appearance', exact: true }).click();
+		await settings.getByRole('radio', { name: wasDark ? 'Dark' : 'Light', exact: true }).check();
 		failRename = false;
 		await settings.getByRole('button', { name: 'Profiles', exact: true }).click();
 		await settings.locator('.rename-input').press('Enter');
@@ -43,12 +59,12 @@ test('successful Settings retries clear only their own failures, including after
 		await settings.getByPlaceholder('New preset name').fill(presetName);
 		failPreset = false;
 		await settings.getByRole('button', { name: 'Save current', exact: true }).click();
-		await expect(settings.locator('.preset-row', { hasText: presetName })).toBeVisible();
+		await expect(settings.locator('.preset-row', { hasText: presetName })).toHaveCount(3);
 		await settings.getByRole('button', { name: 'Account', exact: true }).click();
 		await expect(settings.getByRole('button', { name: 'Acknowledge failed changes' })).toHaveCount(0);
 	} finally {
 		const presets = await (await request.get('/api/preferences/presets')).json();
-		for (const preset of presets.user.filter((p: { name: string }) => p.name === presetName)) {
+		for (const preset of presets.user.filter((p: { name: string }) => p.name.startsWith(presetName))) {
 			await request.delete(`/api/preferences/presets/${preset.presetId}`);
 		}
 		await request.post(`/api/preferences/profiles/${original.profileId}/activate`);
