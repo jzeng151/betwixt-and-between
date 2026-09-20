@@ -2,41 +2,88 @@ name: backup
 
 on:
   schedule:
-    # Weekly Sunday 06:00 UTC
-    - cron: '0 6 * * 0'
+    - cron: '0 6 * * *'
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/backup.yml', 'scripts/backup/**', 'tests/backup/**']
+  push:
+    branches: [main]
+    paths: ['.github/workflows/backup.yml', 'scripts/backup/**', 'tests/backup/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-${{ github.event_name == 'pull_request' && github.ref || 'production' }}
+  cancel-in-progress: false
 
 jobs:
-  backup:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: disposable-backup-test
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - name: Install postgres client + gpg + rclone
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Install backup tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client gnupg rclone
+          sudo apt-get install -y postgresql-common rclone
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-18
+          echo '/usr/lib/postgresql/18/bin' >> "$GITHUB_PATH"
+      - run: node --test tests/backup/*.test.mjs
+        env:
+          BACKUP_TEST_DATABASE_URL: postgres://postgres:disposable-backup-test@127.0.0.1:5432/postgres
 
-      - name: Dump + encrypt + upload
+  backup:
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && vars.BACKUPS_ENABLED == 'true'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: betwixt_restore_check
+          POSTGRES_PASSWORD: disposable-restore-check
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Install backup tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common rclone
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-18
+          echo '/usr/lib/postgresql/18/bin' >> "$GITHUB_PATH"
+      - name: Back up, restore-check, and apply configured retention
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
-          GPG_RECIPIENT: ${{ secrets.BACKUP_GPG_RECIPIENT }}
-          GPG_PUBLIC_KEY: ${{ secrets.BACKUP_GPG_PUBLIC_KEY }}
-          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
+          BACKUP_CONFIG: ${{ secrets.BACKUP_RCLONE_CONFIG }}
+          RESTORE_DATABASE_URL: postgres://postgres:disposable-restore-check@127.0.0.1:5432/betwixt_restore_check
+          BACKUP_PRUNE: ${{ vars.BACKUP_PRUNE }}
+          IMAGE_CLEANUP: ${{ vars.IMAGE_CLEANUP }}
         run: |
-          # Trust the recipient's public key for non-interactive encrypt.
-          echo "$GPG_PUBLIC_KEY" | gpg --batch --import
-          # Configure rclone from inline config — secrets contain B2 keys.
-          mkdir -p ~/.config/rclone
-          echo "$RCLONE_CONFIG" > ~/.config/rclone/rclone.conf
-
-          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-          OUT="backup-${STAMP}.sql.gpg"
-
-          pg_dump --no-owner --no-acl "$DATABASE_URL" \
-            | gpg --batch --yes --trust-model always \
-                --encrypt --recipient "$GPG_RECIPIENT" \
-                --output "$OUT"
-
-          rclone copy "$OUT" b2:betwixt-backups/
-
-          echo "Uploaded $OUT to B2"
+          umask 077
+          export RCLONE_CONFIG="$RUNNER_TEMP/backup-rclone.conf"
+          trap 'rm -f "$RCLONE_CONFIG"' EXIT
+          printf '%s' "$BACKUP_CONFIG" > "$RCLONE_CONFIG"
+          node scripts/backup/run.mjs

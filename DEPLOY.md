@@ -165,7 +165,33 @@ The `deliverMagicLink` helper in `src/lib/server/auth.ts` (called by the `sendMa
 
 ## Backups
 
-Weekly Sunday 06:00 UTC: `.github/workflows/backup.yml` runs `pg_dump | gpg | rclone copy` to Backblaze B2. Restore tested as part of T8b acceptance criteria; cost ~$1-2/mo storage. Neon's 24h-free / 7d-paid PITR alone is insufficient for a writer's app where the data IS the product.
+The daily 06:00 UTC workflow is opt-in. Set repository variable `BACKUPS_ENABLED=true` after configuring the secrets below. Until then, scheduled runs validate the backup code against disposable PostgreSQL, without accessing production.
+
+The backup job creates a compressed `pg_dump -Fc` archive and extracts uploaded-image references from that exact snapshot, including references inside notes and JSON. It copies the referenced images once by SHA-256 content hash. Database archives, images, filenames, and manifests are encrypted through rclone's `crypt` remote over B2. Each run downloads the stored archive, verifies its checksum, and restores it into an empty, disposable PostgreSQL 18 database. Every referenced image is also downloaded and checksum-verified. The manifest is published last, marking a complete recovery point.
+
+### One-time backup configuration
+
+1. Create a dedicated private B2 bucket or prefix, with a restricted application key. Configure an rclone B2 remote named `b2`, then a **crypt** remote named `backup` wrapping `b2:YOUR-BUCKET/betwixt-v1`. Keep the default content and filename encryption. Save the crypt password, salt, and configuration outside GitHub too; losing them makes the backups unreadable. Unlike the earlier GPG-only plan, this permits unattended verification of the actual encrypted archive.
+2. Configure an R2 S3 remote and an alias named `uploads` rooted at the `MAP_UPLOADS` bucket, e.g. `r2:betwixt-map-uploads`. This must be the production upload bucket, not the shared terrain asset bucket. Initially give its credentials read-only access.
+3. Store the complete rclone config as GitHub secret `BACKUP_RCLONE_CONFIG`, and the production connection string as `DATABASE_URL_PROD`. The old `BACKUP_GPG_RECIPIENT`, `BACKUP_GPG_PUBLIC_KEY`, and inline `RCLONE_CONFIG` secrets are no longer used by the workflow. Existing `.sql.gpg` backups are untouched and still need their original GPG private key.
+4. Set `BACKUPS_ENABLED=true`, run the backup workflow manually, and require a successful restore check. GitHub Actions failure notifications must be enabled for this workflow. A delayed or absent scheduled run should also be investigated; a green app deployment is not evidence of a recent backup.
+5. Set `BACKUP_PRUNE=true` to enable retention. Set `IMAGE_CLEANUP=true` only after verifying recovery, and grant the upload credential delete access then. Both default to report-only. No application migration is required.
+
+### Retention and image cleanup
+
+- Keep every completed database backup for 30 days, plus the first successful backup in each of the current and previous 11 calendar months. Manual pre-migration runs get at least 30 days too. Always retain the latest completed backup. Cleanup only starts after the current backup passes restoration.
+- Keep a backup image as long as **any** retained manifest needs it. Unreferenced backup images and interrupted uploads of database archives get a seven-day grace period. Retention uses exact object deletions through the encrypted remote. Do not apply blanket bucket-age rules: an old image may still be needed by a new or monthly database backup.
+- B2 normally retains hidden object versions. The retention job requests hard deletion of the specific expired objects so those versions do not accumulate. Optional seven-day Object Lock protection is compatible with the minimum grace periods; longer locks can delay cleanup and make the job report a failure until objects become eligible. Do not grant governance-retention bypass solely to silence that failure.
+- Source image cleanup scans references across all public database tables, preserves shared images, ignores unrecognized filenames, and removes at most 100 unreferenced uploads observed as unreferenced for over seven days per run. It briefly locks public tables against writes while rechecking references and deleting candidates. A five-second lock-acquisition timeout aborts cleanup when busy. This is for a small deployment; replace the table scan/locks with tracked asset references if the job starts delaying writers. The first unreferenced observation is saved in each completed manifest. Reappearing references or changed object timestamps reset that grace period; new uploads also get at least seven days.
+- Shared terrain sprites, arbitrary external image URLs, and infrastructure secrets are outside this backup. The repository/deployment configuration and encryption keys need their own recovery copies.
+
+### Restore a completed backup
+
+Use a trusted machine with the saved rclone configuration and PostgreSQL client tools. List `backup:snapshots/` with `rclone lsf backup:snapshots/ --dirs-only` and choose a snapshot containing both `manifest.json` and `database.dump`. Download via the **crypt remote** so rclone decrypts it. Read `databaseHash` from the manifest and verify the dump's SHA-256 before restoring with `pg_restore --exit-on-error --no-owner --no-acl --dbname "$RESTORE_DATABASE_URL" database.dump` into an empty development database. Never point a restore test at production.
+
+For each manifest image, download `backup:images/HASH`, verify its SHA-256 equals `hash`, and restore it to the upload bucket under its original `key`. A database-only restore is incomplete when those files are missing. Validate story counts, ownership, and map rendering before any production cutover. Run a manual recovery drill at least monthly, including access to the independently saved encryption configuration.
+
+Local regression command: `node --test tests/backup/*.test.mjs`. The real encrypted round-trip test additionally requires rclone, PostgreSQL 18 client tools, and `BACKUP_TEST_DATABASE_URL` pointing to a **disposable loopback** PostgreSQL server. It creates its own source database and `betwixt_restore_check`; it refuses to reuse an existing restore-check database. CI runs this test with local encrypted storage and no cloud credentials.
 
 ## Rollback
 
