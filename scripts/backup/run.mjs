@@ -31,7 +31,9 @@ const rclone = (...args) => command('rclone', args);
 const list = async (path) => JSON.parse(await rclone('lsjson', path, '--recursive', '--files-only'));
 
 export function imageReferences(text) {
-  return new Set(text.match(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}_\d{13}\.(?:png|jpe?g|webp)/gi) ?? []);
+  // Uploads are stored as root-relative URLs; external URLs and bare filenames are not managed assets.
+  const urls = text.matchAll(/(?:^|[\s"'(<>=]|\\[nrt])\/api\/maps\/file\/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}_\d{13}\.(?:png|jpe?g|webp))(?![\w./%-])/gi);
+  return new Set(Array.from(urls, (match) => match[1]));
 }
 
 export function validateManifest(value, id) {

@@ -30,6 +30,9 @@ test('cleanup protects references, new uploads, unknown keys and invalid dates',
   objects.push({ Path: key(5), ModTime: 'invalid' });
   objects.push({ Path: 'unmanaged.png', ModTime: '2000-01-01' });
   const refs = imageReferences(JSON.stringify({ maps: [`/api/maps/file/${key(1)}`, `/api/maps/file/${key(1)}`], note: `![map](/api/maps/file/${key(2)})` }));
+  assert.deepEqual([...imageReferences(JSON.stringify({ external: `https://example.com/${key(3)}`,
+    externalRoute: `https://example.com/api/maps/file/${key(3)}`, bare: key(3),
+    note: `Map:\n/api/maps/file/${key(2)}` }))], [key(2)]);
   assert.deepEqual(orphanImages(objects, refs, now, Object.fromEntries(objects.map((o) => [o.Path, { since: new Date(now - 8 * DAY).toISOString(), modifiedAt: o.ModTime }]))).map((o) => o.Path), [key(3)]);
   assert.throws(() => validateManifest({ version: 1 }, '../other'), /Invalid/);
 });
@@ -69,7 +72,8 @@ test('encrypted remote round-trip restores data; cleanup waits for verified back
     await source`create table world_maps (id integer primary key, base_image_url text)`;
     await source`insert into stories values (1, 'Harbour')`;
     await source`insert into world_maps values (1, ${`/api/maps/file/${key(1)}`}), (2, ${`/api/maps/file/${key(1)}`})`;
-    await source`insert into entities values (1, ${JSON.stringify({ body: `![Old map](/api/maps/file/${key(2)})` })}::jsonb)`;
+    await source`insert into entities values (1, ${JSON.stringify({ body: `![Old map](/api/maps/file/${key(2)})`,
+      external: `https://example.com/${key(99)}` })}::jsonb)`;
     const uploads = join(work, 'uploads'); const encrypted = join(work, 'encrypted');
     await mkdir(uploads); await mkdir(encrypted);
     for (const n of [1, 2, 3, 4]) {
