@@ -83,6 +83,9 @@ export async function backup({ now = new Date() } = {}) {
       (source.port || '5432') === (restore.port || '5432') && source.pathname === restore.pathname) {
     throw new Error('Source and restore-check database must differ');
   }
+  if (source.hostname.endsWith('.neon.tech') && source.hostname.split('.')[0].endsWith('-pooler')) {
+    throw new Error('Backups require a direct Neon connection, not the transaction pooler');
+  }
   const config = JSON.parse(await rclone('config', 'dump'));
   if (config.backup?.type !== 'crypt' || config.backup?.no_data_encryption === 'true' || !config.uploads) {
     throw new Error('Configure an encrypted backup: remote and an uploads: remote');
@@ -127,11 +130,13 @@ export async function backup({ now = new Date() } = {}) {
       monthly: !manifests.some((m) => m.monthly && m.createdAt.slice(0, 7) === now.toISOString().slice(0, 7)),
       images: []
     };
+    const storedImages = new Set(existing.filter((o) => o.Path.startsWith('images/')).map((o) => o.Path.slice(7)));
     for (const key of [...references].sort()) {
       const local = join(work, 'image');
       await rclone('copyto', `uploads:${key}`, local, '--ignore-times');
       const hash = await fileHash(local);
-      await verifiedCopy(local, `backup:images/${hash}`, join(work, 'roundtrip-image'), existing.some((o) => o.Path === `images/${hash}`));
+      await verifiedCopy(local, `backup:images/${hash}`, join(work, 'roundtrip-image'), storedImages.has(hash));
+      storedImages.add(hash);
       manifest.images.push({ key, hash });
     }
     const remote = `backup:snapshots/${id}`;

@@ -34,6 +34,20 @@ test('cleanup protects references, new uploads, unknown keys and invalid dates',
   assert.throws(() => validateManifest({ version: 1 }, '../other'), /Invalid/);
 });
 
+test('restore destination and pooled source are rejected before accessing storage', async () => {
+  const before = { source: process.env.DATABASE_URL, restore: process.env.RESTORE_DATABASE_URL };
+  try {
+    process.env.DATABASE_URL = 'postgres://user:disposable@ep-test-pooler.us-east-2.aws.neon.tech/app';
+    process.env.RESTORE_DATABASE_URL = 'postgres://postgres@127.0.0.1/betwixt_restore_check';
+    await assert.rejects(backup(), /direct Neon connection/);
+    process.env.RESTORE_DATABASE_URL = 'postgres://postgres@production.example/betwixt_restore_check';
+    await assert.rejects(backup(), /loopback database/);
+  } finally {
+    if (before.source === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = before.source;
+    if (before.restore === undefined) delete process.env.RESTORE_DATABASE_URL; else process.env.RESTORE_DATABASE_URL = before.restore;
+  }
+});
+
 test('encrypted remote round-trip restores data; cleanup waits for verified backup and preserves shared images',
   { skip: !process.env.BACKUP_TEST_DATABASE_URL }, async () => {
   const url = new URL(process.env.BACKUP_TEST_DATABASE_URL);
@@ -60,7 +74,7 @@ test('encrypted remote round-trip restores data; cleanup waits for verified back
     await mkdir(uploads); await mkdir(encrypted);
     for (const n of [1, 2, 3, 4]) {
       await writeFile(join(uploads, key(n)), n < 3 ? 'same-image' : `image-${n}`);
-      if (n < 4) await utimes(join(uploads, key(n)), new Date(Date.now() - 8 * DAY), new Date(Date.now() - 8 * DAY));
+      if (n < 4) await utimes(join(uploads, key(n)), new Date(Date.now() - (8 + n) * DAY), new Date(Date.now() - (8 + n) * DAY));
     }
     const password = cli('obscure', 'disposable-backup-test-password').trim();
     const config = join(work, 'rclone.conf');
@@ -78,6 +92,13 @@ test('encrypted remote round-trip restores data; cleanup waits for verified back
     assert.equal((await restored`select name from stories`)[0].name, 'Harbour');
     assert.equal((await restored`select count(*)::int as n from world_maps`)[0].n, 2);
     await restored.end();
+
+    const corrupt = join(work, 'corrupt-image');
+    await writeFile(corrupt, 'bad!-image');
+    cli('copyto', corrupt, `backup:images/${manifest.images[0].hash}`, '--ignore-times');
+    await assert.rejects(backup(), /checksum mismatch/);
+    assert.ok((await readdir(uploads)).includes(key(3)));
+    cli('copyto', join(uploads, key(1)), `backup:images/${manifest.images[0].hash}`, '--ignore-times');
 
     // A failed restore check must not prune backups or source images.
     process.env.IMAGE_CLEANUP = 'true';
