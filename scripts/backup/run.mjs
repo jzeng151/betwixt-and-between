@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -135,6 +135,8 @@ export async function backup({ now = new Date() } = {}) {
       const local = join(work, 'image');
       await rclone('copyto', `uploads:${key}`, local, '--ignore-times');
       const hash = await fileHash(local);
+      // Backup-orphan grace starts at this copy, not the source image's older timestamp.
+      if (!storedImages.has(hash)) await utimes(local, now, now);
       await verifiedCopy(local, `backup:images/${hash}`, join(work, 'roundtrip-image'), storedImages.has(hash));
       storedImages.add(hash);
       manifest.images.push({ key, hash });

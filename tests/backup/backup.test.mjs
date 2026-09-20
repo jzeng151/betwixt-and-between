@@ -85,6 +85,8 @@ test('encrypted remote round-trip restores data; cleanup waits for verified back
     assert.ok((await readdir(uploads)).includes(key(3)), 'preview must not delete');
     let inventory = JSON.parse(cli('lsjson', 'backup:', '-R', '--files-only'));
     assert.equal(inventory.filter((o) => o.Path.startsWith('images/')).length, 1, 'identical bytes stored once');
+    assert.ok(Date.parse(inventory.find((o) => o.Path.startsWith('images/')).ModTime) > Date.now() - DAY,
+      'backup grace starts when copied, even for old source images');
     const manifestPath = inventory.find((o) => o.Path.endsWith('/manifest.json')).Path;
     const manifest = JSON.parse(cli('cat', `backup:${manifestPath}`));
     assert.deepEqual(manifest.images.map((i) => i.key), [key(1), key(2)]);

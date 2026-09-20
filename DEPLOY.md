@@ -181,7 +181,7 @@ The backup job creates a compressed `pg_dump -Fc` archive and extracts uploaded-
 
 - Keep every completed database backup for 30 days, plus the first successful backup in each of the current and previous 11 calendar months. Manual pre-migration runs get at least 30 days too. Always retain the latest completed backup. Cleanup only starts after the current backup passes restoration.
 - Keep a backup image as long as **any** retained manifest needs it. Unreferenced backup images and interrupted uploads of database archives get a seven-day grace period. Retention uses exact object deletions through the encrypted remote. Do not apply blanket bucket-age rules: an old image may still be needed by a new or monthly database backup.
-- B2 normally retains hidden object versions. The retention job requests hard deletion of the specific expired objects so those versions do not accumulate. Optional seven-day Object Lock protection is compatible with the minimum grace periods; longer locks can delay cleanup and make the job report a failure until objects become eligible. Do not grant governance-retention bypass solely to silence that failure.
+- B2 normally retains hidden object versions. The retention job requests hard deletion of the specific expired objects so those versions do not accumulate. Object Lock can delay cleanup and make the job report a failure until objects become eligible. Do not grant governance-retention bypass solely to silence that failure.
 - Source image cleanup scans references across all public database tables, preserves shared images, ignores unrecognized filenames, and removes at most 100 unreferenced uploads observed as unreferenced for over seven days per run. It briefly locks public tables against writes while rechecking references and deleting candidates. A five-second lock-acquisition timeout aborts cleanup when busy. This is for a small deployment; replace the table scan/locks with tracked asset references if the job starts delaying writers. The first unreferenced observation is saved in each completed manifest. Reappearing references or changed object timestamps reset that grace period; new uploads also get at least seven days.
 - Shared terrain sprites, arbitrary external image URLs, and infrastructure secrets are outside this backup. The repository/deployment configuration and encryption keys need their own recovery copies.
 
@@ -222,7 +222,7 @@ Cloudflare retains previous Worker versions. To revert: dashboard → your Worke
 - [src/lib/server/auth.ts](src/lib/server/auth.ts) — required auth configuration and magic-link delivery.
 - `.github/workflows/test.yml` — CI test gate (runs on PRs).
 - `.github/workflows/deploy.yml` — auto-deploy on push to main.
-- `.github/workflows/backup.yml` — weekly Neon backup to Backblaze B2.
+- `.github/workflows/backup.yml` — daily verified Neon and image backups to Backblaze B2.
 - [Cloudflare: SvelteKit on Workers](https://developers.cloudflare.com/workers/framework-guides/web-apps/sveltekit/) — canonical wrangler.jsonc shape used by this repo.
 
 ### Story ownership migration 0029
