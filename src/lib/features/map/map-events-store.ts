@@ -177,7 +177,7 @@ function createMapEventsStore() {
 		};
 		if (lastLoadedMapId !== mapId) return created;
 		if (invalidatedAnchorIds?.length) mapAnchorsStore.dropLocal(mapId, invalidatedAnchorIds);
-		if (checkpointCreated) mapAnchorsStore.resyncAfterWrite(mapId);
+		else if (checkpointCreated) mapAnchorsStore.resyncAfterWrite(mapId);
 		// Swap the provisional row for the server row in one update so the
 		// terrain never flickers off between the two.
 		store.update((rows) => [...rows.filter((r) => r.id !== tempId), created].sort(compareEvents));
@@ -364,7 +364,7 @@ function createMapEventsStore() {
 		};
 		if (lastLoadedMapId !== mapId) return created;
 		if (invalidatedAnchorIds?.length) mapAnchorsStore.dropLocal(mapId, invalidatedAnchorIds);
-		if (checkpointCreated) mapAnchorsStore.resyncAfterWrite(mapId);
+		else if (checkpointCreated) mapAnchorsStore.resyncAfterWrite(mapId);
 		// Swap the provisional row for the server row in one update.
 		store.update((rows) => [...rows.filter((r) => r.id !== tempId), created].sort(compareEvents));
 		return created;

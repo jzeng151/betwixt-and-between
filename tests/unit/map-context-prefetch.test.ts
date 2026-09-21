@@ -70,12 +70,16 @@ describe('mapAnchorsStore prefetch / applyPrefetched', () => {
 		expect(get(mapAnchorsStore)).toBe(before); // untouched — that's the point of prefetch
 	});
 
-	it('an invalidation supersedes an older checkpoint fetch', async () => {
-		mapAnchorsStore.applyPrefetched('A', [anchor('old', 'A')]);
+	it('invalidation restarts reconciliation and rejects the older checkpoint response', async () => {
+		mapAnchorsStore.applyPrefetched('A', [anchor('old', 'A'), anchor('also-deleted', 'A')]);
 		const d = deferredFetch();
 		const loading = mapAnchorsStore.load('A');
+		// A preceding authored write also removed another checkpoint. The new
+		// event response names only its own invalidation; a fresh GET reconciles both.
+		vi.mocked(globalThis.fetch).mockResolvedValueOnce(resp({ rows: [], next_cursor: null }));
 		mapAnchorsStore.dropLocal('A', ['old']);
-		d.resolve(resp({ rows: [anchor('old', 'A')], next_cursor: null }));
+		await vi.waitFor(() => expect(get(mapAnchorsStore)).toEqual([]));
+		d.resolve(resp({ rows: [anchor('old', 'A'), anchor('also-deleted', 'A')], next_cursor: null }));
 		await loading;
 		expect(get(mapAnchorsStore)).toEqual([]);
 	});
