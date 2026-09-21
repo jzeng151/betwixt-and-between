@@ -135,7 +135,7 @@
 		jitter: strokeBrushSize * 0.5
 	});
 	// Slice D — time-varying terrain authoring. Both brushes commit at the
-	// CURRENT playhead T (paint_cells PixiBrushLayer.svelte:156, paint_stroke
+	// gesture-start playhead T (paint_cells PixiBrushLayer, paint_stroke
 	// PixiFreeformBrushLayer commitStroke), and the fold windows events by
 	// (anchorT, t] — so scrubbing the playhead and painting authors a terrain
 	// BEAT (forest→ash) that appears from that story-time onward. The data path
@@ -145,7 +145,7 @@
 	let paintAtLabel = $derived.by(() => {
 		const t = $playhead;
 		if (t === null || t <= 0) return 'from the story start';
-		const act = [...acts].reverse().find((a) => (a.position ?? 0) <= t);
+		const act = acts[Math.min(Math.floor(t), acts.length - 1)];
 		return act
 			? `from “${act.name}” (t=${t.toFixed(2)}) onward`
 			: `from t=${t.toFixed(2)} onward`;
