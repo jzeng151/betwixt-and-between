@@ -33,7 +33,7 @@
 // map_regions stay during D2 but anchor JSON is the leading source.
 // fanOutRegionPolygonUpdate keeps the two in sync on PATCH.
 
-import { and, eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { mapAnchors, worldMaps } from './db/schema.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -189,6 +189,3 @@ export async function fanOutRegionDelete(
 			AND ${worldMaps.storyId} = ${storyId}
 	`);
 }
-
-// Re-exports keep tests happy without re-importing.
-export { and, eq };

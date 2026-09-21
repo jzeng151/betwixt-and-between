@@ -73,6 +73,7 @@
 	// commits the in-flight stroke; without this snapshot commitStroke would
 	// persist the old map's points onto the newly-active map. null when idle.
 	let gestureMapId: string | null = null;
+	let gestureTPosition = 0;
 	// Recorded path in normalized [0,1] coords.
 	let points: Array<{ x: number; y: number }> = [];
 
@@ -162,7 +163,7 @@
 			return;
 		}
 		const mapId = activeMap.id;
-		const tPosition = get(playhead) ?? 0;
+		const tPosition = gestureTPosition;
 		const localStrokeId = strokeId;
 		// Cap to the server limit — drop excess rather than 400 (a long drag can
 		// exceed STROKE_MAX_POINTS; downsampling preserves the gesture shape).
@@ -212,6 +213,7 @@
 			painting = true;
 			activePointerId = e.pointerId;
 			gestureMapId = activeMap?.id ?? null;
+			gestureTPosition = get(playhead) ?? 0;
 			strokeId = crypto.randomUUID();
 			points = [n];
 			drawPreview();

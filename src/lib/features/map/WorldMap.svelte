@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { getActs, getScenesByActId } from '$lib/story-structure.js';
 	import { onMount } from 'svelte';
 	import { squareGridCounts } from './grid-dims.js';
 	import {
@@ -468,11 +469,7 @@
 	let locations = $derived($entities.filter((e) => e.type === 'Location'));
 	let hasMaps = $derived($worldMaps.length > 0);
 	let hasCanvas = $derived((activeMap?.width ?? 0) > 0 && (activeMap?.height ?? 0) > 0);
-	let acts = $derived(
-		$entities
-			.filter((e) => e.type === 'Act')
-			.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-	);
+	let acts = $derived(getActs($entities));
 	// Location hierarchy (part_of) — index built once per relationships snapshot
 	let hierarchyIndex = $derived(buildHierarchyIndex($relationships));
 	let breadcrumbAncestors = $derived.by(() => {
@@ -505,16 +502,7 @@
 	// live with the toolbar handlers below.
 	let creatingToolbarLocation = $state(false);
 
-	let scenesByAct = $derived.by(() => {
-		const map = new Map<string, typeof $entities[0][]>();
-		for (const act of acts) {
-			const scenes = $entities
-				.filter((e) => e.type === 'Scene' && e.parentId === act.id)
-				.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-			map.set(act.id, scenes);
-		}
-		return map;
-	});
+	let scenesByAct = $derived(getScenesByActId($entities));
 
 	// Pre-fill scene checkboxes from existing intervals when location changes
 		$effect(() => {

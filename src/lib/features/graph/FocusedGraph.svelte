@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getActs } from '$lib/story-structure.js';
 	import { storyFetch } from '$lib/story-fetch.js';
   import { registerDirtyField, unregisterDirtyField } from '$lib/util/pending-commit.js';
 
@@ -66,7 +67,7 @@
   // ── Traversal inputs ──────────────────────────────────────────────────────
   const focalSetIds = $derived(new Set(focalSet));
   const acts = $derived(
-    $entities.filter((e) => e.type === 'Act').sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    getActs($entities)
   );
 
   // Edge list for traversal helpers (B2 contract).

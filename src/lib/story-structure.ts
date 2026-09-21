@@ -6,35 +6,30 @@ import { get } from 'svelte/store';
 import type { Entity } from '$lib/stores/entities.js';
 import { playhead } from '$lib/features/timeline/playhead-store.js';
 
-const sortByPositionThenCreated = (a: Entity, b: Entity): number => {
+type StoryEntity = {
+	type: string;
+	parentId?: string | null;
+	position?: number | null;
+	createdAt?: string | Date;
+};
+
+const sortByPositionThenCreated = (a: StoryEntity, b: StoryEntity): number => {
 	const ap = a.position ?? Number.MAX_SAFE_INTEGER;
 	const bp = b.position ?? Number.MAX_SAFE_INTEGER;
 	if (ap !== bp) return ap - bp;
-	return Number(a.createdAt) - Number(b.createdAt);
+	return new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime();
 };
 
-/**
- * Root-level Acts ordered by (position, createdAt) — matches server actIndexOf.
- *
- * NOTE: this is intentionally different from `buildActIndexById` in
- * `src/lib/features/graph/scope.ts`. Both order Acts on the playhead axis, but:
- *   - This helper includes null-position Acts (using MAX_SAFE_INTEGER fallback)
- *     and tie-breaks by createdAt — the Timeline / PlayerDock surfaces need
- *     EVERY Act in the array so positional indexing works for the full set.
- *   - `buildActIndexById` filters to `position != null` and sorts by position
- *     only — the graph's scope projection only needs Acts that have a defined
- *     position on the axis; nulls don't participate in scope checks.
- * Do not merge these without understanding both call sites.
- */
-export function getActs(entities: Entity[]): Entity[] {
-	return entities
+/** Root-level Acts ordered by (position, createdAt), matching server actIndexOf. */
+export function getActs<T extends StoryEntity>(entities: Iterable<T>): T[] {
+	return [...entities]
 		.filter((e) => e.type === 'Act' && e.parentId == null)
 		.sort(sortByPositionThenCreated);
 }
 
-/** Scenes grouped by parent Act id, each list sorted by (position, createdAt). */
-export function getScenesByActId(entities: Entity[]): Map<string, Entity[]> {
-	const m = new Map<string, Entity[]>();
+/** Scenes grouped by parent Act id, ordered like server sceneIndexOf. */
+export function getScenesByActId<T extends StoryEntity>(entities: Iterable<T>): Map<string, T[]> {
+	const m = new Map<string, T[]>();
 	for (const e of entities) {
 		if (e.type !== 'Scene' || !e.parentId) continue;
 		if (!m.has(e.parentId)) m.set(e.parentId, []);

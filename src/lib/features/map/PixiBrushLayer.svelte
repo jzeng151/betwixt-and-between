@@ -64,6 +64,8 @@
 	// Per-gesture state. Reset on mouse-down.
 	let painting = false;
 	let strokeId: string | null = null;
+	let gestureMapId: string | null = null;
+	let gestureTPosition = 0;
 	let touched: Map<string, { x: number; y: number; biome: string }> = new Map();
 	let hoverCells = $state<Array<{ x: number; y: number }>>([]);
 
@@ -145,7 +147,7 @@
 	}
 
 	function commitStroke(): void {
-		if (!activeMap || !strokeId || touched.size === 0) {
+		if (!activeMap || activeMap.id !== gestureMapId || !strokeId || touched.size === 0) {
 			painting = false;
 			strokeId = null;
 			touched = new Map();
@@ -153,7 +155,7 @@
 			return;
 		}
 		const mapId = activeMap.id;
-		const tPosition = get(playhead) ?? 0;
+		const tPosition = gestureTPosition;
 		const localStrokeId = strokeId;
 		const all = Array.from(touched.values());
 		const totalCells = all.length;
@@ -220,6 +222,8 @@
 			const cell = pointerToCell(local.x, local.y);
 			if (!cell) return;
 			painting = true;
+			gestureMapId = activeMap!.id;
+			gestureTPosition = get(playhead) ?? 0;
 			strokeId = crypto.randomUUID();
 			touched = new Map();
 			recordTouched(cellsUnderBrush(cell.x, cell.y));

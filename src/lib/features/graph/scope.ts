@@ -12,6 +12,7 @@
 // pulls scope.ts in isolation.
 
 import { intervalContainsT } from '$lib/features/timeline/playhead-store.js';
+import { getActs, getScenesByActId } from '$lib/story-structure.js';
 import { sceneRange } from '$lib/features/timeline/timeline-helpers.js';
 
 export interface Interval {
@@ -25,6 +26,7 @@ export interface ScopeEntity {
 	type: string;
 	parentId?: string | null;
 	position?: number | null;
+	createdAt?: string | Date;
 }
 
 export interface SceneRange {
@@ -81,51 +83,21 @@ export function buildEntityIntervalMap(
 	return m;
 }
 
-// 1-indexed DB sort position → 0-based rank so playhead-axis math uses [0,1), [1,2), …
-//
-// NOTE: intentionally different from `getActs` in `src/lib/story-structure.ts`.
-// This helper filters to `position != null` and sorts by position only — Acts
-// without a position don't participate in graph-scope checks. story-structure's
-// getActs INCLUDES null-position Acts (with MAX_SAFE_INTEGER fallback) because
-// Timeline / PlayerDock need every Act in the array. Do not merge without
-// understanding both call sites.
+// The graph, timeline, and server share the same zero-based story-time axis.
 export function buildActIndexById(entities: Iterable<ScopeEntity>): Map<string, number> {
-	return new Map(
-		[...entities]
-			.filter((e) => e.type === 'Act' && e.position != null)
-			.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-			.map((e, i): [string, number] => [e.id, i])
-	);
+	return new Map(getActs(entities).map((e, i) => [e.id, i]));
 }
 
-// Fractional sub-ranges for Scenes within their parent Act's [actIdx, actIdx+1)
-// window. Scenes sort by explicit position when set, otherwise by iteration order
-// from the input (= creation order, when callers pass `$entities`).
 export function buildSceneRanges(
 	entities: Iterable<ScopeEntity>,
 	actIndexById: Map<string, number>
 ): Map<string, SceneRange> {
 	const ranges = new Map<string, SceneRange>();
-	const scenesByAct = new Map<string, Array<{ id: string; position: number | null }>>();
-	for (const e of entities) {
-		if (e.type === 'Scene' && e.parentId != null) {
-			const list = scenesByAct.get(e.parentId) ?? [];
-			list.push({ id: e.id, position: e.position ?? null });
-			scenesByAct.set(e.parentId, list);
-		}
-	}
-	for (const [actId, scenes] of scenesByAct) {
+	for (const [actId, scenes] of getScenesByActId(entities)) {
 		const actIdx = actIndexById.get(actId);
 		if (actIdx == null) continue;
-		const sorted = [...scenes].sort((a, b) => {
-			if (a.position != null && b.position != null) return a.position - b.position;
-			if (a.position != null) return -1;
-			if (b.position != null) return 1;
-			return 0;
-		});
-		const n = sorted.length;
-		for (let i = 0; i < n; i++) {
-			ranges.set(sorted[i].id, sceneRange(i, n, actIdx));
+		for (let i = 0; i < scenes.length; i++) {
+			ranges.set(scenes[i].id, sceneRange(i, scenes.length, actIdx));
 		}
 	}
 	return ranges;

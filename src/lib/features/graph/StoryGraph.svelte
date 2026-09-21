@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getActs } from '$lib/story-structure.js';
 	import { storyFetch } from '$lib/story-fetch.js';
   import { registerDirtyField, unregisterDirtyField } from '$lib/util/pending-commit.js';
   import { trackWrite } from '$lib/stores/pending-writes.js';
@@ -93,7 +94,7 @@
   const displayEntities = $derived($entities.filter((e) => e.type !== 'Note'));
   const hasEntities = $derived(displayEntities.length > 0);
   const acts = $derived(
-    $entities.filter((e) => e.type === 'Act').sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    getActs($entities)
   );
 
   const characterIndexById = $derived(buildCharacterIndexById($entities));

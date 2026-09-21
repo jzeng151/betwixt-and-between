@@ -55,3 +55,6 @@ static/Sprites/*
 # Regenerate the generated ones with `npm run docs:all`.
 # Anchored to root so scripts/docs/ (the generators) is unaffected.
 /docs/
+
+# Local backup credentials.
+/betwixt-backup.conf
