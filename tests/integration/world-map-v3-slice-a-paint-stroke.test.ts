@@ -255,6 +255,68 @@ describe('Slice A — paint_stroke counts toward AUTO_ANCHOR_K', () => {
 		userId = (await seedTestUser(currentDb)).id;
 	});
 
+	it('replaces automatic checkpoints without losing timeline states, authored snapshots, or undo', async () => {
+		const map = await seedMap();
+		const otherMap = await seedMap('Other');
+		const [otherCache] = await currentDb.insert(mapAnchors).values({
+			worldMapId: otherMap.id, tPosition: 1, stateJsonb: {}, isSynthetic: true
+		}).returning();
+		let previousCacheId: string | undefined;
+		for (let batch = 0; batch < 3; batch++) {
+			let last: { invalidatedAnchorIds: string[] } | undefined;
+			for (let i = 1; i <= 20; i++) {
+				last = await (await CREATE_EVENT(mkEvent({
+					params: { id: map.id },
+					body: { tPosition: batch * 20 + i, kind: 'paint_stroke', payloadJsonb: fillStroke() }
+				}))).json();
+			}
+			const rows = await currentDb.select().from(mapAnchors).where(eq(mapAnchors.worldMapId, map.id));
+			const caches = rows.filter((a) => a.isSynthetic);
+			expect(caches).toHaveLength(1);
+			if (previousCacheId) expect(last?.invalidatedAnchorIds).toContain(previousCacheId);
+			previousCacheId = caches[0].id;
+		}
+		const before = await loadProjectionInputs(map.id);
+		expect(before.events).toHaveLength(60);
+		for (const t of [0, 10, 20, 25, 40, 55, 60, 100]) {
+			expect(projectState(t, before.anchors, before.events, emptyCtx).strokes).toHaveLength(Math.min(t, 60));
+		}
+		// A manual snapshot remains authoritative, even when it intentionally clears art.
+		const authored = await (await CREATE_ANCHOR(mkEvent({ params: { id: map.id }, body: {
+			tPosition: 65, stateJsonb: { regions: [], artifacts: [], cells: [], strokes: [] }
+		} }))).json();
+		for (let i = 66; i <= 85; i++) {
+			await CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+				tPosition: i, kind: 'paint_stroke', payloadJsonb: fillStroke()
+			} }));
+		}
+		const rows = await currentDb.select().from(mapAnchors).where(eq(mapAnchors.worldMapId, map.id));
+		expect(rows.filter((a) => a.isSynthetic)).toHaveLength(1);
+		expect(rows.some((a) => a.id === authored.id && !a.isSynthetic)).toBe(true);
+		const later = await loadProjectionInputs(map.id);
+		expect(projectState(60, later.anchors, later.events, emptyCtx).strokes).toHaveLength(60);
+		expect(projectState(85, later.anchors, later.events, emptyCtx).strokes).toHaveLength(20);
+		const retroactive = await (await CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+			tPosition: 25, kind: 'paint_stroke', payloadJsonb: fillStroke({ textureKey: 'Sand' })
+		} }))).json();
+		const retro = await loadProjectionInputs(map.id);
+		expect(projectState(40, retro.anchors, retro.events, emptyCtx).strokes).toHaveLength(41);
+		expect(projectState(85, retro.anchors, retro.events, emptyCtx).strokes).toHaveLength(20);
+		const undone = await (await UNDO_EVENT(mkEvent({ params: { id: map.id } }))).json();
+		expect(undone.map((e: { id: string }) => e.id)).toEqual([retroactive.id]);
+		const afterUndo = await loadProjectionInputs(map.id);
+		expect(projectState(40, afterUndo.anchors, afterUndo.events, emptyCtx).strokes).toHaveLength(40);
+		expect(projectState(85, afterUndo.anchors, afterUndo.events, emptyCtx).strokes).toHaveLength(20);
+		// Redo uses the same POST path as the client.
+		await CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+			tPosition: retroactive.tPosition, kind: retroactive.kind, payloadJsonb: retroactive.payloadJsonb
+		} }));
+		const afterRedo = await loadProjectionInputs(map.id);
+		expect(projectState(40, afterRedo.anchors, afterRedo.events, emptyCtx).strokes).toHaveLength(41);
+		expect(projectState(85, afterRedo.anchors, afterRedo.events, emptyCtx).strokes).toHaveLength(20);
+		expect(await currentDb.select().from(mapAnchors).where(eq(mapAnchors.id, otherCache.id))).toHaveLength(1);
+	});
+
 	it('20 paint_stroke events fire an auto-anchor that bakes all 20 strokes', async () => {
 		const map = await seedMap();
 		for (let i = 0; i < 20; i++) {

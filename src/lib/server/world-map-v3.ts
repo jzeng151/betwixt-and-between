@@ -1339,7 +1339,7 @@ export async function createMapEvent(
 		// (eng-review §6): a strokes-only map would otherwise never anchor and
 		// replay the full stroke list every frame (OQ4 ceiling, unbounded).
 		if (input.kind === 'paint_cells' || input.kind === 'paint_stroke') {
-			await maybeWriteAutoAnchor(tx, worldMapId, input, commandId);
+			invalidatedAnchorIds.push(...(await maybeWriteAutoAnchor(tx, worldMapId, input, commandId)));
 		}
 
 		return { ...row, invalidatedAnchorIds };
@@ -1347,26 +1347,10 @@ export async function createMapEvent(
 }
 
 /**
- * Slice 3 B7 — auto-anchor write logic.
- *
- * Conditions to fire (all must hold):
- *   1. Counter: count(map_events on this map WHERE kind='paint_cells'
- *      AND undone_at IS NULL AND created_at > last anchor's created_at)
- *      >= AUTO_ANCHOR_K.
- *   2. Stroke complete: commandId IS NULL (standalone single-event stroke)
- *      OR payload.command_complete === true (the last chunk of a
- *      multi-event stroke). Never split mid-stroke.
- *
- * Snapshot: t_position = MAX(t_position) over the in-flight paint_cells
- * events (the events that will be summarized). state_jsonb is derived from
- * the latest anchor's state_jsonb with the recent paint_cells events
- * folded into cells[]. Other keys (regions, artifacts, chains) pass through
- * unchanged — paint_cells doesn't touch them.
- *
- * Synchronization: caller already holds FOR UPDATE on the world_maps row,
- * so two concurrent POSTs serialize and only one fires the anchor write.
- * The other observes the new anchor on its own count query (created_at >
- * new anchor's created_at means count restarts at 0).
+ * Bake after 20 live terrain events since the last anchor, at a complete
+ * stroke boundary. Fold all live state events from the preceding anchor to
+ * the latest event time, replace the synthetic cache, and return evicted IDs.
+ * Caller holds the world_maps row lock throughout the event write and bake.
  */
 async function maybeWriteAutoAnchor(
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1374,7 +1358,7 @@ async function maybeWriteAutoAnchor(
 	worldMapId: string,
 	input: EventInput,
 	commandId: string | null
-): Promise<void> {
+): Promise<string[]> {
 	// A paint_stroke event is always one complete stroke (no chunking in Slice
 	// A), so it is always a stroke boundary. paint_cells chunks at 256 cells, so
 	// it fires only on the last chunk (commandId null = single-event stroke, or
@@ -1384,7 +1368,7 @@ async function maybeWriteAutoAnchor(
 		input.kind === 'paint_stroke' ||
 		commandId === null ||
 		(payload != null && payload.command_complete === true);
-	if (!strokeComplete) return;
+	if (!strokeComplete) return [];
 
 	// Find the latest existing anchor (user OR synthetic). Created_at is the
 	// commit-time discriminator; t_position is the snapshot time which can
@@ -1422,7 +1406,7 @@ async function maybeWriteAutoAnchor(
 		? countResult.rows
 		: ((countResult as unknown) as { rows: Array<{ cnt: string | number }> }).rows ?? [];
 	const count = countRows.length > 0 ? Number(countRows[0].cnt) : 0;
-	if (count < AUTO_ANCHOR_K) return;
+	if (count < AUTO_ANCHOR_K) return [];
 
 	// Read the post-cutoff window only to learn the t_position range (maxT)
 	// and confirm there's something to snapshot. The actual fold is rebuilt
@@ -1446,7 +1430,7 @@ async function maybeWriteAutoAnchor(
 				sql`${mapEvents.createdAt} > ${cutoffSql}`
 			)
 		);
-	if (recentEvents.length === 0) return; // belt + suspenders
+	if (recentEvents.length === 0) return []; // belt + suspenders
 	const maxT = recentEvents.reduce(
 		(acc: number, e: { tPosition: number }) => (e.tPosition > acc ? e.tPosition : acc),
 		Number.NEGATIVE_INFINITY
@@ -1530,26 +1514,9 @@ async function maybeWriteAutoAnchor(
 	// Seed baked strokes through applyPaintStroke (same gate the read path uses),
 	// then the shared fold appends post-cutoff stroke events in painter's order.
 	//
-	// TODO(F4 — deferred, product decision): this bake re-seeds the FULL
-	// accumulated stroke history and applies NO cap (ANCHOR_MAX_STROKES is
-	// enforced only on the client anchor POST/PATCH path, not here). Strokes are
-	// append-only — an erase ADDS a stroke; nothing prunes. Painting at the same
-	// playhead T keeps replacing one anchor (O(N)), but painting at M DISTINCT
-	// story-times (Slice D's terrain-beats workflow) accumulates one cumulative
-	// anchor per T → ~O(M²) stored, and the client downloads every anchor.
-	// Blast radius is self-inflicted (own map only, scoped by world_maps.user_id).
-	// NOTE: this is NOT parity with the pre-existing cells[] accumulation —
-	// cells[] is last-write-wins keyed on (x,y), so a synthetic anchor's cells[]
-	// is bounded by grid size (≤128×128 = 16384, enforced by gridCellsX/Y ∈
-	// [4,128]). strokes[] is append-only painter's-order with NO equivalent
-	// bound on this seed path, so the worst case is genuinely unbounded per
-	// anchor — strictly worse than cells[]. Still DEFERRED rather than fixed:
-	// every overflow policy is lossy or degrading (drop-oldest silently destroys
-	// the user's oldest art; refuse-bake forces a full-stroke replay every
-	// frame), and the retention semantic is a product call. A real fix should
-	// enforce a per-map stroke budget (ANCHOR_MAX_TOTAL_POINTS or similar) on
-	// THIS seed path too — not only the client anchor write boundary. See
-	// docs/findings/*review* (F4).
+	// ponytail: each checkpoint still carries all current strokes; use a compact
+	// stroke representation if individual maps outgrow memory. Retaining only
+	// one automatic checkpoint below avoids cumulative O(N²) copies in storage.
 	const strokes: StoredStroke[] = [];
 	for (const s of baseState.strokes ?? []) {
 		applyPaintStroke(strokes, s);
@@ -1564,47 +1531,22 @@ async function maybeWriteAutoAnchor(
 		strokes
 	};
 
-	// Write the synthetic anchor. The unique constraint (world_map_id,
-	// t_position) fires when an anchor already lives at maxT — common when
-	// the user keeps painting at the same playhead T after a synthetic anchor
-	// was already written there.
-	//
-	// codex P1: swallowing the conflict silently loses data — projection
-	// treats an anchor at T as the state at T and excludes events with
-	// t_position <= T, so the new same-T paint events fold into neither the
-	// stale snapshot nor the event stream and the just-painted cells vanish.
-	//
-	// codex P2 (follow-up): an in-place stateJsonb UPDATE would keep the old
-	// created_at, but the re-folded snapshot now contains events committed
-	// AFTER that created_at. invalidateSyntheticAnchorsFrom keys off
-	// (anchor.created_at >= event.created_at), so on a later undo/delete of
-	// one of those events the stale anchor would escape invalidation and keep
-	// rendering removed cells. Delete-then-insert instead: the replacement
-	// row gets a fresh created_at >= every event it folds (invalidation works)
-	// AND advances the count cutoff so we don't re-fold a growing window. The
-	// delete is scoped to is_synthetic, so a user-authored anchor at maxT is
-	// left intact and the insert below hits the constraint (swallowed) —
-	// the authored anchor stays authoritative.
-	await tx
+	// Replace the derived cache only after folding from its previous state.
+	// Earlier frames replay retained events from authored anchors. A fresh row
+	// timestamp keeps undo invalidation correct; authored snapshots are untouched.
+	const removed = await tx
 		.delete(mapAnchors)
-		.where(
-			and(
-				eq(mapAnchors.worldMapId, worldMapId),
-				eq(mapAnchors.tPosition, maxT),
-				eq(mapAnchors.isSynthetic, true)
-			)
-		);
-	try {
-		await tx.insert(mapAnchors).values({
-			worldMapId,
-			tPosition: maxT,
-			stateJsonb: snapshot,
-			isSynthetic: true
-		});
-	} catch (err) {
-		if (!isUniqueViolation(err)) throw err;
-		// A user-authored anchor lives at maxT — authoritative, leave it.
-	}
+		.where(and(eq(mapAnchors.worldMapId, worldMapId), eq(mapAnchors.isSynthetic, true)))
+		.returning({ id: mapAnchors.id });
+	await tx.insert(mapAnchors).values({
+		worldMapId,
+		tPosition: maxT,
+		stateJsonb: snapshot,
+		isSynthetic: true
+	}).onConflictDoNothing({ target: [mapAnchors.worldMapId, mapAnchors.tPosition] });
+	// A manual snapshot at maxT is authoritative. ON CONFLICT keeps its row
+	// without aborting this transaction (catching a PG unique error cannot).
+	return removed.map((row: { id: string }) => row.id);
 }
 
 /**
