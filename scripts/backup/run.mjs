@@ -67,8 +67,14 @@ export function orphanImages(objects, references, now, unreferenced = {}) {
 
 async function verifiedCopy(local, remote, scratch, exists = false) {
   if (!exists) await rclone('copyto', local, remote, '--immutable');
-  await rclone('copyto', remote, scratch, '--ignore-times');
+  await download(remote, scratch);
   if (await fileHash(local) !== await fileHash(scratch)) throw new Error('Backup round-trip checksum mismatch');
+}
+
+export async function download(remote, local) {
+  // Missing S3 objects can make copyto succeed without transferring a file.
+  await rm(local, { force: true });
+  await rclone('copyto', remote, local, '--ignore-times', '--error-on-no-transfer');
 }
 
 export async function backup({ now = new Date() } = {}) {
@@ -119,6 +125,11 @@ export async function backup({ now = new Date() } = {}) {
       tail = part.slice(-128); // preserve filenames split across stream chunks
     }
     const objects = await list('uploads:');
+    const uploadedKeys = new Set(objects.map((object) => object.Path));
+    const missing = [...references].filter((key) => !uploadedKeys.has(key));
+    if (missing.length) {
+      throw new Error(`Missing ${missing.length} referenced upload(s): ${missing.slice(0, 10).join(', ')}. Restore the images or correct their database links before retrying; no cleanup performed.`);
+    }
     const previous = [...manifests].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
     const unreferencedImages = {};
     for (const object of objects) {
@@ -135,7 +146,7 @@ export async function backup({ now = new Date() } = {}) {
     const storedImages = new Set(existing.filter((o) => o.Path.startsWith('images/')).map((o) => o.Path.slice(7)));
     for (const key of [...references].sort()) {
       const local = join(work, 'image');
-      await rclone('copyto', `uploads:${key}`, local, '--ignore-times');
+      await download(`uploads:${key}`, local);
       const hash = await fileHash(local);
       // Backup-orphan grace starts at this copy, not the source image's older timestamp.
       if (!storedImages.has(hash)) await utimes(local, now, now);
