@@ -70,6 +70,16 @@ describe('mapAnchorsStore prefetch / applyPrefetched', () => {
 		expect(get(mapAnchorsStore)).toBe(before); // untouched — that's the point of prefetch
 	});
 
+	it('an invalidation supersedes an older checkpoint fetch', async () => {
+		mapAnchorsStore.applyPrefetched('A', [anchor('old', 'A')]);
+		const d = deferredFetch();
+		const loading = mapAnchorsStore.load('A');
+		mapAnchorsStore.dropLocal('A', ['old']);
+		d.resolve(resp({ rows: [anchor('old', 'A')], next_cursor: null }));
+		await loading;
+		expect(get(mapAnchorsStore)).toEqual([]);
+	});
+
 	it('applyPrefetched(B) supersedes an in-flight load(A) (anti-clobber)', async () => {
 		const d = deferredFetch();
 		const loadA = mapAnchorsStore.load('A'); // in flight, store still empty
@@ -82,6 +92,30 @@ describe('mapAnchorsStore prefetch / applyPrefetched', () => {
 });
 
 describe('mapEventsStore prefetch / applyPrefetched', () => {
+	it.each(['create', 'redo', 'first checkpoint'])('%s loads the new checkpoint after an event bake', async (operation) => {
+		const oldEvent = { ...event('e1', 'A'), kind: 'paint_stroke', payloadJsonb: {} };
+		mapEventsStore.applyPrefetched('A', [oldEvent]);
+		mapAnchorsStore.applyPrefetched('A', [anchor('old', 'A')]);
+		globalThis.fetch = vi.fn(async (url, init) => {
+			if (String(url).endsWith('/undo')) return resp([oldEvent]);
+			if (init?.method === 'POST') return resp({
+				...oldEvent, id: 'e2', checkpointCreated: true,
+				invalidatedAnchorIds: operation === 'first checkpoint' ? [] : ['old']
+			});
+			return resp({ rows: [anchor('replacement', 'A')], next_cursor: null });
+		}) as typeof fetch;
+		if (operation === 'redo') {
+			await mapEventsStore.undo('A');
+			await vi.waitFor(() => expect(get(mapAnchorsStore)[0]?.id).toBe('replacement'));
+		}
+		mapAnchorsStore.applyPrefetched('A', operation === 'first checkpoint' ? [] : [anchor('old', 'A')]);
+		const created = operation === 'redo'
+			? await mapEventsStore.redo('A')
+			: await mapEventsStore.create('A', { tPosition: 1, kind: 'paint_stroke', payloadJsonb: {} });
+		await vi.waitFor(() => expect(get(mapAnchorsStore).map((a) => a.id)).toEqual(['replacement']));
+		expect(created).not.toHaveProperty('checkpointCreated');
+	});
+
 	it('prefetch pages rows WITHOUT touching the store', async () => {
 		globalThis.fetch = vi
 			.fn()

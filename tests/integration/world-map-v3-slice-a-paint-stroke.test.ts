@@ -263,7 +263,7 @@ describe('Slice A — paint_stroke counts toward AUTO_ANCHOR_K', () => {
 		}).returning();
 		let previousCacheId: string | undefined;
 		for (let batch = 0; batch < 3; batch++) {
-			let last: { invalidatedAnchorIds: string[] } | undefined;
+			let last: { invalidatedAnchorIds: string[]; checkpointCreated: boolean } | undefined;
 			for (let i = 1; i <= 20; i++) {
 				last = await (await CREATE_EVENT(mkEvent({
 					params: { id: map.id },
@@ -273,6 +273,7 @@ describe('Slice A — paint_stroke counts toward AUTO_ANCHOR_K', () => {
 			const rows = await currentDb.select().from(mapAnchors).where(eq(mapAnchors.worldMapId, map.id));
 			const caches = rows.filter((a) => a.isSynthetic);
 			expect(caches).toHaveLength(1);
+			expect(last?.checkpointCreated).toBe(true);
 			if (previousCacheId) expect(last?.invalidatedAnchorIds).toContain(previousCacheId);
 			previousCacheId = caches[0].id;
 		}
@@ -315,6 +316,35 @@ describe('Slice A — paint_stroke counts toward AUTO_ANCHOR_K', () => {
 		expect(projectState(40, afterRedo.anchors, afterRedo.events, emptyCtx).strokes).toHaveLength(41);
 		expect(projectState(85, afterRedo.anchors, afterRedo.events, emptyCtx).strokes).toHaveLength(20);
 		expect(await currentDb.select().from(mapAnchors).where(eq(mapAnchors.id, otherCache.id))).toHaveLength(1);
+	});
+
+	it('keeps the prior cache when the next bake meets an authored snapshot', async () => {
+		const map = await seedMap();
+		await CREATE_ANCHOR(mkEvent({ params: { id: map.id }, body: {
+			tPosition: 100, stateJsonb: { regions: [], cells: [], strokes: [] }
+		} }));
+		for (let t = 1; t <= 20; t++) {
+			await CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+				tPosition: t, kind: 'paint_stroke', payloadJsonb: fillStroke()
+			} }));
+		}
+		const [cache] = await currentDb.select().from(mapAnchors)
+			.where(sql`${mapAnchors.worldMapId} = ${map.id} AND ${mapAnchors.isSynthetic}`);
+		await CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+			tPosition: 100, kind: 'paint_cells', payloadJsonb: { cells: [{ x: 0, y: 0, biome: 'plains' }] }
+		} }));
+		for (let t = 21; t <= 40; t++) {
+			const result = await (await CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+				tPosition: t, kind: 'paint_stroke', payloadJsonb: fillStroke()
+			} }))).json();
+			expect(result.invalidatedAnchorIds).not.toContain(cache.id);
+			expect(result.checkpointCreated).toBe(false);
+		}
+		expect(await currentDb.select().from(mapAnchors).where(eq(mapAnchors.id, cache.id))).toHaveLength(1);
+		const { anchors, events } = await loadProjectionInputs(map.id);
+		expect(events).toHaveLength(41);
+		expect(projectState(40, anchors, events, emptyCtx).strokes).toHaveLength(40);
+		expect(projectState(100, anchors, events, emptyCtx).strokes).toHaveLength(0);
 	});
 
 	it('20 paint_stroke events fire an auto-anchor that bakes all 20 strokes', async () => {

@@ -1178,7 +1178,7 @@ export async function createMapEvent(
 	storyId: string,
 	worldMapId: string,
 	input: EventInput
-): Promise<typeof mapEvents.$inferSelect & { invalidatedAnchorIds: string[] }> {
+): Promise<typeof mapEvents.$inferSelect & { invalidatedAnchorIds: string[]; checkpointCreated: boolean }> {
 	await assertMapOwnership(db, storyId, worldMapId);
 	assertObjectBody(input);
 	if (typeof input.tPosition !== 'number' || !isFinite(input.tPosition) || input.tPosition < 0) {
@@ -1338,18 +1338,24 @@ export async function createMapEvent(
 		// Auto-anchor on baked terrain writes. paint_stroke is counted too
 		// (eng-review §6): a strokes-only map would otherwise never anchor and
 		// replay the full stroke list every frame (OQ4 ceiling, unbounded).
+		let checkpointCreated = false;
 		if (input.kind === 'paint_cells' || input.kind === 'paint_stroke') {
-			invalidatedAnchorIds.push(...(await maybeWriteAutoAnchor(tx, worldMapId, input, commandId)));
+			const removedIds = await maybeWriteAutoAnchor(tx, worldMapId, input, commandId);
+			if (removedIds !== null) {
+				invalidatedAnchorIds.push(...removedIds);
+				checkpointCreated = true;
+			}
 		}
 
-		return { ...row, invalidatedAnchorIds };
+		return { ...row, invalidatedAnchorIds, checkpointCreated };
 	});
 }
 
 /**
  * Bake after 20 live terrain events since the last anchor, at a complete
  * stroke boundary. Fold all live state events from the preceding anchor to
- * the latest event time, replace the synthetic cache, and return evicted IDs.
+ * the latest event time, replace the synthetic cache, and return evicted IDs
+ * (null if no checkpoint was created).
  * Caller holds the world_maps row lock throughout the event write and bake.
  */
 async function maybeWriteAutoAnchor(
@@ -1358,7 +1364,7 @@ async function maybeWriteAutoAnchor(
 	worldMapId: string,
 	input: EventInput,
 	commandId: string | null
-): Promise<string[]> {
+): Promise<string[] | null> {
 	// A paint_stroke event is always one complete stroke (no chunking in Slice
 	// A), so it is always a stroke boundary. paint_cells chunks at 256 cells, so
 	// it fires only on the last chunk (commandId null = single-event stroke, or
@@ -1368,7 +1374,7 @@ async function maybeWriteAutoAnchor(
 		input.kind === 'paint_stroke' ||
 		commandId === null ||
 		(payload != null && payload.command_complete === true);
-	if (!strokeComplete) return [];
+	if (!strokeComplete) return null;
 
 	// Find the latest existing anchor (user OR synthetic). Created_at is the
 	// commit-time discriminator; t_position is the snapshot time which can
@@ -1406,7 +1412,7 @@ async function maybeWriteAutoAnchor(
 		? countResult.rows
 		: ((countResult as unknown) as { rows: Array<{ cnt: string | number }> }).rows ?? [];
 	const count = countRows.length > 0 ? Number(countRows[0].cnt) : 0;
-	if (count < AUTO_ANCHOR_K) return [];
+	if (count < AUTO_ANCHOR_K) return null;
 
 	// Read the post-cutoff window only to learn the t_position range (maxT)
 	// and confirm there's something to snapshot. The actual fold is rebuilt
@@ -1430,11 +1436,18 @@ async function maybeWriteAutoAnchor(
 				sql`${mapEvents.createdAt} > ${cutoffSql}`
 			)
 		);
-	if (recentEvents.length === 0) return []; // belt + suspenders
+	if (recentEvents.length === 0) return null; // belt + suspenders
 	const maxT = recentEvents.reduce(
 		(acc: number, e: { tPosition: number }) => (e.tPosition > acc ? e.tPosition : acc),
 		Number.NEGATIVE_INFINITY
 	);
+
+	// A manual snapshot is authoritative. Skip before folding, keeping the
+	// previous checkpoint and its count cutoff when maxT cannot be cached.
+	const [authoredAtMaxT] = await tx.select({ id: mapAnchors.id }).from(mapAnchors)
+		.where(and(eq(mapAnchors.worldMapId, worldMapId), eq(mapAnchors.tPosition, maxT), eq(mapAnchors.isSynthetic, false)))
+		.limit(1);
+	if (authoredAtMaxT) return null;
 
 	// Build the snapshot to EQUAL projectState(maxT): start from the anchor
 	// strictly BEFORE maxT and fold every live event in (baseT, maxT].
@@ -1534,18 +1547,18 @@ async function maybeWriteAutoAnchor(
 	// Replace the derived cache only after folding from its previous state.
 	// Earlier frames replay retained events from authored anchors. A fresh row
 	// timestamp keeps undo invalidation correct; authored snapshots are untouched.
-	const removed = await tx
-		.delete(mapAnchors)
-		.where(and(eq(mapAnchors.worldMapId, worldMapId), eq(mapAnchors.isSynthetic, true)))
-		.returning({ id: mapAnchors.id });
-	await tx.insert(mapAnchors).values({
+	const [created] = await tx.insert(mapAnchors).values({
 		worldMapId,
 		tPosition: maxT,
 		stateJsonb: snapshot,
 		isSynthetic: true
-	}).onConflictDoNothing({ target: [mapAnchors.worldMapId, mapAnchors.tPosition] });
-	// A manual snapshot at maxT is authoritative. ON CONFLICT keeps its row
-	// without aborting this transaction (catching a PG unique error cannot).
+	}).onConflictDoNothing({ target: [mapAnchors.worldMapId, mapAnchors.tPosition] })
+		.returning({ id: mapAnchors.id });
+	if (!created) return null;
+	const removed = await tx
+		.delete(mapAnchors)
+		.where(and(eq(mapAnchors.worldMapId, worldMapId), eq(mapAnchors.isSynthetic, true), sql`${mapAnchors.id} != ${created.id}`))
+		.returning({ id: mapAnchors.id });
 	return removed.map((row: { id: string }) => row.id);
 }
 
