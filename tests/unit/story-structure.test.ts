@@ -36,8 +36,8 @@ describe('getActs', () => {
 
 	it('sorts by position, then createdAt as tiebreaker', () => {
 		const ents: Entity[] = [
-			mkEntity({ id: 'a1', type: 'Act', name: 'A1', position: 2, createdAt: new Date(3000) }),
-			mkEntity({ id: 'a2', type: 'Act', name: 'A2', position: 1, createdAt: new Date(2000) }),
+			mkEntity({ id: 'a1', type: 'Act', name: 'A1', position: 2, createdAt: new Date(3000).toISOString() }),
+			mkEntity({ id: 'a2', type: 'Act', name: 'A2', position: 1, createdAt: new Date(2000).toISOString() }),
 			mkEntity({ id: 'a3', type: 'Act', name: 'A3', position: 1, createdAt: new Date(1000) })
 		];
 		expect(getActs(ents).map((a) => a.id)).toEqual(['a3', 'a2', 'a1']);

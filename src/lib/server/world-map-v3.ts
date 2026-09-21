@@ -601,7 +601,9 @@ export async function createMapAnchor(
 	}
 	const normalizedStrokes = await normalizeStrokeLayerIds(db, storyId, worldMapId, sanitizedStrokes);
 	const normalizedState: AnchorState = {
-		...input.stateJsonb,
+		regions: input.stateJsonb.regions,
+		artifacts: input.stateJsonb.artifacts,
+		chains: input.stateJsonb.chains,
 		cells: input.stateJsonb.cells ?? [],
 		strokes: normalizedStrokes
 	};
@@ -719,7 +721,13 @@ export async function updateMapAnchor(
 			applyPaintStroke(sanitizedStrokes, stroke);
 		}
 		const patchedStrokes = await normalizeStrokeLayerIds(db, storyId, worldMapId, sanitizedStrokes);
-		updates.stateJsonb = { ...incoming, cells: incoming.cells ?? [], strokes: patchedStrokes };
+		updates.stateJsonb = {
+			regions: incoming.regions,
+			artifacts: incoming.artifacts,
+			chains: incoming.chains,
+			cells: incoming.cells ?? [],
+			strokes: patchedStrokes
+		};
 		// codex P2: client-write boundary — validate cell shape/biome/bounds.
 		const grid = await loadGridDims(db, worldMapId);
 		assertCellsInBounds(

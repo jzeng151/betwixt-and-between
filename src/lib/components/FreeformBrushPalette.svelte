@@ -235,6 +235,9 @@
 		font-weight: 600;
 		cursor: pointer;
 	}
+	.mode-toggle button:hover:not(.armed):not(:disabled) {
+		border-color: var(--color-accent, #c8942a);
+	}
 	.mode-toggle button.armed {
 		border-color: var(--color-accent, #c8942a);
 		background: color-mix(in srgb, var(--color-accent, #c8942a) 25%, transparent);

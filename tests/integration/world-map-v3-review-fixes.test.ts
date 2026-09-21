@@ -191,3 +191,22 @@ describe('F19 — PATCH anchor omitting strokes wipes baked strokes', () => {
 		expect((row.stateJsonb as { strokes?: unknown[] }).strokes).toEqual([]);
 	});
 });
+
+it('strips unknown snapshot keys on both create and update without dropping known state', async () => {
+	const map = await seedMap();
+	const state = {
+		regions: [], artifacts: [], chains: [],
+		cells: [{ x: 0, y: 0, biome: 'Grass' }],
+		strokes: [{ path: [{ x: 0.1, y: 0.2 }], brushSize: 0.05, softness: 0.5, mode: 'fill', textureKey: 'Grass' }]
+	};
+	const created = await readJson(await CREATE_ANCHOR(mkEvent({
+		params: { id: map.id }, body: { tPosition: 1, stateJsonb: { ...state, junk: 'x'.repeat(1000) } }
+	}))) as { id: string };
+	const stored = async () => (await ctx.db.select().from(mapAnchors).where(eq(mapAnchors.id, created.id)))[0].stateJsonb;
+	expect(await stored()).toEqual(state);
+	await PATCH_ANCHOR(mkEvent({
+		params: { id: map.id, anchorId: created.id },
+		body: { stateJsonb: { ...state, nestedJunk: { unused: true } } }
+	}));
+	expect(await stored()).toEqual(state);
+});

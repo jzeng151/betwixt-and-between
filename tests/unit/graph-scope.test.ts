@@ -52,18 +52,20 @@ describe('buildEntityIntervalMap', () => {
 });
 
 describe('buildActIndexById', () => {
-	it('ranks Acts 0-based by ascending position, skipping null positions and non-Acts', () => {
+	it('ranks Acts 0-based by ascending position, including null positions and skipping non-root Acts', () => {
 		const entities: ScopeEntity[] = [
 			{ id: ACT_2, type: 'Act', position: 2 },
 			{ id: ACT_1, type: 'Act', position: 1 },
 			{ id: 'act-null', type: 'Act', position: null },
+			{ id: 'nested', type: 'Act', parentId: ACT_1, position: 0 },
 			{ id: SCENE_1A, type: 'Scene', position: 1 },
 			{ id: CHAR_A, type: 'Character', position: null }
 		];
 		const m = buildActIndexById(entities);
 		expect(m.get(ACT_1)).toBe(0);
 		expect(m.get(ACT_2)).toBe(1);
-		expect(m.has('act-null')).toBe(false);
+		expect(m.get('act-null')).toBe(2);
+		expect(m.has('nested')).toBe(false);
 		expect(m.has(SCENE_1A)).toBe(false);
 	});
 });
@@ -111,6 +113,21 @@ describe('buildSceneRanges', () => {
 		expect(ranges.get('has-pos')).toEqual({ start: 0, end: 0.5 });
 		expect(ranges.get('null-pos')).toEqual({ start: 0.5, end: 1 });
 	});
+});
+
+it('uses API timestamps to break tied act and scene positions on the same axis', () => {
+	const entities: ScopeEntity[] = [
+		{ id: ACT_2, type: 'Act', position: 1, createdAt: '2026-02-01T00:00:00Z' },
+		{ id: ACT_1, type: 'Act', position: 1, createdAt: '2026-01-01T00:00:00Z' },
+		{ id: SCENE_1B, type: 'Scene', parentId: ACT_1, position: 1, createdAt: '2026-02-01T00:00:00Z' },
+		{ id: SCENE_1A, type: 'Scene', parentId: ACT_1, position: 1, createdAt: '2026-01-01T00:00:00Z' }
+	];
+	const acts = buildActIndexById(entities);
+	expect([...acts]).toEqual([[ACT_1, 0], [ACT_2, 1]]);
+	const scenes = buildSceneRanges(entities, acts);
+	expect(scenes.get(SCENE_1A)).toEqual({ start: 0, end: 0.5 });
+	expect(scenes.get(SCENE_1B)).toEqual({ start: 0.5, end: 1 });
+	expect(computeOutOfScope(0.25, new Map(), acts, scenes, entities)).toEqual(new Set([ACT_2, SCENE_1B]));
 });
 
 describe('extractSortedSceneStarts', () => {

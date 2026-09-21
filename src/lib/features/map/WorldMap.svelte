@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { getActs, getScenesByActId } from '$lib/story-structure.js';
 	import { onMount } from 'svelte';
 	import { squareGridCounts } from './grid-dims.js';
 	import {
@@ -134,7 +135,7 @@
 		jitter: strokeBrushSize * 0.5
 	});
 	// Slice D — time-varying terrain authoring. Both brushes commit at the
-	// CURRENT playhead T (paint_cells PixiBrushLayer.svelte:156, paint_stroke
+	// gesture-start playhead T (paint_cells PixiBrushLayer, paint_stroke
 	// PixiFreeformBrushLayer commitStroke), and the fold windows events by
 	// (anchorT, t] — so scrubbing the playhead and painting authors a terrain
 	// BEAT (forest→ash) that appears from that story-time onward. The data path
@@ -144,7 +145,7 @@
 	let paintAtLabel = $derived.by(() => {
 		const t = $playhead;
 		if (t === null || t <= 0) return 'from the story start';
-		const act = [...acts].reverse().find((a) => (a.position ?? 0) <= t);
+		const act = acts[Math.min(Math.floor(t), acts.length - 1)];
 		return act
 			? `from “${act.name}” (t=${t.toFixed(2)}) onward`
 			: `from t=${t.toFixed(2)} onward`;
@@ -468,11 +469,7 @@
 	let locations = $derived($entities.filter((e) => e.type === 'Location'));
 	let hasMaps = $derived($worldMaps.length > 0);
 	let hasCanvas = $derived((activeMap?.width ?? 0) > 0 && (activeMap?.height ?? 0) > 0);
-	let acts = $derived(
-		$entities
-			.filter((e) => e.type === 'Act')
-			.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-	);
+	let acts = $derived(getActs($entities));
 	// Location hierarchy (part_of) — index built once per relationships snapshot
 	let hierarchyIndex = $derived(buildHierarchyIndex($relationships));
 	let breadcrumbAncestors = $derived.by(() => {
@@ -505,16 +502,7 @@
 	// live with the toolbar handlers below.
 	let creatingToolbarLocation = $state(false);
 
-	let scenesByAct = $derived.by(() => {
-		const map = new Map<string, typeof $entities[0][]>();
-		for (const act of acts) {
-			const scenes = $entities
-				.filter((e) => e.type === 'Scene' && e.parentId === act.id)
-				.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-			map.set(act.id, scenes);
-		}
-		return map;
-	});
+	let scenesByAct = $derived(getScenesByActId($entities));
 
 	// Pre-fill scene checkboxes from existing intervals when location changes
 		$effect(() => {

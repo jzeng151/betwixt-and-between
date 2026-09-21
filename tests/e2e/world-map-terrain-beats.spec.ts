@@ -48,6 +48,9 @@ async function seedTimelineAndMap(request: APIRequestContext) {
 			});
 		}
 	}
+	// A null-position Act sorts last on the story axis, not at position zero.
+	const parked = await request.patch(`/api/entities/${acts[2].id}`, { data: { position: null } });
+	expect(parked.ok()).toBe(true);
 	const hero = await post<Ent>(request, '/api/entities', { type: 'Character', name: 'Chronicle' });
 	await request.post('/api/intervals', {
 		data: { entity_id: hero.id, start_act_id: acts[0].id, end_act_id: acts[2].id }
@@ -125,13 +128,14 @@ test('painting at a later playhead authors a terrain beat: absent before, presen
 
 	// Scrub LATE and paint a freeform stroke there.
 	await page.mouse.click(lateX, rowsY);
-	await expect.poll(playheadT, { timeout: 8000 }).toBeGreaterThan(0.8);
+	await expect.poll(playheadT, { timeout: 8000 }).toBeGreaterThan(1);
 	const paintT = await playheadT();
+	expect(paintT).toBeLessThan(2);
 
 	await win.locator('[data-testid="map-tool-selector"] button', { hasText: 'Brush' }).click();
 	await win.locator('.brush-mode-toggle button', { hasText: 'Freeform' }).click();
 	// Slice D affordance: the author can SEE the story-time they paint at.
-	await expect(win.locator('[data-testid="paint-at-indicator"]')).toContainText('Painting from');
+	await expect(win.locator('[data-testid="paint-at-indicator"]')).toContainText('Painting from “Act 1”');
 
 	const box = await canvas.boundingBox();
 	if (!box) throw new Error('canvas has no bounding box');
@@ -183,7 +187,7 @@ test('painting at a later playhead authors a terrain beat: absent before, presen
 	// Scrub forward again — the beat re-appears (the fold is T-windowed, not
 	// destructive).
 	await page.mouse.click(lateX, rowsY);
-	await expect.poll(playheadT, { timeout: 8000 }).toBeGreaterThan(0.8);
+	await expect.poll(playheadT, { timeout: 8000 }).toBeGreaterThan(1);
 	await page.waitForTimeout(600);
 	const lateAgain = await canvas.screenshot();
 	expect(Buffer.compare(lateAgain, earlyBefore)).not.toBe(0);
