@@ -4,6 +4,8 @@ The [Worker configuration](wrangler.jsonc) and [deployment workflow](.github/wor
 
 The deploy target is **Cloudflare Workers** with Static Assets (the unified 2024+ replacement for Cloudflare Pages). The repo's `wrangler.jsonc` is the source of truth for the Worker's name, compatibility settings, the `_worker.js` entrypoint, the `ASSETS` binding, observability, and bindings to external resources (R2, etc.).
 
+GitHub Actions use Node 24 and pin runners to Ubuntu 24.04. Upgrade the runner image deliberately after validating PostgreSQL backup tooling and Playwright on the new image.
+
 ## Deploy pipeline
 
 On every push to `main`, `.github/workflows/deploy.yml` runs the E2E job, then `npm run check`, `npm test`, a production build, and `wrangler deploy` in the dependent deploy job. The Worker is deployed to whichever Cloudflare account the `CLOUDFLARE_API_TOKEN` GitHub secret authenticates.
