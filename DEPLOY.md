@@ -193,6 +193,8 @@ For each manifest image, download `backup:images/HASH`, verify its SHA-256 equal
 
 Local regression command: `node --test tests/backup/*.test.mjs`. The real encrypted round-trip test additionally requires rclone, PostgreSQL 18 client tools, and `BACKUP_TEST_DATABASE_URL` pointing to a **disposable loopback** PostgreSQL server. It creates its own source database and `betwixt_restore_check`; it refuses to reuse an existing restore-check database. CI runs this test with local encrypted storage and no cloud credentials.
 
+If backup reports missing referenced uploads, confirm that the `uploads` alias targets `r2:betwixt-map-uploads`. Restore the listed original files or correct obsolete image links in the application. The job stops before publishing a recovery point or deleting anything. Downloads reject zero transferred files and discard earlier temporary downloads before trying again.
+
 ## Rollback
 
 Cloudflare retains previous Worker versions. To revert: dashboard → your Worker → Deployments → click an older successful deploy → "Rollback to this deployment." Or from CLI: `wrangler rollback <deployment-id>`.

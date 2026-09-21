@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readdir, rm, utimes } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, utimes, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { backup, expiredSnapshots, imageReferences, orphanImages, validateManifest } from '../../scripts/backup/run.mjs';
+import { backup, download, expiredSnapshots, imageReferences, orphanImages, validateManifest } from '../../scripts/backup/run.mjs';
 
 const DAY = 86400000;
 const key = (n) => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}_1750000000000.png`;
@@ -51,6 +51,23 @@ test('restore destination and pooled source are rejected before accessing storag
   }
 });
 
+test('download rejects zero transfers instead of reusing an earlier image',
+  { skip: !process.env.BACKUP_TEST_DATABASE_URL }, async () => {
+  const work = await mkdtemp(join(tmpdir(), 'backup-download-test-'));
+  try {
+    const source = join(work, 'source'); const scratch = join(work, 'scratch');
+    const empty = join(work, 'empty');
+    await writeFile(source, 'previous image');
+    await mkdir(empty);
+    await assert.rejects(download(empty, scratch), /exit 9/);
+    await download(source, scratch);
+    assert.equal(await readFile(scratch, 'utf8'), 'previous image');
+    // An empty source directory reproduces S3's successful copyto with no transferred file.
+    await assert.rejects(download(empty, scratch), /exit 9/);
+    await assert.rejects(access(scratch), { code: 'ENOENT' });
+  } finally { await rm(work, { recursive: true, force: true }); }
+});
+
 test('encrypted remote round-trip restores data; cleanup waits for verified backup and preserves shared images',
   { skip: !process.env.BACKUP_TEST_DATABASE_URL }, async () => {
   const url = new URL(process.env.BACKUP_TEST_DATABASE_URL);
@@ -85,6 +102,12 @@ test('encrypted remote round-trip restores data; cleanup waits for verified back
     await writeFile(config, `[backup]\ntype = crypt\nremote = ${encrypted}\npassword = ${password}\n[uploads]\ntype = alias\nremote = ${uploads}\n`, { mode: 0o600 });
     Object.assign(process.env, { RCLONE_CONFIG: config, DATABASE_URL: sourceUrl.href,
       RESTORE_DATABASE_URL: restoreUrl.href, BACKUP_PRUNE: 'true', IMAGE_CLEANUP: 'false' });
+    await source`insert into world_maps values (3, ${`/api/maps/file/${key(98)}`})`;
+    await assert.rejects(backup(), (error) => error.message.includes('Missing 1 referenced upload(s)') && error.message.includes(key(98)));
+    assert.equal(JSON.parse(cli('lsjson', 'backup:', '-R', '--files-only')).length, 0,
+      'missing references must prevent backup publication');
+    assert.ok((await readdir(uploads)).includes(key(3)));
+    await source`delete from world_maps where id = 3`;
     await backup();
     assert.ok((await readdir(uploads)).includes(key(3)), 'preview must not delete');
     let inventory = JSON.parse(cli('lsjson', 'backup:', '-R', '--files-only'));
