@@ -107,6 +107,7 @@ function createMapAnchorsStore() {
 	// change until a full reload. Refetch the canonical set after the optimistic
 	// update reconciles. Best-effort — a failed resync only leaves the stale
 	// snapshot until the next reload, so swallow rather than fail the mutation.
+	// Event POSTs also use this when a new automatic checkpoint was created.
 	function resyncAfterWrite(mapId: string): void {
 		void load(mapId).catch((err) => {
 			console.error('anchor resync after write failed; projection may be stale until reload', err);
@@ -159,16 +160,15 @@ function createMapAnchorsStore() {
 		resyncAfterWrite(mapId);
 	}
 
-	// codex P2 (PR #58): evict synthetic anchors the server invalidated as a
-	// side effect of an event write (createMapEvent returns their ids). No
-	// network call — the rows are already gone server-side; this only keeps
-	// the local cache consistent so projectState doesn't pick a stale anchor.
-	// Honors lastLoadedMapId like the mutation paths above.
+	// Evict server-invalidated checkpoints immediately, then reconcile the
+	// full set. Restarting any older fetch also reconciles earlier mutations
+	// whose deleted IDs were absent from this event's response.
 	function dropLocal(mapId: string, anchorIds: string[]): void {
 		if (anchorIds.length === 0) return;
 		if (lastLoadedMapId !== mapId) return;
 		const drop = new Set(anchorIds);
 		store.update((rows) => rows.filter((r) => !drop.has(r.id)));
+		resyncAfterWrite(mapId);
 	}
 
 	function reset(): void {
@@ -185,6 +185,7 @@ function createMapAnchorsStore() {
 		update,
 		delete: remove,
 		dropLocal,
+		resyncAfterWrite,
 		reset
 	};
 }

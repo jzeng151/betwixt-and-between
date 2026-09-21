@@ -171,11 +171,13 @@ function createMapEventsStore() {
 		// store so projectState doesn't keep picking a stale snapshot that
 		// excludes the just-authored event. Strip the field before storing —
 		// it's not part of the MapEvent shape.
-		const { invalidatedAnchorIds, ...created } = (await res.json()) as MapEvent & {
+		const { invalidatedAnchorIds, checkpointCreated, ...created } = (await res.json()) as MapEvent & {
 			invalidatedAnchorIds?: string[];
+			checkpointCreated?: boolean;
 		};
 		if (lastLoadedMapId !== mapId) return created;
 		if (invalidatedAnchorIds?.length) mapAnchorsStore.dropLocal(mapId, invalidatedAnchorIds);
+		else if (checkpointCreated) mapAnchorsStore.resyncAfterWrite(mapId);
 		// Swap the provisional row for the server row in one update so the
 		// terrain never flickers off between the two.
 		store.update((rows) => [...rows.filter((r) => r.id !== tempId), created].sort(compareEvents));
@@ -356,11 +358,13 @@ function createMapEventsStore() {
 		}
 		// Redo re-POSTs the event, so it can invalidate synthetic anchors too
 		// (codex P2, PR #58) — evict them client-side just like create().
-		const { invalidatedAnchorIds, ...created } = (await res.json()) as MapEvent & {
+		const { invalidatedAnchorIds, checkpointCreated, ...created } = (await res.json()) as MapEvent & {
 			invalidatedAnchorIds?: string[];
+			checkpointCreated?: boolean;
 		};
 		if (lastLoadedMapId !== mapId) return created;
 		if (invalidatedAnchorIds?.length) mapAnchorsStore.dropLocal(mapId, invalidatedAnchorIds);
+		else if (checkpointCreated) mapAnchorsStore.resyncAfterWrite(mapId);
 		// Swap the provisional row for the server row in one update.
 		store.update((rows) => [...rows.filter((r) => r.id !== tempId), created].sort(compareEvents));
 		return created;
