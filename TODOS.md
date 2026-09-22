@@ -154,7 +154,7 @@ Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qo
 
 ### Timeline polish
 
-- [ ] **T2 — Window snapping in `Window.svelte`.** Drag-to-edge zones (halves, quarters). Pure UX additive on `windowStore.move`/`resize`. No data-model change.
+- [x] **T2 — Window snapping.** Edge/corner previews for halves and quarters, keyboard-accessible titlebar arrangement, drag-away restore, and taskbar-safe bounds. Uses existing window geometry and session persistence.
 
 (T4 status-field and T7 bulk-import — CUT by 2026-05-20 audit. See "Footnotes from 2026-05-20 audit" section below.)
 

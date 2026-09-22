@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { takeNextFocusReturn } from '$lib/actions/focus-trap.js';
   import { windowStore, PIN_Z_BASE, readTaskbarHeight } from '$lib/os/windows-store.js';
+  import { SNAP_LABELS, snapZone, snapBounds, type SnapZone, type WindowBounds } from './window-snap.js';
 
   interface Props {
     id: string;
@@ -26,6 +27,14 @@
   let dragging = false;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
+  let dragStart: WindowBounds | null = null;
+  let dragStartPointer = { x: 0, y: 0 };
+  let dragPointer = { x: 0, y: 0 };
+  let dragStarted = false;
+  let restoreBounds = $state<WindowBounds | null>(null);
+  let dragRestoreBounds: WindowBounds | null = null;
+  let preview = $state<WindowBounds | null>(null);
+  let viewport = $state({ width: 0, height: 0 });
 
   type ResizeDir = 'l' | 'r' | 'b' | 'bl' | 'br';
   let resizeDir: ResizeDir | null = null;
@@ -65,6 +74,7 @@
   });
 
   onMount(() => {
+    updateViewport();
     returnFocus = takeNextFocusReturn(
       document.activeElement instanceof HTMLElement ? document.activeElement : null
     );
@@ -81,13 +91,58 @@
   // svelte-ignore state_referenced_locally
   const MIN_H = compact ? 88 : 200;
 
+  $effect(() => { if (minimized || maximized) endDrag(); });
+
+  function updateViewport() {
+    viewport = { width: window.innerWidth, height: window.innerHeight - readTaskbarHeight() };
+    if (dragging && dragStarted) {
+      const zone = snapZone(dragPointer.x, dragPointer.y, viewport.width, viewport.height);
+      preview = zone ? targetBounds(zone) : null;
+    }
+  }
+
+  function applyBounds(bounds: WindowBounds) {
+    windowStore.move(id, bounds.x, bounds.y);
+    windowStore.resize(id, bounds.width, bounds.height);
+  }
+
+  function targetBounds(zone: SnapZone) {
+    return snapBounds(zone, window.innerWidth, window.innerHeight - readTaskbarHeight(), MIN_W, MIN_H);
+  }
+
+  function arrange(e: Event) {
+    const select = e.currentTarget as HTMLSelectElement;
+    const choice = select.value;
+    select.value = '';
+    if (maximized) return;
+    if (choice === 'restore' && restoreBounds) {
+      const usableHeight = window.innerHeight - readTaskbarHeight();
+      const bounds = { ...restoreBounds, width: Math.min(restoreBounds.width, window.innerWidth), height: Math.min(restoreBounds.height, usableHeight) };
+      bounds.x = Math.max(0, Math.min(bounds.x, window.innerWidth - bounds.width));
+      bounds.y = Math.max(0, Math.min(bounds.y, usableHeight - bounds.height));
+      applyBounds(bounds);
+      restoreBounds = null;
+    } else if (Object.hasOwn(SNAP_LABELS, choice)) {
+      const bounds = targetBounds(choice as SnapZone);
+      if (!bounds) return;
+      restoreBounds ??= { x, y, width, height };
+      applyBounds(bounds);
+    }
+    windowStore.focus(id);
+  }
+
   function onTitlebarMousedown(e: MouseEvent) {
+    if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('.win-control')) return;
     if ((e.target as HTMLElement).closest('.titlebar-action')) return;
     if (maximized) return;
     dragging = true;
     dragOffsetX = e.clientX - x;
     dragOffsetY = e.clientY - y;
+    dragStart = { x, y, width, height };
+    dragStartPointer = { x: e.clientX, y: e.clientY };
+    dragRestoreBounds = restoreBounds;
+    dragStarted = false;
     windowStore.focus(id);
     e.preventDefault();
   }
@@ -102,6 +157,7 @@
     e.preventDefault();
     windowStore.focus(id);
     const taskbarHeight = readTaskbarHeight();
+    restoreBounds = null;
     if (e.shiftKey) {
       const maxWidth = Math.max(MIN_W, window.innerWidth - x);
       const maxHeight = Math.max(MIN_H, window.innerHeight - y - taskbarHeight);
@@ -124,7 +180,8 @@
   }
 
   function onResizeMousedown(e: MouseEvent, dir: ResizeDir) {
-    if (maximized) return;
+    if (maximized || e.button !== 0) return;
+    restoreBounds = null;
     resizeDir = dir;
     resizeStartX = e.clientX;
     resizeStartY = e.clientY;
@@ -138,9 +195,23 @@
 
   function onMousemove(e: MouseEvent) {
     if (dragging) {
+      dragPointer = { x: e.clientX, y: e.clientY };
+      if (!dragStarted) {
+        if (Math.hypot(e.clientX - dragStartPointer.x, e.clientY - dragStartPointer.y) < 4) return;
+        dragStarted = true;
+        if (restoreBounds) {
+          const restoredWidth = Math.min(restoreBounds.width, window.innerWidth);
+          const restoredHeight = Math.min(restoreBounds.height, window.innerHeight - readTaskbarHeight());
+          dragOffsetX = Math.min(restoredWidth, dragOffsetX / width * restoredWidth);
+          windowStore.resize(id, restoredWidth, restoredHeight);
+          restoreBounds = null;
+        }
+      }
       const nx = e.clientX - dragOffsetX;
       const ny = e.clientY - dragOffsetY;
       windowStore.move(id, Math.max(0, nx), Math.max(0, ny));
+      const zone = snapZone(e.clientX, e.clientY, window.innerWidth, window.innerHeight - readTaskbarHeight());
+      preview = zone ? targetBounds(zone) : null;
       return;
     }
     if (resizeDir) {
@@ -170,15 +241,42 @@
     }
   }
 
-  function onMouseup() {
+  function onMouseup(e: MouseEvent) {
+    if (e.button !== 0) return;
+    if (dragging && dragStarted && preview && dragStart) {
+      const zone = snapZone(e.clientX, e.clientY, window.innerWidth, window.innerHeight - readTaskbarHeight());
+      const bounds = zone ? targetBounds(zone) : null;
+      if (bounds) {
+        restoreBounds = dragRestoreBounds ?? dragStart;
+        applyBounds(bounds);
+      }
+    }
+    endDrag();
+  }
+
+  function endDrag() {
     dragging = false;
     resizeDir = null;
+    preview = null;
+    dragStart = null;
+  }
+
+  function cancelDrag(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !dragging) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (dragStart) applyBounds(dragStart);
+    restoreBounds = dragRestoreBounds;
+    endDrag();
   }
 </script>
 
-<svelte:window onmousemove={onMousemove} onmouseup={onMouseup} />
+<svelte:window onmousemove={onMousemove} onmouseup={onMouseup} onblur={endDrag} onresize={updateViewport} onkeydown={cancelDrag} />
 
 {#if !minimized}
+  {#if preview}
+    <div class="snap-preview" aria-hidden="true" style={`left:${preview.x}px; top:${preview.y}px; width:${preview.width}px; height:${preview.height}px; z-index:${effectiveZ + 1}`}></div>
+  {/if}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     bind:this={windowElement}
@@ -204,6 +302,14 @@
       tabindex={maximized ? undefined : 0}
     >
       <span class="win-title">{title}</span>
+      <label class="titlebar-action arrange" title="Arrange window">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="1" stroke="currentColor" /><path d="M8 2v12M8 8h6" stroke="currentColor" /></svg>
+        <select aria-label="Arrange window" disabled={maximized} value="" onchange={arrange}>
+          <option value="" disabled>Arrange window</option>
+          {#each Object.entries(SNAP_LABELS) as [zone, label]}<option value={zone} disabled={!snapBounds(zone as SnapZone, viewport.width, viewport.height, MIN_W, MIN_H)}>{label}</option>{/each}
+          <option value="restore" disabled={!restoreBounds}>Restore previous size</option>
+        </select>
+      </label>
       <!-- Item 3: persist this window's current size (+ position for
            single-instance apps) as the open default for its app. -->
       <button
@@ -245,6 +351,19 @@
 {/if}
 
 <style>
+  .snap-preview {
+    position: fixed;
+    pointer-events: none;
+    box-sizing: border-box;
+    border: 2px solid var(--color-focus);
+    background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+    border-radius: var(--window-radius);
+  }
+  .arrange { position: relative; display: grid; place-items: center; }
+  .arrange select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+  .arrange:has(select:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+  .arrange:has(select:disabled) { opacity: 0.5; }
+  .arrange select:disabled { cursor: default; }
   .window {
     position: fixed;
     background: var(--color-surface);
