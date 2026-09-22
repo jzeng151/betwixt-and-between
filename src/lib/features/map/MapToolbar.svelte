@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+	import { mapGeometrySaving } from './store.js';
 	// Map editor toolbar: switcher, rename, new/delete, image upload, linked-
 	// Location picker + inline new-Location creation, variant chip, duplicate.
 	// Styles come from WorldMap.svelte's :global(.map-*), :global(.btn-icon)
@@ -8,6 +10,7 @@
 
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { WorldMap } from './types.js';
+	import MapGridSettings from './MapGridSettings.svelte';
 
 	let {
 		worldMaps,
@@ -15,6 +18,7 @@
 		activeMapId,
 		hasCanvas,
 		preparingCanvas,
+		gridSettingsOpen = $bindable(false),
 		locations,
 		duplicating,
 		renamingMapName = $bindable(),
@@ -42,6 +46,7 @@
 		activeMapId: string | null;
 		hasCanvas: boolean;
 		preparingCanvas: boolean;
+		gridSettingsOpen?: boolean;
 		locations: Entity[];
 		duplicating: boolean;
 		renamingMapName: string | null;
@@ -66,6 +71,27 @@
 		onOpenVariantForm: () => void;
 		onDuplicate: () => void;
 	} = $props();
+	let gridButton = $state<HTMLButtonElement>();
+	let gridRevision = $derived(JSON.stringify([activeMapId, activeMap?.gridType, activeMap?.gridCellsX, activeMap?.gridCellsY, activeMap?.gridScaleValue, activeMap?.gridScaleUnit]));
+	let viewedGridRevision = '';
+	$effect(() => {
+		if ($mapGeometrySaving.has(activeMapId ?? '')) return;
+		if (gridRevision !== viewedGridRevision) {
+			viewedGridRevision = gridRevision;
+			if (gridSettingsOpen && gridButton?.parentElement?.contains(document.activeElement)) void closeGridSettings();
+			else gridSettingsOpen = false;
+		}
+	});
+	$effect(() => {
+		activeMapId;
+		gridSettingsOpen = false;
+	});
+	async function closeGridSettings(savedMapId?: string) {
+		if (savedMapId && savedMapId !== activeMapId) return;
+		gridSettingsOpen = false;
+		await tick();
+		gridButton?.focus();
+	}
 </script>
 
 <div class="map-toolbar">
@@ -120,10 +146,18 @@
 				accept=".jpg,.jpeg,.png,.webp"
 				onclick={() => onImagePickerOpen?.()}
 				onchange={onImageUpload}
-				disabled={preparingCanvas}
+				disabled={preparingCanvas || $mapGeometrySaving.has(activeMapId ?? '')}
 				hidden
 			/>
 		</label>
+	{/if}
+	{#if activeMap && hasCanvas}
+		<button class="btn-icon grid-toggle" type="button" title="Grid settings" aria-haspopup="dialog" aria-expanded={gridSettingsOpen}
+			disabled={$mapGeometrySaving.has(activeMap.id)}
+			bind:this={gridButton} onclick={() => (gridSettingsOpen = !gridSettingsOpen)}>Grid</button>
+		{#if gridSettingsOpen}
+			{#key activeMap.id}<MapGridSettings map={activeMap} onClose={closeGridSettings} />{/key}
+		{/if}
 	{/if}
 	{#if activeMap}
 		{#if creatingToolbarLocation}
@@ -175,7 +209,7 @@
 		<button
 			class="btn-icon"
 			onclick={onDuplicate}
-			disabled={duplicating}
+			disabled={duplicating || $mapGeometrySaving.has(activeMap.id)}
 			title="Duplicate this map (clones regions; clears variant range)"
 			aria-label="Duplicate map"
 		>
@@ -183,3 +217,7 @@
 		</button>
 	{/if}
 </div>
+
+<style>
+	button.grid-toggle { width: auto; padding: 0 8px; font-size: 12px; }
+</style>

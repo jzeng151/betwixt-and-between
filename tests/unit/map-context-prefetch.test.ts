@@ -96,6 +96,26 @@ describe('mapAnchorsStore prefetch / applyPrefetched', () => {
 });
 
 describe('mapEventsStore prefetch / applyPrefetched', () => {
+	it.each(['undo', 'redo'] as const)('grid changes invalidate a pending %s response without discarding freeform redo', async (operation) => {
+		for (const kind of ['paint_cells', 'paint_stroke']) {
+			mapEventsStore.reset();
+			const row = { ...event('paint', 'A'), kind, payloadJsonb: {} };
+			mapEventsStore.applyPrefetched('A', [row]);
+			globalThis.fetch = vi.fn(async (url) => String(url).endsWith('/undo')
+				? resp([row]) : resp({ rows: [], next_cursor: null })) as typeof fetch;
+			if (operation === 'redo') await mapEventsStore.undo('A');
+			const delayed = deferredFetch();
+			const pending = mapEventsStore[operation]('A');
+			await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledOnce());
+			mapEventsStore.clearGridRedo('A');
+			globalThis.fetch = vi.fn().mockResolvedValue(resp({ rows: [], next_cursor: null })) as typeof fetch;
+			delayed.resolve(operation === 'undo' ? resp([row]) : resp('grid changed', false, 409));
+			if (operation === 'redo') await expect(pending).rejects.toThrow('grid changed');
+			else await pending;
+			expect(get(mapEventsStore.redoStack)).toEqual(kind === 'paint_cells' ? [] : [row]);
+		}
+	});
+
 	it.each(['create', 'redo', 'first checkpoint'])('%s loads the new checkpoint after an event bake', async (operation) => {
 		const oldEvent = { ...event('e1', 'A'), kind: 'paint_stroke', payloadJsonb: {} };
 		mapEventsStore.applyPrefetched('A', [oldEvent]);

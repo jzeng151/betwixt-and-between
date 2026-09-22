@@ -879,6 +879,15 @@ async function validateEventPayload(
 	}
 	if (kind === 'paint_cells') {
 		const p = payload as Partial<PaintCellsPayload>;
+		if (p.grid_type !== undefined && p.grid_type !== 'square' && p.grid_type !== 'hex') {
+			error(400, 'paint_cells payload.grid_type must be square or hex');
+		}
+		for (const key of ['grid_cells_x', 'grid_cells_y'] as const) {
+			const count = p[key];
+			if (count !== undefined && (!Number.isInteger(count) || count < 4 || count > 128)) {
+				error(400, `paint_cells payload.${key} must be an integer from 4 to 128`);
+			}
+		}
 		if (!Array.isArray(p.cells)) {
 			error(400, 'paint_cells payload.cells must be an array');
 		}
@@ -1268,10 +1277,16 @@ export async function createMapEvent(
 		// slipping terrain outside the new bounds.
 		if (input.kind === 'paint_cells') {
 			const [lockedGrid] = await tx
-				.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY })
+				.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY, type: worldMaps.gridType })
 				.from(worldMaps)
 				.where(eq(worldMaps.id, worldMapId));
 			if (!lockedGrid) error(404, 'world_map not found');
+			const captured = input.payloadJsonb as PaintCellsPayload;
+			if ((captured.grid_type !== undefined && captured.grid_type !== lockedGrid.type) ||
+				(captured.grid_cells_x !== undefined && captured.grid_cells_x !== lockedGrid.x) ||
+				(captured.grid_cells_y !== undefined && captured.grid_cells_y !== lockedGrid.y)) {
+				error(409, 'The grid changed before this stroke was saved. Paint it again on the updated grid.');
+			}
 			assertCellsInBounds(
 				(input.payloadJsonb as Partial<PaintCellsPayload>).cells,
 				lockedGrid.x,
@@ -1798,6 +1813,14 @@ export async function undoLatestMapEvent(
 			);
 			if (earliestUndone) {
 				await invalidateSyntheticAnchorsFrom(tx, worldMapId, earliestUndone.id);
+			}
+			// Redo must use the geometry the cells had when undone, including
+			// legacy paints and live terrain resized since its original gesture.
+			if (all.some((row) => row.kind === 'paint_cells')) {
+				const [map] = await tx.select({ gridType: worldMaps.gridType, x: worldMaps.gridCellsX, y: worldMaps.gridCellsY }).from(worldMaps).where(eq(worldMaps.id, worldMapId));
+				for (const row of all) {
+					if (row.kind === 'paint_cells') row.payloadJsonb = { ...(row.payloadJsonb as PaintCellsPayload), grid_type: map.gridType, grid_cells_x: map.x, grid_cells_y: map.y };
+				}
 			}
 
 			return all;

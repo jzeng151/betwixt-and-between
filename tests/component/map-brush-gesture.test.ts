@@ -24,7 +24,7 @@ vi.mock('pixi.js', () => {
 	return { Container, Graphics };
 });
 vi.mock('$lib/features/map/map-events-store.js', () => ({
-	mapEventsStore: { create: vi.fn().mockResolvedValue({}) }
+	mapEventsStore: { create: vi.fn().mockResolvedValue({}), createCommand: vi.fn().mockResolvedValue(undefined) }
 }));
 
 const map = { id: 'map-a', width: 100, height: 100, gridType: 'square', gridCellsX: 10, gridCellsY: 10 } as WorldMap;
@@ -40,6 +40,7 @@ describe.each([
 	['grid', GridBrush, 'paint_cells'],
 	['freeform', FreeformBrush, 'paint_stroke']
 ] as const)('%s brush gesture', (_name, Brush, kind) => {
+	const save = Brush === GridBrush ? mapEventsStore.createCommand : mapEventsStore.create;
 	async function setup() {
 		const viewport = Object.assign(new EventEmitter(), { addChild() {} });
 		const options = {
@@ -57,9 +58,8 @@ describe.each([
 		viewport.emit('pointerdown', pointer);
 		playhead.scrubTo(1.75);
 		viewport.emit('pointerup', pointer);
-		await waitFor(() => expect(mapEventsStore.create).toHaveBeenCalledWith('map-a', expect.objectContaining({
-			tPosition: 0.25, kind
-		})));
+		const expected = expect.objectContaining({ tPosition: 0.25, kind });
+		await waitFor(() => expect(save).toHaveBeenCalledWith('map-a', Brush === GridBrush ? [expected] : expected));
 	});
 
 	it('does not save the old gesture onto a newly selected map', async () => {
@@ -67,9 +67,10 @@ describe.each([
 		viewport.emit('pointerdown', pointer);
 		await view.rerender({ active: true, activeMap: { ...map, id: 'map-b' } });
 		viewport.emit('pointerup', pointer);
-		expect(mapEventsStore.create).not.toHaveBeenCalled();
+		expect(save).not.toHaveBeenCalled();
 		viewport.emit('pointerdown', pointer);
 		viewport.emit('pointerup', pointer);
-		await waitFor(() => expect(mapEventsStore.create).toHaveBeenCalledWith('map-b', expect.objectContaining({ kind })));
+		const expected = expect.objectContaining({ kind });
+		await waitFor(() => expect(save).toHaveBeenCalledWith('map-b', Brush === GridBrush ? [expected] : expected));
 	});
 });

@@ -230,6 +230,34 @@ describe('Slice 3 B.2 — paint_cells server validator', () => {
 		userId = (await seedTestUser(currentDb)).id;
 	});
 
+	it('validates captured layouts and protects legacy paint redo after a layout change', async () => {
+		const map = await seedMap();
+		const paint = (grid_type?: unknown, grid_cells_x?: unknown, grid_cells_y?: unknown) => CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+			tPosition: 0, kind: 'paint_cells', payloadJsonb: { cells: [{ x: 1, y: 1, biome: 'Grass' }], grid_type, grid_cells_x, grid_cells_y }
+		} }));
+		await expect(paint('triangle')).rejects.toMatchObject({ status: 400 });
+		await expect(paint('hex')).rejects.toMatchObject({ status: 409 });
+		await expect(paint('square', 4.5)).rejects.toMatchObject({ status: 400 });
+		await expect(paint('square', 32, 129)).rejects.toMatchObject({ status: 400 });
+		await expect(paint('square', 64, 24)).rejects.toMatchObject({ status: 409 });
+		await expect(paint('square', 32, 64)).rejects.toMatchObject({ status: 409 });
+		expect((await paint()).status).toBe(201);
+		const undone = await (await UNDO_EVENT(mkEvent({ params: { id: map.id } }))).json();
+		expect(undone[0].payloadJsonb).toMatchObject({ grid_type: 'square', grid_cells_x: 32, grid_cells_y: 24 });
+		const { PATCH } = await import('../../src/routes/api/maps/[id]/+server.js');
+		await PATCH(mkEvent({ params: { id: map.id }, body: { gridType: 'hex' } }));
+		await expect(CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+			tPosition: 0, kind: 'paint_cells', payloadJsonb: undone[0].payloadJsonb
+		} }))).rejects.toMatchObject({ status: 409 });
+		expect((await paint('hex', 32, 24)).status).toBe(201);
+		await PATCH(mkEvent({ params: { id: map.id }, body: { gridCellsX: 64 } }));
+		const resizedUndo = await (await UNDO_EVENT(mkEvent({ params: { id: map.id } }))).json();
+		expect(resizedUndo[0].payloadJsonb).toMatchObject({ grid_type: 'hex', grid_cells_x: 64, grid_cells_y: 24 });
+		expect((await CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+			tPosition: 0, kind: 'paint_cells', payloadJsonb: resizedUndo[0].payloadJsonb
+		} }))).status).toBe(201);
+	});
+
 	it('accepts a happy-path single-cell paint event', async () => {
 		const map = await seedMap();
 		const res = await CREATE_EVENT(

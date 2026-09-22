@@ -6,6 +6,7 @@
 		worldMapStore,
 		worldMaps,
 		worldMapsLoadStatus,
+		mapGeometrySaving,
 		mapRegions,
 		type LoadRegionsResult
 	} from '$lib/features/map/store.js';
@@ -1309,6 +1310,8 @@
 	// Bound from PixiPlacementLayer: true while its marker menu / style popover is
 	// open. Also feeds the authoringOpen gate (Codex PR #72 #857).
 	let placementAuthoringOpen = $state(false);
+	let gridSettingsOpen = $state(false);
+	let gridEditing = $derived(gridSettingsOpen || $mapGeometrySaving.has(activeMapId ?? ''));
 
 	// True while ANY authoring form/flow OR canvas interaction is open. Cycling must
 	// stay suspended for the whole flow — a playhead advance (or a Play that unpins)
@@ -1322,6 +1325,7 @@
 	// context-menu / cause modal the child owns (#953).
 	let authoringOpen = $derived(
 		showRegionForm ||
+			gridEditing ||
 			showVariantForm ||
 			renamingMapName !== null ||
 			creatingToolbarLocation ||
@@ -2168,7 +2172,7 @@
 	async function handleImageUpload(e: Event) {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
-		if (!file || !activeMapId || preparingCanvas) return;
+		if (!file || !activeMapId || preparingCanvas || $mapGeometrySaving.has(activeMapId)) return;
 		const mapId = activeMapId;
 		preparingCanvas = true;
 		uploadError = null;
@@ -2363,7 +2367,7 @@
 	}
 
 	async function handleDuplicate() {
-		if (!activeMapId || duplicating) return;
+		if (!activeMapId || duplicating || $mapGeometrySaving.has(activeMapId)) return;
 		// Duplicating navigates to the clone for editing — pin so cycling doesn't
 		// switch away from it (Codex PR #72).
 		pinView();
@@ -2415,6 +2419,7 @@
 			{activeMapId}
 			{hasCanvas}
 			{preparingCanvas}
+			bind:gridSettingsOpen
 			{locations}
 			{duplicating}
 			bind:renamingMapName
@@ -2648,10 +2653,11 @@
 				     pre-stroke rows. Same guard the snapshot/ownership writes
 				     use. -->
 				<PixiBrushLayer
-					active={canvasMode === 'brush' && brushMode === 'grid' && !dataLoading}
+					active={canvasMode === 'brush' && brushMode === 'grid' && !dataLoading && !gridEditing}
 					{activeMap}
 					biome={brushBiome}
 					size={brushSize}
+					onError={(msg) => (strokeError = msg)}
 					onStrokeComplete={(mapId, _count, t) => revealAuthoredTime(mapId, t)}
 				/>
 				<!-- WM3 Slice A: freeform brush. Same gating as the grid brush, but
@@ -2906,6 +2912,7 @@
 
 	.map-wrapper {
 		position: relative;
+		container-type: size;
 		width: 100%;
 		height: 100%;
 		display: flex;

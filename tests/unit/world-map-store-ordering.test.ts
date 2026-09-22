@@ -19,8 +19,10 @@ import {
 	worldMapStore,
 	worldMaps,
 	worldMapsLoadStatus,
+	mapGeometrySaving,
 	mapRegions
 } from '../../src/lib/features/map/store.js';
+import { mapEventsStore } from '../../src/lib/features/map/map-events-store.js';
 import type { MapRegion } from '../../src/lib/features/map/types.js';
 
 function makeResponse(body: unknown, ok = true, status = 200): Response {
@@ -252,5 +254,50 @@ describe('loadMapRegions — generation guard', () => {
 			.fn()
 			.mockResolvedValue(makeResponse('nope', false, 404)) as unknown as typeof fetch;
 		expect((await worldMapStore.loadMapRegions('gone')).status).toBe('not-found');
+	});
+});
+
+
+describe('grid geometry writes', () => {
+	it.each(['settings', 'image'])('%s waits for the entire paint command and excludes other geometry writes', async (operation) => {
+		mapEventsStore.reset();
+		const map = { id: 'A', gridType: 'square', gridCellsX: 32, gridCellsY: 24 };
+		worldMaps.set([map as never]);
+		let release!: (response: Response) => void;
+		const calls: string[] = [];
+		globalThis.fetch = vi.fn(async (url) => {
+			calls.push(String(url));
+			if (calls.length === 1) return new Promise<Response>((resolve) => { release = resolve; });
+			return makeResponse(String(url).endsWith('/events') ? { id: 'second', worldMapId: 'A' } : map);
+		}) as typeof fetch;
+		const input = { tPosition: 0, kind: 'paint_cells' as const, payloadJsonb: { cells: [] } };
+		const painting = mapEventsStore.createCommand('A', [input, input]);
+		await vi.waitFor(() => expect(calls).toHaveLength(1));
+		const file = new File(['image'], 'map.png', { type: 'image/png' });
+		const writing = operation === 'settings'
+			? worldMapStore.updateMap('A', { gridCellsY: 32 })
+			: worldMapStore.uploadImage('A', file);
+		expect(get(mapGeometrySaving).has('A')).toBe(true);
+		await expect(operation === 'settings' ? worldMapStore.uploadImage('A', file)
+			: worldMapStore.updateMap('A', { gridCellsY: 32 })).rejects.toThrow('Wait for');
+		expect(calls).toHaveLength(1);
+		release(makeResponse({ id: 'first', worldMapId: 'A' }));
+		await Promise.all([painting, writing]);
+		expect(calls).toEqual(['/api/maps/A/events', '/api/maps/A/events', operation === 'settings' ? '/api/maps/A' : '/api/maps/A/upload-image']);
+		expect(get(mapGeometrySaving).has('A')).toBe(false);
+	});
+
+	it('invalidates paint redo when an image refits the grid', async () => {
+		const original = { id: 'A', gridType: 'square', gridCellsX: 32, gridCellsY: 24 };
+		worldMaps.set([original as never]);
+		mapEventsStore.applyPrefetched('A', [{ id: 'paint', worldMapId: 'A', kind: 'paint_cells', payloadJsonb: {} } as never]);
+		globalThis.fetch = vi.fn(async (url) => makeResponse(String(url).endsWith('/undo')
+			? [{ id: 'paint', worldMapId: 'A', kind: 'paint_cells', payloadJsonb: {} }]
+			: { rows: [], next_cursor: null })) as typeof fetch;
+		await mapEventsStore.undo('A');
+		expect(get(mapEventsStore.redoStack)).toHaveLength(1);
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse({ ...original, gridCellsY: 32 })) as typeof fetch;
+		await worldMapStore.uploadImage('A', new File(['image'], 'map.png', { type: 'image/png' }));
+		expect(get(mapEventsStore.redoStack)).toEqual([]);
 	});
 });

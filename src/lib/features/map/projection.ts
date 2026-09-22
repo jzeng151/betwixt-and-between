@@ -169,6 +169,10 @@ export type TransferRegionPayload = {
 // fire only at stroke boundary (outside-voice B7).
 export type PaintCellsPayload = {
 	cells: Array<{ x: number; y: number; biome: string }>; // open vocab (Slice 6 D15)
+	// Captured at gesture start; optional for legacy events/API clients.
+	grid_type?: 'square' | 'hex';
+	grid_cells_x?: number;
+	grid_cells_y?: number;
 	// Optional. Last chunk of a multi-event stroke sets this true so the
 	// auto-anchor logic doesn't fire mid-stroke. Single-event strokes
 	// either set it true or omit it (defaults to true server-side).
