@@ -1,18 +1,6 @@
-/**
- * Wiki-link parser. Splits a body string at `[[Name]]` markers and
- * resolves each marker against the supplied entity pool by name match
- * (case-insensitive). Pure — no Svelte / store dependencies — so it
- * lives outside `components/` and can be unit-tested directly.
- *
- * Resolution rules (Phase 1 wiki-rework slice 3):
- *   - Match is whole-string-equal on the trimmed name, lower-cased.
- *   - Duplicate names: last entity in the pool wins. The design specs
- *     defer ambiguity disambiguation (e.g. `[[Aragorn (Character)]]`)
- *     to a later slice; this parser resolves the simple case only.
- *   - Unknown names render as a segment with `entity: null`; the
- *     viewer renders those as strikethrough fallback text per spec.
- *   - Markers with newlines inside them (`[[bad\ntext]]`) do NOT match;
- *     the regex is intentionally non-greedy and excludes \n / \].
+/** Wiki links resolve only against the supplied story's entities.
+ * Name matches ignore case; the last duplicate wins. ID links disambiguate
+ * and display the current name unless an explicit label is supplied.
  */
 
 export type WikiLinkSegment =
@@ -21,8 +9,9 @@ export type WikiLinkSegment =
 			kind: 'link';
 			/** The literal `[[Name]]` substring including brackets. */
 			raw: string;
-			/** Trimmed name as written between the brackets. */
+			/** Display label, or the current entity name for an ID link. */
 			name: string;
+			target: string;
 			/** Resolved entity, or null if no match in the pool. */
 			entity: WikiLinkEntity | null;
 	  };
@@ -33,7 +22,26 @@ export interface WikiLinkEntity {
 	type: string;
 }
 
-const LINK_RE = /\[\[([^\]\n]+?)\]\]/g;
+const LINK_RE = /\[\[([^\]\r\n]+?)\]\]/g;
+
+/** Index the supplied story's entities once for a whole document. */
+export function createWikiLinkResolver(entities: readonly WikiLinkEntity[]) {
+	const byName = new Map(entities.map((e) => [e.name.toLowerCase(), e]));
+	const byId = new Map(entities.map((e) => [e.id, e]));
+	return (raw: string): Extract<WikiLinkSegment, { kind: 'link' }> => {
+		const contents = raw.slice(2, -2).replace(/\\\|/g, '|');
+		const fullName = contents.trim();
+		// Preserve existing links to names containing pipes. IDs keep explicit targeting.
+		const separator = !fullName.startsWith('#') && byName.has(fullName.toLowerCase())
+			? -1
+			: contents.indexOf('|');
+		const target = (separator < 0 ? contents : contents.slice(0, separator)).trim();
+		const label = separator < 0 ? '' : contents.slice(separator + 1).trim();
+		const isId = target.startsWith('#');
+		const entity = (isId ? byId.get(target.slice(1)) : byName.get(target.toLowerCase())) ?? null;
+		return { kind: 'link', raw, target, name: label || (isId ? entity?.name : target) || target, entity };
+	};
+}
 
 export function parseWikiLinks(
 	body: string,
@@ -41,10 +49,7 @@ export function parseWikiLinks(
 ): WikiLinkSegment[] {
 	if (!body) return [];
 
-	const byName = new Map<string, WikiLinkEntity>();
-	for (const e of entities) {
-		byName.set(e.name.toLowerCase(), e);
-	}
+	const resolve = createWikiLinkResolver(entities);
 
 	const out: WikiLinkSegment[] = [];
 	let lastIndex = 0;
@@ -53,11 +58,8 @@ export function parseWikiLinks(
 		if (start > lastIndex) {
 			out.push({ kind: 'text', text: body.slice(lastIndex, start) });
 		}
-		const raw = m[0];
-		const name = m[1].trim();
-		const found = byName.get(name.toLowerCase()) ?? null;
-		out.push({ kind: 'link', raw, name, entity: found });
-		lastIndex = start + raw.length;
+		out.push(resolve(m[0]));
+		lastIndex = start + m[0].length;
 	}
 	if (lastIndex < body.length) {
 		out.push({ kind: 'text', text: body.slice(lastIndex) });

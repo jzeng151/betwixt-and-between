@@ -38,7 +38,7 @@ it('renders tables and tasks without nesting entity buttons inside links', () =>
 	expect(view.getAllByRole('cell').map(cell => cell.textContent?.trim())).toEqual(['Mara', 'Home']);
 	expect(view.getByRole('checkbox', { name: 'Completed task' })).toBeChecked();
 	expect(view.getByRole('checkbox', { name: 'Incomplete task' })).toBeDisabled();
-	expect(view.getByTitle("No entity named 'Unknown'")).toHaveTextContent('[[Unknown]]');
+	expect(view.getByTitle("No entity matching 'Unknown'")).toHaveTextContent('[[Unknown]]');
 	expect(view.getByRole('link').querySelector('button')).toBeNull();
 	expect(view.getByRole('link')).toHaveTextContent('[[Mara]]');
 });
@@ -58,4 +58,19 @@ it('formats body fields while preserving structured textarea text and mentions',
 	expect(synopsis.queryByRole('heading')).toBeNull();
 	expect(synopsis.container.textContent).toContain('# Literal **text**');
 	expect(synopsis.getByRole('button', { name: 'Mara' })).toBeInTheDocument();
+});
+
+it.each([false, true])('renders safe alias and ID labels and navigates to their targets (Markdown: %s)', async (renderMarkdown) => {
+	const view = render(WikiLinkText, { renderMarkdown, body: '[[Mara|the captain]] [[#mara|<img src=x>]] [[#mara]] [[#absent|Mara]]' });
+	for (const name of ['the captain', '<img src=x>', 'Mara']) {
+		await fireEvent.click(view.getByRole('button', { name }));
+		expect(openEntity).toHaveBeenLastCalledWith('mara');
+	}
+	expect(view.container.querySelector('img')).toBeNull();
+	expect(view.getByTitle("No entity matching '#absent'")).toHaveTextContent('[[#absent|Mara]]');
+});
+
+it('supports escaped alias separators in Markdown tables', () => {
+	const view = render(WikiLinkText, { renderMarkdown: true, body: '| Who |\n| --- |\n| [[#mara\\|the captain]] |' });
+	expect(view.getByRole('cell').querySelector('button')).toHaveTextContent('the captain');
 });

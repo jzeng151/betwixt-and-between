@@ -98,6 +98,7 @@
 	$effect(() => {
 		if (entityId !== _prevEntityId) {
 			_prevEntityId = entityId;
+			copyStatus = 'idle';
 			if (entityId && pendingEditMode.has(entityId)) {
 				pendingEditMode.delete(entityId);
 				mode = 'edit';
@@ -106,6 +107,19 @@
 			}
 		}
 	});
+
+	let copyStatus = $state<'idle' | 'copied' | 'failed'>('idle');
+	async function copyWikiLink() {
+		const id = entityId;
+		if (!id) return;
+		copyStatus = 'idle';
+		try {
+			await navigator.clipboard.writeText(`[[#${id}]]`);
+			if (entityId === id) copyStatus = 'copied';
+		} catch {
+			if (entityId === id) copyStatus = 'failed';
+		}
+	}
 
 	function cancelEdit() {
 		// Dispatch Escape to the currently focused EditableField so its keydown
@@ -223,6 +237,7 @@
 			<div class="entity-detail-eyebrow-row">
 				<span class="entity-detail-eyebrow">{eyebrowFor(entity)}</span>
 				<div class="entity-detail-actions">
+					<button type="button" class="copy-link" onclick={copyWikiLink}>Copy Wiki link</button>
 					{#if mode === 'edit'}
 						<button
 							type="button"
@@ -249,6 +264,10 @@
 					{/if}
 				</div>
 			</div>
+			<p class="copy-status" role="status">{copyStatus === 'copied' ? 'Wiki link copied.' : copyStatus === 'failed' ? 'Could not copy. Select and copy the link below.' : ''}</p>
+			{#if copyStatus === 'failed'}
+				<input aria-label="Wiki link" readonly value={`[[#${entity.id}]]`} onclick={(event) => event.currentTarget.select()} />
+			{/if}
 			<div class="entity-detail-title">
 				{#if mode === 'edit'}
 					<InlineEdit value={entity.name} onSave={rename} forceEditing />
@@ -318,7 +337,7 @@
 				rows={bodyRows}
 				placeholder={entity.type === 'Note'
 					? 'Write the note…'
-					: `Tell ${entity.name}'s story. You can link to other entries with [[Name]].`}
+					: `Tell ${entity.name}'s story. Link to entries with [[Name]] or [[Name|label]], or paste a copied Wiki link.`}
 			/>
 		</div>
 
@@ -387,6 +406,7 @@
 	}
 	.entity-detail-actions {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 6px;
 	}
@@ -404,7 +424,7 @@
 	.mode-toggle:hover {
 		filter: brightness(1.1);
 	}
-	.mode-cancel {
+	.mode-cancel, .copy-link {
 		background: transparent;
 		color: var(--color-text-muted, #6b7280);
 		border: 1px solid var(--color-border, #2a2d35);
@@ -415,10 +435,11 @@
 		font-family: var(--font-ui, 'Inter', sans-serif);
 		cursor: pointer;
 	}
-	.mode-cancel:hover {
+	.mode-cancel:hover, .copy-link:hover {
 		color: var(--color-text, #e8e0d0);
 		border-color: var(--color-text, #e8e0d0);
 	}
+	.copy-status { margin: 0; font-size: 11px; color: var(--color-text-muted); }
 	.entity-detail-title-text {
 		display: inline-block;
 		padding: 2px 0;

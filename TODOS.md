@@ -148,9 +148,9 @@ Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qo
 
 ### Wiki / Editor polish (unblocked — wiki-rework shipped v0.2.0)
 
-- [ ] **T9-uuid — `[[#uuid]]` ID-fallback link syntax.** Escape hatch for duplicate-name disambiguation. Today: warn-on-ambiguity, first-match wins. ~30 lines parser change.
+- [x] **T9-uuid — `[[#uuid]]` ID link syntax.** Resolves duplicate names and survives renames. “Copy Wiki link” on each entry copies its ID link; resolution stays within the current story.
 
-- [ ] **T13-aliassyntax — `[[Entity Name|alias]]` markdown alias syntax.** Obsidian/MediaWiki convention. `[[Aragorn|the king]]` renders "the king", resolves Aragorn.
+- [x] **T13-aliassyntax — `[[Entity Name|alias]]` markdown alias syntax.** Obsidian/MediaWiki convention. `[[Aragorn|the king]]` renders "the king", resolves Aragorn.
 
 ### Timeline polish
 
