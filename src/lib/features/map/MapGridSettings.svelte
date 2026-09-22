@@ -87,8 +87,8 @@
 		position: absolute;
 		top: calc(100% + 6px);
 		left: 0;
-		width: min(320px, calc(100vw - 96px));
-		max-height: 70vh;
+		width: min(320px, calc(100cqw - 80px));
+		max-height: calc(100cqh - 80px);
 		overflow-y: auto;
 		box-sizing: border-box;
 		padding: 16px;

@@ -46,13 +46,15 @@
 		activeMap = null,
 		biome = 'Grass',
 		size = 1,
-		onStrokeComplete = undefined
+		onStrokeComplete = undefined,
+		onError = undefined
 	}: {
 		active?: boolean;
 		activeMap?: WorldMap | null;
 		biome?: string;
 		size?: 1 | 3 | 5;
 		onStrokeComplete?: (mapId: string, cellCount: number, tPosition: number) => void;
+		onError?: (message: string) => void;
 	} = $props();
 
 	const stageCtx = getContext<PixiStageContext>(PIXI_STAGE_CONTEXT);
@@ -66,6 +68,7 @@
 	let strokeId: string | null = null;
 	let gestureMapId: string | null = null;
 	let gestureTPosition = 0;
+	let gestureGridType: WorldMap['gridType'] = 'square';
 	let touched: Map<string, { x: number; y: number; biome: string }> = new Map();
 	let hoverCells = $state<Array<{ x: number; y: number }>>([]);
 
@@ -156,6 +159,7 @@
 		}
 		const mapId = activeMap.id;
 		const tPosition = gestureTPosition;
+		const gridType = gestureGridType;
 		const localStrokeId = strokeId;
 		const all = Array.from(touched.values());
 		const totalCells = all.length;
@@ -188,6 +192,7 @@
 						kind: 'paint_cells',
 						payloadJsonb: {
 							cells: chunks[i],
+							grid_type: gridType,
 							command_complete: isLast
 						},
 						commandId: localStrokeId
@@ -200,6 +205,7 @@
 				// already reset. Chunks that already landed stay in the event log
 				// under localStrokeId and undo pops them as a group.
 				console.error('paint_cells stroke failed mid-flight; aborting gesture', err);
+				onError?.(err instanceof Error ? err.message : 'Could not save the stroke. Try again.');
 			}
 		})();
 	}
@@ -224,6 +230,7 @@
 			painting = true;
 			gestureMapId = activeMap!.id;
 			gestureTPosition = get(playhead) ?? 0;
+			gestureGridType = activeMap!.gridType;
 			strokeId = crypto.randomUUID();
 			touched = new Map();
 			recordTouched(cellsUnderBrush(cell.x, cell.y));

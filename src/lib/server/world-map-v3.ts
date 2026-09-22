@@ -879,6 +879,9 @@ async function validateEventPayload(
 	}
 	if (kind === 'paint_cells') {
 		const p = payload as Partial<PaintCellsPayload>;
+		if (p.grid_type !== undefined && p.grid_type !== 'square' && p.grid_type !== 'hex') {
+			error(400, 'paint_cells payload.grid_type must be square or hex');
+		}
 		if (!Array.isArray(p.cells)) {
 			error(400, 'paint_cells payload.cells must be an array');
 		}
@@ -1268,10 +1271,14 @@ export async function createMapEvent(
 		// slipping terrain outside the new bounds.
 		if (input.kind === 'paint_cells') {
 			const [lockedGrid] = await tx
-				.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY })
+				.select({ x: worldMaps.gridCellsX, y: worldMaps.gridCellsY, type: worldMaps.gridType })
 				.from(worldMaps)
 				.where(eq(worldMaps.id, worldMapId));
 			if (!lockedGrid) error(404, 'world_map not found');
+			const capturedType = (input.payloadJsonb as PaintCellsPayload).grid_type;
+			if (capturedType !== undefined && capturedType !== lockedGrid.type) {
+				error(409, 'The grid layout changed before this stroke was saved. Paint it again on the updated grid.');
+			}
 			assertCellsInBounds(
 				(input.payloadJsonb as Partial<PaintCellsPayload>).cells,
 				lockedGrid.x,
@@ -1798,6 +1805,14 @@ export async function undoLatestMapEvent(
 			);
 			if (earliestUndone) {
 				await invalidateSyntheticAnchorsFrom(tx, worldMapId, earliestUndone.id);
+			}
+			// Legacy paints lack a captured layout. Live terrain prevented layout
+			// changes, so the locked map's current layout is their safe redo layout.
+			if (all.some((row) => row.kind === 'paint_cells')) {
+				const [map] = await tx.select({ gridType: worldMaps.gridType }).from(worldMaps).where(eq(worldMaps.id, worldMapId));
+				for (const row of all) {
+					if (row.kind === 'paint_cells') row.payloadJsonb = { grid_type: map.gridType, ...(row.payloadJsonb as PaintCellsPayload) };
+				}
 			}
 
 			return all;

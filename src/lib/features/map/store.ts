@@ -3,6 +3,7 @@ import { writable } from 'svelte/store';
 import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } from './types.js';
 import type { MapArtLayer } from './projection.js';
 import { errorMessage } from '$lib/util/api-error-message.js';
+import { mapEventsStore } from './map-events-store.js';
 
 export const worldMapsLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
 // Survives closing a panel/window or switching away from a map during its save.
@@ -180,6 +181,9 @@ function createWorldMapStore() {
 		maps.update((all) =>
 			all.map((m) => {
 				if (m.id !== id) return m;
+				if ((['gridType', 'gridCellsX', 'gridCellsY'] as const).some((key) => key in fields && m[key] !== updated[key])) {
+					mapEventsStore.clearGridRedo(id);
+				}
 				const merged = { ...m };
 				for (const k of changed) {
 					(merged as Record<string, unknown>)[k] = (updated as Record<string, unknown>)[k];

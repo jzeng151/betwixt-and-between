@@ -72,6 +72,16 @@
 		onDuplicate: () => void;
 	} = $props();
 	let gridButton = $state<HTMLButtonElement>();
+	let gridRevision = $derived(JSON.stringify([activeMapId, activeMap?.gridType, activeMap?.gridCellsX, activeMap?.gridCellsY, activeMap?.gridScaleValue, activeMap?.gridScaleUnit]));
+	let viewedGridRevision = '';
+	$effect(() => {
+		if ($gridSettingsSaving.has(activeMapId ?? '')) return;
+		if (gridRevision !== viewedGridRevision) {
+			viewedGridRevision = gridRevision;
+			if (gridSettingsOpen && gridButton?.parentElement?.contains(document.activeElement)) void closeGridSettings();
+			else gridSettingsOpen = false;
+		}
+	});
 	$effect(() => {
 		activeMapId;
 		gridSettingsOpen = false;

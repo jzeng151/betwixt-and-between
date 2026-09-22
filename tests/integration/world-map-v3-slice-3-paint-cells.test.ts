@@ -230,6 +230,24 @@ describe('Slice 3 B.2 — paint_cells server validator', () => {
 		userId = (await seedTestUser(currentDb)).id;
 	});
 
+	it('validates captured layouts and protects legacy paint redo after a layout change', async () => {
+		const map = await seedMap();
+		const paint = (grid_type?: unknown) => CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+			tPosition: 0, kind: 'paint_cells', payloadJsonb: { cells: [{ x: 1, y: 1, biome: 'Grass' }], ...(grid_type === undefined ? {} : { grid_type }) }
+		} }));
+		await expect(paint('triangle')).rejects.toMatchObject({ status: 400 });
+		await expect(paint('hex')).rejects.toMatchObject({ status: 409 });
+		expect((await paint()).status).toBe(201);
+		const undone = await (await UNDO_EVENT(mkEvent({ params: { id: map.id } }))).json();
+		expect(undone[0].payloadJsonb.grid_type).toBe('square');
+		const { PATCH } = await import('../../src/routes/api/maps/[id]/+server.js');
+		await PATCH(mkEvent({ params: { id: map.id }, body: { gridType: 'hex' } }));
+		await expect(CREATE_EVENT(mkEvent({ params: { id: map.id }, body: {
+			tPosition: 0, kind: 'paint_cells', payloadJsonb: undone[0].payloadJsonb
+		} }))).rejects.toMatchObject({ status: 409 });
+		expect((await paint('hex')).status).toBe(201);
+	});
+
 	it('accepts a happy-path single-cell paint event', async () => {
 		const map = await seedMap();
 		const res = await CREATE_EVENT(

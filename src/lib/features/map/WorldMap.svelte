@@ -2657,6 +2657,7 @@
 					{activeMap}
 					biome={brushBiome}
 					size={brushSize}
+					onError={(msg) => (strokeError = msg)}
 					onStrokeComplete={(mapId, _count, t) => revealAuthoredTime(mapId, t)}
 				/>
 				<!-- WM3 Slice A: freeform brush. Same gating as the grid brush, but
@@ -2911,6 +2912,7 @@
 
 	.map-wrapper {
 		position: relative;
+		container-type: size;
 		width: 100%;
 		height: 100%;
 		display: flex;

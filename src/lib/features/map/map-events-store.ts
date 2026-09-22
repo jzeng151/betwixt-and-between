@@ -405,6 +405,11 @@ function createMapEventsStore() {
 		redoStore.set([]);
 		store.set([]);
 	}
+	function clearGridRedo(mapId: string): void {
+		if (redoStackForMapId === mapId) {
+			redoStore.update((rows) => rows.filter((row) => row.kind !== 'paint_cells'));
+		}
+	}
 
 	return {
 		subscribe: store.subscribe,
@@ -415,6 +420,7 @@ function createMapEventsStore() {
 		delete: remove,
 		undo,
 		redo,
+		clearGridRedo,
 		redoStack: { subscribe: redoStore.subscribe },
 		reset
 	};

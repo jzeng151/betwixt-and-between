@@ -173,3 +173,99 @@ test('grid painting waits until grid settings have finished saving', async ({ pa
 		expect((await painted).ok()).toBe(true);
 	} finally { release(); }
 });
+
+async function restoreMapWindows(page: import('@playwright/test').Page, locationId: string | null, height = 620) {
+	await page.addInitScript(({ locationId, height }) => {
+		const ids = locationId ? [null, locationId] : [null];
+		sessionStorage.setItem('betwixt-windows-v1', JSON.stringify({
+			userId: '00000000-0000-0000-0000-00000000e2e0',
+			windows: ids.map((entityId, i) => ({ id: entityId ? `world-map-${entityId}` : 'world-map', appId: 'world-map', entityId, x: i * 720, y: 20, width: 690, height, minimized: false, maximized: false, zIndex: 100 + i }))
+		}));
+	}, { locationId, height });
+}
+
+test('saving closes stale grid drafts in another map window', async ({ page, request }) => {
+	const location = await (await request.post('/api/entities', { data: { type: 'Location', name: 'Shared coast' } })).json();
+	const map = await createMap(request, 'Shared grid');
+	await request.patch(`/api/maps/${map.id}`, { data: { locationId: location.id } });
+	await restoreMapWindows(page, location.id);
+	await page.goto('/app');
+	const windows = page.getByRole('dialog', { name: 'World Map', exact: true });
+	await expect(windows).toHaveCount(2);
+	for (const win of await windows.all()) await win.getByTitle('Grid settings', { exact: true }).click();
+	const first = windows.nth(0).getByRole('dialog', { name: 'Map grid settings' });
+	await first.getByLabel('Layout').selectOption('hex');
+	await first.getByRole('button', { name: 'Save grid' }).click();
+	await expect(page.getByRole('dialog', { name: 'Map grid settings' })).toHaveCount(0);
+	await expect(windows.nth(0).getByTitle('Grid settings', { exact: true })).toBeFocused();
+	await windows.nth(1).getByTitle('Grid settings', { exact: true }).click();
+	await expect(windows.nth(1).getByLabel('Layout')).toHaveValue('hex');
+});
+
+test('grid settings fit inside a short map window and remain saveable', async ({ page, request }) => {
+	const map = await createMap(request, 'Short window');
+	await restoreMapWindows(page, null, 200);
+	await page.goto('/app');
+	const win = page.getByRole('dialog', { name: 'World Map', exact: true });
+	await win.getByTitle('Grid settings', { exact: true }).click();
+	const panel = win.getByRole('dialog', { name: 'Map grid settings' });
+	const windowBox = (await win.boundingBox())!;
+	const panelBox = (await panel.boundingBox())!;
+	expect(panelBox.y + panelBox.height).toBeLessThan(windowBox.y + windowBox.height);
+	await panel.getByLabel('Columns').fill('40');
+	await panel.getByRole('button', { name: 'Save grid' }).click();
+	await expect(panel).toHaveCount(0);
+	expect(await (await request.get(`/api/maps/${map.id}`)).json()).toMatchObject({ gridCellsX: 40 });
+});
+
+test('changing grid geometry discards incompatible paint redos', async ({ page, request }) => {
+	const map = await createMap(request, 'Undo grid');
+	await request.post(`/api/maps/${map.id}/events`, { data: { tPosition: 0, kind: 'paint_cells', payloadJsonb: { cells: [{ x: 2, y: 2, biome: 'Grass' }] } } });
+	await page.goto('/app');
+	await page.getByTitle('World Map', { exact: true }).click();
+	const win = page.getByRole('dialog', { name: 'World Map', exact: true });
+	await win.getByTitle('Undo (Ctrl/Cmd+Z)', { exact: true }).click();
+	await expect(win.getByTitle('Redo (Ctrl/Cmd+Shift+Z)', { exact: true })).toBeEnabled();
+	await win.getByTitle('Grid settings', { exact: true }).click();
+	const panel = win.getByRole('dialog', { name: 'Map grid settings' });
+	await panel.getByLabel('Layout').selectOption('hex');
+	await panel.getByRole('button', { name: 'Save grid' }).click();
+	await expect(panel).toHaveCount(0);
+	await expect(win.getByTitle('Redo (Ctrl/Cmd+Shift+Z)', { exact: true })).toBeDisabled();
+});
+
+test('a submitted stroke cannot cross a grid layout change', async ({ page, request }) => {
+	const map = await createMap(request, 'Delayed paint');
+	await page.goto('/app');
+	await page.getByTitle('World Map', { exact: true }).click();
+	const win = page.getByRole('dialog', { name: 'World Map', exact: true });
+	await win.getByRole('button', { name: 'Maximize', exact: true }).click();
+	await win.getByTestId('map-tool-selector').getByRole('button', { name: 'Brush', exact: true }).click();
+	const canvas = win.locator('.pixi-stage canvas');
+	await expect(canvas).toBeVisible();
+	let release!: () => void;
+	let started!: () => void;
+	const hold = new Promise<void>((resolve) => { release = resolve; });
+	const painting = new Promise<void>((resolve) => { started = resolve; });
+	await page.route(`**/api/maps/${map.id}/events`, async (route) => {
+		if (route.request().method() !== 'POST') return route.continue();
+		started();
+		await hold;
+		await route.continue();
+	});
+	try {
+		const box = (await canvas.boundingBox())!;
+		await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.4);
+		await painting;
+		await win.getByTitle('Grid settings', { exact: true }).click();
+		const panel = win.getByRole('dialog', { name: 'Map grid settings' });
+		await panel.getByLabel('Layout').selectOption('hex');
+		await panel.getByRole('button', { name: 'Save grid' }).click();
+		await expect(panel).toHaveCount(0);
+		const result = page.waitForResponse((r) => r.url().endsWith(`/api/maps/${map.id}/events`) && r.request().method() === 'POST');
+		release();
+		expect((await result).status()).toBe(409);
+		await expect(win.getByRole('alert')).toContainText('grid layout changed');
+		expect((await (await request.get(`/api/maps/${map.id}/events`)).json()).rows).toHaveLength(0);
+	} finally { release(); }
+});
