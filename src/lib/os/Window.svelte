@@ -14,13 +14,14 @@
     zIndex: number;
     minimized: boolean;
     maximized: boolean;
+    restoreBounds?: WindowBounds | null;
     bare?: boolean;
     compact?: boolean;
     alwaysOnTop?: boolean;
     children?: import('svelte').Snippet;
   }
 
-  let { id, title, x, y, width, height, zIndex, minimized, maximized, bare = false, compact = false, alwaysOnTop = false, children }: Props = $props();
+  let { id, title, x, y, width, height, zIndex, minimized, maximized, restoreBounds = null, bare = false, compact = false, alwaysOnTop = false, children }: Props = $props();
 
   const effectiveZ = $derived(alwaysOnTop ? PIN_Z_BASE + zIndex : zIndex);
 
@@ -31,7 +32,6 @@
   let dragStartPointer = { x: 0, y: 0 };
   let dragPointer = { x: 0, y: 0 };
   let dragStarted = false;
-  let restoreBounds = $state<WindowBounds | null>(null);
   let dragRestoreBounds: WindowBounds | null = null;
   let preview = $state<WindowBounds | null>(null);
   let viewport = $state({ width: 0, height: 0 });
@@ -121,11 +121,11 @@
       bounds.x = Math.max(0, Math.min(bounds.x, window.innerWidth - bounds.width));
       bounds.y = Math.max(0, Math.min(bounds.y, usableHeight - bounds.height));
       applyBounds(bounds);
-      restoreBounds = null;
+      windowStore.setRestoreBounds(id, null);
     } else if (Object.hasOwn(SNAP_LABELS, choice)) {
       const bounds = targetBounds(choice as SnapZone);
       if (!bounds) return;
-      restoreBounds ??= { x, y, width, height };
+      if (!restoreBounds) windowStore.setRestoreBounds(id, { x, y, width, height });
       applyBounds(bounds);
     }
     windowStore.focus(id);
@@ -157,7 +157,7 @@
     e.preventDefault();
     windowStore.focus(id);
     const taskbarHeight = readTaskbarHeight();
-    restoreBounds = null;
+    windowStore.setRestoreBounds(id, null);
     if (e.shiftKey) {
       const maxWidth = Math.max(MIN_W, window.innerWidth - x);
       const maxHeight = Math.max(MIN_H, window.innerHeight - y - taskbarHeight);
@@ -181,7 +181,7 @@
 
   function onResizeMousedown(e: MouseEvent, dir: ResizeDir) {
     if (maximized || e.button !== 0) return;
-    restoreBounds = null;
+    windowStore.setRestoreBounds(id, null);
     resizeDir = dir;
     resizeStartX = e.clientX;
     resizeStartY = e.clientY;
@@ -204,7 +204,7 @@
           const restoredHeight = Math.min(restoreBounds.height, window.innerHeight - readTaskbarHeight());
           dragOffsetX = Math.min(restoredWidth, dragOffsetX / width * restoredWidth);
           windowStore.resize(id, restoredWidth, restoredHeight);
-          restoreBounds = null;
+          windowStore.setRestoreBounds(id, null);
         }
       }
       const nx = e.clientX - dragOffsetX;
@@ -247,7 +247,7 @@
       const zone = snapZone(e.clientX, e.clientY, window.innerWidth, window.innerHeight - readTaskbarHeight());
       const bounds = zone ? targetBounds(zone) : null;
       if (bounds) {
-        restoreBounds = dragRestoreBounds ?? dragStart;
+        windowStore.setRestoreBounds(id, dragRestoreBounds ?? dragStart);
         applyBounds(bounds);
       }
     }
@@ -266,7 +266,7 @@
     e.preventDefault();
     e.stopPropagation();
     if (dragStart) applyBounds(dragStart);
-    restoreBounds = dragRestoreBounds;
+    windowStore.setRestoreBounds(id, dragRestoreBounds);
     endDrag();
   }
 </script>

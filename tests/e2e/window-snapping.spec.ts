@@ -78,6 +78,16 @@ test('titlebar arrangements restore, maximize, minimize, and survive reload', as
 	await page.reload();
 	await expect(win).toBeVisible();
 	expect(await win.boundingBox()).toEqual(quarter);
+	await arrange.selectOption('restore');
+	expect(await win.boundingBox()).toEqual(original);
+	await arrange.selectOption('left');
+	await page.reload();
+	await expect(win).toBeVisible();
+	await dragTo(page, win, 400, 220);
+	await page.mouse.up();
+	const restored = (await win.boundingBox())!;
+	expect(restored.width).toBe(original!.width);
+	expect(restored.height).toBe(original!.height);
 });
 
 test('short viewports disable quarters while keeping halves available', async ({ page }) => {

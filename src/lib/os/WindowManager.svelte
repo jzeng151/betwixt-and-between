@@ -83,6 +83,7 @@
     y={win.y}
     width={win.width}
     height={win.height}
+    restoreBounds={win.restoreBounds ?? null}
     zIndex={win.zIndex}
     minimized={win.minimized}
     maximized={win.maximized}

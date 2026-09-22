@@ -462,6 +462,26 @@ describe('tab window restoration', () => {
 		expect(get(windowStore).map((w) => w.id)).toEqual(['wiki']);
 	});
 
+	it('keeps pre-snap bounds with the story session and validates saved bounds', () => {
+		stop = windowStore.startSession('user-a', 'story-a');
+		windowStore.open('wiki');
+		windowStore.setRestoreBounds('wiki', { x: 700, y: 600, width: 720, height: 500 });
+		stop();
+		stop = windowStore.startSession('user-a', 'story-b');
+		expect(get(windowStore)).toEqual([]);
+		stop();
+		stop = windowStore.startSession('user-a', 'story-a');
+		expect(get(windowStore)[0].restoreBounds).toEqual({ x: 80, y: 56, width: 720, height: 500 });
+		const valid = get(windowStore)[0];
+		stop();
+		for (const restoreBounds of [null, {}, { x: 0, y: 0, width: -1, height: 100 }, { x: '0', y: 0, width: 100, height: 100 }]) {
+			saved.set('betwixt-windows-v1', JSON.stringify({ userId: 'user-a', windows: [{ ...valid, restoreBounds }] }));
+			stop = windowStore.startSession('user-a');
+			expect(get(windowStore)[0].restoreBounds).toBeNull();
+			stop();
+		}
+	});
+
 	it('keeps windows usable when browser storage is disabled', () => {
 		vi.stubGlobal('sessionStorage', {
 			getItem: () => { throw new Error('Blocked'); },
