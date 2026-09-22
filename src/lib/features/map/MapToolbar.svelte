@@ -8,6 +8,7 @@
 
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { WorldMap } from './types.js';
+	import MapGridSettings from './MapGridSettings.svelte';
 
 	let {
 		worldMaps,
@@ -15,6 +16,7 @@
 		activeMapId,
 		hasCanvas,
 		preparingCanvas,
+		gridSettingsOpen = $bindable(false),
 		locations,
 		duplicating,
 		renamingMapName = $bindable(),
@@ -42,6 +44,7 @@
 		activeMapId: string | null;
 		hasCanvas: boolean;
 		preparingCanvas: boolean;
+		gridSettingsOpen?: boolean;
 		locations: Entity[];
 		duplicating: boolean;
 		renamingMapName: string | null;
@@ -66,6 +69,15 @@
 		onOpenVariantForm: () => void;
 		onDuplicate: () => void;
 	} = $props();
+	let gridButton = $state<HTMLButtonElement>();
+	$effect(() => {
+		activeMapId;
+		gridSettingsOpen = false;
+	});
+	function closeGridSettings() {
+		gridSettingsOpen = false;
+		gridButton?.focus();
+	}
 </script>
 
 <div class="map-toolbar">
@@ -125,6 +137,13 @@
 			/>
 		</label>
 	{/if}
+	{#if activeMap && hasCanvas}
+		<button class="btn-icon grid-toggle" type="button" title="Grid settings" aria-haspopup="dialog" aria-expanded={gridSettingsOpen}
+			bind:this={gridButton} onclick={() => (gridSettingsOpen = !gridSettingsOpen)}>Grid</button>
+		{#if gridSettingsOpen}
+			{#key activeMap.id}<MapGridSettings map={activeMap} onClose={closeGridSettings} />{/key}
+		{/if}
+	{/if}
 	{#if activeMap}
 		{#if creatingToolbarLocation}
 			<!-- svelte-ignore a11y_autofocus -->
@@ -183,3 +202,7 @@
 		</button>
 	{/if}
 </div>
+
+<style>
+	button.grid-toggle { width: auto; padding: 0 8px; font-size: 12px; }
+</style>

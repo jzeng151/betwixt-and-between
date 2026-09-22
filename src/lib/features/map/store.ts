@@ -146,6 +146,9 @@ function createWorldMapStore() {
 			baseImageUrl?: string;
 			width?: number;
 			height?: number;
+			gridType?: WorldMap['gridType'];
+			gridScaleValue?: number;
+			gridScaleUnit?: string;
 			gridCellsX?: number;
 			gridCellsY?: number;
 			locationId?: string | null;

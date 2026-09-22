@@ -245,7 +245,7 @@ export const PATCH: RequestHandler = async (event) => {
 					if (rows.length > 0) {
 						error(
 							409,
-							'Cannot change the grid type after terrain has been painted — erase all terrain first.'
+							'Cannot change the grid layout while this map contains painted terrain, including earlier story times. Use a new map for a different layout.'
 						);
 					}
 				}
@@ -278,7 +278,7 @@ export const PATCH: RequestHandler = async (event) => {
 						if (rows.length > 0) {
 							error(
 								409,
-								'Cannot shrink the grid below painted cells — erase the out-of-bounds terrain first.'
+								'Cannot shrink the grid below painted cells, including earlier story times. Keep larger cell counts or use a new map.'
 							);
 						}
 					}

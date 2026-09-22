@@ -1309,6 +1309,7 @@
 	// Bound from PixiPlacementLayer: true while its marker menu / style popover is
 	// open. Also feeds the authoringOpen gate (Codex PR #72 #857).
 	let placementAuthoringOpen = $state(false);
+	let gridSettingsOpen = $state(false);
 
 	// True while ANY authoring form/flow OR canvas interaction is open. Cycling must
 	// stay suspended for the whole flow — a playhead advance (or a Play that unpins)
@@ -1322,6 +1323,7 @@
 	// context-menu / cause modal the child owns (#953).
 	let authoringOpen = $derived(
 		showRegionForm ||
+			gridSettingsOpen ||
 			showVariantForm ||
 			renamingMapName !== null ||
 			creatingToolbarLocation ||
@@ -2415,6 +2417,7 @@
 			{activeMapId}
 			{hasCanvas}
 			{preparingCanvas}
+			bind:gridSettingsOpen
 			{locations}
 			{duplicating}
 			bind:renamingMapName

@@ -12,6 +12,8 @@ Entity body fields accept Markdown in edit mode and render it in view mode. Code
 
 Link to entries with `[[Name]]`, or set a display label with `[[Name|the captain]]`. **Copy Wiki link** on an entry copies `[[#id]]`, which identifies that entry even after a rename or when names are duplicated. ID links can also use labels: `[[#id|the captain]]`. Links resolve within the current story. Exact full names take precedence over name aliases (for example, an entry named `North|South`); use an ID link to disambiguate. In Markdown tables, escape the separator as `\|`.
 
+Use **Grid** in the World Map toolbar to set square or hex layout, cell counts, and distance per cell. Changes apply when you save. Grid visibility stays in **Layers**; terrain history protects painted cells from incompatible layout changes.
+
 | Feature | What it does |
 |---|---|
 | **Story Graph** | Visual relationship map — characters, locations, events as nodes with typed edges (`allied_with`, `rivals`, `appears_in`, `caused_by`, etc.). |
