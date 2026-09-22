@@ -2367,7 +2367,7 @@
 	}
 
 	async function handleDuplicate() {
-		if (!activeMapId || duplicating) return;
+		if (!activeMapId || duplicating || $gridSettingsSaving.has(activeMapId)) return;
 		// Duplicating navigates to the clone for editing — pin so cycling doesn't
 		// switch away from it (Codex PR #72).
 		pinView();

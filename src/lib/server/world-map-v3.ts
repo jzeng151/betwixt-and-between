@@ -882,6 +882,12 @@ async function validateEventPayload(
 		if (p.grid_type !== undefined && p.grid_type !== 'square' && p.grid_type !== 'hex') {
 			error(400, 'paint_cells payload.grid_type must be square or hex');
 		}
+		for (const key of ['grid_cells_x', 'grid_cells_y'] as const) {
+			const count = p[key];
+			if (count !== undefined && (!Number.isInteger(count) || count < 4 || count > 128)) {
+				error(400, `paint_cells payload.${key} must be an integer from 4 to 128`);
+			}
+		}
 		if (!Array.isArray(p.cells)) {
 			error(400, 'paint_cells payload.cells must be an array');
 		}
@@ -1275,9 +1281,11 @@ export async function createMapEvent(
 				.from(worldMaps)
 				.where(eq(worldMaps.id, worldMapId));
 			if (!lockedGrid) error(404, 'world_map not found');
-			const capturedType = (input.payloadJsonb as PaintCellsPayload).grid_type;
-			if (capturedType !== undefined && capturedType !== lockedGrid.type) {
-				error(409, 'The grid layout changed before this stroke was saved. Paint it again on the updated grid.');
+			const captured = input.payloadJsonb as PaintCellsPayload;
+			if ((captured.grid_type !== undefined && captured.grid_type !== lockedGrid.type) ||
+				(captured.grid_cells_x !== undefined && captured.grid_cells_x !== lockedGrid.x) ||
+				(captured.grid_cells_y !== undefined && captured.grid_cells_y !== lockedGrid.y)) {
+				error(409, 'The grid changed before this stroke was saved. Paint it again on the updated grid.');
 			}
 			assertCellsInBounds(
 				(input.payloadJsonb as Partial<PaintCellsPayload>).cells,
@@ -1806,12 +1814,12 @@ export async function undoLatestMapEvent(
 			if (earliestUndone) {
 				await invalidateSyntheticAnchorsFrom(tx, worldMapId, earliestUndone.id);
 			}
-			// Legacy paints lack a captured layout. Live terrain prevented layout
-			// changes, so the locked map's current layout is their safe redo layout.
+			// Redo must use the geometry the cells had when undone, including
+			// legacy paints and live terrain resized since its original gesture.
 			if (all.some((row) => row.kind === 'paint_cells')) {
-				const [map] = await tx.select({ gridType: worldMaps.gridType }).from(worldMaps).where(eq(worldMaps.id, worldMapId));
+				const [map] = await tx.select({ gridType: worldMaps.gridType, x: worldMaps.gridCellsX, y: worldMaps.gridCellsY }).from(worldMaps).where(eq(worldMaps.id, worldMapId));
 				for (const row of all) {
-					if (row.kind === 'paint_cells') row.payloadJsonb = { grid_type: map.gridType, ...(row.payloadJsonb as PaintCellsPayload) };
+					if (row.kind === 'paint_cells') row.payloadJsonb = { ...(row.payloadJsonb as PaintCellsPayload), grid_type: map.gridType, grid_cells_x: map.x, grid_cells_y: map.y };
 				}
 			}
 

@@ -208,7 +208,7 @@
 		<button
 			class="btn-icon"
 			onclick={onDuplicate}
-			disabled={duplicating}
+			disabled={duplicating || $gridSettingsSaving.has(activeMap.id)}
 			title="Duplicate this map (clones regions; clears variant range)"
 			aria-label="Duplicate map"
 		>

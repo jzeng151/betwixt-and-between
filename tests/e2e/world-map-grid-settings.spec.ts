@@ -112,6 +112,7 @@ test('a save finishing after a map switch cannot close or overwrite the new draf
 		await panel.getByRole('button', { name: 'Save grid' }).click();
 		await saving;
 		await expect(panel.getByLabel('Columns')).toBeDisabled();
+		await expect.soft(win.getByRole('button', { name: 'Duplicate map', exact: true })).toBeDisabled();
 		await expect.soft(win.getByTitle('Grid settings', { exact: true })).toBeDisabled();
 		await win.locator('.map-switcher').selectOption(second.id);
 		await win.locator('.map-switcher').selectOption(first.id);
@@ -234,7 +235,8 @@ test('changing grid geometry discards incompatible paint redos', async ({ page, 
 	await expect(win.getByTitle('Redo (Ctrl/Cmd+Shift+Z)', { exact: true })).toBeDisabled();
 });
 
-test('a submitted stroke cannot cross a grid layout change', async ({ page, request }) => {
+for (const change of ['layout', 'columns', 'rows'] as const) {
+test(`a submitted stroke cannot cross a grid ${change} change`, async ({ page, request }) => {
 	const map = await createMap(request, 'Delayed paint');
 	await page.goto('/app');
 	await page.getByTitle('World Map', { exact: true }).click();
@@ -259,13 +261,15 @@ test('a submitted stroke cannot cross a grid layout change', async ({ page, requ
 		await painting;
 		await win.getByTitle('Grid settings', { exact: true }).click();
 		const panel = win.getByRole('dialog', { name: 'Map grid settings' });
-		await panel.getByLabel('Layout').selectOption('hex');
+		if (change === 'layout') await panel.getByLabel('Layout').selectOption('hex');
+		else await panel.getByLabel(change === 'columns' ? 'Columns' : 'Rows', { exact: true }).fill('64');
 		await panel.getByRole('button', { name: 'Save grid' }).click();
 		await expect(panel).toHaveCount(0);
 		const result = page.waitForResponse((r) => r.url().endsWith(`/api/maps/${map.id}/events`) && r.request().method() === 'POST');
 		release();
 		expect((await result).status()).toBe(409);
-		await expect(win.getByRole('alert')).toContainText('grid layout changed');
+		await expect(win.getByRole('alert')).toContainText('grid changed');
 		expect((await (await request.get(`/api/maps/${map.id}/events`)).json()).rows).toHaveLength(0);
 	} finally { release(); }
 });
+}

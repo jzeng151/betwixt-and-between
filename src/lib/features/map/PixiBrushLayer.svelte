@@ -69,6 +69,8 @@
 	let gestureMapId: string | null = null;
 	let gestureTPosition = 0;
 	let gestureGridType: WorldMap['gridType'] = 'square';
+	let gestureGridCellsX = 0;
+	let gestureGridCellsY = 0;
 	let touched: Map<string, { x: number; y: number; biome: string }> = new Map();
 	let hoverCells = $state<Array<{ x: number; y: number }>>([]);
 
@@ -160,6 +162,8 @@
 		const mapId = activeMap.id;
 		const tPosition = gestureTPosition;
 		const gridType = gestureGridType;
+		const gridCellsX = gestureGridCellsX;
+		const gridCellsY = gestureGridCellsY;
 		const localStrokeId = strokeId;
 		const all = Array.from(touched.values());
 		const totalCells = all.length;
@@ -193,6 +197,8 @@
 						payloadJsonb: {
 							cells: chunks[i],
 							grid_type: gridType,
+							grid_cells_x: gridCellsX,
+							grid_cells_y: gridCellsY,
 							command_complete: isLast
 						},
 						commandId: localStrokeId
@@ -231,6 +237,8 @@
 			gestureMapId = activeMap!.id;
 			gestureTPosition = get(playhead) ?? 0;
 			gestureGridType = activeMap!.gridType;
+			gestureGridCellsX = activeMap!.gridCellsX;
+			gestureGridCellsY = activeMap!.gridCellsY;
 			strokeId = crypto.randomUUID();
 			touched = new Map();
 			recordTouched(cellsUnderBrush(cell.x, cell.y));
