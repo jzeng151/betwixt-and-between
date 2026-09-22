@@ -23,7 +23,7 @@ test('grid settings validate, save, cancel, and persist independently for each m
 	await page.getByTitle('World Map', { exact: true }).click();
 	const win = page.getByRole('dialog', { name: 'World Map', exact: true });
 	await win.locator('.map-switcher').selectOption(first.id);
-	const gridButton = win.getByRole('button', { name: 'Grid', exact: true });
+	const gridButton = win.getByTitle('Grid settings', { exact: true });
 	await gridButton.click();
 	const panel = win.getByRole('dialog', { name: 'Map grid settings' });
 	await expect(panel.getByLabel('Layout')).toBeFocused();
@@ -69,7 +69,7 @@ test('terrain conflicts preserve the draft and allow a safe retry', async ({ pag
 	await page.goto('/app');
 	await page.getByTitle('World Map', { exact: true }).click();
 	const win = page.getByRole('dialog', { name: 'World Map', exact: true });
-	await win.getByRole('button', { name: 'Grid', exact: true }).click();
+	await win.getByTitle('Grid settings', { exact: true }).click();
 	const panel = win.getByRole('dialog', { name: 'Map grid settings' });
 	await panel.getByLabel('Layout').selectOption('hex');
 	await panel.getByRole('button', { name: 'Save grid' }).click();
@@ -106,15 +106,19 @@ test('a save finishing after a map switch cannot close or overwrite the new draf
 		await route.fulfill({ response });
 	});
 	try {
-		await win.getByRole('button', { name: 'Grid', exact: true }).click();
+		await win.getByTitle('Grid settings', { exact: true }).click();
 		const panel = win.getByRole('dialog', { name: 'Map grid settings' });
 		await panel.getByLabel('Columns').fill('64');
 		await panel.getByRole('button', { name: 'Save grid' }).click();
 		await saving;
 		await expect(panel.getByLabel('Columns')).toBeDisabled();
+		await expect.soft(win.getByTitle('Grid settings', { exact: true })).toBeDisabled();
+		await win.locator('.map-switcher').selectOption(second.id);
+		await win.locator('.map-switcher').selectOption(first.id);
+		await expect.soft(win.getByTitle('Grid settings', { exact: true })).toBeDisabled();
 		await win.locator('.map-switcher').selectOption(second.id);
 		await expect(panel).toHaveCount(0);
-		await win.getByRole('button', { name: 'Grid', exact: true }).click();
+		await win.getByTitle('Grid settings', { exact: true }).click();
 		await panel.getByLabel('Columns').fill('48');
 		const finished = page.waitForResponse((response) => response.url().endsWith(`/api/maps/${first.id}`) && response.request().method() === 'PATCH');
 		release();
@@ -124,5 +128,48 @@ test('a save finishing after a map switch cannot close or overwrite the new draf
 		await expect(panel).toHaveCount(0);
 		expect(await (await request.get(`/api/maps/${first.id}`)).json()).toMatchObject({ gridCellsX: 64 });
 		expect(await (await request.get(`/api/maps/${second.id}`)).json()).toMatchObject({ gridCellsX: 48 });
+	} finally { release(); }
+});
+
+
+test('grid painting waits until grid settings have finished saving', async ({ page, request }) => {
+	const map = await createMap(request, 'Changing grid');
+	await page.goto('/app');
+	await page.getByTitle('World Map', { exact: true }).click();
+	const win = page.getByRole('dialog', { name: 'World Map', exact: true });
+	await win.getByRole('button', { name: 'Maximize', exact: true }).click();
+	const canvas = win.locator('.pixi-stage canvas');
+	await expect(canvas).toBeVisible();
+	await win.getByTestId('map-tool-selector').getByRole('button', { name: 'Brush', exact: true }).click();
+	await expect(win.getByTestId('brush-palette')).toBeVisible();
+	let release!: () => void;
+	let started!: () => void;
+	const hold = new Promise<void>((resolve) => { release = resolve; });
+	const saving = new Promise<void>((resolve) => { started = resolve; });
+	await page.route(`**/api/maps/${map.id}`, async (route) => {
+		if (route.request().method() !== 'PATCH') return route.continue();
+		const response = await route.fetch();
+		started();
+		await hold;
+		await route.fulfill({ response });
+	});
+	try {
+		await win.getByTitle('Grid settings', { exact: true }).click();
+		const panel = win.getByRole('dialog', { name: 'Map grid settings' });
+		await panel.getByLabel('Layout').selectOption('hex');
+		await panel.getByRole('button', { name: 'Save grid' }).click();
+		await saving;
+		const box = await canvas.boundingBox();
+		if (!box) throw new Error('Canvas has no bounds');
+		const point = { x: box.x + box.width * 0.5, y: box.y + box.height * 0.4 };
+		await page.mouse.click(point.x, point.y);
+		// Let an unintended asynchronous paint request reach the server before checking absence.
+		await page.waitForTimeout(200);
+		expect.soft((await (await request.get(`/api/maps/${map.id}/events`)).json()).rows).toHaveLength(0);
+		release();
+		await expect(panel).toHaveCount(0);
+		const painted = page.waitForResponse((response) => response.url().endsWith(`/api/maps/${map.id}/events`) && response.request().method() === 'POST');
+		await page.mouse.click(point.x, point.y);
+		expect((await painted).ok()).toBe(true);
 	} finally { release(); }
 });

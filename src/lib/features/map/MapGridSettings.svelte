@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { worldMapStore } from './store.js';
+	import { worldMapStore, gridSettingsSaving } from './store.js';
 	import type { WorldMap } from './types.js';
 
 	let { map, onClose }: { map: WorldMap; onClose: () => void } = $props();
@@ -13,7 +13,7 @@
 		gridScaleValue: map.gridScaleValue,
 		gridScaleUnit: map.gridScaleUnit
 	});
-	let busy = $state(false);
+	let busy = $derived($gridSettingsSaving.has(map.id));
 	let error = $state('');
 	let layoutSelect: HTMLSelectElement;
 	let mounted = true;
@@ -28,16 +28,22 @@
 			error = 'Enter a scale unit, such as m, km, or mi.';
 			return;
 		}
-		busy = true;
+		const mapId = map.id;
+		gridSettingsSaving.update((ids) => new Set([...ids, mapId]));
 		error = '';
 		try {
-			await worldMapStore.updateMap(map.id, fields);
-			if (mounted) onClose();
+			await worldMapStore.updateMap(mapId, fields);
 		} catch (err) {
 			if (mounted) error = err instanceof Error ? err.message : 'Could not save grid settings. Try again.';
+			return;
 		} finally {
-			if (mounted) busy = false;
+			gridSettingsSaving.update((ids) => {
+				const remaining = new Set(ids);
+				remaining.delete(mapId);
+				return remaining;
+			});
 		}
+		if (mounted) onClose();
 	}
 </script>
 

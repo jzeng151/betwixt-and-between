@@ -6,6 +6,7 @@
 		worldMapStore,
 		worldMaps,
 		worldMapsLoadStatus,
+		gridSettingsSaving,
 		mapRegions,
 		type LoadRegionsResult
 	} from '$lib/features/map/store.js';
@@ -1310,6 +1311,7 @@
 	// open. Also feeds the authoringOpen gate (Codex PR #72 #857).
 	let placementAuthoringOpen = $state(false);
 	let gridSettingsOpen = $state(false);
+	let gridEditing = $derived(gridSettingsOpen || $gridSettingsSaving.has(activeMapId ?? ''));
 
 	// True while ANY authoring form/flow OR canvas interaction is open. Cycling must
 	// stay suspended for the whole flow — a playhead advance (or a Play that unpins)
@@ -1323,7 +1325,7 @@
 	// context-menu / cause modal the child owns (#953).
 	let authoringOpen = $derived(
 		showRegionForm ||
-			gridSettingsOpen ||
+			gridEditing ||
 			showVariantForm ||
 			renamingMapName !== null ||
 			creatingToolbarLocation ||
@@ -2651,7 +2653,7 @@
 				     pre-stroke rows. Same guard the snapshot/ownership writes
 				     use. -->
 				<PixiBrushLayer
-					active={canvasMode === 'brush' && brushMode === 'grid' && !dataLoading}
+					active={canvasMode === 'brush' && brushMode === 'grid' && !dataLoading && !gridEditing}
 					{activeMap}
 					biome={brushBiome}
 					size={brushSize}

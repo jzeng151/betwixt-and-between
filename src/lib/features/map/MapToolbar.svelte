@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+	import { gridSettingsSaving } from './store.js';
 	// Map editor toolbar: switcher, rename, new/delete, image upload, linked-
 	// Location picker + inline new-Location creation, variant chip, duplicate.
 	// Styles come from WorldMap.svelte's :global(.map-*), :global(.btn-icon)
@@ -74,8 +76,9 @@
 		activeMapId;
 		gridSettingsOpen = false;
 	});
-	function closeGridSettings() {
+	async function closeGridSettings() {
 		gridSettingsOpen = false;
+		await tick();
 		gridButton?.focus();
 	}
 </script>
@@ -139,6 +142,7 @@
 	{/if}
 	{#if activeMap && hasCanvas}
 		<button class="btn-icon grid-toggle" type="button" title="Grid settings" aria-haspopup="dialog" aria-expanded={gridSettingsOpen}
+			disabled={$gridSettingsSaving.has(activeMap.id)}
 			bind:this={gridButton} onclick={() => (gridSettingsOpen = !gridSettingsOpen)}>Grid</button>
 		{#if gridSettingsOpen}
 			{#key activeMap.id}<MapGridSettings map={activeMap} onClose={closeGridSettings} />{/key}

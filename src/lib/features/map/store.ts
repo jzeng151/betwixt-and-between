@@ -5,6 +5,8 @@ import type { MapArtLayer } from './projection.js';
 import { errorMessage } from '$lib/util/api-error-message.js';
 
 export const worldMapsLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
+// Survives closing a panel/window or switching away from a map during its save.
+export const gridSettingsSaving = writable<ReadonlySet<string>>(new Set());
 
 // Result of loadMapRegions. `superseded` is distinct from `not-found` so the
 // caller does NOT flip its region-readiness gate on a stale A→B→A load that
