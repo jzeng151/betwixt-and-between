@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { gridSettingsSaving } from './store.js';
+	import { mapGeometrySaving } from './store.js';
 	// Map editor toolbar: switcher, rename, new/delete, image upload, linked-
 	// Location picker + inline new-Location creation, variant chip, duplicate.
 	// Styles come from WorldMap.svelte's :global(.map-*), :global(.btn-icon)
@@ -75,7 +75,7 @@
 	let gridRevision = $derived(JSON.stringify([activeMapId, activeMap?.gridType, activeMap?.gridCellsX, activeMap?.gridCellsY, activeMap?.gridScaleValue, activeMap?.gridScaleUnit]));
 	let viewedGridRevision = '';
 	$effect(() => {
-		if ($gridSettingsSaving.has(activeMapId ?? '')) return;
+		if ($mapGeometrySaving.has(activeMapId ?? '')) return;
 		if (gridRevision !== viewedGridRevision) {
 			viewedGridRevision = gridRevision;
 			if (gridSettingsOpen && gridButton?.parentElement?.contains(document.activeElement)) void closeGridSettings();
@@ -86,7 +86,8 @@
 		activeMapId;
 		gridSettingsOpen = false;
 	});
-	async function closeGridSettings() {
+	async function closeGridSettings(savedMapId?: string) {
+		if (savedMapId && savedMapId !== activeMapId) return;
 		gridSettingsOpen = false;
 		await tick();
 		gridButton?.focus();
@@ -145,14 +146,14 @@
 				accept=".jpg,.jpeg,.png,.webp"
 				onclick={() => onImagePickerOpen?.()}
 				onchange={onImageUpload}
-				disabled={preparingCanvas}
+				disabled={preparingCanvas || $mapGeometrySaving.has(activeMapId ?? '')}
 				hidden
 			/>
 		</label>
 	{/if}
 	{#if activeMap && hasCanvas}
 		<button class="btn-icon grid-toggle" type="button" title="Grid settings" aria-haspopup="dialog" aria-expanded={gridSettingsOpen}
-			disabled={$gridSettingsSaving.has(activeMap.id)}
+			disabled={$mapGeometrySaving.has(activeMap.id)}
 			bind:this={gridButton} onclick={() => (gridSettingsOpen = !gridSettingsOpen)}>Grid</button>
 		{#if gridSettingsOpen}
 			{#key activeMap.id}<MapGridSettings map={activeMap} onClose={closeGridSettings} />{/key}
@@ -208,7 +209,7 @@
 		<button
 			class="btn-icon"
 			onclick={onDuplicate}
-			disabled={duplicating || $gridSettingsSaving.has(activeMap.id)}
+			disabled={duplicating || $mapGeometrySaving.has(activeMap.id)}
 			title="Duplicate this map (clones regions; clears variant range)"
 			aria-label="Duplicate map"
 		>

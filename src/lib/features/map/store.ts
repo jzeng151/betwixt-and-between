@@ -1,5 +1,5 @@
 import { storyFetch } from '$lib/story-fetch.js';
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import type { WorldMap, MapRegion, CreateRegionPayload, UpdateRegionPayload } from './types.js';
 import type { MapArtLayer } from './projection.js';
 import { errorMessage } from '$lib/util/api-error-message.js';
@@ -7,7 +7,7 @@ import { mapEventsStore } from './map-events-store.js';
 
 export const worldMapsLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
 // Survives closing a panel/window or switching away from a map during its save.
-export const gridSettingsSaving = writable<ReadonlySet<string>>(new Set());
+export const mapGeometrySaving = writable<ReadonlySet<string>>(new Set());
 
 // Result of loadMapRegions. `superseded` is distinct from `not-found` so the
 // caller does NOT flip its region-readiness gate on a stale A→B→A load that
@@ -47,10 +47,27 @@ function createWorldMapStore() {
 	let loadSeq = 0;
 	let mapListLoadPromise: Promise<void> | null = null;
 	let mapListGeneration = 0;
-	const upsertMap = (all: WorldMap[], map: WorldMap) =>
-		all.some((item) => item.id === map.id)
-			? all.map((item) => (item.id === map.id ? map : item))
-			: [...all, map];
+	function upsertMap(all: WorldMap[], map: WorldMap): WorldMap[] {
+		const previous = all.find((item) => item.id === map.id);
+		if (previous && (['gridType', 'gridCellsX', 'gridCellsY'] as const).some((key) => previous[key] !== map[key])) {
+			mapEventsStore.clearGridRedo(map.id);
+		}
+		return previous ? all.map((item) => item.id === map.id ? map : item) : [...all, map];
+	}
+
+	async function writeGeometry(id: string, write: () => Promise<WorldMap>): Promise<WorldMap> {
+		if (get(mapGeometrySaving).has(id)) throw new Error('Wait for the current map settings or image to finish saving.');
+		mapGeometrySaving.update((ids) => new Set([...ids, id]));
+		try {
+			return await mapEventsStore.enqueue(write);
+		} finally {
+			mapGeometrySaving.update((ids) => {
+				const remaining = new Set(ids);
+				remaining.delete(id);
+				return remaining;
+			});
+		}
+	}
 
 	function commitMapMutation() {
 		mapListGeneration++;
@@ -162,36 +179,36 @@ function createWorldMapStore() {
 			artLayersJsonb?: MapArtLayer[];
 		}
 	): Promise<WorldMap> {
-		const res = await storyFetch(`/api/maps/${id}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(fields)
-		});
-		if (!res.ok) throw new Error(await errorMessage(res));
-		const updated: WorldMap = await res.json();
-		commitMapMutation();
-		// codex P2: write back ONLY the fields THIS PATCH changed, taken from the
-		// authoritative response; keep every other field from the current store
-		// row. A concurrent PATCH (e.g. a toolbar rename) returns a full row whose
-		// untouched fields (artLayersJsonb) may be a snapshot from before a just-
-		// saved art-layer edit; a wholesale row replace would revert that edit in
-		// the client until reload even though the DB is correct. (Within-field art
-		// PATCHes are already serialized by MapSidebar's artBusy/artPending queue.)
-		const changed = Object.keys(fields) as (keyof typeof fields)[];
-		maps.update((all) =>
-			all.map((m) => {
-				if (m.id !== id) return m;
-				if ((['gridType', 'gridCellsX', 'gridCellsY'] as const).some((key) => key in fields && m[key] !== updated[key])) {
-					mapEventsStore.clearGridRedo(id);
-				}
-				const merged = { ...m };
+		const write = async () => {
+			const res = await storyFetch(`/api/maps/${id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(fields)
+			});
+			if (!res.ok) throw new Error(await errorMessage(res));
+			const updated: WorldMap = await res.json();
+			commitMapMutation();
+			// codex P2: write back ONLY the fields THIS PATCH changed, taken from the
+			// authoritative response; keep every other field from the current store
+			// row. A concurrent PATCH (e.g. a toolbar rename) returns a full row whose
+			// untouched fields (artLayersJsonb) may be a snapshot from before a just-
+			// saved art-layer edit; a wholesale row replace would revert that edit in
+			// the client until reload even though the DB is correct. (Within-field art
+			// PATCHes are already serialized by MapSidebar's artBusy/artPending queue.)
+			const changed = Object.keys(fields) as (keyof typeof fields)[];
+			maps.update((all) => {
+				const current = all.find((m) => m.id === id);
+				if (!current) return all;
+				const merged = { ...current };
 				for (const k of changed) {
 					(merged as Record<string, unknown>)[k] = (updated as Record<string, unknown>)[k];
 				}
-				return merged;
-			})
-		);
-		return updated;
+				return upsertMap(all, merged);
+			});
+			return updated;
+		};
+		return ['gridType', 'gridCellsX', 'gridCellsY', 'gridScaleValue', 'gridScaleUnit', 'width', 'height', 'baseImageUrl'].some((key) => key in fields)
+			? writeGeometry(id, write) : write();
 	}
 
 	async function deleteMap(id: string): Promise<void> {
@@ -263,17 +280,19 @@ function createWorldMapStore() {
 	}
 
 	async function uploadImage(mapId: string, file: File): Promise<WorldMap> {
-		const formData = new FormData();
-		formData.append('file', file);
-		const res = await storyFetch(`/api/maps/${mapId}/upload-image`, {
-			method: 'POST',
-			body: formData
+		return writeGeometry(mapId, async () => {
+			const formData = new FormData();
+			formData.append('file', file);
+			const res = await storyFetch(`/api/maps/${mapId}/upload-image`, {
+				method: 'POST',
+				body: formData
+			});
+			if (!res.ok) throw new Error(await errorMessage(res));
+			const updated: WorldMap = await res.json();
+			commitMapMutation();
+			maps.update((all) => all.some((m) => m.id === mapId) ? upsertMap(all, updated) : all);
+			return updated;
 		});
-		if (!res.ok) throw new Error(await errorMessage(res));
-		const updated: WorldMap = await res.json();
-		commitMapMutation();
-		maps.update((all) => all.map((m) => (m.id === mapId ? updated : m)));
-		return updated;
 	}
 
 	return {

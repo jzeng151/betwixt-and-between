@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { worldMapStore, gridSettingsSaving } from './store.js';
+	import { worldMapStore, mapGeometrySaving } from './store.js';
 	import type { WorldMap } from './types.js';
 
-	let { map, onClose }: { map: WorldMap; onClose: () => void } = $props();
+	let { map, onClose }: { map: WorldMap; onClose: (savedMapId?: string) => void } = $props();
 	// Remounting for each map/opening keeps drafts separate from saved settings.
 	// svelte-ignore state_referenced_locally
 	let draft = $state({
@@ -13,7 +13,7 @@
 		gridScaleValue: map.gridScaleValue,
 		gridScaleUnit: map.gridScaleUnit
 	});
-	let busy = $derived($gridSettingsSaving.has(map.id));
+	let busy = $derived($mapGeometrySaving.has(map.id));
 	let error = $state('');
 	let layoutSelect: HTMLSelectElement;
 	let mounted = true;
@@ -29,21 +29,14 @@
 			return;
 		}
 		const mapId = map.id;
-		gridSettingsSaving.update((ids) => new Set([...ids, mapId]));
 		error = '';
 		try {
 			await worldMapStore.updateMap(mapId, fields);
 		} catch (err) {
 			if (mounted) error = err instanceof Error ? err.message : 'Could not save grid settings. Try again.';
 			return;
-		} finally {
-			gridSettingsSaving.update((ids) => {
-				const remaining = new Set(ids);
-				remaining.delete(mapId);
-				return remaining;
-			});
 		}
-		if (mounted) onClose();
+		onClose(mapId);
 	}
 </script>
 
@@ -75,7 +68,7 @@
 			<p>Changes that would invalidate painted terrain cannot be saved. Show or hide the grid in Layers.</p>
 			{#if error}<p class="error" role="alert">{error}</p>{/if}
 			<div class="actions">
-				<button type="button" onclick={onClose}>Cancel</button>
+				<button type="button" onclick={() => onClose()}>Cancel</button>
 				<button type="submit" class="save">{busy ? 'Saving…' : 'Save grid'}</button>
 			</div>
 		</fieldset>

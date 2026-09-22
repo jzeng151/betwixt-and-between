@@ -189,21 +189,18 @@
 
 		void (async () => {
 			try {
-				for (let i = 0; i < chunks.length; i++) {
-					const isLast = i === chunks.length - 1;
-					await mapEventsStore.create(mapId, {
-						tPosition,
-						kind: 'paint_cells',
-						payloadJsonb: {
-							cells: chunks[i],
-							grid_type: gridType,
-							grid_cells_x: gridCellsX,
-							grid_cells_y: gridCellsY,
-							command_complete: isLast
-						},
-						commandId: localStrokeId
-					});
-				}
+				await mapEventsStore.createCommand(mapId, chunks.map((cells, i) => ({
+					tPosition,
+					kind: 'paint_cells',
+					payloadJsonb: {
+						cells,
+						grid_type: gridType,
+						grid_cells_x: gridCellsX,
+						grid_cells_y: gridCellsY,
+						command_complete: i === chunks.length - 1
+					},
+					commandId: localStrokeId
+				})));
 				onStrokeComplete?.(mapId, totalCells, tPosition);
 			} catch (err) {
 				// A permanent commit failure (400 after the grid changed,

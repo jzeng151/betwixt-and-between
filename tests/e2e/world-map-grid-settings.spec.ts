@@ -112,6 +112,7 @@ test('a save finishing after a map switch cannot close or overwrite the new draf
 		await panel.getByRole('button', { name: 'Save grid' }).click();
 		await saving;
 		await expect(panel.getByLabel('Columns')).toBeDisabled();
+		await expect.soft(win.locator('input[type=file]')).toBeDisabled();
 		await expect.soft(win.getByRole('button', { name: 'Duplicate map', exact: true })).toBeDisabled();
 		await expect.soft(win.getByTitle('Grid settings', { exact: true })).toBeDisabled();
 		await win.locator('.map-switcher').selectOption(second.id);
@@ -259,12 +260,10 @@ test(`a submitted stroke cannot cross a grid ${change} change`, async ({ page, r
 		const box = (await canvas.boundingBox())!;
 		await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.4);
 		await painting;
-		await win.getByTitle('Grid settings', { exact: true }).click();
-		const panel = win.getByRole('dialog', { name: 'Map grid settings' });
-		if (change === 'layout') await panel.getByLabel('Layout').selectOption('hex');
-		else await panel.getByLabel(change === 'columns' ? 'Columns' : 'Rows', { exact: true }).fill('64');
-		await panel.getByRole('button', { name: 'Save grid' }).click();
-		await expect(panel).toHaveCount(0);
+		// An external client can still change geometry while this browser's POST is delayed.
+		const fields = change === 'layout' ? { gridType: 'hex' }
+			: change === 'columns' ? { gridCellsX: 64 } : { gridCellsY: 64 };
+		expect((await request.patch(`/api/maps/${map.id}`, { data: fields })).ok()).toBe(true);
 		const result = page.waitForResponse((r) => r.url().endsWith(`/api/maps/${map.id}/events`) && r.request().method() === 'POST');
 		release();
 		expect((await result).status()).toBe(409);
@@ -273,3 +272,48 @@ test(`a submitted stroke cannot cross a grid ${change} change`, async ({ page, r
 	} finally { release(); }
 });
 }
+
+
+test('a grid save waits for all chunks of a submitted brush stroke', async ({ page, request }) => {
+	const map = await createMap(request, 'Long stroke');
+	await request.patch(`/api/maps/${map.id}`, { data: { gridCellsX: 128, gridCellsY: 64 } });
+	await page.goto('/app');
+	await page.getByTitle('World Map', { exact: true }).click();
+	const win = page.getByRole('dialog', { name: 'World Map', exact: true });
+	await win.getByRole('button', { name: 'Maximize', exact: true }).click();
+	await win.getByTestId('map-tool-selector').getByRole('button', { name: 'Brush', exact: true }).click();
+	await win.getByTestId('brush-palette').locator('.size-button', { hasText: '5' }).click();
+	let release!: () => void;
+	let started!: () => void;
+	const hold = new Promise<void>((resolve) => { release = resolve; });
+	const secondChunk = new Promise<void>((resolve) => { started = resolve; });
+	let chunks = 0;
+	let gridWrites = 0;
+	page.on('request', (req) => { if (req.url().endsWith(`/api/maps/${map.id}`) && req.method() === 'PATCH') gridWrites++; });
+	await page.route(`**/api/maps/${map.id}/events`, async (route) => {
+		if (route.request().method() !== 'POST') return route.continue();
+		if (++chunks === 2) { started(); await hold; }
+		await route.continue();
+	});
+	try {
+		const box = (await win.locator('.pixi-stage canvas').boundingBox())!;
+		await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.5);
+		await page.mouse.down();
+		await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.5, { steps: 80 });
+		await page.mouse.up();
+		await secondChunk;
+		await win.getByTitle('Grid settings', { exact: true }).click();
+		const panel = win.getByRole('dialog', { name: 'Map grid settings' });
+		await panel.getByLabel('Rows', { exact: true }).fill('128');
+		await panel.getByRole('button', { name: 'Save grid' }).click();
+		await expect(panel.getByLabel('Rows', { exact: true })).toBeDisabled();
+		expect(gridWrites).toBe(0);
+		release();
+		await expect(panel).toHaveCount(0);
+		expect(gridWrites).toBe(1);
+		const events = (await (await request.get(`/api/maps/${map.id}/events`)).json()).rows;
+		expect(events.length).toBeGreaterThan(1);
+		expect(events.some((event: any) => event.payloadJsonb.command_complete)).toBe(true);
+		expect(await (await request.get(`/api/maps/${map.id}`)).json()).toMatchObject({ gridCellsY: 128 });
+	} finally { release(); }
+});

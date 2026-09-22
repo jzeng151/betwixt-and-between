@@ -127,6 +127,11 @@ function createMapEventsStore() {
 	function create(mapId: string, input: EventInput): Promise<MapEvent> {
 		return enqueue(() => createImpl(mapId, input));
 	}
+	function createCommand(mapId: string, inputs: EventInput[]): Promise<void> {
+		return enqueue(async () => {
+			for (const input of inputs) await createImpl(mapId, input);
+		});
+	}
 	async function createImpl(mapId: string, input: EventInput): Promise<MapEvent> {
 		// Optimistic insert: render the painted cells immediately instead of
 		// waiting for the POST round-trip. Without this the brush had a visible
@@ -425,6 +430,9 @@ function createMapEventsStore() {
 		prefetch,
 		applyPrefetched,
 		create,
+		createCommand,
+		// ponytail: one client queue keeps geometry writes between whole commands; use per-map queues if cross-map waits matter.
+		enqueue,
 		delete: remove,
 		undo,
 		redo,

@@ -6,7 +6,7 @@
 		worldMapStore,
 		worldMaps,
 		worldMapsLoadStatus,
-		gridSettingsSaving,
+		mapGeometrySaving,
 		mapRegions,
 		type LoadRegionsResult
 	} from '$lib/features/map/store.js';
@@ -1311,7 +1311,7 @@
 	// open. Also feeds the authoringOpen gate (Codex PR #72 #857).
 	let placementAuthoringOpen = $state(false);
 	let gridSettingsOpen = $state(false);
-	let gridEditing = $derived(gridSettingsOpen || $gridSettingsSaving.has(activeMapId ?? ''));
+	let gridEditing = $derived(gridSettingsOpen || $mapGeometrySaving.has(activeMapId ?? ''));
 
 	// True while ANY authoring form/flow OR canvas interaction is open. Cycling must
 	// stay suspended for the whole flow — a playhead advance (or a Play that unpins)
@@ -2172,7 +2172,7 @@
 	async function handleImageUpload(e: Event) {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
-		if (!file || !activeMapId || preparingCanvas) return;
+		if (!file || !activeMapId || preparingCanvas || $mapGeometrySaving.has(activeMapId)) return;
 		const mapId = activeMapId;
 		preparingCanvas = true;
 		uploadError = null;
@@ -2367,7 +2367,7 @@
 	}
 
 	async function handleDuplicate() {
-		if (!activeMapId || duplicating || $gridSettingsSaving.has(activeMapId)) return;
+		if (!activeMapId || duplicating || $mapGeometrySaving.has(activeMapId)) return;
 		// Duplicating navigates to the clone for editing — pin so cycling doesn't
 		// switch away from it (Codex PR #72).
 		pinView();
