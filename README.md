@@ -10,7 +10,7 @@ Click a character in the Story Graph and their wiki page opens. Click a location
 
 Entity body fields accept Markdown in edit mode and render it in view mode. Code spans and fenced blocks keep their contents literal. Raw HTML is displayed as text. Only absolute HTTP, HTTPS, and mailto links are clickable; Markdown images appear as links rather than loading remote images. The standalone Notes editor remains plain text.
 
-Link to entries with `[[Name]]`, or set a display label with `[[Name|the captain]]`. **Copy Wiki link** on an entry copies `[[#id]]`, which identifies that entry even after a rename or when names are duplicated. ID links can also use labels: `[[#id|the captain]]`. Links resolve within the current story. In Markdown tables, escape the separator as `\|`.
+Link to entries with `[[Name]]`, or set a display label with `[[Name|the captain]]`. **Copy Wiki link** on an entry copies `[[#id]]`, which identifies that entry even after a rename or when names are duplicated. ID links can also use labels: `[[#id|the captain]]`. Links resolve within the current story. Exact full names take precedence over name aliases (for example, an entry named `North|South`); use an ID link to disambiguate. In Markdown tables, escape the separator as `\|`.
 
 | Feature | What it does |
 |---|---|

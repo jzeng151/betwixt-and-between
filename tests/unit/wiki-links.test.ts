@@ -119,4 +119,14 @@ describe('parseWikiLinks', () => {
 		expect(parseWikiLinks('[[#c1]]', [{ ...POOL[1], name: '#c1' }])[0]).toMatchObject({ entity: null });
 	});
 
+	it('preserves full-name links containing pipes while allowing ID aliases to disambiguate', () => {
+		const pool = [
+			{ id: 'north', name: 'North', type: 'Location' },
+			{ id: 'border', name: 'North|South', type: 'Location' }
+		];
+		expect(parseWikiLinks('[[ North|South ]]', pool)[0]).toMatchObject({ name: 'North|South', entity: pool[1] });
+		expect(parseWikiLinks('[[#north|South]]', pool)[0]).toMatchObject({ name: 'South', entity: pool[0] });
+		expect(parseWikiLinks('[[#border|the border]]', pool)[0]).toMatchObject({ name: 'the border', entity: pool[1] });
+	});
+
 });

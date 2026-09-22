@@ -30,7 +30,11 @@ export function createWikiLinkResolver(entities: readonly WikiLinkEntity[]) {
 	const byId = new Map(entities.map((e) => [e.id, e]));
 	return (raw: string): Extract<WikiLinkSegment, { kind: 'link' }> => {
 		const contents = raw.slice(2, -2).replace(/\\\|/g, '|');
-		const separator = contents.indexOf('|');
+		const fullName = contents.trim();
+		// Preserve existing links to names containing pipes. IDs keep explicit targeting.
+		const separator = !fullName.startsWith('#') && byName.has(fullName.toLowerCase())
+			? -1
+			: contents.indexOf('|');
 		const target = (separator < 0 ? contents : contents.slice(0, separator)).trim();
 		const label = separator < 0 ? '' : contents.slice(separator + 1).trim();
 		const isId = target.startsWith('#');
