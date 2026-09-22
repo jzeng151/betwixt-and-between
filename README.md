@@ -20,7 +20,7 @@ Use **Grid** in the World Map toolbar to set square or hex layout, cell counts, 
 | **Wiki** | Markdown bodies with headings, emphasis, lists, tables, quotes, and code. `[[Entity]]` mentions remain clickable in view mode. |
 | **Timeline** | Acts, scenes, and events on a scrollable timeline. Expand rows to see nested detail. |
 | **World Map** | Paint terrain freehand, stack art on layers (blend mode + opacity), scatter object stamps, and let terrain change as the story plays. Polygon regions and placed characters/events sit on a zoomable canvas. |
-| **Window manager** | Every entity opens in its own floating window. Multiple windows of the same type stay open simultaneously. Taskbar groups them. |
+| **Window manager** | Every entity opens in its own floating window. Drag a titlebar to an edge or corner to snap into halves or quarters, or use Arrange window in the titlebar. Drag away to restore the previous size. Taskbar groups open windows. |
 | **Stories** | Settings → Stories creates, renames, and switches isolated stories. Other tabs keep their current story; each story has its own appearance profiles and saved presets. |
 | **Story export** | Settings → Export downloads all this account's saved stories and preferences as JSON. |
 

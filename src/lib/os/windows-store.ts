@@ -5,6 +5,7 @@ import { APP_IDS, type AppId, persistsPosition } from './app-ids.js';
 import { preferences } from './preferences-store.js';
 import { applyPreferencePatch, preferencesOwnershipResolved } from './preferences-sync.js';
 import { clampToViewport } from './context-menu-clamp.js';
+import type { WindowBounds } from './window-snap.js';
 
 // Re-export so existing `import type { AppId } from '$lib/os/windows-store'`
 // call sites (Taskbar, app-catalog, WindowManager) keep working.
@@ -29,6 +30,7 @@ type WindowState = {
 	minimized: boolean;
 	maximized: boolean;
 	zIndex: number;
+	restoreBounds?: WindowBounds | null;
 	// FocusedGraph window state. Only set on appId === 'focused-graph'.
 	// focalSet writes MUST reassign (`focalSet = [...focalSet, id]`),
 	// never push/Object.assign, to keep Svelte 5 $derived invalidation
@@ -151,6 +153,12 @@ function readSessionWindow(value: unknown): WindowState | null {
 		minimized: w.minimized, maximized: w.maximized, zIndex: w.zIndex,
 		alwaysOnTop: w.alwaysOnTop === true,
 		geomAdjusted: true,
+		restoreBounds: w.restoreBounds &&
+			[w.restoreBounds.x, w.restoreBounds.y, w.restoreBounds.width, w.restoreBounds.height]
+				.every((n) => typeof n === 'number' && Number.isFinite(n)) &&
+			w.restoreBounds.width > 0 && w.restoreBounds.height > 0
+			? clampOpenGeom(w.restoreBounds.x, w.restoreBounds.y, w.restoreBounds.width, w.restoreBounds.height)
+			: null,
 		...(w.appId === 'focused-graph' ? {
 			focalSet: Array.isArray(w.focalSet) ? [...new Set(w.focalSet.filter(validId))] : [],
 			viewMode: w.viewMode === 'shared' || w.viewMode === 'reachable' ? w.viewMode : 'their_worlds' as const,
@@ -360,6 +368,10 @@ function createWindowStore() {
 		patchWindow(id, { width, height, geomAdjusted: true });
 	}
 
+	function setRestoreBounds(id: string, restoreBounds: WindowBounds | null) {
+		patchWindow(id, { restoreBounds });
+	}
+
 	function maximize(id: string) {
 		zCounter++;
 		const z = zCounter;
@@ -473,6 +485,7 @@ function createWindowStore() {
 		maximize,
 		move,
 		resize,
+		setRestoreBounds,
 		togglePin,
 		setEntityId,
 		setAsDefault,

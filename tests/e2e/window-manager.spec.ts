@@ -62,7 +62,8 @@ test.describe('Window Manager', () => {
 		const tbBox = await titlebar.boundingBox();
 		expect(tbBox).not.toBeNull();
 
-		const startX = tbBox!.x + tbBox!.width / 2;
+		// Drag the title text, away from the titlebar controls.
+		const startX = tbBox!.x + 40;
 		const startY = tbBox!.y + tbBox!.height / 2;
 		const deltaX = 150;
 		const deltaY = 80;
