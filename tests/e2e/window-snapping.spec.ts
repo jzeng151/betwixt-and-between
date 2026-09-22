@@ -64,6 +64,10 @@ test('titlebar arrangements restore, maximize, minimize, and survive reload', as
 	await expect(arrange).toBeFocused();
 	await arrange.selectOption('right');
 	const snapped = await win.boundingBox();
+	await win.locator('.resize-br').click();
+	await win.locator('.titlebar').press('Alt+ArrowRight');
+	await win.locator('.titlebar').press('Shift+Alt+ArrowRight');
+	await expect(arrange.locator('option[value="restore"]')).toHaveJSProperty('disabled', false);
 	await win.getByRole('button', { name: 'Maximize', exact: true }).click();
 	await expect(arrange).toBeDisabled();
 	await win.getByRole('button', { name: 'Restore', exact: true }).click();

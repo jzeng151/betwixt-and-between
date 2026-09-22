@@ -157,7 +157,6 @@
     e.preventDefault();
     windowStore.focus(id);
     const taskbarHeight = readTaskbarHeight();
-    windowStore.setRestoreBounds(id, null);
     if (e.shiftKey) {
       const maxWidth = Math.max(MIN_W, window.innerWidth - x);
       const maxHeight = Math.max(MIN_H, window.innerHeight - y - taskbarHeight);
@@ -167,6 +166,7 @@
       const nextHeight = e.key === 'ArrowUp' || e.key === 'ArrowDown'
         ? Math.min(maxHeight, Math.max(MIN_H, height + direction * delta))
         : height;
+      if (nextWidth !== width || nextHeight !== height) windowStore.setRestoreBounds(id, null);
       windowStore.resize(id, nextWidth, nextHeight);
     } else {
       const nextX = e.key === 'ArrowLeft' || e.key === 'ArrowRight'
@@ -175,13 +175,13 @@
       const nextY = e.key === 'ArrowUp' || e.key === 'ArrowDown'
 		? Math.max(0, Math.min(window.innerHeight - height - taskbarHeight, y + direction * delta))
         : y;
+      if (nextX !== x || nextY !== y) windowStore.setRestoreBounds(id, null);
       windowStore.move(id, nextX, nextY);
     }
   }
 
   function onResizeMousedown(e: MouseEvent, dir: ResizeDir) {
     if (maximized || e.button !== 0) return;
-    windowStore.setRestoreBounds(id, null);
     resizeDir = dir;
     resizeStartX = e.clientX;
     resizeStartY = e.clientY;
@@ -234,6 +234,7 @@
         nh = Math.max(MIN_H, resizeStartH + dy);
       }
 
+      if (Math.max(0, nx) !== x || nw !== width || nh !== height) windowStore.setRestoreBounds(id, null);
       if (nx !== x || nw !== width) {
         windowStore.move(id, Math.max(0, nx), y);
       }
