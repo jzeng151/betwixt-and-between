@@ -4,7 +4,7 @@
 -->
 
 <script lang="ts">
-	import { parseWikiLinks } from '$lib/wiki-links.js';
+	import { createWikiLinkResolver, parseWikiLinks } from '$lib/wiki-links.js';
 	import { entities } from '$lib/stores/entities.js';
 	import { markdown, markdownHref } from '$lib/markdown.js';
 	import { decodeHTMLStrict } from 'entities';
@@ -19,7 +19,7 @@
 	}
 	const { body, renderMarkdown = false, placeholder = '—' }: Props = $props();
 
-	const byName = $derived(new Map($entities.map((e) => [e.name.toLowerCase(), e])));
+	const resolve = $derived(createWikiLinkResolver($entities));
 	const tokens = $derived(renderMarkdown ? markdown.lexer(body ?? '') : []);
 	const segments = $derived(renderMarkdown ? [] : parseWikiLinks(body ?? '', $entities));
 </script>
@@ -27,10 +27,10 @@
 {#snippet renderTokens(items: Token[], links = true)}
 	{#each items as token}
 		{#if token.type === 'wikilink'}
-			{@const entity = byName.get(token.text.toLowerCase())}
-			{#if entity && links}<EntityLink id={entity.id} name={token.text} />
-			{:else if entity}{token.raw}
-			{:else}<span class="wiki-link-unknown" title="No entity named '{token.text}'">{token.raw}</span>{/if}
+			{@const link = resolve(token.raw)}
+			{#if link.entity && links}<EntityLink id={link.entity.id} name={link.name} />
+			{:else if link.entity}{token.raw}
+			{:else}<span class="wiki-link-unknown" title="No entity matching '{link.target}'">{token.raw}</span>{/if}
 		{:else if token.type === 'heading'}
 			<svelte:element this={`h${Math.min(token.depth + 1, 6)}`}>{@render renderTokens(token.tokens ?? [], links)}</svelte:element>
 		{:else if token.type === 'paragraph'}
@@ -76,7 +76,7 @@
 		{#each segments as seg}
 			{#if seg.kind === 'text'}<span>{seg.text}</span>
 			{:else if seg.entity}<EntityLink id={seg.entity.id} name={seg.name} />
-			{:else}<span class="wiki-link-unknown" title="No entity named '{seg.name}'">{seg.raw}</span>{/if}
+			{:else}<span class="wiki-link-unknown" title="No entity matching '{seg.target}'">{seg.raw}</span>{/if}
 		{/each}
 	</span>
 {/if}

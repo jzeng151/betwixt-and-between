@@ -92,4 +92,31 @@ describe('parseWikiLinks', () => {
 			{ kind: 'text', text: '[[Aragorn' }
 		]);
 	});
+	it.each([
+		['[[ aragorn | the king ]]', 'the king', 'c1'],
+		['[[#c1]]', 'Aragorn', 'c1'],
+		['[[#c1\\|the king]]', 'the king', 'c1'],
+		['[[ #c1 | Strider ]]', 'Strider', 'c1'],
+		['[[Aragorn| ]]', 'Aragorn', 'c1'],
+		['[[#c1|]]', 'Aragorn', 'c1'],
+		['[[Aragorn|king|ranger]]', 'king|ranger', 'c1'],
+		['[[Missing|Aragorn]]', 'Aragorn', undefined],
+		['[[#missing|Aragorn]]', 'Aragorn', undefined],
+		['[[|Aragorn]]', 'Aragorn', undefined]
+	])('resolves target and display label separately: %s', (raw, name, id) => {
+		const [link] = parseWikiLinks(raw, POOL);
+		expect(link.kind).toBe('link');
+		if (link.kind !== 'link') throw new Error();
+		expect(link.raw).toBe(raw);
+		expect(link.name).toBe(name);
+		expect(link.entity?.id).toBe(id);
+	});
+
+	it('uses IDs to disambiguate names and follows renames only within the supplied pool', () => {
+		const duplicates = [POOL[0], { ...POOL[1], name: 'Aragorn' }];
+		expect(parseWikiLinks('[[#c1]]', duplicates)[0]).toMatchObject({ entity: { id: 'c1' } });
+		expect(parseWikiLinks('[[#c1]]', [{ ...POOL[0], name: 'Strider' }])[0]).toMatchObject({ name: 'Strider', entity: { id: 'c1' } });
+		expect(parseWikiLinks('[[#c1]]', [{ ...POOL[1], name: '#c1' }])[0]).toMatchObject({ entity: null });
+	});
+
 });

@@ -322,6 +322,55 @@ test.describe('Wiki — body + in-window navigation (slice 7)', () => {
 		expect(allWindowsAfter).toBe(allWindowsBefore);
 	});
 
+	test('copied ID links survive renames, support labels, and navigate to the intended duplicate', async ({ page, request }) => {
+		const target = await (await request.post('/api/entities', { data: { type: 'Character', name: 'Boromir' } })).json();
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Boromir' } });
+		await request.post('/api/entities', { data: { type: 'Character', name: 'Aragorn' } });
+		await page.goto('/app');
+		await page.click('button[title="Wiki"]');
+		const win = page.locator('.window[aria-label="Wiki"]');
+		await win.locator('.entry', { hasText: 'Boromir' }).first().click();
+		// Select the intended duplicate through a seeded ID link, independent of sidebar order.
+		const source = (await (await request.get('/api/entities')).json()).find((e: { name: string }) => e.name === 'Aragorn');
+		await request.patch(`/api/entities/${source.id}`, { data: { data: { body: `[[#${target.id}|the captain]]` } } });
+		await page.reload();
+		await win.locator('.entry', { hasText: 'Aragorn' }).click();
+		const windowCount = await page.locator('.window').count();
+		await win.getByRole('button', { name: 'the captain', exact: true }).click();
+		await expect(win.locator('.entity-detail-host')).toHaveAttribute('data-entity-id', target.id);
+		expect(await page.locator('.window').count()).toBe(windowCount);
+
+		await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+			writeText: async () => { throw new Error('Clipboard denied'); }
+		} }));
+		await win.getByRole('button', { name: 'Copy Wiki link' }).click();
+		const fallback = win.getByRole('textbox', { name: 'Wiki link', exact: true });
+		await expect(fallback).toHaveValue(`[[#${target.id}]]`);
+		await fallback.click();
+		expect(await fallback.evaluate((el: HTMLInputElement) => el.value.slice(el.selectionStart ?? 0, el.selectionEnd ?? 0))).toBe(`[[#${target.id}]]`);
+
+		await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+			writeText: async (text: string) => { sessionStorage.setItem('copied-wiki-link', text); }
+		} }));
+		await win.getByRole('button', { name: 'Copy Wiki link' }).click();
+		await expect(win.getByRole('status')).toHaveText('Wiki link copied.');
+		const copied = await page.evaluate(() => sessionStorage.getItem('copied-wiki-link'));
+		expect(copied).toBe(`[[#${target.id}]]`);
+		await win.locator('.entry', { hasText: 'Aragorn' }).click();
+		await expect(win.getByRole('status')).toBeEmpty();
+		await win.locator('.mode-toggle').click();
+		const body = win.locator('.entity-detail-body textarea');
+		await body.fill(`${copied} [[#${target.id}|the captain]] [[Boromir|my companion]]`);
+		await expect(win.locator('.preview-chip')).toHaveText(['Boromir', 'the captain', 'my companion']);
+		await body.blur();
+		await win.locator('.mode-toggle').click();
+		await request.patch(`/api/entities/${target.id}`, { data: { name: 'Captain Boromir' } });
+		await page.reload();
+		await win.locator('.entity-detail-body').getByRole('button', { name: 'Captain Boromir', exact: true }).click();
+		await expect(win.locator('.entity-detail-title-text')).toHaveText('Captain Boromir');
+		await expect(win.locator('.entity-detail-host')).toHaveAttribute('data-entity-id', target.id);
+	});
+
 	test('preview pane appears in edit mode when Body draft contains a resolved [[Name]]', async ({
 		page,
 		request

@@ -9,7 +9,7 @@ export const markdown = new Marked({
 		level: 'inline',
 		start: (source) => source.indexOf('[['),
 		tokenizer(source) {
-			const match = /^\[\[([^\]\n]+?)\]\]/.exec(source);
+			const match = /^\[\[([^\]\r\n]+?)\]\]/.exec(source);
 			if (match) return { type: 'wikilink', raw: match[0], text: match[1].trim() };
 		}
 	}]
