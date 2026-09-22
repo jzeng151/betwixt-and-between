@@ -62,6 +62,8 @@ function createMapEventsStore() {
 	// currently-loaded map.
 	const redoStore = writable<MapEvent[]>([]);
 	let redoStackForMapId: string | null = null;
+	// Invalidates grid history still in flight when the map geometry changes.
+	let gridRedoGeneration = 0;
 
 	// Serialize undo/redo so spamming them can't fire concurrent POSTs. The
 	// server's undo pops the latest LIVE event; N in-flight optimistic undos
@@ -208,6 +210,7 @@ function createMapEventsStore() {
 		return enqueue(() => undoImpl(mapId));
 	}
 	async function undoImpl(mapId: string): Promise<MapEvent | null> {
+		const gridGeneration = gridRedoGeneration;
 		// Optimistic undo: predict the command group the server will pop — the
 		// latest live event plus any events sharing its commandId — and remove
 		// it from the store NOW so the terrain updates without waiting for the
@@ -289,11 +292,12 @@ function createMapEventsStore() {
 		// redo (replaying the whole stroke with a fresh command_id) lands
 		// with the brush UX in PR C; for now redo pops one event at a
 		// time and the user sees the chunks come back individually.
+		const redoable = undone.filter((row) => row.kind !== 'paint_cells' || gridGeneration === gridRedoGeneration);
 		if (redoStackForMapId === mapId) {
-			redoStore.update((stack) => [...stack, ...undone]);
+			redoStore.update((stack) => [...stack, ...redoable]);
 		} else {
 			redoStackForMapId = mapId;
-			redoStore.set([...undone]);
+			redoStore.set(redoable);
 		}
 		return latest;
 	}
@@ -305,6 +309,7 @@ function createMapEventsStore() {
 		return enqueue(() => redoImpl(mapId));
 	}
 	async function redoImpl(mapId: string): Promise<MapEvent | null> {
+		const gridGeneration = gridRedoGeneration;
 		if (redoStackForMapId !== mapId) return null;
 		let popped: MapEvent | undefined;
 		redoStore.update((stack) => {
@@ -330,7 +335,9 @@ function createMapEventsStore() {
 			if (lastLoadedMapId === mapId) {
 				store.update((rows) => rows.filter((r) => r.id !== tempId));
 			}
-			redoStore.update((stack) => [...stack, poppedRow]);
+			if (poppedRow.kind !== 'paint_cells' || gridGeneration === gridRedoGeneration) {
+				redoStore.update((stack) => [...stack, poppedRow]);
+			}
 		};
 
 		// `create` would clear the redo stack on success — we just popped
@@ -407,6 +414,7 @@ function createMapEventsStore() {
 	}
 	function clearGridRedo(mapId: string): void {
 		if (redoStackForMapId === mapId) {
+			gridRedoGeneration++;
 			redoStore.update((rows) => rows.filter((row) => row.kind !== 'paint_cells'));
 		}
 	}
