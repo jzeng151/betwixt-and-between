@@ -5,6 +5,7 @@
 	import { drainPendingCommit } from '$lib/util/pending-commit.js';
 	import { flushPendingWrites, trackWrite, trackCreation, writeRetryKey } from '$lib/stores/pending-writes.js';
 	import { notesStore } from '$lib/stores/notes.js';
+	import { flushBoards } from '$lib/features/whiteboard/store.js';
 	import { flushPendingPreferences } from '$lib/os/preferences-sync.js';
 
 	let stories = $state<Array<{ id: string; name: string }>>([]);
@@ -56,7 +57,7 @@
 		progress.showModal();
 		try {
 			await drainPendingCommit(true);
-			const results = await Promise.allSettled([notesStore.flushDrafts(), flushPendingPreferences()]);
+			const results = await Promise.allSettled([notesStore.flushDrafts(), flushPendingPreferences(), flushBoards()]);
 			for (const result of results) {
 				if (result.status === 'rejected') throw result.reason;
 				if (result.value === false) throw new Error('Save or retry your notes before switching stories.');

@@ -826,3 +826,14 @@ export const appearancePresets = pgTable(
 	},
 	(table) => [primaryKey({ columns: [table.storyId, table.presetId] })]
 );
+
+// Freeform documents are separate from narrative entities and graph layouts.
+export const whiteboards = pgTable('whiteboards', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	storyId: uuid('story_id').notNull().references(() => stories.id, { onDelete: 'cascade' }),
+	name: text('name').notNull(),
+	revision: integer('revision').notNull().default(0),
+	document: jsonb('document').notNull().$type<import('$lib/features/whiteboard/model.js').BoardDocument>().default(sql`'{"version":1,"elements":[],"viewport":{"x":0,"y":0,"zoom":1}}'::jsonb`),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+}, (table) => [index('whiteboards_story_id_idx').on(table.storyId), check('whiteboards_name_check', sql`char_length(btrim(${table.name})) BETWEEN 1 AND 100`), check('whiteboards_revision_check', sql`${table.revision} >= 0`)]);
