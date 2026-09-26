@@ -15,6 +15,7 @@
   let selectedId = $state<string | null>(null);
   let notesLoading = $state(false);
   let notesError = $state(false);
+  const notesLoaded = notesStore.entriesLoaded;
   const matches = $derived(open ? findCommands($entitySnapshotReady ? $entities : [], query,
     $noteEntries.map((note) => ({ ...note, name: notesStore.drafts.get(note.id)?.name ?? note.name }))) : []);
   const results = $derived(matches.slice(0, 50));
@@ -23,6 +24,10 @@
   $effect(() => {
     if (!open) return;
     return focusTrap(dialog, { onEscape: () => dialog.close() }).destroy;
+  });
+
+  $effect(() => {
+    if (open && !$notesLoaded && !notesLoading && !notesError) void loadNotes();
   });
 
   function shortcut(event: KeyboardEvent) {
@@ -42,7 +47,7 @@
   async function loadNotes() {
     if (notesLoading) return;
     notesError = false;
-    if (notesStore.entriesLoaded) return;
+    if ($notesLoaded) return;
     notesLoading = true;
     try { await notesStore.loadEntries(); }
     catch { notesError = true; }

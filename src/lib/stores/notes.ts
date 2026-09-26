@@ -28,10 +28,10 @@ function createNotesStore() {
 	const entryVersions = new Map<string, number>();
 	let version = 0;
 	let entryLoadRequest = 0;
-	let entriesLoaded = false;
+	const entriesLoaded = writable(false);
 
 	function invalidateEntries() {
-		entriesLoaded = false;
+		entriesLoaded.set(false);
 		++entryLoadRequest;
 	}
 
@@ -134,7 +134,7 @@ function createNotesStore() {
 			});
 		} else {
 			entries.set(mapped);
-			entriesLoaded = true;
+			entriesLoaded.set(true);
 		}
 	}
 
@@ -242,7 +242,7 @@ function createNotesStore() {
 	}
 
 	return {
-		get entriesLoaded() { return entriesLoaded; },
+		entriesLoaded,
 		invalidateEntries,
 		folders,
 		entries,

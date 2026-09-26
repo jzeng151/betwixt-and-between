@@ -87,7 +87,7 @@
     if (selectedEntryId) notesStore.editDraft(selectedEntryId, { name: editName, body: editBody });
   }
 
-  async function selectFolder(id: string): Promise<boolean> {
+  async function selectFolder(id: string | null): Promise<boolean> {
     const request = ++loadRequest;
     if (selectedEntryId && !await notesStore.flushDrafts(selectedEntryId)) return false;
     if (request !== loadRequest) return false;
@@ -96,6 +96,7 @@
     editName = '';
     editBody = '';
     renamingFolderId = null;
+    if (!id) return true;
     try {
       await notesStore.loadEntries(id);
       if (request !== loadRequest) return false;
@@ -259,7 +260,7 @@
       {:else}Saved{/if}
     </div>
     {#if viewMode === 'editor' && selectedEntry}
-      <button class="back-to-notes" onclick={() => selectedFolderId && selectFolder(selectedFolderId)}>Back to notes</button>
+      <button class="back-to-notes" onclick={() => selectFolder(selectedFolderId)}>Back to notes</button>
       <input
         class="entry-title"
         type="text"
