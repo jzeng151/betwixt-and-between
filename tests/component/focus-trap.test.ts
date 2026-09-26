@@ -6,9 +6,12 @@ describe('focusTrap', () => {
 		const trigger = document.body.appendChild(document.createElement('button'));
 		trigger.focus();
 		const dialog = document.body.appendChild(document.createElement('div'));
+		dialog.tabIndex = -1;
 		const first = dialog.appendChild(document.createElement('button'));
 		const last = dialog.appendChild(document.createElement('button'));
-		for (const element of [dialog, first, last]) {
+		const pointerOnly = dialog.appendChild(document.createElement('button'));
+		pointerOnly.tabIndex = -1;
+		for (const element of [dialog, first, last, pointerOnly]) {
 			element.getClientRects = () => [{ width: 1, height: 1 }] as unknown as DOMRectList;
 		}
 		const onEscape = vi.fn();

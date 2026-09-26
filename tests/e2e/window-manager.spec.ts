@@ -171,7 +171,7 @@ test.describe('Window Manager', () => {
 	test('only consumes shortcuts when a window action is available', async ({ page }) => {
 		for (const app of [null, 'Wiki']) {
 			if (app) await page.getByTitle(app, { exact: true }).click();
-			for (const key of app ? ['k', 'Tab'] : ['k', 'w', 'Tab']) {
+			for (const key of app ? ['f', 'Tab'] : ['f', 'w', 'Tab']) {
 				const prevented = await page.evaluate((key) => {
 					const event = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true });
 					window.dispatchEvent(event);

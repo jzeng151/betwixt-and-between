@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CommandPalette from './CommandPalette.svelte';
   import { windowStore, type AppId } from '$lib/os/windows-store.js';
   import { APP_CATALOG, DOCK_ORDER } from '$lib/os/app-catalog.js';
   import { entities } from '$lib/stores/entities.js';
@@ -132,6 +133,7 @@
 
 <div class="taskbar">
   <div class="dock">
+    <CommandPalette />
     {#each grouped() as group}
       <!-- Wrap is the hover-zone: covers icon AND popover so cursor travel
            between them doesn't dismiss. Both onmouseenter and onmouseleave

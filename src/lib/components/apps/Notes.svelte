@@ -2,6 +2,9 @@
   import { notesStore, noteFolders, noteEntries, type NoteEntry } from '$lib/stores/notes.js';
   import { onMount, onDestroy } from 'svelte';
   import ContextMenu from '$lib/os/ContextMenu.svelte';
+  import { windowStore } from '$lib/os/windows-store.js';
+
+  let { entryId = null }: { entryId?: string | null } = $props();
 
   let selectedFolderId = $state<string | null>(null);
   let selectedEntryId = $state<string | null>(null);
@@ -32,6 +35,15 @@
   const selectedEntry = $derived(
     selectedEntryId ? $noteEntries.find((e: NoteEntry) => e.id === selectedEntryId) ?? null : null
   );
+
+  $effect(() => {
+    if (!entryId) return;
+    const entry = $noteEntries.find((note) => note.id === entryId);
+    if (!entry) return;
+    selectedFolderId = entry.folderId;
+    selectEntry(entry.id);
+    windowStore.setEntityId('notes', null);
+  });
 
   const selectedFolderName = $derived(
     selectedFolderId ? $noteFolders.find((f) => f.id === selectedFolderId)?.name ?? '' : ''
@@ -75,7 +87,7 @@
     if (selectedEntryId) notesStore.editDraft(selectedEntryId, { name: editName, body: editBody });
   }
 
-  async function selectFolder(id: string): Promise<boolean> {
+  async function selectFolder(id: string | null): Promise<boolean> {
     const request = ++loadRequest;
     if (selectedEntryId && !await notesStore.flushDrafts(selectedEntryId)) return false;
     if (request !== loadRequest) return false;
@@ -84,6 +96,7 @@
     editName = '';
     editBody = '';
     renamingFolderId = null;
+    if (!id) return true;
     try {
       await notesStore.loadEntries(id);
       if (request !== loadRequest) return false;
@@ -247,7 +260,7 @@
       {:else}Saved{/if}
     </div>
     {#if viewMode === 'editor' && selectedEntry}
-      <button class="back-to-notes" onclick={() => selectedFolderId && selectFolder(selectedFolderId)}>Back to notes</button>
+      <button class="back-to-notes" onclick={() => selectFolder(selectedFolderId)}>Back to notes</button>
       <input
         class="entry-title"
         type="text"

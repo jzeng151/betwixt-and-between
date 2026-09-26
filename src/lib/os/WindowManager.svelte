@@ -114,7 +114,7 @@
       {:else if win.appId === 'settings'}
         <App />
       {:else if win.appId === 'notes'}
-        <App />
+        <App entryId={win.entityId} />
       {:else if win.appId === 'story-player'}
         <App winId={win.id} pinned={win.alwaysOnTop ?? false} />
       {/if}
