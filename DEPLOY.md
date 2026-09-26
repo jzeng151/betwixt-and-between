@@ -232,3 +232,7 @@ Cloudflare retains previous Worker versions. To revert: dashboard → your Worke
 ### Story ownership migration 0029
 
 Apply migration 0029 before deploying the story-switching Worker. It creates a first story for each existing account and retargets narrative and appearance ownership foreign keys. Physical `user_id` columns stay in place for the previous Worker; application fields now call them `storyId`. A Worker rollback can still serve the original story, while additional stories remain stored until the newer Worker is restored. Test the migration on a Neon dev branch first.
+
+### Whiteboard migration 0030
+
+Apply `0030_whiteboards.sql` through `npm run db:migrate` before deploying the whiteboard Worker. Test it on a Neon dev branch first, then apply it to production before merging the feature PR. It adds only the story-owned whiteboards table, its index, and its timestamp trigger. The previous Worker remains compatible and ignores the table. No new secrets or R2 bindings are required.

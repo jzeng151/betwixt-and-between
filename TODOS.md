@@ -164,16 +164,7 @@ Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qo
 
 ### Freeform whiteboard ("white board")
 
-- [ ] **White board — freeform Excalidraw-like infinite-canvas brainstorming surface.** A pannable/zoomable
-  blank canvas (dotted/grid background) for loose ideation that sits *alongside* the structured
-  data layers, not inside them. Place freeform elements — sticky notes, text, pen/ink strokes,
-  shapes, images — and, crucially, drop in *live* references to existing entities (a Character,
-  a map, a graph) that stay interactive (click-through to open). For grouping, a "frame/section"
-  that moves its contents as one unit. This is the loose, pre-structure scratch space the app
-  currently lacks: today's only freeform-ish surface is graph node-position persistence
-  (`window_canvas_state` / `canvas_positions`), which is layout state for the relationship graph,
-  not a blank board. Scope a proper design pass (element model, persistence shape, whether entity
-  embeds are read-only chips vs. live mini-editors) before scheduling.
+- [x] **Whiteboard canvas.** Multiple named boards per story with a dotted pan/zoom canvas, sticky notes, text, rectangles, ellipses, arrows, pen strokes, images, and live entity/map/focused-graph cards. Frames move their members together. Autosave uses revision checks; failed drafts can be retried or downloaded. See ADR 0014 for the document model and limits.
 
 ### Search
 

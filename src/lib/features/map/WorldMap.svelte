@@ -97,7 +97,7 @@
 	// specific `world-map-<entityId>`), so the keyboard-shortcut handler scopes
 	// to THIS window's id, not just appId — otherwise one Ctrl+Z would undo in
 	// every open map instance.
-	let { entityId = $bindable<string | undefined>(undefined), windowId = undefined }: { entityId?: string; windowId?: string } = $props();
+	let { entityId = $bindable<string | undefined>(undefined), windowId = undefined, mapTarget = undefined }: { entityId?: string; windowId?: string; mapTarget?: { id: string } } = $props();
 
 	// Slice 4 PR-F (DS4) — the unified tool selector's active tool is the single
 	// source of truth for which authoring mode the canvas is in. brush/place/move
@@ -1792,10 +1792,17 @@
 	// would force the map back to entityId's variant every time the user
 	// switched maps via the dropdown or drilled into a sublocation.
 	let lastAppliedEntityId: string | undefined = undefined;
+	let lastMapTarget: { id: string } | undefined;
 	$effect(() => {
 		if (initialSelectionDone || $worldMaps.length === 0) return;
 		initialSelectionDone = true;
 		lastAppliedEntityId = entityId;
+		if (mapTarget && $worldMaps.some(m => m.id === mapTarget.id)) {
+			lastMapTarget = mapTarget;
+			pinView();
+			void switchMap(mapTarget.id);
+			return;
+		}
 		if (entityId) {
 			const variant = resolveActiveVariant($worldMaps, entityId, $playhead);
 			if (variant) {
@@ -1814,6 +1821,13 @@
 			}
 		}
 		switchMap($worldMaps[0].id);
+	});
+
+	$effect(() => {
+		if (!initialSelectionDone || !mapTarget || mapTarget === lastMapTarget || !$worldMaps.some(m => m.id === mapTarget.id)) return;
+		lastMapTarget = mapTarget;
+		pinView();
+		void switchMap(mapTarget.id);
 	});
 
 	// React to an external deep-link change (parent rewrote win.entityId) by

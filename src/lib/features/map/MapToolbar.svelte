@@ -97,6 +97,7 @@
 <div class="map-toolbar">
 	<select
 		class="map-switcher"
+		aria-label="Active map"
 		value={activeMapId}
 		onchange={(e) => onSwitchMap((e.target as HTMLSelectElement).value)}
 	>
