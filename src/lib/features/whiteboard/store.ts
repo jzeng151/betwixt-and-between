@@ -101,7 +101,8 @@ export async function flushBoards() {
 export async function deleteBoard(id: string) {
   clearTimeout(timers.get(id));
   if (saves.has(id)) await saves.get(id);
-  await responseData(await storyFetch(`/api/whiteboards/${id}`, { method: 'DELETE' }, { retryKey: key(id) }));
+  const response = await storyFetch(`/api/whiteboards/${id}`, { method: 'DELETE' }, { retryKey: key(id) });
+  if (response.status !== 404) await responseData(response);
   boardList.update(all => all.filter(b => b.id !== id));
   patch(id, { dirty: false });
   boardDrafts.update(all => { const next = { ...all }; delete next[id]; return next; });

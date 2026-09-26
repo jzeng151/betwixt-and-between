@@ -1,7 +1,7 @@
 import { expect, it, vi, afterEach } from 'vitest';
 import { get } from 'svelte/store';
 import { documentError, emptyDocument, assignFrame, moveElements, type BoardElement } from '$lib/features/whiteboard/model.js';
-import { boardDrafts, boardList, loadBoards, loadBoard, editBoard, saveBoard, flushBoards, undoBoard } from '$lib/features/whiteboard/store.js';
+import { boardDrafts, boardList, loadBoards, loadBoard, editBoard, saveBoard, flushBoards, undoBoard, deleteBoard } from '$lib/features/whiteboard/store.js';
 import { failedWrites } from '$lib/stores/pending-writes.js';
 const element = (extra: Partial<BoardElement> = {}): BoardElement => ({ id: crypto.randomUUID(), type: 'sticky', x: 20, y: 50, width: 100, height: 100, color: '#c8942a', ...extra });
 afterEach(() => { vi.unstubAllGlobals(); boardDrafts.set({}); failedWrites.set([]); });
@@ -32,10 +32,12 @@ it('keeps edits made during a save, retries failed drafts, and allows saving aft
 
 it('keeps a deleted board in the picker until its unsaved draft can be recovered', async () => {
   const id = crypto.randomUUID();
-  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ id, name: 'Draft', revision: 0, document: emptyDocument() })).mockResolvedValueOnce(Response.json({ message: 'Board not found' }, { status: 404 })).mockResolvedValueOnce(Response.json([]));
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ id, name: 'Draft', revision: 0, document: emptyDocument() })).mockResolvedValueOnce(Response.json({ message: 'Board not found' }, { status: 404 })).mockResolvedValueOnce(Response.json([])).mockResolvedValueOnce(Response.json({ message: 'Board not found' }, { status: 404 }));
   vi.stubGlobal('fetch', fetcher);
   await loadBoard(id); editBoard(id, { ...emptyDocument(), elements: [element({ text: 'Keep me' })] });
   await saveBoard(id); await loadBoards();
   expect(get(boardList)).toContainEqual({ id, name: 'Draft' });
   expect(get(boardDrafts)[id]).toMatchObject({ dirty: true, error: 'Board not found' });
+  await deleteBoard(id); expect(get(boardDrafts)[id]).toBeUndefined(); expect(get(boardList)).toEqual([]);
+  expect(get(failedWrites)).toEqual([]);
 });
