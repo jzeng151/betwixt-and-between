@@ -4,8 +4,7 @@
   import { entities } from '$lib/stores/entities.js';
   import { worldMaps, worldMapStore } from '$lib/features/map/store.js';
   import { windowStore } from '$lib/os/windows-store.js';
-  import { storyFetch } from '$lib/story-fetch.js';
-  import { boardList, boardDrafts, activeBoardId, loadBoards, loadBoard, createBoard, editBoard, saveBoard, undoBoard, deleteBoard, flushBoards } from './store.js';
+  import { boardList, boardDrafts, activeBoardId, loadBoards, loadBoard, createBoard, editBoard, saveBoard, undoBoard, deleteBoard, flushBoards, uploadBoardImage } from './store.js';
   import { emptyDocument, moveElements, assignFrame, type BoardDocument, type BoardElement, type ElementType, type Point } from './model.js';
 
   const tools = [{ id: 'select', label: 'Select', icon: MousePointer2 }, { id: 'pan', label: 'Pan', icon: Hand }, { id: 'sticky', label: 'Sticky note', icon: StickyNote }, { id: 'text', label: 'Text', icon: Type }, { id: 'rectangle', label: 'Rectangle', icon: Square }, { id: 'ellipse', label: 'Ellipse', icon: Circle }, { id: 'arrow', label: 'Arrow', icon: ArrowUpRight }, { id: 'pen', label: 'Pen', icon: Pencil }, { id: 'frame', label: 'Frame', icon: Frame }];
@@ -27,10 +26,10 @@
   function fail(cause: unknown) { error = cause instanceof Error ? cause.message : 'Something went wrong. Try again.'; }
   async function load() {
     loading = true; error = ''; confirmAction = null;
-    try { await loadBoards(); const id = $activeBoardId ?? $boardList[0]?.id; if (id) { await loadBoard(id); activeBoardId.set(id); } }
+    try { await Promise.all([loadBoards(), worldMapStore.loadMaps()]); const id = $activeBoardId ?? $boardList[0]?.id; if (id) { await loadBoard(id); activeBoardId.set(id); } }
     catch (cause) { fail(cause); } finally { loading = false; }
   }
-  onMount(() => { void load(); void worldMapStore.loadMaps().catch(fail); });
+  onMount(() => { void load(); });
   onDestroy(() => { void flushBoards().catch(() => {}); });
   async function switchBoard(id: string) {
     if (loading || busy) return;
@@ -63,7 +62,7 @@
     if (!chosen) return;
     const id = crypto.randomUUID();
     const copies = document.elements.filter(e => e.id === chosen.id || e.frameId === chosen.id).map(e => ({ ...e, id: e.id === chosen.id ? id : crypto.randomUUID(), x: e.x + 24, y: e.y + 24, frameId: e.frameId === chosen.id ? id : e.frameId }));
-    commit({ ...document, elements: [...document.elements, ...copies] }); selected = id;
+    commit({ ...document, elements: assignFrame([...document.elements, ...copies], id) }); selected = id;
   }
   function point(event: { clientX: number; clientY: number }): Point {
     const rect = canvas.getBoundingClientRect(), v = document.viewport;
@@ -158,12 +157,8 @@
     if (!file || !board || busy) return;
     const id = board.id, position = center(); busy = true; error = '';
     try {
-      const form = new FormData(); form.set('file', file);
-      const response = await storyFetch(`/api/whiteboards/${id}/upload-image`, { method: 'POST', body: form }, { required: false });
-      const image = await response.json(); if (!response.ok) throw new Error(image.message ?? 'Could not upload image.');
-      busy = false;
-      if ($activeBoardId === id) add('image', position, { url: image.url, text: file.name, width: 320, height: Math.min(20000, Math.max(20, 320 * image.height / image.width)) });
-    } catch (cause) { fail(cause); } finally { busy = false; fileInput.value = ''; }
+      await uploadBoardImage(id, file, position);
+    } catch (cause) { fail(cause); } finally { busy = false; if (fileInput) fileInput.value = ''; }
   }
   function download() {
     if (!board) return;
@@ -203,7 +198,7 @@
         <defs><pattern id="whiteboard-dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="var(--color-border)" /></pattern><marker id="whiteboard-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 z" fill="context-stroke" /></marker></defs>
         <rect x={document.viewport.x} y={document.viewport.y} width={width / document.viewport.zoom} height={height / document.viewport.zoom} fill="url(#whiteboard-dots)" />
         {#each ordered as element (element.id)}
-          <g data-element-id={element.id} transform={`translate(${element.x},${element.y})`} role="button" tabindex="0" aria-label={`${element.type}: ${element.type === 'reference' ? referenceName(element) : element.text || element.type}`} onkeydown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selected = element.id; canvas.focus(); } }} ondblclick={() => { if (element.type === 'reference') openReference(element); else selected = element.id; }}>
+          <g data-element-id={element.id} transform={`translate(${element.x},${element.y})`} role="button" tabindex="0" aria-label={`${element.type}: ${element.type === 'reference' ? referenceName(element) : element.text || element.type}`} onkeydown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); selected = element.id; canvas.focus(); } }} ondblclick={() => { if (element.type === 'reference') openReference(element); else selected = element.id; }}>
             {#if element.type === 'ellipse'}<ellipse cx={element.width / 2} cy={element.height / 2} rx={element.width / 2} ry={element.height / 2} fill="transparent" stroke={element.color} stroke-width="2" />
             {:else if element.type === 'pen' || element.type === 'arrow'}<polyline points={(element.points ?? [{ x: 0, y: element.height }, { x: element.width, y: 0 }]).map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={element.color} stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end={element.type === 'arrow' ? 'url(#whiteboard-arrow)' : undefined} />
             {:else if element.type === 'image'}<image href={element.url} width={element.width} height={element.height} preserveAspectRatio="xMidYMid meet" />

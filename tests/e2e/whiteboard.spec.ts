@@ -47,15 +47,20 @@ test('opens live entity and exact map references and keeps failed-save drafts re
   const map = await (await request.post('/api/maps', { data: { name: mapName } })).json();
   const id = crypto.randomUUID();
   await request.post('/api/whiteboards', { data: { id, name: 'Reference board' } });
-  const app = await open(page); await app.getByRole('combobox', { name: 'Current board' }).selectOption(id);
+  let failMaps = true;
+  await page.route('**/api/maps', route => failMaps ? route.fulfill({ status: 503, json: { message: 'Maps unavailable' } }) : route.continue());
+  const app = await open(page);
+  await expect(app.getByRole('alert')).toBeVisible(); failMaps = false;
+  await app.getByRole('button', { name: 'Retry loading' }).click();
+  await app.getByRole('combobox', { name: 'Current board' }).selectOption(id);
   await app.getByRole('button', { name: 'Add reference', exact: true }).click(); await app.getByRole('textbox', { name: 'Find a reference' }).fill(name);
   await app.locator('.references').getByRole('button', { name: `${name} Character`, exact: true }).click();
-  await app.getByRole('button', { name, exact: true }).click();
+  await app.getByRole('button', { name, exact: true }).press('Enter');
   const editor = page.getByRole('dialog', { name, exact: true }); await expect(editor).toBeVisible();
   await editor.getByRole('button', { name: 'Close', exact: true }).click();
   await app.getByRole('button', { name: 'Add reference', exact: true }).click(); await app.getByRole('textbox', { name: 'Find a reference' }).fill(mapName);
   await app.locator('.references').getByRole('button', { name: `${mapName} Map`, exact: true }).click();
-  await app.getByRole('button', { name: mapName, exact: true }).click();
+  await app.getByRole('button', { name: mapName, exact: true }).press('Space');
   const worldMap = page.getByRole('dialog', { name: 'World Map', exact: true }); await expect(worldMap).toBeVisible();
   await expect(worldMap.getByRole('combobox', { name: 'Active map' })).toHaveValue(map.id);
   await worldMap.getByRole('button', { name: 'Close', exact: true }).click();
@@ -74,7 +79,15 @@ test('uploads images, cancels deletion when switching boards, and hides boards i
   await request.post('/api/whiteboards', { data: { id, name: 'Image board' } });
   await request.post('/api/whiteboards', { data: { id: second, name: 'Keep this board' } });
   const app = await open(page); await app.getByRole('combobox', { name: 'Current board' }).selectOption(id);
+  let releaseUpload!: () => void, uploadStarted!: () => void;
+  const uploadGate = new Promise<void>(resolve => { releaseUpload = resolve; });
+  const started = new Promise<void>(resolve => { uploadStarted = resolve; });
+  await page.route(`**/api/whiteboards/${id}/upload-image`, async route => { uploadStarted(); await uploadGate; await route.continue(); });
   await app.locator('input[type=file]').setInputFiles({ name: 'clue.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==', 'base64') });
+  await started; await app.getByRole('button', { name: 'Close', exact: true }).click();
+  releaseUpload();
+  await expect.poll(async () => (await (await request.get(`/api/whiteboards/${id}`)).json()).document.elements.length).toBe(1);
+  await page.getByRole('button', { name: 'Whiteboard', exact: true }).click();
   await expect(app.locator('svg image')).toHaveAttribute('href', /\/api\/maps\/file\//);
   await expect(app.locator('.save-state')).toHaveText('Saved');
   const saved = await (await request.get(`/api/whiteboards/${id}`)).json(); expect(saved.document.elements[0].type).toBe('image');
@@ -86,4 +99,22 @@ test('uploads images, cancels deletion when switching boards, and hides boards i
   await page.getByRole('button', { name: 'Whiteboard', exact: true }).click();
   await expect(app.getByRole('textbox', { name: 'New board name' })).toBeVisible();
   await expect(app.getByRole('option', { name: 'Image board', exact: true })).toHaveCount(0);
+});
+
+test('duplicating a framed note outside its frame leaves the copy independent', async ({ page, request }) => {
+  const id = crypto.randomUUID(), frame = crypto.randomUUID(), note = crypto.randomUUID();
+  await request.post('/api/whiteboards', { data: { id, name: 'Frame duplication' } });
+  await request.put(`/api/whiteboards/${id}`, { data: { name: 'Frame duplication', revision: 0, document: { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, elements: [
+    { id: frame, type: 'frame', text: 'Clues', x: 0, y: 0, width: 400, height: 300, color: '#c8942a' },
+    { id: note, type: 'sticky', text: 'At the edge', x: 180, y: 70, width: 200, height: 150, color: '#c8942a', frameId: frame }
+  ] } } });
+  const app = await open(page); await app.getByRole('combobox', { name: 'Current board' }).selectOption(id);
+  await app.getByRole('button', { name: 'sticky: At the edge', exact: true }).press('Enter');
+  await app.getByRole('button', { name: 'Duplicate element' }).click();
+  await app.getByRole('button', { name: 'frame: Clues', exact: true }).press('Enter');
+  await app.getByRole('application').press('ArrowRight');
+  const notes = app.getByRole('button', { name: 'sticky: At the edge', exact: true });
+  await expect(notes.first()).toHaveAttribute('transform', 'translate(190,70)');
+  await expect(notes.last()).toHaveAttribute('transform', 'translate(204,94)');
+  await expect(app.locator('.save-state')).toHaveText('Saved');
 });

@@ -8,7 +8,7 @@ Each story owns multiple named whiteboards in a separate `whiteboards` table. A 
 
 References store a target kind and ID. Entity cards display the current entity name/type and open its existing editor. Map cards open the exact map. Graph cards open a focused graph for the referenced entity. Newly added references must belong to the story. Deleted targets leave unavailable cards so deleting story content does not discard board layout.
 
-The client autosaves a complete document after 500 ms of inactivity. Each update compares a revision and increments it atomically. A stale save returns 409 instead of overwriting another tab. Failed drafts remain in memory, with retry, JSON download, and explicit discard controls. Story switching and sign-out flush drafts; unsaved changes warn before a tab leaves. Undo retains 20 whole-document snapshots in the current session.
+The client autosaves a complete document after 500 ms of inactivity. Each update compares a revision and increments it atomically. A stale save returns 409 instead of overwriting another tab. Failed drafts remain in memory, with retry, JSON download, and explicit discard controls. Story switching and sign-out await in-flight image uploads, add them to the originating board, and flush drafts; unsaved changes warn before a tab leaves. Undo retains 20 whole-document snapshots in the current session.
 
 ## Bounds and storage
 

@@ -1,8 +1,8 @@
 import { expect, it, vi, afterEach } from 'vitest';
 import { get } from 'svelte/store';
 import { documentError, emptyDocument, assignFrame, moveElements, type BoardElement } from '$lib/features/whiteboard/model.js';
-import { boardDrafts, boardList, loadBoards, loadBoard, editBoard, saveBoard, flushBoards, undoBoard, deleteBoard } from '$lib/features/whiteboard/store.js';
-import { failedWrites } from '$lib/stores/pending-writes.js';
+import { boardDrafts, boardList, loadBoards, loadBoard, editBoard, saveBoard, flushBoards, undoBoard, deleteBoard, uploadBoardImage } from '$lib/features/whiteboard/store.js';
+import { failedWrites, flushPendingWrites } from '$lib/stores/pending-writes.js';
 const element = (extra: Partial<BoardElement> = {}): BoardElement => ({ id: crypto.randomUUID(), type: 'sticky', x: 20, y: 50, width: 100, height: 100, color: '#c8942a', ...extra });
 afterEach(() => { vi.unstubAllGlobals(); boardDrafts.set({}); failedWrites.set([]); });
 it('assigns enclosed items to frames, moves members together, and unlinks items dragged out', () => {
@@ -40,4 +40,26 @@ it('keeps a deleted board in the picker until its unsaved draft can be recovered
   expect(get(boardDrafts)[id]).toMatchObject({ dirty: true, error: 'Board not found' });
   await deleteBoard(id); expect(get(boardDrafts)[id]).toBeUndefined(); expect(get(boardList)).toEqual([]);
   expect(get(failedWrites)).toEqual([]);
+});
+
+it('flushes an in-flight image into the board before allowing the workspace to leave', async () => {
+  const id = crypto.randomUUID(), upload = Promise.withResolvers<Response>();
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ id, name: 'Images', revision: 0, document: emptyDocument() })).mockImplementationOnce(() => upload.promise).mockResolvedValueOnce(Response.json({ revision: 1, name: 'Images' }));
+  vi.stubGlobal('fetch', fetcher); await loadBoard(id);
+  const adding = uploadBoardImage(id, new File(['png'], 'image.png', { type: 'image/png' }), { x: 10, y: 20 });
+  let left = false; const leaving = flushBoards().then(() => { left = true; });
+  await Promise.resolve(); expect(left).toBe(false);
+  upload.resolve(Response.json({ url: `/api/maps/file/${crypto.randomUUID()}_1790395600000.png`, width: 40, height: 20 }));
+  await adding; await leaving;
+  const saved = JSON.parse(fetcher.mock.calls[2][1].body); expect(saved.document.elements[0]).toMatchObject({ type: 'image', x: 10, y: 20, width: 320, height: 160 });
+  expect(get(boardDrafts)[id].dirty).toBe(false);
+});
+
+it('keeps upload failures visible to workspace flushing after the board window closes', async () => {
+  const id = crypto.randomUUID();
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ id, name: 'Images', revision: 0, document: emptyDocument() })).mockResolvedValueOnce(Response.json({ message: 'Upload failed. Choose the image again.' }, { status: 503 })));
+  await loadBoard(id);
+  await expect(uploadBoardImage(id, new File(['png'], 'image.png'), { x: 0, y: 0 })).rejects.toThrow('Upload failed');
+  await expect(flushPendingWrites()).rejects.toThrow('Some changes failed');
+  expect(get(failedWrites)[0].message).toContain('Choose the image again');
 });

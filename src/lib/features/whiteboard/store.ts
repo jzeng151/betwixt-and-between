@@ -1,7 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { storyFetch } from '$lib/story-fetch.js';
-import { failedWrites, trackCreation, writeRetryKey } from '$lib/stores/pending-writes.js';
-import { documentError, type Board, type BoardDocument } from './model.js';
+import { failedWrites, trackCreation, trackWrite, writeRetryKey } from '$lib/stores/pending-writes.js';
+import { documentError, assignFrame, type Point, type Board, type BoardDocument } from './model.js';
 
 type Snapshot = Pick<Board, 'name' | 'document'>;
 type Draft = Board & { dirty: boolean; saving: boolean; error: string; undo: Snapshot[]; redo: Snapshot[] };
@@ -14,12 +14,16 @@ activeBoardId.subscribe(id => {
 });
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const saves = new Map<string, Promise<boolean>>();
+const uploads = new Set<Promise<void>>();
 const key = (id: string) => `whiteboard:${id}`;
 function warn(event: BeforeUnloadEvent) { event.preventDefault(); event.returnValue = ''; }
 function patch(id: string, values: Partial<Draft>) {
   boardDrafts.update(all => ({ ...all, [id]: { ...all[id], ...values } }));
+  updateUnloadGuard();
+}
+function updateUnloadGuard() {
   if (typeof window !== 'undefined') {
-    if (Object.values(get(boardDrafts)).some(d => d.dirty)) window.addEventListener('beforeunload', warn);
+    if (uploads.size || Object.values(get(boardDrafts)).some(d => d.dirty)) window.addEventListener('beforeunload', warn);
     else window.removeEventListener('beforeunload', warn);
   }
 }
@@ -94,11 +98,27 @@ export function saveBoard(id: string): Promise<boolean> {
   saves.set(id, task);
   return task;
 }
+export function uploadBoardImage(id: string, file: File, position: Point): Promise<void> {
+  const task = trackWrite((async () => {
+    const form = new FormData(); form.set('file', file);
+    const image = await responseData(await storyFetch(`/api/whiteboards/${id}/upload-image`, { method: 'POST', body: form }, { required: false }));
+    const current = get(boardDrafts)[id];
+    if (!current) throw new Error('The board closed before the image could be added. Upload it again.');
+    const element = { id: crypto.randomUUID(), type: 'image' as const, ...position, url: image.url, text: file.name, color: '#c8942a', width: 320, height: Math.min(20000, Math.max(20, 320 * image.height / image.width)) };
+    editBoard(id, { ...current.document, elements: assignFrame([...current.document.elements, element], element.id) });
+  })(), writeRetryKey('whiteboard:upload', { id, name: file.name, size: file.size, lastModified: file.lastModified }));
+  uploads.add(task); updateUnloadGuard();
+  void task.finally(() => { uploads.delete(task); updateUnloadGuard(); }).catch(() => {});
+  return task;
+}
 export async function flushBoards() {
+  const uploaded = await Promise.allSettled([...uploads]);
   const results = await Promise.all(Object.values(get(boardDrafts)).filter(b => b.dirty).map(b => saveBoard(b.id)));
+  if (uploaded.some(result => result.status === 'rejected')) throw new Error('An image could not be uploaded. Retry the upload before leaving.');
   if (results.some(ok => !ok)) throw new Error('Save or download your whiteboard drafts before leaving.');
 }
 export async function deleteBoard(id: string) {
+  await Promise.allSettled([...uploads]);
   clearTimeout(timers.get(id));
   if (saves.has(id)) await saves.get(id);
   const response = await storyFetch(`/api/whiteboards/${id}`, { method: 'DELETE' }, { retryKey: key(id) });
