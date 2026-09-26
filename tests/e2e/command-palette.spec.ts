@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { E2E_USER_HEADERS } from './pglite-config.js';
 
 test.use({ extraHTTPHeaders: E2E_USER_HEADERS, viewport: { width: 1440, height: 900 } });
@@ -6,10 +6,17 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
 });
 
+async function openWorkspace(page: Page, url = '/app') {
+  // Core requests start on mount, after the shortcut listener is installed.
+  const mounted = page.waitForResponse(response => new URL(response.url()).pathname === '/api/entities');
+  await page.goto(url);
+  await mounted;
+}
+
 test('searches names and types, opens the selected entity, and restores focus on dismissal', async ({ page, request }) => {
   const name = `Palette Elara ${Date.now()}`;
   await request.post('/api/entities', { data: { type: 'Character', name } });
-  await page.goto('/app');
+  await openWorkspace(page);
   const launcher = page.getByRole('button', { name: 'Command palette', exact: true });
   await launcher.click();
   const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
@@ -36,7 +43,7 @@ test('searches names and types, opens the selected entity, and restores focus on
 });
 
 test('launches apps with arrow keys, traps focus, and keeps window shortcuts inside the palette', async ({ page }) => {
-  await page.goto('/app');
+  await openWorkspace(page);
   await page.keyboard.press('Meta+k');
   const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
   const search = palette.getByRole('combobox');
@@ -64,7 +71,7 @@ test('opens notebook notes across folders and preserves an unsaved draft', async
   const folder = await (await request.post('/api/notes/folders', { data: { name: `Palette folder ${suffix}` } })).json();
   const first = await (await request.post('/api/notes/entries', { data: { name: `Palette note Aster ${suffix}`, body: 'Original A', parentId: folder.id } })).json();
   const second = await (await request.post('/api/notes/entries', { data: { name: `Palette note Birch ${suffix}`, body: 'Original B', parentId: folder.id } })).json();
-  await page.goto('/app');
+  await openWorkspace(page);
   const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
   const search = palette.getByRole('combobox');
   async function openNote(name: string) {
@@ -88,7 +95,7 @@ test('opens notebook notes across folders and preserves an unsaved draft', async
 test('shows load failures with retry while keeping app commands available', async ({ page }) => {
   let fail = true;
   await page.route('**/api/entities', route => fail ? route.fulfill({ status: 503, body: 'Unavailable' }) : route.continue());
-  await page.goto('/app');
+  await openWorkspace(page);
   await page.getByRole('button', { name: 'Command palette', exact: true }).click();
   const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
   await expect(palette.getByRole('alert')).toContainText("Couldn't load your story.");
@@ -102,7 +109,7 @@ test('searches only the current story', async ({ page, request }) => {
   const name = `Only original ${Date.now()}`;
   await request.post('/api/entities', { data: { type: 'Location', name } });
   const story = await (await request.post('/api/stories', { data: { name: `Palette isolated ${Date.now()}` } })).json();
-  await page.goto(`/app?story=${story.id}`);
+  await openWorkspace(page, `/app?story=${story.id}`);
   await page.getByRole('button', { name: 'Command palette', exact: true }).click();
   const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
   await palette.getByRole('combobox').fill(name);
@@ -118,7 +125,7 @@ test('retries a failed notebook load and reuses it when reopening', async ({ pag
       ? { status: 503, body: 'Unavailable' }
       : { json: [] });
   });
-  await page.goto('/app');
+  await openWorkspace(page);
   const launcher = page.getByRole('button', { name: 'Command palette', exact: true });
   const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
   await launcher.click();
@@ -137,7 +144,7 @@ test('refreshes cached notes after edits from entity details', async ({ page, re
   const suffix = Date.now();
   const name = `Palette note host ${suffix}`;
   await request.post('/api/entities', { data: { type: 'Location', name } });
-  await page.goto('/app');
+  await openWorkspace(page);
   const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
   const search = palette.getByRole('combobox');
   await page.keyboard.press('Control+k');
@@ -195,7 +202,7 @@ test('keeps the selected app when notebook results arrive', async ({ page }) => 
     await ready;
     await route.fulfill({ json: [{ id: 'late-note', name: 'Story Aardvark', data: {}, parentId: null, position: null }] });
   });
-  await page.goto('/app');
+  await openWorkspace(page);
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
   const search = palette.getByRole('combobox');
