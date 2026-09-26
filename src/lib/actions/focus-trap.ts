@@ -35,7 +35,7 @@ const FOCUSABLE = [
 
 function focusableChildren(node: HTMLElement): HTMLElement[] {
 	return [...node.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-		(el) => el.getClientRects().length > 0 || el === document.activeElement
+		(el) => el.tabIndex >= 0 && (el.getClientRects().length > 0 || el === document.activeElement)
 	);
 }
 
@@ -48,7 +48,7 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 	const isActive = () => trapStack.at(-1) === node;
 	function focusFirst() {
 		if (!isActive()) return;
-		focusableChildren(node)[0]?.focus() ?? node.focus();
+		(focusableChildren(node)[0] ?? node).focus();
 	}
 
 	queueMicrotask(focusFirst);
@@ -122,7 +122,7 @@ export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 				if (returnFocus?.isConnected) returnFocus.focus();
 				if (document.activeElement !== returnFocus) {
 					const next = trapStack.at(-1);
-					if (next) focusableChildren(next)[0]?.focus() ?? next.focus();
+					if (next) (focusableChildren(next)[0] ?? next).focus();
 				}
 			}
 		}

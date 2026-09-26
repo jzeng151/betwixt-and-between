@@ -177,7 +177,9 @@ Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qo
 
 ### Search
 
-- [ ] **T16 — Cmd-K full-body search index.** Extend the (yet-to-ship) Cmd-K Fuse.js index to include `entities.data.body_md`. Trade-off: ~10× index size growth (10k × 1KB ≈ 10MB), first-keypress latency. **Depends on:** Cmd-K shipping. Defer body-content path until names+types+note-titles index ships and feedback shows it's not enough.
+- [x] **Command palette.** Ctrl/Cmd+K or taskbar Search opens current-story entity names/types, notebook titles, and app commands. Keyboard selection, focus return, loading/retry states, and draft-safe note navigation. Uses native string matching with exact/prefix ranking; no search dependency.
+
+- [ ] **T16 — Cmd-K full-body search.** Extend the palette to include `entities.data.body` only if names, types, and note titles prove insufficient. Body indexing increases memory and first-keypress cost; defer until user feedback justifies it.
 
 ### Multi-user / deploy follow-ups
 

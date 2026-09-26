@@ -386,7 +386,7 @@ function createWindowStore() {
 		);
 	}
 
-	function setEntityId(id: string, entityId: string) {
+	function setEntityId(id: string, entityId: string | null) {
 		patchWindow(id, { entityId });
 	}
 
