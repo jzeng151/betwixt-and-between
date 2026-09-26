@@ -28,6 +28,7 @@ function createNotesStore() {
 	const entryVersions = new Map<string, number>();
 	let version = 0;
 	let entryLoadRequest = 0;
+	let entriesLoaded = false;
 
 	function warnAboutDrafts(event: BeforeUnloadEvent) {
 		if (!drafts.size) return;
@@ -128,6 +129,7 @@ function createNotesStore() {
 			});
 		} else {
 			entries.set(mapped);
+			entriesLoaded = true;
 		}
 	}
 
@@ -235,6 +237,7 @@ function createNotesStore() {
 	}
 
 	return {
+		get entriesLoaded() { return entriesLoaded; },
 		folders,
 		entries,
 		drafts,

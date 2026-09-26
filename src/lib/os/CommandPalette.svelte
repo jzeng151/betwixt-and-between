@@ -41,8 +41,9 @@
 
   async function loadNotes() {
     if (notesLoading) return;
-    notesLoading = true;
     notesError = false;
+    if (notesStore.entriesLoaded) return;
+    notesLoading = true;
     try { await notesStore.loadEntries(); }
     catch { notesError = true; }
     finally { notesLoading = false; }

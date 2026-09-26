@@ -109,3 +109,26 @@ test('searches only the current story', async ({ page, request }) => {
   await expect(palette.getByRole('option')).toHaveCount(0);
   await expect(palette.getByText('Loading story entries… Apps are available below.')).toHaveCount(0);
 });
+
+test('retries a failed notebook load and reuses it when reopening', async ({ page }) => {
+  let loads = 0;
+  await page.route('**/api/notes/entries', async route => {
+    loads++;
+    await route.fulfill(loads === 1
+      ? { status: 503, body: 'Unavailable' }
+      : { json: [] });
+  });
+  await page.goto('/app');
+  const launcher = page.getByRole('button', { name: 'Command palette', exact: true });
+  const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
+  await launcher.click();
+  await expect(palette.getByRole('alert')).toContainText("Couldn't refresh notebook notes.");
+  await palette.getByRole('button', { name: 'Retry notes' }).click();
+  await expect(palette.getByRole('alert')).toHaveCount(0);
+  await expect(palette.getByText('Loading notebook notes…')).toHaveCount(0);
+  await palette.getByRole('combobox').press('Escape');
+  await launcher.click();
+  await expect(palette.getByText('Loading notebook notes…')).toHaveCount(0);
+  await expect(palette.getByRole('combobox')).toBeFocused();
+  expect(loads).toBe(2);
+});
