@@ -12,13 +12,13 @@
   let trigger: HTMLButtonElement;
   let open = $state(false);
   let query = $state('');
-  let selected = $state(0);
+  let selectedId = $state<string | null>(null);
   let notesLoading = $state(false);
   let notesError = $state(false);
   const matches = $derived(open ? findCommands($entitySnapshotReady ? $entities : [], query,
     $noteEntries.map((note) => ({ ...note, name: notesStore.drafts.get(note.id)?.name ?? note.name }))) : []);
   const results = $derived(matches.slice(0, 50));
-  const active = $derived(Math.min(selected, results.length - 1));
+  const active = $derived(results.length ? Math.max(0, results.findIndex((result) => result.id === selectedId)) : -1);
 
   $effect(() => {
     if (!open) return;
@@ -32,7 +32,7 @@
   function show() {
     if (dialog.open || document.querySelector('dialog[open]') || isActiveFocusTrapTarget(document.activeElement)) return;
     query = '';
-    selected = 0;
+    selectedId = null;
     open = true;
     dialog.showModal();
     input.focus();
@@ -76,7 +76,8 @@
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       if (!results.length) return;
-      selected = (active + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length;
+      const selected = (active + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length;
+      selectedId = results[selected].id;
       await tick();
       document.getElementById(`command-result-${selected}`)?.scrollIntoView({ block: 'nearest' });
     } else if (event.key === 'Enter') {
@@ -102,7 +103,7 @@
   <header><h2>Command palette</h2></header>
   <div class="search-field">
     <Search size={18} aria-hidden="true" />
-    <input bind:this={input} bind:value={query} oninput={() => { selected = 0; }} placeholder="Find an entity or app…" aria-label="Search this story and apps" role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls="command-results" aria-activedescendant={active >= 0 ? `command-result-${active}` : undefined} autocomplete="off" />
+    <input bind:this={input} bind:value={query} oninput={() => { selectedId = null; }} placeholder="Find an entity or app…" aria-label="Search this story and apps" role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls="command-results" aria-activedescendant={active >= 0 ? `command-result-${active}` : undefined} autocomplete="off" />
     <button class="close" aria-label="Close command palette" onclick={() => dialog.close()}><X size={18} aria-hidden="true" /></button>
   </div>
   {#if $entityLoadStatus === 'error'}
@@ -114,7 +115,7 @@
   {:else if notesLoading}<p class="load-message" role="status">Loading notebook notes…</p>{/if}
   <div id="command-results" role="listbox" aria-label="Search results">
     {#each results as result, index (result.id)}
-      <button id={`command-result-${index}`} role="option" aria-selected={active === index} tabindex="-1" onmousedown={(event) => event.preventDefault()} onmouseenter={() => { selected = index; }} onclick={() => choose(result)}>
+      <button id={`command-result-${index}`} role="option" aria-selected={active === index} tabindex="-1" onmousedown={(event) => event.preventDefault()} onmouseenter={() => { selectedId = result.id; }} onclick={() => choose(result)}>
         <span class="result-name">{result.name}</span><span class="result-type">{result.type}</span>
       </button>
     {/each}

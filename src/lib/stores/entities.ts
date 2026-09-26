@@ -3,6 +3,7 @@ import { get, writable } from 'svelte/store';
 import type { EntityType } from '$lib/server/db/schema.js';
 import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 import { relationships } from '$lib/stores/relationships.js';
+import { notesStore } from '$lib/stores/notes.js';
 
 export const entityLoadStatus = writable<'idle' | 'loading' | 'ready' | 'error'>('idle');
 export const entitySnapshotReady = writable(false);
@@ -139,6 +140,7 @@ function createEntityStore() {
 		return needsFreshSnapshot;
 	}
 	function upsertEntities(created: Entity[]) {
+		if (created.some((entity) => entity.type === 'Note')) notesStore.invalidateEntries();
 		const byId = new Map(created.map((entity) => [entity.id, entity]));
 		update((all) => {
 			const existing = new Set(all.map((entity) => entity.id));
@@ -265,6 +267,7 @@ function createEntityStore() {
 		let updated: Entity;
 		try {
 			updated = await run;
+			if (updated.type === 'Note') notesStore.invalidateEntries();
 		} catch (err) {
 			// Only roll back via load() if a newer edit hasn't superseded ours —
 			// otherwise the reload would discard the newer optimistic value too.
@@ -317,6 +320,7 @@ function createEntityStore() {
 	}
 
 	async function deleteEntity(id: string): Promise<void> {
+		const isNote = get({ subscribe }).some((entity) => entity.id === id && entity.type === 'Note');
 		update((all) => all.filter((e) => e.id !== id));
 		let res: Response;
 		try {
@@ -330,6 +334,7 @@ function createEntityStore() {
 			await rollbackSnapshot();
 			throw new Error(await res.text());
 		}
+		if (isNote) notesStore.invalidateEntries();
 		const needsFreshSnapshot = await settleSnapshotBeforeMutation();
 		update((all) => all.filter((e) => e.id !== id));
 		if (needsFreshSnapshot) await replaceSnapshot().catch(() => {});

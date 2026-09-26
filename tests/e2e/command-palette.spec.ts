@@ -132,3 +132,66 @@ test('retries a failed notebook load and reuses it when reopening', async ({ pag
   await expect(palette.getByRole('combobox')).toBeFocused();
   expect(loads).toBe(2);
 });
+
+test('refreshes cached notes after edits from entity details', async ({ page, request }) => {
+  const suffix = Date.now();
+  const name = `Palette note host ${suffix}`;
+  await request.post('/api/entities', { data: { type: 'Location', name } });
+  await page.goto('/app');
+  const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
+  const search = palette.getByRole('combobox');
+  await page.keyboard.press('Control+k');
+  await expect(palette.getByText('Loading notebook notes…')).toHaveCount(0);
+  await search.fill(name);
+  await expect(palette.getByRole('option')).toHaveCount(1);
+  await search.press('Enter');
+  const detail = page.getByRole('dialog', { name, exact: true });
+  await detail.getByRole('button', { name: 'Edit', exact: true }).click();
+  const notes = detail.getByRole('region', { name: 'Notes', exact: true });
+  await notes.getByRole('button', { name: '+ Add note', exact: true }).click();
+  await expect(notes.getByText('Untitled Note', { exact: true })).toBeVisible();
+  await expect(notes.getByRole('button', { name: '+ Add note', exact: true })).toBeEnabled();
+  await page.keyboard.press('Control+k');
+  await search.fill('Untitled Note');
+  await expect(palette.getByRole('option', { name: 'Untitled Note Notebook note', exact: true })).toBeVisible();
+  await search.press('Escape');
+  await notes.getByRole('button', { name: 'Rename', exact: true }).click();
+  const rename = notes.locator('.inline-edit-input');
+  const renamed = `Attached palette note ${suffix}`;
+  await rename.fill(renamed);
+  const saved = page.waitForResponse(response => response.url().includes('/api/entities/') && response.request().method() === 'PATCH');
+  await rename.press('Enter');
+  await saved;
+  await page.keyboard.press('Control+k');
+  await search.fill(renamed);
+  await expect(palette.getByRole('option')).toHaveCount(1);
+  await search.press('Escape');
+  const deleted = page.waitForResponse(response => response.url().includes('/api/entities/') && response.request().method() === 'DELETE');
+  await notes.getByRole('button', { name: 'Remove note', exact: true }).click();
+  await deleted;
+  await page.keyboard.press('Control+k');
+  await search.fill(renamed);
+  await expect(palette.getByText('Loading notebook notes…')).toHaveCount(0);
+  await expect(palette.getByRole('option')).toHaveCount(0);
+});
+
+test('keeps the selected app when notebook results arrive', async ({ page }) => {
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/notes/entries', async route => {
+    await ready;
+    await route.fulfill({ json: [{ id: 'late-note', name: 'Story Aardvark', data: {}, parentId: null, position: null }] });
+  });
+  await page.goto('/app');
+  await page.keyboard.press('Control+k');
+  const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
+  const search = palette.getByRole('combobox');
+  await search.fill('story');
+  await search.press('ArrowDown');
+  await expect(palette.getByRole('option', { selected: true })).toContainText('Story Player');
+  release();
+  await expect(palette.getByRole('option', { name: 'Story Aardvark Notebook note' })).toBeVisible();
+  await expect(palette.getByRole('option', { selected: true })).toContainText('Story Player');
+  await search.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'Story Player', exact: true })).toBeVisible();
+});

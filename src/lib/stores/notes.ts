@@ -30,6 +30,11 @@ function createNotesStore() {
 	let entryLoadRequest = 0;
 	let entriesLoaded = false;
 
+	function invalidateEntries() {
+		entriesLoaded = false;
+		++entryLoadRequest;
+	}
+
 	function warnAboutDrafts(event: BeforeUnloadEvent) {
 		if (!drafts.size) return;
 		event.preventDefault();
@@ -238,6 +243,7 @@ function createNotesStore() {
 
 	return {
 		get entriesLoaded() { return entriesLoaded; },
+		invalidateEntries,
 		folders,
 		entries,
 		drafts,
