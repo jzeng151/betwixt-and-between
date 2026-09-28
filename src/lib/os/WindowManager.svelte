@@ -16,6 +16,7 @@
     'story-graph': () => import('$lib/features/graph/StoryGraph.svelte'),
     'focused-graph': () => import('$lib/features/graph/FocusedGraph.svelte'),
     'settings': () => import('$lib/components/apps/Settings.svelte'),
+    'whiteboard': () => import('$lib/features/whiteboard/Whiteboard.svelte'),
     'notes': () => import('$lib/components/apps/Notes.svelte'),
     'story-player': () => import('$lib/features/timeline/PlayerDock.svelte'),
     'entity-detail': () => import('$lib/components/EntityDetail.svelte')
@@ -106,12 +107,14 @@
           onClose={() => windowStore.close(win.id)}
         />
       {:else if win.appId === 'world-map'}
-        <App entityId={win.entityId ?? undefined} windowId={win.id} />
+        <App entityId={win.entityId ?? undefined} windowId={win.id} mapTarget={win.mapTarget} />
       {:else if win.appId === 'story-graph'}
         <App />
       {:else if win.appId === 'focused-graph'}
         <App windowId={win.id} />
       {:else if win.appId === 'settings'}
+        <App />
+      {:else if win.appId === 'whiteboard'}
         <App />
       {:else if win.appId === 'notes'}
         <App entryId={win.entityId} />

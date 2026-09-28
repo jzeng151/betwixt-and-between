@@ -12,6 +12,7 @@ export const APP_IDS = [
 	'wiki',
 	'story-graph',
 	'focused-graph',
+	'whiteboard',
 	'notes',
 	'settings',
 	'story-player'
@@ -36,7 +37,8 @@ export const POSITION_PERSIST_APP_IDS = [
 	'wiki',
 	'story-player',
 	'character-editor',
-	'notes'
+	'notes',
+	'whiteboard'
 ] as const satisfies readonly AppId[];
 
 export function persistsPosition(appId: AppId): boolean {

@@ -34,6 +34,7 @@ export const APP_CATALOG: Record<AppId, AppMeta> = {
 	'timeline':         { title: 'Timeline', icon: 'TL' },
 	'world-map':        { title: 'World Map', icon: 'MP', bare: true },
 	'wiki':             { title: 'Wiki', icon: 'WK' },
+	'whiteboard':       { title: 'Whiteboard', icon: 'WB', bare: true },
 	'notes':            { title: 'Notes', icon: 'NT' },
 	'settings':         { title: 'Settings', icon: 'ST' },
 	'entity-detail':    { title: 'Entity' },
@@ -57,5 +58,6 @@ export const DOCK_ORDER: AppId[] = [
 	'world-map',
 	'wiki',
 	'notes',
+	'whiteboard',
 	'settings'
 ];

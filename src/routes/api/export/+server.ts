@@ -4,7 +4,7 @@ import { getUserId } from '$lib/server/auth-gate.js';
 import {
 	entities, relationships, intervals, entityAliases, canvasPositions, windowCanvasState,
 	worldMaps, mapPlacements, mapAnchors, mapEvents, factions, worldMapLayerPrefs,
-	userPreferences, appearancePresets, stories
+	userPreferences, appearancePresets, stories, whiteboards
 } from '$lib/server/db/schema.js';
 import type { RequestHandler } from './$types';
 
@@ -15,6 +15,7 @@ export const GET: RequestHandler = async (event) => {
 		const ownedStories = tx.select({ id: stories.id }).from(stories).where(eq(stories.userId, userId));
 		const ownedEntities = tx.select({ id: entities.id }).from(entities).where(inArray(entities.storyId, ownedStories));
 		const queries = {
+			whiteboards: tx.select().from(whiteboards).where(inArray(whiteboards.storyId, ownedStories)),
 			stories: tx.select().from(stories).where(eq(stories.userId, userId)),
 			entities: tx.select().from(entities).where(inArray(entities.storyId, ownedStories)),
 			relationships: tx.select().from(relationships).where(inArray(relationships.storyId, ownedStories)),

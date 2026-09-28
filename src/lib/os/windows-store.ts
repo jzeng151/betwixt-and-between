@@ -23,6 +23,7 @@ type WindowState = {
 	id: string;
 	appId: AppId;
 	entityId: string | null;
+	mapTarget?: { id: string };
 	x: number;
 	y: number;
 	width: number;
@@ -65,6 +66,7 @@ export const WINDOW_DEFAULTS: Record<AppId, { width: number; height: number }> =
 	'wiki':             { width: 980, height: 700 },
 	'story-graph':      { width: 640, height: 500 },
 	'focused-graph':    { width: 640, height: 500 },
+	'whiteboard':       { width: 1000, height: 680 },
 	'notes':            { width: 320, height: 450 },
 	'settings':         { width: 520, height: 400 },
 	'story-player':     { width: 280, height: 100 }
@@ -153,6 +155,7 @@ function readSessionWindow(value: unknown): WindowState | null {
 		minimized: w.minimized, maximized: w.maximized, zIndex: w.zIndex,
 		alwaysOnTop: w.alwaysOnTop === true,
 		geomAdjusted: true,
+		...(w.appId === 'world-map' && validId(w.mapTarget?.id) ? { mapTarget: { id: w.mapTarget.id } } : {}),
 		restoreBounds: w.restoreBounds &&
 			[w.restoreBounds.x, w.restoreBounds.y, w.restoreBounds.width, w.restoreBounds.height]
 				.every((n) => typeof n === 'number' && Number.isFinite(n)) &&
@@ -284,6 +287,12 @@ function createWindowStore() {
 	 */
 	function patchWindow(id: string, patch: Partial<WindowState>) {
 		update((all) => all.map((w) => (w.id === id ? { ...w, ...patch } : w)));
+	}
+
+	function openMap(id: string): string {
+		const windowId = open('world-map');
+		patchWindow(windowId, { mapTarget: { id } });
+		return windowId;
 	}
 
 	/**
@@ -476,6 +485,7 @@ function createWindowStore() {
 		open,
 		openForEntity,
 		openFocusedGraph,
+		openMap,
 		setFocalSet,
 		setViewMode,
 		setTypeOrder,

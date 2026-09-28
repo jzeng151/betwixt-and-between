@@ -1,0 +1,106 @@
+import { error } from '@sveltejs/kit';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+
+const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const ALLOWED_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp']);
+const MAX_BYTES = 5 * 1024 * 1024;
+
+export async function uploadImage(request: Request, platform: App.Platform | undefined, ownerId: string) {
+	const formData = await request.formData();
+	const file = formData.get('file');
+	if (!file || !(file instanceof File)) {
+		error(400, 'No file provided');
+	}
+
+	if (!ALLOWED_TYPES.has(file.type)) {
+		error(400, 'File must be JPG, PNG, or WebP');
+	}
+	if (file.size > MAX_BYTES) {
+		error(400, 'File must be under 5 MB');
+	}
+
+	const buffer = Buffer.from(await file.arrayBuffer());
+	const dimensions = readImageDimensions(buffer, file.type);
+	if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+		error(400, 'Could not read image dimensions');
+	}
+
+	const ext = file.name.split('.').pop()?.toLowerCase() || 'png';
+	if (!ALLOWED_EXTS.has(ext)) error(400, 'Invalid file extension');
+	const filename = `${ownerId}_${Date.now()}.${ext}`;
+
+	// R2 in prod (Cloudflare Workers has no writable filesystem); local fs
+	// fallback for `npm run dev` where the R2 binding isn't injected.
+	const bucket = platform?.env?.MAP_UPLOADS;
+	if (bucket) {
+		await bucket.put(filename, buffer, {
+			httpMetadata: { contentType: file.type },
+		});
+	} else {
+		const dir = join(process.cwd(), 'static', 'maps');
+		await mkdir(dir, { recursive: true });
+		await writeFile(join(dir, filename), buffer);
+	}
+
+	const baseImageUrl = `/api/maps/file/${filename}`;
+	return { url: baseImageUrl, ...dimensions };
+}
+
+/**
+ * Read width/height from image file headers without external dependencies.
+ * Supports JPEG (SOF0/SOF2), PNG (IHDR), and WebP (VP8/VP8L).
+ */
+function readImageDimensions(
+	buf: Buffer,
+	mime: string
+): { width: number; height: number } | null {
+	if (mime === 'image/png') {
+		// PNG: IHDR chunk starts at byte 16 (after 8-byte sig + 4-byte length + 4-byte type)
+		if (buf.length < 24) return null;
+		const width = buf.readUInt32BE(16);
+		const height = buf.readUInt32BE(20);
+		return { width, height };
+	}
+
+	if (mime === 'image/jpeg') {
+		// JPEG: scan for SOF0 (FF C0) or SOF2 (FF C2) marker
+		let offset = 2; // skip FF D8
+		while (offset < buf.length - 9) {
+			if (buf[offset] !== 0xff) break;
+			const marker = buf[offset + 1];
+			if (marker === 0xc0 || marker === 0xc2) {
+				const height = buf.readUInt16BE(offset + 5);
+				const width = buf.readUInt16BE(offset + 7);
+				return { width, height };
+			}
+			// Skip to next marker (length is big-endian at offset+2)
+			if (marker === 0xd8 || marker === 0xd9) break;
+			const segLen = buf.readUInt16BE(offset + 2);
+			offset += 2 + segLen;
+		}
+		return null;
+	}
+
+	if (mime === 'image/webp') {
+		// WebP: RIFF header at 0, VP8/VP8L bitstream at 12+
+		if (buf.length < 30) return null;
+		const chunkFourCC = buf.toString('ascii', 12, 16);
+		if (chunkFourCC === 'VP8 ') {
+			// Lossy: width/height are 14-bit LE at offset 26/28
+			const width = buf.readUInt16LE(26) & 0x3fff;
+			const height = buf.readUInt16LE(28) & 0x3fff;
+			return { width, height };
+		}
+		if (chunkFourCC === 'VP8L') {
+			// Lossless: 28-bit packed at offset 21
+			const b = buf.readUInt32LE(21);
+			const width = (b & 0x3fff) + 1;
+			const height = ((b >> 14) & 0x3fff) + 1;
+			return { width, height };
+		}
+		return null;
+	}
+
+	return null;
+}

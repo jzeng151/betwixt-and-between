@@ -1,6 +1,7 @@
 import { invalidateAll } from '$app/navigation';
 import { writable } from 'svelte/store';
 import { notesStore } from '$lib/stores/notes.js';
+import { flushBoards } from '$lib/features/whiteboard/store.js';
 import { flushPendingWrites } from '$lib/stores/pending-writes.js';
 import { flushPendingPreferences } from '$lib/os/preferences-sync.js';
 
@@ -41,7 +42,7 @@ async function saveWorkspace(id: string) {
 	await ready;
 	// Wait for every category even when one fails, so cancellation cannot expose
 	// editing while an older write can still overwrite a new edit.
-	const writes = await Promise.allSettled([notesStore.flushDrafts(), flushPendingPreferences()]);
+	const writes = await Promise.allSettled([notesStore.flushDrafts(), flushPendingPreferences(), flushBoards()]);
 	await flushPendingWrites();
 	for (const result of writes) {
 		if (result.status === 'rejected') throw result.reason;

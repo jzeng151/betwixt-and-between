@@ -30,6 +30,7 @@ it('exports every saved data table for the authenticated account, including map 
 		await db.insert(schema.worldMapLayerPrefs).values({ storyId: user.id, worldMapId: map.id, layerKey: 'terrain', visible: 0 });
 		await db.insert(schema.userPreferences).values({ storyId: user.id, name: `${name} profile` });
 		await db.insert(schema.appearancePresets).values({ storyId: user.id, name: `${name} preset` });
+		await db.insert(schema.whiteboards).values({ storyId: user.id, name: `${name} board` });
 		await db.insert(schema.session).values({ userId: user.id, token: `${name}-secret`, expiresAt: new Date(Date.now() + 60_000) });
 	}
 	const response = await GET({ locals: { db, user: users[0] } } as any);
@@ -38,7 +39,7 @@ it('exports every saved data table for the authenticated account, including map 
 	const text = await response.text();
 	const result = JSON.parse(text);
 	expect(result).toMatchObject({ format: 'betwixt-story', version: 2 });
-	expect(Object.keys(result.tables)).toHaveLength(15);
+	expect(Object.keys(result.tables)).toHaveLength(16);
 	for (const [name, rows] of Object.entries(result.tables)) expect(rows, name).toHaveLength(name === 'entities' ? 3 : 1);
 	expect(result.tables.mapAnchors[0].tPosition).toBe('-Infinity');
 	expect(result.tables.mapEvents[0].undoneAt).toBeTruthy();
