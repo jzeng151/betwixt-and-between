@@ -22,7 +22,7 @@ Use **Grid** in the World Map toolbar to set square or hex layout, cell counts, 
 | **World Map** | Paint terrain freehand, stack art on layers (blend mode + opacity), scatter object stamps, and let terrain change as the story plays. Polygon regions and placed characters/events sit on a zoomable canvas. |
 | **Window manager** | Every entity opens in its own floating window. Drag a titlebar to an edge or corner to snap into halves or quarters, or use Arrange window in the titlebar. Drag away to restore the previous size. Taskbar groups open windows. |
 | **Command palette** | Press Ctrl/Cmd+K or choose Search in the taskbar. Find current-story entities by name and type, search notebook titles, or open an app. Arrow keys select; Enter opens; Escape returns to your work. |
-| **Whiteboard** | Named boards per story with sticky notes, text, shapes, pen strokes, images, and live entity/map/graph cards. Pan and zoom; move related ideas together inside frames. Changes autosave with undo and draft recovery. |
+| **Whiteboard** | Named boards per story with sticky notes, text, shapes, pen strokes, images, and live entity/map/graph cards. Pan and zoom; move related ideas together inside frames. Search and bulk-add story items, use context menus, or run board actions through Ctrl/Cmd+K. Changes autosave with undo and draft recovery. |
 | **Stories** | Settings → Stories creates, renames, and switches isolated stories. Other tabs keep their current story; each story has its own appearance profiles and saved presets. |
 | **Story export** | Settings → Export downloads all this account's saved stories and preferences as JSON. |
 

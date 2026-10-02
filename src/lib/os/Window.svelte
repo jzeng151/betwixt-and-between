@@ -44,7 +44,7 @@
   let resizeStartH = 0;
   let resizeStartLeft = 0;
   let windowElement = $state<HTMLElement>();
-  let returnFocus: HTMLElement | null = null;
+  let returnFocus: HTMLElement | SVGElement | null = null;
 
   function focusWindow() {
     queueMicrotask(() => {
@@ -76,7 +76,7 @@
   onMount(() => {
     updateViewport();
     returnFocus = takeNextFocusReturn(
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
+      document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement ? document.activeElement : null
     );
     return restoreFocus;
   });

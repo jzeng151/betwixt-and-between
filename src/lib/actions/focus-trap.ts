@@ -2,10 +2,10 @@ type FocusTrapOptions = {
 	onEscape?: () => void;
 };
 
-let nextReturnFocus: HTMLElement | null = null;
+let nextReturnFocus: HTMLElement | SVGElement | null = null;
 const trapStack: HTMLElement[] = [];
 
-export function setNextFocusTrapReturn(element: HTMLElement | null) {
+export function setNextFocusTrapReturn(element: HTMLElement | SVGElement | null) {
 	nextReturnFocus = element?.isConnected ? element : null;
 }
 
@@ -13,7 +13,7 @@ export function clearNextFocusTrapReturn() {
 	nextReturnFocus = null;
 }
 
-export function takeNextFocusReturn(fallback: HTMLElement | null): HTMLElement | null {
+export function takeNextFocusReturn(fallback: HTMLElement | SVGElement | null): HTMLElement | SVGElement | null {
 	const returnFocus = nextReturnFocus ?? fallback;
 	nextReturnFocus = null;
 	return returnFocus;
@@ -41,7 +41,7 @@ function focusableChildren(node: HTMLElement): HTMLElement[] {
 
 export function focusTrap(node: HTMLElement, options: FocusTrapOptions = {}) {
 	const returnFocus = takeNextFocusReturn(
-		document.activeElement instanceof HTMLElement ? document.activeElement : null
+		document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement ? document.activeElement : null
 	);
 	let currentOptions = options;
 	trapStack.push(node);

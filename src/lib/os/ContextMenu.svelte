@@ -21,7 +21,7 @@
   let { items, x, y, onClose }: Props = $props();
 
   let menuEl: HTMLDivElement | undefined = $state();
-  const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const returnFocus = document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement ? document.activeElement : null;
   let buttonEls: (HTMLButtonElement | null)[] = $state([]);
   let pos = $state({ x: 0, y: 0 });
   // Focused item index; starts at first non-disabled item.
@@ -185,7 +185,7 @@
   .context-menu-item:hover:not(.disabled),
   .context-menu-item:focus-visible {
     background: var(--color-accent);
-    color: white;
+    color: var(--color-on-accent);
     outline: none;
   }
 

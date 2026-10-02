@@ -4,6 +4,7 @@
   import { entities, entityLoadStatus, entitySnapshotReady } from '$lib/stores/entities.js';
   import { notesStore, noteEntries } from '$lib/stores/notes.js';
   import { focusTrap, isActiveFocusTrapTarget } from '$lib/actions/focus-trap.js';
+  import { whiteboardCommands } from '$lib/features/whiteboard/commands.js';
   import { windowStore } from './windows-store.js';
   import { findCommands, type CommandResult } from './command-search.js';
 
@@ -16,8 +17,10 @@
   let notesLoading = $state(false);
   let notesError = $state(false);
   const notesLoaded = notesStore.entriesLoaded;
+  const contextual = $derived($windowStore.some((win) => win.appId === 'whiteboard' && !win.minimized && windowStore.focusedWindow()?.id === win.id) ? $whiteboardCommands : []);
+  const hasWhiteboardActions = $derived(contextual.some((command) => !command.disabled));
   const matches = $derived(open ? findCommands($entitySnapshotReady ? $entities : [], query,
-    $noteEntries.map((note) => ({ ...note, name: notesStore.drafts.get(note.id)?.name ?? note.name }))) : []);
+    $noteEntries.map((note) => ({ ...note, name: notesStore.drafts.get(note.id)?.name ?? note.name })), contextual) : []);
   const results = $derived(matches.slice(0, 50));
   const active = $derived(results.length ? Math.max(0, results.findIndex((result) => result.id === selectedId)) : -1);
 
@@ -62,10 +65,15 @@
   }
 
   async function choose(result: CommandResult) {
+    open = false;
     dialog.close();
-    // Let native dialog focus restoration finish before focusing the destination.
+    // Remove the focus trap and finish dialog restoration before focusing the destination.
     await tick();
-    if (result.note) {
+    if (result.whiteboardCommandId !== undefined) {
+      if (windowStore.focusedWindow()?.appId === 'whiteboard') {
+        $whiteboardCommands.find((command) => command.id === result.whiteboardCommandId && !command.disabled)?.run();
+      }
+    } else if (result.note) {
       windowStore.open('notes');
       windowStore.setEntityId('notes', result.note.id);
     } else if (result.entity) windowStore.openForEntity(result.entity.id, result.entity.type);
@@ -105,10 +113,10 @@
 </button>
 
 <dialog bind:this={dialog} aria-label="Command palette" onclose={() => { open = false; }} onkeydown={keydown} onclick={backdrop}>
-  <header><h2>Command palette</h2></header>
+  <header><h2>Command palette</h2>{#if hasWhiteboardActions}<span id="command-context" class="result-type">Whiteboard actions</span>{/if}</header>
   <div class="search-field">
     <Search size={18} aria-hidden="true" />
-    <input bind:this={input} bind:value={query} oninput={() => { selectedId = null; }} placeholder="Find an entity or app…" aria-label="Search this story and apps" role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls="command-results" aria-activedescendant={active >= 0 ? `command-result-${active}` : undefined} autocomplete="off" />
+    <input bind:this={input} bind:value={query} oninput={() => { selectedId = null; }} placeholder={hasWhiteboardActions ? 'Find an action, entity, or app…' : 'Find an entity or app…'} aria-label="Search this story and apps" aria-describedby={hasWhiteboardActions ? 'command-context' : undefined} role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls="command-results" aria-activedescendant={active >= 0 ? `command-result-${active}` : undefined} autocomplete="off" />
     <button class="close" aria-label="Close command palette" onclick={() => dialog.close()}><X size={18} aria-hidden="true" /></button>
   </div>
   {#if $entityLoadStatus === 'error'}
@@ -126,7 +134,7 @@
     {/each}
   </div>
   {#if results.length === 0}<p class="empty" role="status">No matches. Try a name or entity type.</p>{/if}
-  <footer><span>{matches.length > 50 ? `Showing 50 of ${matches.length}. Refine your search.` : `${matches.length} ${matches.length === 1 ? 'result' : 'results'}`}</span><span>Arrow keys to choose · Enter to open</span></footer>
+  <footer><span>{matches.length > 50 ? `Showing 50 of ${matches.length}. Refine your search.` : `${matches.length} ${matches.length === 1 ? 'result' : 'results'}`}</span><span>Arrow keys to choose · Enter to {results[active]?.whiteboardCommandId ? 'run' : 'open'}</span></footer>
 </dialog>
 
 <style>
@@ -134,7 +142,7 @@
   .launcher:hover { background: var(--color-surface); color: var(--color-text); }
   dialog { position: fixed; inset: 12vh 0 auto; margin: 0 auto; width: min(580px, calc(100vw - 32px)); max-height: 76dvh; padding: 0; border: 1px solid var(--color-border); border-radius: var(--window-radius); background: var(--color-surface); color: var(--color-text); overflow: auto; }
   dialog::backdrop { background: rgb(0 0 0 / 45%); }
-  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 4px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px 4px; }
   h2 { margin: 0; font-size: 13px; font-weight: 600; }
   .close { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent; color: var(--color-text-muted); cursor: pointer; }
   .close:hover { color: var(--color-text); background: var(--color-surface-2); }
