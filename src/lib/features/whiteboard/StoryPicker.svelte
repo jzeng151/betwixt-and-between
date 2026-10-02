@@ -25,6 +25,12 @@
   ]);
   const matches = $derived(candidates.filter(item => `${item.name} ${item.label} ${item.id}`.toLowerCase().includes(query.trim().toLowerCase())));
   const visible = $derived(matches.slice(0, 100));
+  $effect(() => {
+    const available = selected.filter(target => target.kind === 'map'
+      ? $worldMaps.some(map => map.id === target.id)
+      : storyEntities.some(entity => entity.id === target.id));
+    if (available.length !== selected.length) selected = available;
+  });
 
   onMount(() => { search.focus(); });
 
