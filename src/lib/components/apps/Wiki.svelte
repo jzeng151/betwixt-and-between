@@ -9,6 +9,7 @@
 
 <script lang="ts">
 	import { setContext, onDestroy } from 'svelte';
+	import { sendReferenceToBoard } from '$lib/features/whiteboard/send-to-board.js';
 	import { entities, entityLoadStatus, entitySnapshotReady } from '$lib/stores/entities.js';
 	import { intervals as intervalsStore } from '$lib/features/timeline/intervals-store.js';
 	import { relationships } from '$lib/stores/relationships.js';
@@ -124,6 +125,7 @@
 	const contextItems = $derived(
 		contextMenu
 			? [
+					{ label: 'Send to whiteboard…', onSelect: () => { if (contextMenu) sendReferenceToBoard({ kind: 'entity', id: contextMenu.entityId }, $entities.find(e => e.id === contextMenu?.entityId)?.name ?? 'Entity'); } },
 					{
 						label: 'Open focused graph',
 						icon: '◎',

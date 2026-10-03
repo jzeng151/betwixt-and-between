@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { boardImport, sendReferenceToBoard } from '$lib/features/whiteboard/send-to-board.js';
+  import { graphCaption } from '$lib/features/whiteboard/graph-import.js';
   import { getActs } from '$lib/story-structure.js';
 	import { storyFetch } from '$lib/story-fetch.js';
   import { registerDirtyField, unregisterDirtyField } from '$lib/util/pending-commit.js';
@@ -644,6 +646,8 @@
     const entity = $entities.find((e) => e.id === id);
     const hasLinkedMap = entity?.type === 'Location' && $worldMaps.some((m) => m.locationId === id);
     return [
+      { label: 'Send entity to whiteboard…', onSelect: () => sendReferenceToBoard({ kind: 'entity', id }, entity?.name ?? 'Entity') },
+      ...graphMenuItems,
       {
         label: 'Open in window',
         onSelect: () => openEntity(id)
@@ -676,6 +680,24 @@
       }
     ];
   });
+  let graphMenu = $state<{ x: number; y: number } | null>(null);
+  let exportError = $state('');
+  function sendGraph(kind: 'diagram' | 'snapshot') {
+    if (!canvas) return;
+    try {
+      const name = 'Story graph';
+      const graph = canvas.capture();
+      if (!graph.nodes.length) throw new Error('This graph has no visible entities to add.');
+      boardImport.set({ kind, name, graph, caption: graphCaption(name, { time: $playhead, hardFilter, hideOutOfScope: $hideOutOfScope,
+        ghostTrails: showGhostTrails, labels: edgeLabelsVisible, relationships: [...enabledRelTypes] }) });
+      exportError = '';
+    } catch (cause) { exportError = cause instanceof Error ? cause.message : 'Could not capture the graph. Try again.'; }
+  }
+  const graphMenuItems = $derived([
+    { label: 'Send graph snapshot to whiteboard…', disabled: !graphNodes.length, onSelect: () => sendGraph('snapshot') },
+    { label: 'Send editable diagram to whiteboard…', disabled: !graphNodes.length, onSelect: () => sendGraph('diagram') }
+  ]);
+
 </script>
 
 <svelte:window
@@ -711,6 +733,7 @@
   onNodeOpen={openEntity}
   onNodePositionChange={onNodePositionChange}
   onContextMenu={(id, x, y) => (contextMenu = { entityId: id, x, y })}
+  onCanvasContextMenu={(x, y) => (graphMenu = { x, y })}
   onEdgeContextMenu={(id, x, y) => (editRelMenu = { relationshipId: id, x, y })}
   onEdgeClick={(id) => jumpToCause($relationships.find((r) => r.id === id))}
   showEdgeLabels={edgeLabelsVisible}
@@ -755,6 +778,7 @@
      anchoring at the bottom corner. -->
 <div class="sg-controls">
   <div class="sg-controls-row">
+    <button class="sg-icon-btn graph-send" aria-label="Send graph to whiteboard" title="Send graph to whiteboard" disabled={!graphNodes.length} onclick={event => { const rect = event.currentTarget.getBoundingClientRect(); graphMenu = { x: rect.left, y: rect.bottom }; }}>Whiteboard…</button>
     <button
       type="button"
       class="sg-icon-btn"
@@ -924,6 +948,9 @@
   </div>
 {/if}
 
+{#if exportError}<div class="graph-export-error" role="alert">{exportError}</div>{/if}
+{#if graphMenu}<ContextMenu items={graphMenuItems} x={graphMenu.x} y={graphMenu.y} onClose={() => (graphMenu = null)} />{/if}
+
 {#if contextMenu}
   <ContextMenu
     items={contextMenuItems}
@@ -1003,6 +1030,8 @@
 {/if}
 
 <style>
+  .sg-icon-btn.graph-send { width: auto; padding: 0 8px; font-size: 11px; }
+  .graph-export-error { position: absolute; left: 12px; bottom: 12px; padding: 8px; background: var(--color-surface); color: var(--color-danger); }
   .graph-load { min-height: 100%; display: grid; place-content: center; gap: 10px; color: var(--color-text-muted); }
   .graph-refresh { position: absolute; z-index: 8; margin: 10px; padding: 8px; background: var(--color-surface-2); color: var(--color-text); }
   /* ── Per-node overlay buttons ───────────────────────────────────────────── */

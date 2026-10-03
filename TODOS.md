@@ -168,7 +168,7 @@ Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qo
 
 - [x] **Whiteboard actions and story picker.** Right-click and keyboard menus share actions with the global command palette while the whiteboard is active. Search/filter story entities and maps, select multiple references, and add them as one undoable change. Removing a card preserves its story entity.
 - [x] **Whiteboard selection and connectors.** Shift-click and box selection, group movement/duplication/deletion, alignment, locking, and attached labeled connectors. Frame membership and connector endpoints survive duplication; each group operation is one undo step.
-- [ ] **Send to whiteboard.** Entity/map actions with a destination board picker; graph snapshots and editable relationship diagrams that preserve source filters and story time.
+- [x] **Send to whiteboard.** Entity/map actions with a destination board picker; graph snapshots and editable relationship diagrams that preserve source filters and story time.
 
 ### Search
 

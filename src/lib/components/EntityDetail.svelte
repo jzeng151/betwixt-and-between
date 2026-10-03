@@ -38,6 +38,7 @@
 </script>
 
 <script lang="ts">
+	import { sendReferenceToBoard } from '$lib/features/whiteboard/send-to-board.js';
 	import { entities } from '$lib/stores/entities.js';
 	import type { Entity } from '$lib/stores/entities.js';
 	import InlineEdit from './InlineEdit.svelte';
@@ -237,6 +238,7 @@
 			<div class="entity-detail-eyebrow-row">
 				<span class="entity-detail-eyebrow">{eyebrowFor(entity)}</span>
 				<div class="entity-detail-actions">
+					<button type="button" class="copy-link" onclick={() => sendReferenceToBoard({ kind: 'entity', id: entity.id }, entity.name)}>Send to whiteboard…</button>
 					<button type="button" class="copy-link" onclick={copyWikiLink}>Copy Wiki link</button>
 					{#if mode === 'edit'}
 						<button
