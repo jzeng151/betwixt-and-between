@@ -25,7 +25,7 @@
 	let panelEl: HTMLDivElement | undefined = $state();
 	let pos = $state({ x: 0, y: 0 });
 	const returnFocus = takeNextFocusReturn(
-		document.activeElement instanceof HTMLElement ? document.activeElement : null
+		document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement ? document.activeElement : null
 	);
 
 	$effect(() => {

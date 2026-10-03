@@ -1,15 +1,23 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { MousePointer2, Hand, StickyNote, Type, Square, Circle, ArrowUpRight, Pencil, Frame, ImagePlus, Link, Undo2, Redo2, Trash2, Copy, Minus, Plus, Maximize } from 'lucide-svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
+  import { MousePointer2, Hand, StickyNote, Type, Square, Circle, ArrowUpRight, Pencil, Frame, ImagePlus, Link, Undo2, Redo2, Trash2, Copy, Minus, Plus, Maximize, MoreHorizontal } from 'lucide-svelte';
   import { entities } from '$lib/stores/entities.js';
   import { worldMaps, worldMapStore } from '$lib/features/map/store.js';
+  import ContextMenu from '$lib/os/ContextMenu.svelte';
+  import StoryPicker from './StoryPicker.svelte';
+  import { whiteboardCommands, type WhiteboardCommand } from './commands.js';
   import { windowStore } from '$lib/os/windows-store.js';
   import { boardList, boardDrafts, activeBoardId, loadBoards, loadBoard, createBoard, editBoard, saveBoard, undoBoard, deleteBoard, flushBoards, uploadBoardImage } from './store.js';
   import { emptyDocument, moveElements, assignFrame, type BoardDocument, type BoardElement, type ElementType, type Point } from './model.js';
 
   const tools = [{ id: 'select', label: 'Select', icon: MousePointer2 }, { id: 'pan', label: 'Pan', icon: Hand }, { id: 'sticky', label: 'Sticky note', icon: StickyNote }, { id: 'text', label: 'Text', icon: Type }, { id: 'rectangle', label: 'Rectangle', icon: Square }, { id: 'ellipse', label: 'Ellipse', icon: Circle }, { id: 'arrow', label: 'Arrow', icon: ArrowUpRight }, { id: 'pen', label: 'Pen', icon: Pencil }, { id: 'frame', label: 'Frame', icon: Frame }];
   let tool = $state('select'), selected = $state<string | null>(null), error = $state('');
-  let loading = $state(true), busy = $state(false), newName = $state(''), showCreate = $state(false), showReferences = $state(false), referenceQuery = $state('');
+  let loading = $state(true), busy = $state(false), newName = $state(''), showCreate = $state(false), showReferences = $state(false);
+  let referencePosition: Point | null = null;
+  let contextMenu = $state<{ x: number; y: number; position: Point } | null>(null);
+  let textInput: HTMLTextAreaElement | undefined = $state();
+  let nameInput: HTMLInputElement | undefined = $state();
+  let picker: { focus: () => void } | undefined = $state();
   let confirmAction = $state<'delete' | 'reload' | null>(null);
   let canvas = $state<SVGSVGElement>(null!), fileInput = $state<HTMLInputElement>(null!);
   let width = $state(800), height = $state(500), preview = $state<BoardDocument | null>(null);
@@ -18,32 +26,62 @@
   const document = $derived(preview ?? board?.document ?? emptyDocument());
   const chosen = $derived(document.elements.find(e => e.id === selected));
   const ordered = $derived([...document.elements.filter(e => e.type === 'frame'), ...document.elements.filter(e => e.type !== 'frame')]);
-  const references = $derived([
-    ...$entities.filter(e => e.type !== 'Note' || !e.data.isFolder).flatMap(e => [{ kind: 'entity' as const, id: e.id, name: e.name, label: e.type }, { kind: 'graph' as const, id: e.id, name: e.name, label: 'Focused graph' }]),
-    ...$worldMaps.map(m => ({ kind: 'map' as const, id: m.id, name: m.name, label: 'Map' }))
-  ].filter(r => `${r.name} ${r.label}`.toLowerCase().includes(referenceQuery.toLowerCase())).slice(0, 40));
+  const ready = $derived(!!board && !loading && !busy);
+  const actions: WhiteboardCommand[] = $derived([
+    { id: 'new-board', name: 'New board', disabled: loading || busy, run: () => { showCreate = true; void tick().then(() => nameInput?.focus()); } },
+    ...(['sticky', 'text', 'rectangle', 'ellipse', 'frame'] as const).map(type => ({
+      id: `add-${type}`, name: `Add ${type === 'sticky' ? 'sticky note' : type}`, disabled: !ready,
+      run: () => { add(type, contextMenu?.position ?? center()); canvas.focus(); }
+    })),
+    { id: 'add-from-story', name: 'Add from story', disabled: !ready, run: () => { referencePosition = contextMenu?.position ?? center(); showReferences = true; void tick().then(() => picker?.focus()); } },
+    { id: 'upload-image', name: 'Upload image', disabled: !ready, run: () => fileInput.click() },
+    { id: 'select', name: 'Select elements', disabled: !ready, run: () => { tool = 'select'; canvas.focus(); } },
+    { id: 'pan', name: 'Pan canvas', disabled: !ready, run: () => { tool = 'pan'; canvas.focus(); } },
+    { id: 'pen', name: 'Draw with pen', disabled: !ready, run: () => { tool = 'pen'; canvas.focus(); } },
+    { id: 'arrow', name: 'Draw arrow', disabled: !ready, run: () => { tool = 'arrow'; canvas.focus(); } },
+    { id: 'edit-text', name: 'Edit text', disabled: !ready || !chosen || ['image', 'pen', 'arrow', 'reference'].includes(chosen.type), run: () => textInput?.focus() },
+    { id: 'open-reference', name: 'Open source', disabled: !ready || chosen?.type !== 'reference' || !referenceTarget(chosen), run: () => chosen && openReference(chosen) },
+    { id: 'view-connections', name: 'View connections', disabled: !ready || chosen?.target?.kind !== 'entity' || !referenceTarget(chosen), run: () => chosen?.target && windowStore.openFocusedGraph([chosen.target.id]) },
+    { id: 'duplicate', name: 'Duplicate element', disabled: !ready || !chosen, run: () => { duplicate(); canvas.focus(); } },
+    { id: 'front', name: 'Bring to front', disabled: !ready || !chosen || chosen.type === 'frame', run: () => reorder(true) },
+    { id: 'back', name: 'Send to back', disabled: !ready || !chosen || chosen.type === 'frame', run: () => reorder(false) },
+    { id: 'remove', name: chosen?.type === 'reference' ? 'Remove from board' : 'Delete element', disabled: !ready || !chosen, run: () => { remove(); canvas.focus(); } },
+    { id: 'undo', name: 'Undo whiteboard change', disabled: !ready || !board?.undo.length, run: () => { if (board) undoBoard(board.id); canvas.focus(); } },
+    { id: 'redo', name: 'Redo whiteboard change', disabled: !ready || !board?.redo.length, run: () => { if (board) undoBoard(board.id, true); canvas.focus(); } },
+    { id: 'zoom-in', name: 'Zoom in', disabled: !ready, run: () => zoom(1.25) },
+    { id: 'zoom-out', name: 'Zoom out', disabled: !ready, run: () => zoom(0.8) },
+    { id: 'fit', name: 'Fit board', disabled: !ready, run: fit }
+  ]);
+  const contextItems = $derived((chosen
+    ? ['open-reference', 'view-connections', 'edit-text', 'duplicate', 'front', 'back', 'remove', 'undo', 'redo']
+    : ['add-sticky', 'add-text', 'add-rectangle', 'add-ellipse', 'add-frame', 'add-from-story', 'upload-image', 'undo', 'redo', 'fit'])
+    .map(id => actions.find(action => action.id === id)!)
+    .filter(action => !['open-reference', 'view-connections', 'edit-text'].includes(action.id) || !action.disabled)
+    .map(action => ({ label: action.name, disabled: action.disabled, onSelect: action.run })));
+  $effect(() => { whiteboardCommands.set(actions); });
+
 
   function fail(cause: unknown) { error = cause instanceof Error ? cause.message : 'Something went wrong. Try again.'; }
   async function load() {
-    loading = true; error = ''; confirmAction = null;
+    loading = true; error = ''; confirmAction = null; contextMenu = null; showReferences = false;
     try { await Promise.all([loadBoards(), worldMapStore.loadMaps()]); const id = $activeBoardId ?? $boardList[0]?.id; if (id) { await loadBoard(id); activeBoardId.set(id); } }
     catch (cause) { fail(cause); } finally { loading = false; }
   }
   onMount(() => { void load(); });
-  onDestroy(() => { void flushBoards().catch(() => {}); });
+  onDestroy(() => { whiteboardCommands.set([]); void flushBoards().catch(() => {}); });
   async function switchBoard(id: string) {
     if (loading || busy) return;
-    loading = true; confirmAction = null; selected = null; preview = null; gesture = null; error = '';
+    loading = true; confirmAction = null; contextMenu = null; showReferences = false; selected = null; preview = null; gesture = null; error = '';
     try { await loadBoard(id); activeBoardId.set(id); } catch (cause) { fail(cause); } finally { loading = false; }
   }
   async function create() {
     if (!newName.trim() || busy) return;
     busy = true; error = '';
-    try { await createBoard(newName.trim()); newName = ''; showCreate = false; selected = null; confirmAction = null; } catch (cause) { fail(cause); } finally { busy = false; }
+    try { await createBoard(newName.trim()); newName = ''; showCreate = false; showReferences = false; contextMenu = null; selected = null; confirmAction = null; } catch (cause) { fail(cause); } finally { busy = false; }
   }
   function commit(next: BoardDocument, history = true) {
-    if (!board || loading || busy) return;
-    try { editBoard(board.id, $state.snapshot(next), undefined, history); error = ''; } catch (cause) { fail(cause); }
+    if (!board || loading || busy) return false;
+    try { editBoard(board.id, $state.snapshot(next), undefined, history); error = ''; return true; } catch (cause) { fail(cause); return false; }
   }
   function updateElement(values: Partial<BoardElement>) {
     if (!chosen) return;
@@ -69,9 +107,44 @@
     return { x: (event.clientX - rect.left) / v.zoom + v.x, y: (event.clientY - rect.top) / v.zoom + v.y };
   }
   function center(): Point { return { x: document.viewport.x + width / document.viewport.zoom / 2, y: document.viewport.y + height / document.viewport.zoom / 2 }; }
-  function add(type: ElementType, position = center(), extra: Partial<BoardElement> = {}) {
-    const element: BoardElement = { id: crypto.randomUUID(), type, ...position, width: type === 'frame' ? 440 : 200, height: type === 'frame' ? 320 : type === 'text' || type === 'reference' ? 90 : 150, color: '#c8942a', text: type === 'sticky' ? 'New idea' : type === 'frame' ? 'Section' : type === 'text' ? 'Text' : '', ...extra };
-    commit({ ...document, elements: assignFrame([...document.elements, element], element.id) }); selected = element.id; tool = 'select'; return element;
+  function add(type: ElementType, position = center()) {
+    const element: BoardElement = { id: crypto.randomUUID(), type, ...position, width: type === 'frame' ? 440 : 200, height: type === 'frame' ? 320 : type === 'text' ? 90 : 150, color: '#c8942a', text: type === 'sticky' ? 'New idea' : type === 'frame' ? 'Section' : type === 'text' ? 'Text' : '' };
+    let elements = assignFrame([...document.elements, element], element.id);
+    if (type === 'frame') for (const item of elements) if (item.type !== 'frame' && !item.frameId) elements = assignFrame(elements, item.id);
+    if (commit({ ...document, elements })) { selected = element.id; tool = 'select'; }
+  }
+  function addReferences(targets: Array<NonNullable<BoardElement['target']>>) {
+    const position = referencePosition ?? center();
+    if (targets.some(target => !referenceTarget({ target }))) { error = 'An item is no longer available. Refresh the story and try again.'; return false; }
+    const columns = Math.max(1, Math.min(3, targets.length, Math.floor((width / document.viewport.zoom - 32) / 220)));
+    const start = { x: Math.max(document.viewport.x + 16, position.x - (columns * 220 - 20) / 2), y: Math.max(document.viewport.y + 16, position.y - 45) };
+    const added: BoardElement[] = targets.map((target, index) => ({ id: crypto.randomUUID(), type: 'reference', target,
+      x: start.x + (index % columns) * 220, y: start.y + Math.floor(index / columns) * 110, width: 200, height: 90, color: '#c8942a' }));
+    let elements = [...document.elements, ...added];
+    for (const item of added) elements = assignFrame(elements, item.id);
+    if (!added.length || !commit({ ...document, elements })) return false;
+    selected = added[0].id; tool = 'select'; return true;
+  }
+  function closeReferences() { showReferences = false; referencePosition = null; void tick().then(() => canvas?.focus()); }
+  function reorder(front: boolean) {
+    if (!chosen) return;
+    const others = document.elements.filter(e => e.id !== chosen.id);
+    commit({ ...document, elements: front ? [...others, chosen] : [chosen, ...others] }); canvas.focus();
+  }
+  function openMenu(event: MouseEvent) {
+    event.preventDefault(); event.stopPropagation();
+    if (!ready) return;
+    finish(true);
+    const target = event.target as Element;
+    selected = target.closest('[data-element-id]')?.getAttribute('data-element-id') ?? null;
+    contextMenu = { x: event.clientX, y: event.clientY, position: point(event) };
+  }
+  function keyboardMenu(target: Element) {
+    const element = target.closest('[data-element-id]');
+    if (element) selected = element.getAttribute('data-element-id');
+    const rect = (element ?? canvas).getBoundingClientRect();
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    contextMenu = { x, y, position: point({ clientX: x, clientY: y }) };
   }
   function down(event: PointerEvent) {
     if (!board || loading || busy || event.button > 1) return;
@@ -134,9 +207,11 @@
     commit({ ...document, viewport: { x: minX, y: minY, zoom: Math.max(0.1, Math.min(2, width / (maxX - minX), height / (maxY - minY))) } }, false);
   }
   function keydown(event: KeyboardEvent) {
-    if (busy || loading) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') contextMenu = null;
+    if (busy || loading || (event.target as Element).closest('[role=menu]')) return;
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
-    if (event.key === 'Escape') { finish(true); selected = null; tool = 'select'; showReferences = false; confirmAction = null; return; }
+    if ((event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) && ready) { event.preventDefault(); event.stopPropagation(); keyboardMenu(event.target as Element); return; }
+    if (event.key === 'Escape') { contextMenu = null; finish(true); selected = null; tool = 'select'; showReferences = false; confirmAction = null; return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && board) { event.preventDefault(); undoBoard(board.id, event.shiftKey); return; }
     if (event.key === 'Delete' && chosen) { event.preventDefault(); remove(); }
     if (event.key === 'Enter' && event.target === canvas && ['sticky', 'text', 'rectangle', 'ellipse', 'frame'].includes(tool)) { event.preventDefault(); add(tool as ElementType); }
@@ -145,7 +220,7 @@
       commit(chosen ? { ...document, elements: assignFrame(moveElements(document.elements, chosen.id, dx, dy), chosen.id) } : { ...document, viewport: { ...document.viewport, x: document.viewport.x + dx, y: document.viewport.y + dy } }, !!chosen);
     }
   }
-  function referenceTarget(e: BoardElement) { return e.target?.kind === 'map' ? $worldMaps.find(m => m.id === e.target?.id) : $entities.find(n => n.id === e.target?.id); }
+  function referenceTarget(e: Pick<BoardElement, 'target'>) { return e.target?.kind === 'map' ? $worldMaps.find(m => m.id === e.target?.id) : $entities.find(n => n.id === e.target?.id); }
   function referenceName(e: BoardElement) { return referenceTarget(e)?.name ?? 'Reference unavailable'; }
   function openReference(e: BoardElement) {
     const target = e.target; if (!target) return;
@@ -180,7 +255,7 @@
     <button onclick={() => { showCreate = !showCreate; }} disabled={busy}>New board</button>
     {#if board}<span class="save-state" role="status">{board.saving ? 'Saving…' : board.error ? 'Not saved' : board.dirty ? 'Unsaved changes' : 'Saved'}</span>{/if}
   </div>
-  {#if showCreate || (!loading && !$boardList.length)}<form class="create" onsubmit={e => { e.preventDefault(); void create(); }}><label>Name <input aria-label="New board name" bind:value={newName} maxlength="100" placeholder="Ideas for Act II" required disabled={busy} /></label><button disabled={busy || !newName.trim()}>Create board</button></form>{/if}
+  {#if showCreate || (!loading && !$boardList.length)}<form class="create" onsubmit={e => { e.preventDefault(); void create(); }}><label>Name <input aria-label="New board name" bind:this={nameInput} bind:value={newName} maxlength="100" placeholder="Ideas for Act II" required disabled={busy} /></label><button disabled={busy || !newName.trim()}>Create board</button></form>{/if}
   {#if error}<div class="message" role="alert">{error}<button onclick={load} disabled={busy}>Retry loading</button></div>{/if}
   {#if board?.error}<div class="message" role="alert">{board.error} Your draft is kept in this session.<button onclick={() => board && saveBoard(board.id)}>Retry save</button><button onclick={download}>Download draft</button><button onclick={() => { confirmAction = 'reload'; }}>Reload saved board</button></div>{/if}
   {#if confirmAction}<div class="message" role="alert">{confirmAction === 'delete' ? 'Delete this board and all its elements?' : 'Discard this draft and reload the saved board?'}<button onclick={confirm} disabled={busy}>Confirm {confirmAction}</button><button onclick={() => { confirmAction = null; }}>Cancel</button></div>{/if}
@@ -188,13 +263,14 @@
     <div class="tools" role="toolbar" aria-label="Drawing tools">
       {#each tools as item}<button title={item.label} aria-label={item.label} aria-pressed={tool === item.id} disabled={busy} onclick={() => { tool = item.id; selected = null; }}><item.icon size={17} /><span>{item.label}</span></button>{/each}
       <button title="Upload image" aria-label="Upload image" disabled={busy} onclick={() => fileInput.click()}><ImagePlus size={17} /></button><input class="file" bind:this={fileInput} type="file" accept="image/png,image/jpeg,image/webp" onchange={e => upload(e.currentTarget.files?.[0])} />
-      <button title="Add reference" aria-label="Add reference" aria-pressed={showReferences} disabled={busy} onclick={() => { showReferences = !showReferences; }}><Link size={17} /></button>
+      <button title="Add from story" aria-label="Add from story" aria-pressed={showReferences} disabled={busy} onclick={() => { if (showReferences) closeReferences(); else { referencePosition = center(); showReferences = true; } }}><Link size={17} /><span>Add from story</span></button>
       <button aria-label="Undo" title="Undo (Ctrl/Cmd+Z)" disabled={!board.undo.length || busy} onclick={() => board && undoBoard(board.id)}><Undo2 size={17} /></button><button aria-label="Redo" title="Redo (Ctrl/Cmd+Shift+Z)" disabled={!board.redo.length || busy} onclick={() => board && undoBoard(board.id, true)}><Redo2 size={17} /></button>
+      <button aria-label="Canvas actions" title="Canvas actions (Shift+F10)" disabled={busy} onclick={e => keyboardMenu(e.currentTarget)}><MoreHorizontal size={17} /></button>
     </div>
-    {#if showReferences}<div class="references"><label>Find a reference <input bind:value={referenceQuery} placeholder="Character, map, or graph" /></label><div>{#each references as ref}<button onclick={() => { add('reference', center(), { target: { kind: ref.kind, id: ref.id } }); showReferences = false; }}>{ref.name}<small>{ref.label}</small></button>{/each}{#if !references.length}<p>No matching references. Create an entity or map first.</p>{/if}</div></div>{/if}
+    {#if showReferences}<StoryPicker bind:this={picker} disabled={!ready} onAdd={addReferences} onClose={closeReferences} />{/if}
     <div class="stage" bind:clientWidth={width} bind:clientHeight={height}>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex (The application canvas supports keyboard drawing, selection, and movement.) -->
-      <svg bind:this={canvas} role="application" aria-label="Whiteboard canvas" tabindex="0" viewBox={`${document.viewport.x} ${document.viewport.y} ${width / document.viewport.zoom} ${height / document.viewport.zoom}`} onpointerdown={down} onpointermove={move} onpointerup={() => finish()} onpointercancel={() => finish(true)} onwheel={wheel}>
+      <svg bind:this={canvas} role="application" aria-label="Whiteboard canvas" tabindex="0" viewBox={`${document.viewport.x} ${document.viewport.y} ${width / document.viewport.zoom} ${height / document.viewport.zoom}`} oncontextmenu={openMenu} onpointerdown={down} onpointermove={move} onpointerup={() => finish()} onpointercancel={() => finish(true)} onwheel={wheel}>
         <defs><pattern id="whiteboard-dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="var(--color-border)" /></pattern><marker id="whiteboard-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 z" fill="context-stroke" /></marker></defs>
         <rect x={document.viewport.x} y={document.viewport.y} width={width / document.viewport.zoom} height={height / document.viewport.zoom} fill="url(#whiteboard-dots)" />
         {#each ordered as element (element.id)}
@@ -209,10 +285,11 @@
         {/each}
       </svg>
       {#if !document.elements.length}<div class="empty"><strong>Room for unfinished ideas</strong><p>Choose a sticky note, draw a shape, or add a live reference. Drag a frame around related ideas to move them together.</p></div>{/if}
-      {#if chosen}<aside aria-label="Selected element"><strong>{chosen.type === 'reference' ? referenceName(chosen) : 'Selected element'}</strong>{#if !['image', 'pen', 'arrow', 'reference'].includes(chosen.type)}<label>Text<textarea aria-label="Element text" value={chosen.text ?? ''} maxlength="10000" oninput={e => updateElement({ text: e.currentTarget.value })}></textarea></label>{/if}<label>Color<input type="color" value={chosen.color} onchange={e => updateElement({ color: e.currentTarget.value })} /></label><div class="dimensions">{#each (['pen', 'arrow'].includes(chosen.type) ? ['x', 'y'] : ['x', 'y', 'width', 'height']) as field}<label>{field}<input aria-label={`Element ${field}`} type="number" step="any" value={Number(chosen[field as 'x' | 'y' | 'width' | 'height'].toFixed(1))} onchange={e => updateElement({ [field]: e.currentTarget.valueAsNumber })} /></label>{/each}</div><div><button aria-label="Duplicate element" title="Duplicate" onclick={duplicate}><Copy size={16} /></button><button aria-label="Delete element" title="Delete" onclick={remove}><Trash2 size={16} /></button></div></aside>{/if}
+      {#if chosen}<aside aria-label="Selected element"><strong>{chosen.type === 'reference' ? referenceName(chosen) : 'Selected element'}</strong>{#if !['image', 'pen', 'arrow', 'reference'].includes(chosen.type)}<label>Text<textarea bind:this={textInput} aria-label="Element text" value={chosen.text ?? ''} maxlength="10000" oninput={e => updateElement({ text: e.currentTarget.value })}></textarea></label>{/if}<label>Color<input type="color" value={chosen.color} onchange={e => updateElement({ color: e.currentTarget.value })} /></label><div class="dimensions">{#each (['pen', 'arrow'].includes(chosen.type) ? ['x', 'y'] : ['x', 'y', 'width', 'height']) as field}<label>{field}<input aria-label={`Element ${field}`} type="number" step="any" value={Number(chosen[field as 'x' | 'y' | 'width' | 'height'].toFixed(1))} onchange={e => updateElement({ [field]: e.currentTarget.valueAsNumber })} /></label>{/each}</div><div><button aria-label="Duplicate element" title="Duplicate" onclick={duplicate}><Copy size={16} /></button><button aria-label={chosen.type === 'reference' ? 'Remove from board' : 'Delete element'} title={chosen.type === 'reference' ? 'Remove from board' : 'Delete'} onclick={remove}><Trash2 size={16} /></button></div></aside>{/if}
     </div>
     <footer><label>Name <input aria-label="Board name" value={board.name} maxlength="100" onchange={e => { if (board && e.currentTarget.value.trim()) editBoard(board.id, board.document, e.currentTarget.value.trim()); }} /></label><button aria-label="Delete board" title="Delete board" onclick={() => { confirmAction = 'delete'; }}><Trash2 size={15} /></button><span class="hint">Drag to draw · Scroll to pan · Ctrl/⌘ scroll to zoom</span><button aria-label="Zoom out" onclick={() => zoom(0.8)}><Minus size={16} /></button><output aria-label="Zoom">{Math.round(document.viewport.zoom * 100)}%</output><button aria-label="Zoom in" onclick={() => zoom(1.25)}><Plus size={16} /></button><button aria-label="Fit board" title="Fit board" onclick={fit}><Maximize size={16} /></button></footer>
   {:else if !showCreate && $boardList.length}<p>Select a board to keep working.</p>{/if}
+  {#if contextMenu}<ContextMenu items={contextItems} x={contextMenu.x} y={contextMenu.y} onClose={() => { contextMenu = null; }} />{/if}
 </div>
 
 <style>
@@ -242,8 +319,6 @@
   aside textarea { min-height: 70px; resize: vertical; }
   .dimensions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .dimensions input { width: 100%; box-sizing: border-box; }
-  .references { padding: 10px; border-bottom: 1px solid var(--color-border); }
-  .references > div { display: flex; flex-wrap: wrap; gap: 5px; max-height: 110px; overflow: auto; margin-top: 6px; }
   small { color: var(--color-text-muted); }
   .empty { position: absolute; inset: 35% auto auto 8%; width: min(360px, 70%); pointer-events: none; }
   .empty strong { font: 22px var(--font-display); }
