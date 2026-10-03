@@ -172,3 +172,51 @@ test('locking a mixed selection preserves inherited frame locks', async ({ page,
   await canvas.press('ArrowRight');
   await expect(childElement).toHaveAttribute('transform', 'translate(70,80)');
 });
+
+test('alignment requires two independent movable roots across the inspector and palette', async ({ page, request }) => {
+  const frame: BoardElement = { ...note('Evidence', 20, 20), type: 'frame', width: 300, height: 240 };
+  const child = { ...note('Framed clue', 60, 80), frameId: frame.id }, outside = note('Loose clue', 400, 100);
+  const { app, canvas } = await openBoard(page, request, [frame, child, outside]);
+  await app.locator(`[data-element-id="${frame.id}"]`).press('Enter');
+  await app.locator(`[data-element-id="${child.id}"]`).press('Shift+Enter');
+  const alignment = app.getByRole('combobox', { name: 'Align selection' });
+  await expect(alignment).toBeDisabled();
+  await app.getByRole('button', { name: 'Canvas actions', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Align left', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await canvas.press('Control+k');
+  const palette = page.getByRole('dialog', { name: 'Command palette', exact: true });
+  await palette.getByRole('combobox').fill('Align');
+  await expect(palette.getByRole('option', { name: /Align/ })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(app.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  const loose = app.locator(`[data-element-id="${outside.id}"]`);
+  await loose.press('Shift+Enter'); await expect(alignment).toBeEnabled();
+  await alignment.selectOption('left');
+  await expect(loose).toHaveAttribute('transform', 'translate(20,100)');
+  await expect(app.locator(`[data-element-id="${child.id}"]`)).toHaveAttribute('transform', 'translate(60,80)');
+  await app.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(loose).toHaveAttribute('transform', 'translate(400,100)');
+  await expect(app.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
+
+for (const removal of ['delete', 'undo'] as const) test(`connector drawing recovers when its first endpoint is removed by ${removal}`, async ({ page, request }) => {
+  const first = note('Mara', 70, 70), second = note('The harbor', 370, 220);
+  const { id, app, canvas } = await openBoard(page, request, [first, second]);
+  await app.getByRole('button', { name: 'Sticky note', exact: true }).click();
+  await canvas.click({ position: { x: 70, y: 360 } });
+  const origin = app.getByRole('button', { name: 'sticky: New idea', exact: true });
+  await app.getByRole('button', { name: 'Connector', exact: true }).click();
+  await origin.press('Enter');
+  await expect(app.getByText('Choose the second element to connect. Escape cancels.', { exact: true })).toBeVisible();
+  if (removal === 'delete') await canvas.press('Delete');
+  else await app.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(origin).toHaveCount(0);
+  await expect(app.getByText('Choose the first element, then the second. Tab and Enter work too.', { exact: true })).toBeVisible();
+  await app.locator(`[data-element-id="${first.id}"]`).press('Enter');
+  await app.locator(`[data-element-id="${second.id}"]`).press('Enter');
+  await expect(canvas.locator('path[data-connector-id]')).toHaveCount(1);
+  await expect(app.locator('.save-state')).toHaveText('Saved');
+  const saved = await (await request.get(`/api/whiteboards/${id}`)).json();
+  expect(saved.document.elements.find((e: BoardElement) => e.type === 'connector')).toMatchObject({ fromId: first.id, toId: second.id });
+});

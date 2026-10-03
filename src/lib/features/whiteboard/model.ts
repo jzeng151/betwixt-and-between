@@ -81,14 +81,20 @@ export function duplicateSelected(elements: BoardElement[], selected: readonly s
     ...(e.type === 'connector' ? { fromId: copied.get(e.fromId!) ?? e.fromId, toId: copied.get(e.toId!) ?? e.toId } : {})
   }));
   const copyIds = new Set<string>(copied.values());
+  // Connectors follow their endpoints, so a lone copy needs a different curve.
+  for (const e of copies) if (e.type === 'connector' && !copyIds.has(e.fromId!) && !copyIds.has(e.toId!)) e.bend = (e.bend ?? 0) + ((e.bend ?? 0) > 20000 - 48 ? -48 : 48);
   let result = [...elements, ...copies];
   for (const e of copies) if (!e.frameId || !copyIds.has(e.frameId)) result = assignFrame(result, e.id);
   return { elements: result, selected: selected.flatMap(id => copied.has(id) ? [copied.get(id)!] : []) };
 }
 
-export function alignElements(elements: BoardElement[], selected: readonly string[], alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom'): BoardElement[] {
+export function alignmentRoots(elements: BoardElement[], selected: readonly string[]): BoardElement[] {
   const ids = new Set(selected);
-  const roots = elements.filter(e => ids.has(e.id) && e.type !== 'connector' && !isElementLocked(elements, e) && (!e.frameId || !ids.has(e.frameId)));
+  return elements.filter(e => ids.has(e.id) && e.type !== 'connector' && !isElementLocked(elements, e) && (!e.frameId || !ids.has(e.frameId)));
+}
+
+export function alignElements(elements: BoardElement[], selected: readonly string[], alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom'): BoardElement[] {
+  const roots = alignmentRoots(elements, selected);
   if (roots.length < 2) return elements;
   const left = Math.min(...roots.map(e => e.x)), top = Math.min(...roots.map(e => e.y));
   const right = Math.max(...roots.map(e => e.x + e.width)), bottom = Math.max(...roots.map(e => e.y + e.height));
@@ -130,6 +136,8 @@ export function connectorGeometry(connector: BoardElement, elements: BoardElemen
     path = `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`;
     label = { x: (start.x + 2 * control.x + end.x) / 4, y: (start.y + 2 * control.y + end.y) / 4 };
   }
-  const points = [start, end, ...controls], x = Math.min(...points.map(p => p.x)), y = Math.min(...points.map(p => p.y));
+  const points = [start, end, ...controls];
+  if (connector.text) points.push({ x: label.x - 100, y: label.y - 18 }, { x: label.x + 100, y: label.y + 30 });
+  const x = Math.min(...points.map(p => p.x)), y = Math.min(...points.map(p => p.y));
   return { path, label, start, end, bounds: { x, y, width: Math.max(1, ...points.map(p => p.x - x)), height: Math.max(1, ...points.map(p => p.y - y)) } };
 }

@@ -1,6 +1,6 @@
 import { expect, it, vi, afterEach } from 'vitest';
 import { get } from 'svelte/store';
-import { documentError, emptyDocument, assignFrame, moveElements, deleteSelected, duplicateSelected, alignElements, isElementLocked, connectorGeometry, type BoardElement } from '$lib/features/whiteboard/model.js';
+import { documentError, emptyDocument, assignFrame, moveElements, deleteSelected, duplicateSelected, alignmentRoots, alignElements, isElementLocked, connectorGeometry, type BoardElement } from '$lib/features/whiteboard/model.js';
 import { boardDrafts, boardList, loadBoards, loadBoard, editBoard, saveBoard, flushBoards, undoBoard, deleteBoard, uploadBoardImage } from '$lib/features/whiteboard/store.js';
 import { failedWrites, flushPendingWrites } from '$lib/stores/pending-writes.js';
 const element = (extra: Partial<BoardElement> = {}): BoardElement => ({ id: crypto.randomUUID(), type: 'sticky', x: 20, y: 50, width: 100, height: 100, color: '#c8942a', ...extra });
@@ -43,19 +43,32 @@ it('moves a frame and selected children once while preserving locked elements an
 it('duplicates complete frames unlocked, remaps internal attachments, and leaves original locks untouched', () => {
   const frame = element({ type: 'frame', locked: true, x: 0, y: 0, width: 500, height: 400 });
   const first = element({ frameId: frame.id, locked: true }), second = element({ frameId: frame.id, x: 180 });
-  const line = element({ type: 'connector', fromId: first.id, toId: second.id, text: 'Leads to', locked: true });
+  const line = element({ type: 'connector', fromId: first.id, toId: second.id, text: 'Leads to', locked: true, bend: 80 });
   const result = duplicateSelected([frame, first, second, line], [frame.id, first.id]);
   const [copyFrame, copyFirst, copySecond, copyLine] = result.elements.slice(4);
   expect(result.selected).toEqual([copyFrame.id, copyFirst.id]);
   expect(copyFirst).toMatchObject({ x: 44, y: 74, frameId: copyFrame.id, locked: false });
   expect(copySecond.frameId).toBe(copyFrame.id);
-  expect(copyLine).toMatchObject({ fromId: copyFirst.id, toId: copySecond.id, text: 'Leads to', locked: false });
+  expect(copyLine).toMatchObject({ fromId: copyFirst.id, toId: copySecond.id, text: 'Leads to', locked: false, bend: 80 });
   expect(documentError({ ...emptyDocument(), elements: result.elements })).toBeNull();
   expect(result.elements[0]).toBe(frame); expect(result.elements[1].locked).toBe(true);
   const detached = duplicateSelected([frame, first], [first.id]);
   expect(detached.elements[2]).toMatchObject({ locked: false, frameId: null });
   const copiedLine = duplicateSelected([first, second, line], [line.id]).elements[3];
   expect(copiedLine).toMatchObject({ fromId: first.id, toId: second.id });
+});
+it('duplicates standalone connectors and self-loops with visible curves while preserving copied endpoint geometry', () => {
+  const first = element(), second = element({ x: 300 });
+  for (const bend of [undefined, 80, -80, 20000, -20000]) for (const toId of [first.id, second.id]) {
+    const line = element({ type: 'connector', fromId: first.id, toId, bend });
+    const result = duplicateSelected([first, second, line], [line.id]);
+    const copy = result.elements[3];
+    expect(copy).toMatchObject({ fromId: first.id, toId });
+    expect(connectorGeometry(copy, result.elements)!.path).not.toBe(connectorGeometry(line, result.elements)!.path);
+    expect(documentError({ ...emptyDocument(), elements: result.elements })).toBeNull();
+    const partial = duplicateSelected([first, second, line], [first.id, line.id]);
+    expect(partial.elements[4]).toMatchObject({ fromId: partial.elements[3].id, bend });
+  }
 });
 it('removes attached connectors with endpoints, ungroups frame children, and preserves locked connector endpoints', () => {
   const frame = element({ type: 'frame' }), first = element({ frameId: frame.id }), second = element();
@@ -68,6 +81,10 @@ it('removes attached connectors with endpoints, ungroups frame children, and pre
 it('aligns movable selection roots using their bounds and moves grouped children only once', () => {
   const frame = element({ type: 'frame', x: 100, y: 0, width: 200, height: 300 }), child = element({ frameId: frame.id, x: 120 });
   const other = element({ x: 10 }), locked = element({ x: -100, locked: true });
+  const line = element({ type: 'connector', fromId: frame.id, toId: other.id });
+  expect(alignmentRoots([frame, child, other, locked, line], [frame.id, child.id, other.id, locked.id, line.id])).toEqual([frame, other]);
+  expect(alignmentRoots([frame, child], [frame.id, child.id])).toEqual([frame]);
+  expect(alignElements([frame, child], [frame.id, child.id], 'left')).toEqual([frame, child]);
   const result = alignElements([frame, child, other, locked], [frame.id, child.id, other.id, locked.id], 'left');
   expect(result.map(e => e.x)).toEqual([10, 30, 10, -100]);
   const centered = alignElements([element({ x: 0, width: 100, id: frame.id }), element({ x: 200, width: 200, id: other.id })], [frame.id, other.id], 'center');
@@ -96,6 +113,19 @@ it('attaches connector paths to borders, follows movement, and encloses curved p
     expect(point.y).toBeGreaterThanOrEqual(loop.bounds.y); expect(point.y).toBeLessThanOrEqual(loop.bounds.y + loop.bounds.height);
   }
   expect(connectorGeometry(line, [first])).toBeNull();
+});
+it('includes rendered label boxes in straight, curved and self-loop connector bounds', () => {
+  const first = element({ x: 0, y: 0, width: 20, height: 20 }), second = element({ x: 0, y: 300, width: 20, height: 20 });
+  for (const toId of [first.id, second.id]) for (const bend of [0, 80, -80]) {
+    const line = element({ type: 'connector', fromId: first.id, toId, bend });
+    const plain = connectorGeometry(line, [first, second])!;
+    const { label, bounds } = connectorGeometry({ ...line, text: 'Leads to' }, [first, second])!;
+    expect(bounds.x).toBeLessThanOrEqual(label.x - 100);
+    expect(bounds.y).toBeLessThanOrEqual(label.y - 18);
+    expect(bounds.x + bounds.width + 1e-9).toBeGreaterThanOrEqual(label.x + 100);
+    expect(bounds.y + bounds.height + 1e-9).toBeGreaterThanOrEqual(label.y + 30);
+    expect(connectorGeometry({ ...line, text: '' }, [first, second])!.bounds).toEqual(plain.bounds);
+  }
 });
 it('keeps edits made during a save, retries failed drafts, and allows saving after a clean flush', async () => {
   const id = crypto.randomUUID(), document = emptyDocument();

@@ -8,7 +8,7 @@
   import { whiteboardCommands, type WhiteboardCommand } from './commands.js';
   import { windowStore } from '$lib/os/windows-store.js';
   import { boardList, boardDrafts, activeBoardId, loadBoards, loadBoard, createBoard, editBoard, saveBoard, undoBoard, deleteBoard, flushBoards, uploadBoardImage } from './store.js';
-  import { emptyDocument, moveElements, assignFrame, isElementLocked, deleteSelected, duplicateSelected, alignElements, connectorGeometry, type BoardDocument, type BoardElement, type ElementType, type Point } from './model.js';
+  import { emptyDocument, moveElements, assignFrame, isElementLocked, deleteSelected, duplicateSelected, alignElements, alignmentRoots, connectorGeometry, type BoardDocument, type BoardElement, type ElementType, type Point } from './model.js';
 
   const tools = [{ id: 'select', label: 'Select', icon: MousePointer2 }, { id: 'pan', label: 'Pan', icon: Hand }, { id: 'sticky', label: 'Sticky note', icon: StickyNote }, { id: 'text', label: 'Text', icon: Type }, { id: 'rectangle', label: 'Rectangle', icon: Square }, { id: 'ellipse', label: 'Ellipse', icon: Circle }, { id: 'arrow', label: 'Arrow', icon: ArrowUpRight }, { id: 'pen', label: 'Pen', icon: Pencil }, { id: 'frame', label: 'Frame', icon: Frame }];
   let tool = $state('select'), selected = $state<string[]>([]), error = $state('');
@@ -30,6 +30,8 @@
   const chosen = $derived(selection.length === 1 ? selection[0] : undefined);
   const locked = $derived(!!chosen && isElementLocked(document.elements, chosen));
   const editable = $derived(selection.filter(e => !isElementLocked(document.elements, e)));
+  const canAlign = $derived(alignmentRoots(document.elements, selected).length >= 2);
+  $effect(() => { if (connectFrom && !document.elements.some(e => e.id === connectFrom && e.type !== 'connector')) connectFrom = null; });
   const lockOwners = $derived([...new Set(selection.flatMap(e => [e.locked ? e.id : '', e.frameId && document.elements.find(f => f.id === e.frameId)?.locked ? e.frameId : '']).filter(Boolean))]);
   const alignments = ['left', 'center', 'right', 'top', 'middle', 'bottom'] as const;
   const ordered = $derived([...document.elements.filter(e => e.type === 'frame'), ...document.elements.filter(e => e.type === 'connector'), ...document.elements.filter(e => e.type !== 'frame' && e.type !== 'connector')]);
@@ -57,7 +59,7 @@
     { id: 'back', name: 'Send to back', disabled: !ready || !editable.some(e => !['frame', 'connector'].includes(e.type)), run: () => reorder(false) },
     { id: 'lock', name: 'Lock selection', disabled: !ready || !editable.length, run: () => setLocked(true) },
     { id: 'unlock', name: 'Unlock selection', disabled: !ready || !lockOwners.length, run: () => setLocked(false) },
-    ...alignments.map(alignment => ({ id: `align-${alignment}`, name: `Align ${alignment}`, disabled: !ready || editable.filter(e => e.type !== 'connector').length < 2, run: () => align(alignment) })),
+    ...alignments.map(alignment => ({ id: `align-${alignment}`, name: `Align ${alignment}`, disabled: !ready || !canAlign, run: () => align(alignment) })),
     { id: 'remove', name: selection.length > 1 ? 'Delete selection' : chosen?.type === 'reference' ? 'Remove from board' : 'Delete element', disabled: !ready || !editable.length, run: () => { remove(); canvas.focus(); } },
     { id: 'undo', name: 'Undo whiteboard change', disabled: !ready || !board?.undo.length, run: () => { if (board) undoBoard(board.id); canvas.focus(); } },
     { id: 'redo', name: 'Redo whiteboard change', disabled: !ready || !board?.redo.length, run: () => { if (board) undoBoard(board.id, true); canvas.focus(); } },
@@ -121,6 +123,7 @@
     if (commit({ ...document, elements: document.elements.map(e => ids.includes(e.id) ? { ...e, locked: value } : e) })) canvas.focus();
   }
   function align(alignment: typeof alignments[number]) {
+    if (!canAlign) return;
     if (commit({ ...document, elements: alignElements(document.elements, selected, alignment) })) canvas.focus();
   }
   function connect(fromId: string, toId: string) {
@@ -379,7 +382,7 @@
           {:else}<div class="dimensions">{#each (['pen', 'arrow'].includes(chosen.type) ? ['x', 'y'] : ['x', 'y', 'width', 'height']) as field}<label>{field}<input aria-label={`Element ${field}`} type="number" step="any" value={Number(chosen[field as 'x' | 'y' | 'width' | 'height'].toFixed(1))} onchange={e => updateElement({ [field]: e.currentTarget.valueAsNumber })} /></label>{/each}</div>{/if}
         </fieldset>{/if}
         {#if selection.length > 1}
-          <label>Align<select aria-label="Align selection" disabled={editable.filter(e => e.type !== 'connector').length < 2} value="" onchange={e => { align(e.currentTarget.value as typeof alignments[number]); e.currentTarget.value = ''; }}><option value="" disabled>Choose alignment</option>{#each alignments as alignment}<option value={alignment}>{alignment[0].toUpperCase() + alignment.slice(1)}</option>{/each}</select></label>
+          <label>Align<select aria-label="Align selection" disabled={!canAlign} value="" onchange={e => { align(e.currentTarget.value as typeof alignments[number]); e.currentTarget.value = ''; }}><option value="" disabled>Choose alignment</option>{#each alignments as alignment}<option value={alignment}>{alignment[0].toUpperCase() + alignment.slice(1)}</option>{/each}</select></label>
           {#if selection.length === 2 && selection.every(e => e.type !== 'connector')}<button onclick={() => connect(selection[0].id, selection[1].id)}>Connect selected elements</button>{/if}
         {/if}
         <div><button aria-label={chosen ? 'Duplicate element' : 'Duplicate selection'} title="Duplicate (Ctrl/Cmd+D)" onclick={duplicate}><Copy size={16} /></button><button aria-label={chosen ? chosen.type === 'reference' ? 'Remove from board' : 'Delete element' : 'Delete selection'} title={chosen?.type === 'reference' ? 'Remove from board' : 'Delete'} disabled={!editable.length} onclick={remove}><Trash2 size={16} /></button></div>
