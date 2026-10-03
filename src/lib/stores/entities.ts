@@ -140,7 +140,6 @@ function createEntityStore() {
 		return needsFreshSnapshot;
 	}
 	function upsertEntities(created: Entity[]) {
-		if (created.some((entity) => entity.type === 'Note')) notesStore.invalidateEntries();
 		const byId = new Map(created.map((entity) => [entity.id, entity]));
 		update((all) => {
 			const existing = new Set(all.map((entity) => entity.id));
@@ -148,6 +147,27 @@ function createEntityStore() {
 				...all.map((entity) => byId.get(entity.id) ?? entity),
 				...created.filter((entity) => !existing.has(entity.id))
 			];
+		});
+	}
+
+	/** Install confirmed Notes endpoint writes before their best-effort full refresh. */
+	function applyNoteMutation(mutation: { saved: Entity } | { deletedId: string }) {
+		markMutationReady();
+		if ('saved' in mutation) {
+			upsertEntities([mutation.saved]);
+			return;
+		}
+		update((all) => {
+			// The parent_id foreign key cascades through folders and any nested descendants.
+			const deleted = new Set([mutation.deletedId]);
+			let previousSize: number;
+			do {
+				previousSize = deleted.size;
+				for (const entity of all) {
+					if (entity.parentId && deleted.has(entity.parentId)) deleted.add(entity.id);
+				}
+			} while (deleted.size !== previousSize);
+			return all.filter((entity) => !deleted.has(entity.id));
 		});
 	}
 
@@ -174,6 +194,7 @@ function createEntityStore() {
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity = await res.json();
 		const needsFreshSnapshot = await settleSnapshotBeforeCreate();
+		if (created.type === 'Note') notesStore.invalidateEntries();
 		upsertEntities([created]);
 		if (needsFreshSnapshot) {
 			entitySnapshotReady.set(true);
@@ -205,6 +226,7 @@ function createEntityStore() {
 		if (!res.ok) throw new Error(await res.text());
 		const created: Entity[] = await res.json();
 		const needsFreshSnapshot = await settleSnapshotBeforeCreate();
+		if (created.some((entity) => entity.type === 'Note')) notesStore.invalidateEntries();
 		upsertEntities(created);
 		if (needsFreshSnapshot) {
 			entitySnapshotReady.set(true);
@@ -348,7 +370,7 @@ function createEntityStore() {
 		await Promise.all([intervalsStore.load(), relationships.load()]);
 	}
 
-	return { subscribe, load, refreshAfterMutation, createEntity, createEntities, updateEntity, deleteEntity };
+	return { subscribe, load, refreshAfterMutation, applyNoteMutation, createEntity, createEntities, updateEntity, deleteEntity };
 }
 
 export const entities = createEntityStore();

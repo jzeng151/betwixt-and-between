@@ -16,7 +16,8 @@ async function seedMap(request: APIRequestContext) {
 
 async function openMapMenu(page: Page) {
   await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
-  await page.goto('/app');
+  const loaded = page.waitForResponse(response => new URL(response.url()).pathname === '/api/entities');
+  await page.goto('/app'); await loaded;
   await page.getByRole('button', { name: 'World Map', exact: true }).click();
   const map = page.getByRole('dialog', { name: 'World Map', exact: true });
   await map.getByRole('button', { name: 'Maximize', exact: true }).click();

@@ -81,9 +81,11 @@ describe('notesStore.loadEntries', () => {
 // =============================================================================
 
 describe('notesStore.createFolder', () => {
-	it('POSTs to /api/notes/folders and adds to store', async () => {
+	it.each([true, false])('keeps the created folder cached when entity refresh succeeds: %s', async (refreshOk) => {
 		const created = { id: 'f3', name: 'New Folder', type: 'Note', data: { isFolder: true }, parentId: null, position: null, createdAt: 0, updatedAt: 0 };
-		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(created, true, 201)) as unknown as typeof fetch;
+		globalThis.fetch = vi.fn()
+			.mockResolvedValueOnce(makeResponse(created, true, 201))
+			.mockResolvedValue(makeResponse([created], refreshOk, refreshOk ? 200 : 503)) as unknown as typeof fetch;
 
 		const result = await notesStore.createFolder('New Folder');
 
@@ -94,6 +96,7 @@ describe('notesStore.createFolder', () => {
 		});
 		expect(result.id).toBe('f3');
 		expect(get(noteFolders)).toHaveLength(1);
+		expect(get(entities)).toEqual([created]);
 	});
 });
 
@@ -102,11 +105,11 @@ describe('notesStore.createFolder', () => {
 // =============================================================================
 
 describe('notesStore.createEntry', () => {
-	it('POSTs to /api/notes/entries with parentId and adds to store', async () => {
+	it.each([true, false])('keeps the created note available when entity refresh succeeds: %s', async (refreshOk) => {
 		const created = { id: 'e3', name: 'Untitled', type: 'Note', data: { body: '' }, parentId: 'f1', position: null, createdAt: 0, updatedAt: 0 };
 		globalThis.fetch = vi.fn()
 			.mockResolvedValueOnce(makeResponse(created, true, 201))
-			.mockResolvedValue(makeResponse([created])) as unknown as typeof fetch;
+			.mockResolvedValue(makeResponse([created], refreshOk, refreshOk ? 200 : 503)) as unknown as typeof fetch;
 
 		const result = await notesStore.createEntry('Untitled', 'f1');
 
@@ -126,27 +129,28 @@ describe('notesStore.createEntry', () => {
 // =============================================================================
 
 describe('notesStore.updateEntry', () => {
-	it('PATCHes entry and updates store', async () => {
+	it.each([true, false])('updates both caches when entity refresh succeeds: %s', async (refreshOk) => {
 		// Seed an entry
 		const seed = [{ id: 'e1', name: 'Old', type: 'Note', data: { body: 'old' }, parentId: 'f1', position: 0, createdAt: 0, updatedAt: 0 }];
 		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seed)) as unknown as typeof fetch;
 		await notesStore.loadEntries();
 		await entities.load();
 
-		const updated = { id: 'e1', name: 'Updated', type: 'Note', data: { body: 'new body' }, parentId: 'f1', position: 0, createdAt: 0, updatedAt: 0 };
+		const updated = { id: 'e1', name: 'Updated', type: 'Note', data: { body: 'new body' }, parentId: null, position: 0, createdAt: 0, updatedAt: 0 };
 		globalThis.fetch = vi.fn()
 			.mockResolvedValueOnce(makeResponse(updated))
-			.mockResolvedValue(makeResponse([updated])) as unknown as typeof fetch;
+			.mockResolvedValue(makeResponse([updated], refreshOk, refreshOk ? 200 : 503)) as unknown as typeof fetch;
 
-		await notesStore.updateEntry('e1', { name: 'Updated', body: 'new body' });
+		await notesStore.updateEntry('e1', { name: 'Updated', body: 'new body', folderId: null });
 
 		expect(globalThis.fetch).toHaveBeenCalledWith('/api/notes/entries/e1', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Updated', body: 'new body' })
+			body: JSON.stringify({ name: 'Updated', body: 'new body', folderId: null })
 		});
 		expect(get(noteEntries)[0].name).toBe('Updated');
 		expect(get(noteEntries)[0].body).toBe('new body');
+		expect(get(noteEntries)[0].folderId).toBeNull();
 		expect(get(entities)).toEqual([updated]);
 	});
 
@@ -163,6 +167,7 @@ describe('notesStore.updateEntry', () => {
 		await sendReferenceToBoard({ kind: 'entity', id: 'e1' }, 'Old');
 		expect(get(boardImport)).toMatchObject({ kind: 'reference', name: 'Saved', target: { kind: 'entity', id: 'e1' } });
 		expect(get(noteEntries)[0]).toMatchObject({ name: 'Saved', body: 'Kept' });
+		expect(get(entities)[0]).toMatchObject({ id: 'e1', name: 'Saved', data: { body: 'Kept' } });
 		expect(notesStore.drafts.size).toBe(0);
 		expect(get(notesStore.saveState)).toBe('saved');
 		expect(get(entityLoadStatus)).toBe('error');
@@ -186,7 +191,7 @@ it('uses the current entity title when Notes still holds an older saved title', 
 // =============================================================================
 
 describe('notesStore.deleteEntry', () => {
-	it('DELETEs entry and removes from store', async () => {
+	it.each([200, 404])('removes a confirmed deleted note (%s) even if the entity refresh fails', async (status) => {
 		const seed = [{ id: 'e1', name: 'To Delete', type: 'Note', data: { body: '' }, parentId: 'f1', position: 0, createdAt: 0, updatedAt: 0 }];
 		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seed)) as unknown as typeof fetch;
 		await notesStore.loadEntries();
@@ -194,8 +199,8 @@ describe('notesStore.deleteEntry', () => {
 		expect(get(noteEntries)).toHaveLength(1);
 
 		globalThis.fetch = vi.fn()
-			.mockResolvedValueOnce(makeResponse({ ok: true }))
-			.mockResolvedValue(makeResponse([])) as unknown as typeof fetch;
+			.mockResolvedValueOnce(makeResponse({ ok: true }, status === 200, status))
+			.mockResolvedValue(makeResponse({}, false, 503)) as unknown as typeof fetch;
 		await notesStore.deleteEntry('e1');
 
 		expect(get(noteEntries)).toHaveLength(0);
@@ -232,19 +237,108 @@ describe('notesStore.deleteFolder', () => {
 		expect(get(noteEntries)).toHaveLength(0);
 		expect(get(entities)).toHaveLength(0);
 	});
+
+	it('removes the cached folder subtree but keeps unrelated entities when refresh fails', async () => {
+		const base = { type: 'Note', data: {}, position: 0, createdAt: 0, updatedAt: 0 };
+		const rows = [
+			{ ...base, id: 'nested-note', name: 'Nested note', parentId: 'nested-folder' },
+			{ ...base, id: 'nested-folder', name: 'Nested folder', parentId: 'folder', data: { isFolder: true } },
+			{ ...base, id: 'folder', name: 'Folder', parentId: null, data: { isFolder: true } },
+			{ ...base, id: 'keep', name: 'Keep', parentId: null, type: 'Character' }
+		];
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(rows)) as unknown as typeof fetch;
+		await entities.load();
+		globalThis.fetch = vi.fn()
+			.mockResolvedValueOnce(makeResponse({ ok: true }))
+			.mockResolvedValue(makeResponse({}, false, 503)) as unknown as typeof fetch;
+
+		await notesStore.deleteFolder('folder');
+		expect(get(entities)).toEqual([rows[3]]);
+	});
+});
+
+it.each([true, false])('keeps a renamed folder cached when entity refresh succeeds: %s', async (refreshOk) => {
+	const folder = { id: 'f1', name: 'Folder', type: 'Note', data: { isFolder: true }, parentId: null, position: 0, createdAt: 0, updatedAt: 0 };
+	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([folder])) as unknown as typeof fetch;
+	await notesStore.loadFolders();
+	await entities.load();
+	const renamed = { ...folder, name: 'Renamed' };
+	globalThis.fetch = vi.fn()
+		.mockResolvedValueOnce(makeResponse(renamed))
+		.mockResolvedValue(makeResponse([renamed], refreshOk, refreshOk ? 200 : 503)) as unknown as typeof fetch;
+
+	await notesStore.renameFolder(folder.id, renamed.name);
+	expect(get(noteFolders)[0].name).toBe('Renamed');
+	expect(get(entities)).toEqual([renamed]);
+	expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+});
+
+it.each(['create', 'rename'])('replaces an initial story snapshot after folder %s without losing unrelated entities', async (mutation) => {
+	const character = { id: 'character', name: 'Keep me', type: 'Character', data: {}, parentId: null, position: 0, createdAt: 0, updatedAt: 0 };
+	const folder = { ...character, id: 'folder', name: 'Saved folder', type: 'Note', data: { isFolder: true } };
+	let finishInitial!: (response: Response) => void;
+	globalThis.fetch = vi.fn()
+		.mockReturnValueOnce(new Promise<Response>(resolve => { finishInitial = resolve; }))
+		.mockResolvedValueOnce(makeResponse(folder))
+		.mockResolvedValue(makeResponse([character, folder])) as unknown as typeof fetch;
+
+	const initial = entities.load();
+	if (mutation === 'create') await notesStore.createFolder(folder.name);
+	else await notesStore.renameFolder(folder.id, folder.name);
+	finishInitial(makeResponse([character]));
+	await initial;
+	expect(get(entities)).toEqual([character, folder]);
+});
+
+it('keeps a pending note-list read when a folder rename updates the entity cache', async () => {
+	const entry = { id: 'entry', name: 'Entry', type: 'Note', data: { body: 'Body' }, parentId: 'folder', position: 0, createdAt: 0, updatedAt: 0 };
+	const folder = { ...entry, id: 'folder', name: 'Renamed folder', data: { isFolder: true }, parentId: null };
+	let finishEntries!: (response: Response) => void;
+	globalThis.fetch = vi.fn()
+		.mockReturnValueOnce(new Promise<Response>(resolve => { finishEntries = resolve; }))
+		.mockResolvedValueOnce(makeResponse(folder))
+		.mockResolvedValue(makeResponse([folder, entry])) as unknown as typeof fetch;
+	const loading = notesStore.loadEntries();
+	await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledOnce());
+	await notesStore.renameFolder(folder.id, folder.name);
+	finishEntries(makeResponse([entry]));
+	await loading;
+	expect(get(noteEntries)).toEqual([{ id: entry.id, name: entry.name, body: entry.data.body, folderId: folder.id, position: 0 }]);
+});
+
+it.each(['load', 'replacement'])('does not let a pending %s restore an older note after a confirmed edit', async (kind) => {
+	const old = { id: 'e1', name: 'Old', type: 'Note', data: { body: 'Old body' }, parentId: null, position: 0, createdAt: 0, updatedAt: 0 };
+	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([old])) as unknown as typeof fetch;
+	await notesStore.loadEntries();
+	await entities.load();
+	const saved = { ...old, name: 'Saved', data: { body: 'Saved body' } };
+	let finishRead!: (response: Response) => void;
+	globalThis.fetch = vi.fn()
+		.mockReturnValueOnce(new Promise<Response>(resolve => { finishRead = resolve; }))
+		.mockResolvedValueOnce(makeResponse(saved))
+		.mockResolvedValue(makeResponse({}, false, 503)) as unknown as typeof fetch;
+
+	const oldRead = kind === 'load' ? entities.load() : entities.refreshAfterMutation();
+	const writing = notesStore.updateEntry(old.id, { name: saved.name, body: saved.data.body });
+	await vi.waitFor(() => expect(get(entities)).toEqual([saved]));
+	finishRead(makeResponse([old]));
+	await Promise.all([oldRead, writing]);
+	expect(get(entities)).toEqual([saved]);
 });
 
 
 it.each([true, false])('waits for a pending folder rename before sign-out (success: %s)', async (ok) => {
 	let finish!: (response: Response) => void;
-	globalThis.fetch = vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; }));
+	globalThis.fetch = vi.fn()
+		.mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }))
+		.mockResolvedValue(makeResponse([]));
 	const rename = notesStore.renameFolder('f1', 'Renamed');
 	const handledRename = rename.catch(() => undefined);
 	let drained = false;
 	const flush = flushPendingWrites().then(() => { drained = true; return true; }, () => { drained = true; return false; });
 	await Promise.resolve();
 	expect(drained).toBe(false);
-	finish(makeResponse({ name: 'Renamed' }, ok, ok ? 200 : 500));
+	finish(makeResponse({ id: 'f1', name: 'Renamed', type: 'Note', data: { isFolder: true }, parentId: null, position: 0, createdAt: 0, updatedAt: 0 }, ok, ok ? 200 : 500));
 	expect(await flush).toBe(ok);
 	await handledRename;
 });
@@ -264,7 +358,8 @@ it('tracks a failed folder creation once and a successful retry clears it', asyn
 	await expect(notesStore.createFolder('Retry folder')).rejects.toThrow();
 	expect(get(failedWrites)).toHaveLength(1);
 	await expect(flushPendingWrites()).rejects.toThrow(/failed to save/);
-	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse({ id: 'retry-folder', name: 'Retry folder' }));
+	const folder = { id: 'retry-folder', name: 'Retry folder', type: 'Note', data: { isFolder: true }, parentId: null, position: 0, createdAt: 0, updatedAt: 0 };
+	globalThis.fetch = vi.fn().mockResolvedValueOnce(makeResponse(folder)).mockResolvedValue(makeResponse([folder]));
 	await notesStore.createFolder('Retry folder');
 	await expect(flushPendingWrites()).resolves.toBeUndefined();
 	expect(get(failedWrites)).toHaveLength(0);

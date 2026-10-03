@@ -1,6 +1,6 @@
 import { get, writable } from 'svelte/store';
-import { entities, entityLoadStatus } from '$lib/stores/entities.js';
-import { noteEntries, notesStore } from '$lib/stores/notes.js';
+import { entities } from '$lib/stores/entities.js';
+import { notesStore } from '$lib/stores/notes.js';
 import type { BoardElement } from './model.js';
 import type { GraphCapture } from './graph-import.js';
 
@@ -8,15 +8,16 @@ export type BoardImport =
   | { kind: 'reference'; target: NonNullable<BoardElement['target']>; name: string }
   | { kind: 'diagram' | 'snapshot'; graph: GraphCapture; name: string; caption: string };
 export const boardImport = writable<BoardImport | null>(null);
+let importVersion = 0;
+// Direct graph imports and closing the dialog also supersede an in-flight note send.
+boardImport.subscribe(() => { importVersion++; });
 
 export async function sendReferenceToBoard(target: NonNullable<BoardElement['target']>, name: string) {
+  const version = ++importVersion;
   if (target.kind === 'entity') {
-    const hadDraft = notesStore.drafts.has(target.id);
     if (!await notesStore.flushDrafts(target.id)) return;
-    // Notes may hold an older title after editing elsewhere; prefer the refreshed entity cache.
-    name = (hadDraft && get(entityLoadStatus) === 'error'
-      ? get(noteEntries).find(entry => entry.id === target.id)?.name
-      : get(entities).find(entity => entity.id === target.id)?.name) ?? name;
+    name = get(entities).find(entity => entity.id === target.id)?.name ?? name;
   }
+  if (version !== importVersion) return;
   boardImport.set({ kind: 'reference', target, name });
 }
