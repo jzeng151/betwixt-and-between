@@ -268,6 +268,7 @@
             {/if}
             <button
               class="char-row"
+              data-entity-id={char.id}
               onclick={() => {
                 if (selecting) toggleSelect(char.id);
                 else openEntity(char.id);
@@ -311,7 +312,7 @@
 
 {:else}
   <!-- ── Detail mode ── -->
-  <div class="char-detail" class:view-mode={mode === 'view'}>
+  <div class="char-detail" data-entity-id={entity.id} class:view-mode={mode === 'view'}>
     <div class="mode-row">
       {#if mode === 'edit'}
         <button

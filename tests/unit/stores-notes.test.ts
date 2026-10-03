@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { failedWrites, flushPendingWrites } from '../../src/lib/stores/pending-writes.js';
 import { notesStore, noteFolders, noteEntries } from '../../src/lib/stores/notes.js';
+import { entities, entityLoadStatus } from '../../src/lib/stores/entities.js';
+import { boardImport, sendReferenceToBoard } from '../../src/lib/features/whiteboard/send-to-board.js';
 
 // =============================================================================
 // Helpers
@@ -18,10 +20,12 @@ function makeResponse(body: unknown, ok = true, status = 200): Response {
 
 beforeEach(async () => {
 	failedWrites.set([]);
+	boardImport.set(null);
 	// Reset stores by loading empty
 	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([])) as unknown as typeof fetch;
 	await notesStore.loadFolders();
 	await notesStore.loadEntries();
+	await entities.load();
 });
 
 // =============================================================================
@@ -100,7 +104,9 @@ describe('notesStore.createFolder', () => {
 describe('notesStore.createEntry', () => {
 	it('POSTs to /api/notes/entries with parentId and adds to store', async () => {
 		const created = { id: 'e3', name: 'Untitled', type: 'Note', data: { body: '' }, parentId: 'f1', position: null, createdAt: 0, updatedAt: 0 };
-		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(created, true, 201)) as unknown as typeof fetch;
+		globalThis.fetch = vi.fn()
+			.mockResolvedValueOnce(makeResponse(created, true, 201))
+			.mockResolvedValue(makeResponse([created])) as unknown as typeof fetch;
 
 		const result = await notesStore.createEntry('Untitled', 'f1');
 
@@ -111,6 +117,7 @@ describe('notesStore.createEntry', () => {
 		});
 		expect(result.id).toBe('e3');
 		expect(get(noteEntries)).toHaveLength(1);
+		expect(get(entities)).toEqual([created]);
 	});
 });
 
@@ -124,9 +131,12 @@ describe('notesStore.updateEntry', () => {
 		const seed = [{ id: 'e1', name: 'Old', type: 'Note', data: { body: 'old' }, parentId: 'f1', position: 0, createdAt: 0, updatedAt: 0 }];
 		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seed)) as unknown as typeof fetch;
 		await notesStore.loadEntries();
+		await entities.load();
 
 		const updated = { id: 'e1', name: 'Updated', type: 'Note', data: { body: 'new body' }, parentId: 'f1', position: 0, createdAt: 0, updatedAt: 0 };
-		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(updated)) as unknown as typeof fetch;
+		globalThis.fetch = vi.fn()
+			.mockResolvedValueOnce(makeResponse(updated))
+			.mockResolvedValue(makeResponse([updated])) as unknown as typeof fetch;
 
 		await notesStore.updateEntry('e1', { name: 'Updated', body: 'new body' });
 
@@ -137,7 +147,38 @@ describe('notesStore.updateEntry', () => {
 		});
 		expect(get(noteEntries)[0].name).toBe('Updated');
 		expect(get(noteEntries)[0].body).toBe('new body');
+		expect(get(entities)).toEqual([updated]);
 	});
+
+	it('sends a saved draft title even when refreshing entity references fails', async () => {
+		const seed = { id: 'e1', name: 'Old', type: 'Note', data: { body: 'old' }, parentId: 'f1', position: 0, createdAt: 0, updatedAt: 0 };
+		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([seed])) as unknown as typeof fetch;
+		await notesStore.loadEntries();
+		await entities.load();
+		globalThis.fetch = vi.fn()
+			.mockResolvedValueOnce(makeResponse({ ...seed, name: 'Saved', data: { body: 'Kept' } }))
+			.mockResolvedValue(makeResponse({}, false, 503)) as unknown as typeof fetch;
+
+		notesStore.editDraft('e1', { name: 'Saved', body: 'Kept' });
+		await sendReferenceToBoard({ kind: 'entity', id: 'e1' }, 'Old');
+		expect(get(boardImport)).toMatchObject({ kind: 'reference', name: 'Saved', target: { kind: 'entity', id: 'e1' } });
+		expect(get(noteEntries)[0]).toMatchObject({ name: 'Saved', body: 'Kept' });
+		expect(notesStore.drafts.size).toBe(0);
+		expect(get(notesStore.saveState)).toBe('saved');
+		expect(get(entityLoadStatus)).toBe('error');
+		expect(get(failedWrites)).toHaveLength(0);
+	});
+});
+
+it('uses the current entity title when Notes still holds an older saved title', async () => {
+	const note = { id: 'e1', name: 'Old note title', type: 'Note', data: { body: '' }, parentId: 'f1', position: 0, createdAt: 0, updatedAt: 0 };
+	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([note])) as unknown as typeof fetch;
+	await notesStore.loadEntries();
+	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([{ ...note, name: 'Renamed in Wiki' }])) as unknown as typeof fetch;
+	await entities.load();
+
+	await sendReferenceToBoard({ kind: 'entity', id: note.id }, 'Old note title');
+	expect(get(boardImport)).toMatchObject({ kind: 'reference', name: 'Renamed in Wiki', target: { kind: 'entity', id: note.id } });
 });
 
 // =============================================================================
@@ -149,12 +190,16 @@ describe('notesStore.deleteEntry', () => {
 		const seed = [{ id: 'e1', name: 'To Delete', type: 'Note', data: { body: '' }, parentId: 'f1', position: 0, createdAt: 0, updatedAt: 0 }];
 		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse(seed)) as unknown as typeof fetch;
 		await notesStore.loadEntries();
+		await entities.load();
 		expect(get(noteEntries)).toHaveLength(1);
 
-		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse({ ok: true })) as unknown as typeof fetch;
+		globalThis.fetch = vi.fn()
+			.mockResolvedValueOnce(makeResponse({ ok: true }))
+			.mockResolvedValue(makeResponse([])) as unknown as typeof fetch;
 		await notesStore.deleteEntry('e1');
 
 		expect(get(noteEntries)).toHaveLength(0);
+		expect(get(entities)).toHaveLength(0);
 	});
 });
 
@@ -170,18 +215,22 @@ describe('notesStore.deleteFolder', () => {
 		await notesStore.loadFolders();
 
 		globalThis.fetch = vi.fn()
-			.mockResolvedValueOnce(makeResponse([{ id: 'e1', name: 'Entry', type: 'Note', data: { body: '' }, parentId: 'f1', position: 0, createdAt: 0, updatedAt: 0 }])) as unknown as typeof fetch;
+			.mockResolvedValue(makeResponse([{ id: 'e1', name: 'Entry', type: 'Note', data: { body: '' }, parentId: 'f1', position: 0, createdAt: 0, updatedAt: 0 }])) as unknown as typeof fetch;
 		await notesStore.loadEntries('f1');
+		await entities.load();
 
 		expect(get(noteFolders)).toHaveLength(1);
 		expect(get(noteEntries)).toHaveLength(1);
 
 		// Delete
-		globalThis.fetch = vi.fn().mockResolvedValue(makeResponse({ ok: true })) as unknown as typeof fetch;
+		globalThis.fetch = vi.fn()
+			.mockResolvedValueOnce(makeResponse({ ok: true }))
+			.mockResolvedValue(makeResponse([])) as unknown as typeof fetch;
 		await notesStore.deleteFolder('f1');
 
 		expect(get(noteFolders)).toHaveLength(0);
 		expect(get(noteEntries)).toHaveLength(0);
+		expect(get(entities)).toHaveLength(0);
 	});
 });
 

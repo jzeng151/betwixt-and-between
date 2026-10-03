@@ -37,6 +37,7 @@
 	import type { Entity } from '$lib/stores/entities.js';
 	import type { WorldMap } from './types.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
+	import { sendReferenceToBoard } from '$lib/features/whiteboard/send-to-board.js';
 	import PlacementStylePopover from '$lib/features/map/PlacementStylePopover.svelte';
 
 	type PixiModule = typeof import('pixi.js');
@@ -472,10 +473,7 @@
 					st.haloTarget = 0;
 				}
 			});
-			marker.on('pointertap', (e: FederatedPointerEvent) => {
-				if (e.button !== 0) return;
-				// In Move mode a click is the start of a drag, not a menu open.
-				if (inMoveMode) return;
+			const openMarkerMenu = (e: FederatedPointerEvent) => {
 				e.stopPropagation();
 				const { x, y } = clientXY(e);
 				tooltip = null;
@@ -487,7 +485,12 @@
 					placeableType: placeable.type,
 					placeableName: placeable.name
 				};
+			};
+			marker.on('pointertap', (e: FederatedPointerEvent) => {
+				// In Move mode a left click starts a drag; right-click still opens actions.
+				if (e.button === 0 && !inMoveMode) openMarkerMenu(e);
 			});
+			marker.on('rightclick', openMarkerMenu);
 
 			// Slice 4 PR-F (DS4) — Move tool: grab a marker to drag it. The drag
 			// itself is tracked on the viewport (pointermove/up) so it keeps
@@ -778,6 +781,10 @@
 	const menuItems = $derived(
 		menu
 			? [
+					{
+						label: 'Send entity to whiteboard…',
+						onSelect: () => sendReferenceToBoard({ kind: 'entity', id: menu!.placeableId }, menu!.placeableName)
+					},
 					{
 						label: `Open ${menu.placeableType}`,
 						icon: '↗',

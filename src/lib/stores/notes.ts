@@ -1,5 +1,6 @@
 import { storyFetch } from '$lib/story-fetch.js';
 import { get, writable } from 'svelte/store';
+import { entities } from '$lib/stores/entities.js';
 
 type NoteFolder = {
 	id: string;
@@ -180,6 +181,8 @@ function createNotesStore() {
 		updateSaveState();
 		folders.update((all) => all.filter((f) => f.id !== id));
 		entries.update((all) => all.filter((e) => e.folderId !== id));
+		// A failed reference refresh must not turn a successful note write into an unsaved draft.
+		await entities.refreshAfterMutation().catch(() => {});
 	}
 
 	async function createEntry(name: string, folderId: string | null): Promise<NoteEntry> {
@@ -199,6 +202,7 @@ function createNotesStore() {
 		};
 		entryVersions.set(entry.id, ++version);
 		entries.update((all) => [...all, entry]);
+		await entities.refreshAfterMutation().catch(() => {});
 		return entry;
 	}
 
@@ -228,6 +232,7 @@ function createNotesStore() {
 					: e
 			)
 		);
+		await entities.refreshAfterMutation().catch(() => {});
 	}
 
 	async function deleteEntry(id: string): Promise<void> {
@@ -239,6 +244,7 @@ function createNotesStore() {
 		entryVersions.set(id, ++version);
 		updateSaveState();
 		entries.update((all) => all.filter((e) => e.id !== id));
+		await entities.refreshAfterMutation().catch(() => {});
 	}
 
 	return {

@@ -37,6 +37,8 @@
 	import { mapAnchorsStore } from './map-anchors-store.js';
 	import { layerVisibility } from './layer-prefs-store.js';
 	import ContextMenu from '$lib/os/ContextMenu.svelte';
+	import { entities } from '$lib/stores/entities.js';
+	import { sendReferenceToBoard } from '$lib/features/whiteboard/send-to-board.js';
 	import { pointInPolygon } from './point-in-polygon.js';
 	import type { MapRegion, ProvenanceResult } from './types.js';
 
@@ -504,7 +506,14 @@
 		// linked Location.
 		const region = regions.find((r) => r.id === regionId);
 		const linkedLocationId = region?.locationId ?? null;
+		const linkedLocation = $entities.find((entity) => entity.id === linkedLocationId && entity.type === 'Location');
 		const items: MenuItem[] = [];
+		if (linkedLocation) {
+			items.push({
+				label: 'Send linked location to whiteboard…',
+				onSelect: () => sendReferenceToBoard({ kind: 'entity', id: linkedLocation.id }, linkedLocation.name)
+			});
+		}
 		if (onEditRegion) {
 			items.push({
 				label: 'Edit region',
