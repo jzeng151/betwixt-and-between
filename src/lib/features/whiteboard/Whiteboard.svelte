@@ -117,7 +117,7 @@
     if (commit({ ...document, elements: copy.elements })) selected = copy.selected;
   }
   function setLocked(value: boolean) {
-    const ids = value ? selected : lockOwners;
+    const ids = value ? editable.map(e => e.id) : lockOwners;
     if (commit({ ...document, elements: document.elements.map(e => ids.includes(e.id) ? { ...e, locked: value } : e) })) canvas.focus();
   }
   function align(alignment: typeof alignments[number]) {

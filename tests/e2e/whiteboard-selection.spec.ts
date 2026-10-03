@@ -152,3 +152,23 @@ test('keeps labeled connectors attached and remaps their endpoints when copying 
   await page.reload();
   await expect(app.getByRole('button', { name: 'connector: Knows the route', exact: true })).toHaveCount(2);
 });
+
+test('locking a mixed selection preserves inherited frame locks', async ({ page, request }) => {
+  const frame: BoardElement = { ...note('Evidence', 20, 20), type: 'frame', width: 300, height: 240, locked: true };
+  const child = { ...note('Framed clue', 60, 80), frameId: frame.id }, outside = note('Loose clue', 400, 80);
+  const { id, app, canvas } = await openBoard(page, request, [frame, child, outside]);
+  const childElement = app.locator(`[data-element-id="${child.id}"]`);
+  await childElement.press('Enter');
+  await app.locator(`[data-element-id="${outside.id}"]`).press('Shift+Enter');
+  await app.getByRole('button', { name: 'Lock selection', exact: true }).click();
+  await expect(app.locator('.save-state')).toHaveText('Saved');
+  const saved = await (await request.get(`/api/whiteboards/${id}`)).json();
+  expect(saved.document.elements.find((e: BoardElement) => e.id === child.id).locked).toBeFalsy();
+  expect(saved.document.elements.find((e: BoardElement) => e.id === outside.id).locked).toBe(true);
+  await app.locator(`[data-element-id="${frame.id}"]`).press('Enter');
+  await app.getByRole('button', { name: 'Unlock selection', exact: true }).click();
+  await childElement.press('Enter');
+  await expect(app.getByRole('textbox', { name: 'Element text' })).toBeEnabled();
+  await canvas.press('ArrowRight');
+  await expect(childElement).toHaveAttribute('transform', 'translate(70,80)');
+});
