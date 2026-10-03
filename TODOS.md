@@ -167,7 +167,7 @@ Pre-WM3 v2 design doc: `~/.gstack/projects/betwixt-and-between/steve-feat-app-qo
 - [x] **Whiteboard canvas.** Multiple named boards per story with a dotted pan/zoom canvas, sticky notes, text, rectangles, ellipses, arrows, pen strokes, images, and live entity/map/focused-graph cards. Frames move their members together. Autosave uses revision checks; failed drafts can be retried or downloaded. See ADR 0014 for the document model and limits.
 
 - [x] **Whiteboard actions and story picker.** Right-click and keyboard menus share actions with the global command palette while the whiteboard is active. Search/filter story entities and maps, select multiple references, and add them as one undoable change. Removing a card preserves its story entity.
-- [ ] **Whiteboard selection and connectors.** Multi-select, attached labeled connectors, alignment, and locking.
+- [x] **Whiteboard selection and connectors.** Shift-click and box selection, group movement/duplication/deletion, alignment, locking, and attached labeled connectors. Frame membership and connector endpoints survive duplication; each group operation is one undo step.
 - [ ] **Send to whiteboard.** Entity/map actions with a destination board picker; graph snapshots and editable relationship diagrams that preserve source filters and story time.
 
 ### Search
