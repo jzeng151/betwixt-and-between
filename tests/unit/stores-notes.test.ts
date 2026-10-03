@@ -273,20 +273,20 @@ it.each([true, false])('keeps a renamed folder cached when entity refresh succee
 	expect(globalThis.fetch).toHaveBeenCalledTimes(2);
 });
 
-it.each(['create', 'rename'])('replaces an initial story snapshot after folder %s without losing unrelated entities', async (mutation) => {
+it.each(['create', 'rename'])('keeps the initial story snapshot after folder %s when refreshing fails', async (mutation) => {
 	const character = { id: 'character', name: 'Keep me', type: 'Character', data: {}, parentId: null, position: 0, createdAt: 0, updatedAt: 0 };
 	const folder = { ...character, id: 'folder', name: 'Saved folder', type: 'Note', data: { isFolder: true } };
 	let finishInitial!: (response: Response) => void;
 	globalThis.fetch = vi.fn()
 		.mockReturnValueOnce(new Promise<Response>(resolve => { finishInitial = resolve; }))
 		.mockResolvedValueOnce(makeResponse(folder))
-		.mockResolvedValue(makeResponse([character, folder])) as unknown as typeof fetch;
+		.mockResolvedValue(makeResponse({}, false, 503)) as unknown as typeof fetch;
 
 	const initial = entities.load();
-	if (mutation === 'create') await notesStore.createFolder(folder.name);
-	else await notesStore.renameFolder(folder.id, folder.name);
-	finishInitial(makeResponse([character]));
-	await initial;
+	const writing = mutation === 'create' ? notesStore.createFolder(folder.name) : notesStore.renameFolder(folder.id, folder.name);
+	await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+	finishInitial(makeResponse(mutation === 'create' ? [character] : [character, { ...folder, name: 'Old folder' }]));
+	await Promise.all([initial, writing]);
 	expect(get(entities)).toEqual([character, folder]);
 });
 
@@ -306,24 +306,78 @@ it('keeps a pending note-list read when a folder rename updates the entity cache
 	expect(get(noteEntries)).toEqual([{ id: entry.id, name: entry.name, body: entry.data.body, folderId: folder.id, position: 0 }]);
 });
 
-it.each(['load', 'replacement'])('does not let a pending %s restore an older note after a confirmed edit', async (kind) => {
+it.each([
+	['create', 'load'], ['update', 'load'], ['delete', 'load'],
+	['create', 'replacement'], ['update', 'replacement'], ['delete', 'replacement']
+])('keeps unrelated entities and the confirmed note %s after a pending %s succeeds but refresh fails', async (mutation, kind) => {
 	const old = { id: 'e1', name: 'Old', type: 'Note', data: { body: 'Old body' }, parentId: null, position: 0, createdAt: 0, updatedAt: 0 };
+	const unrelated = { ...old, id: 'character', name: 'Unrelated character', type: 'Character', data: {} };
 	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([old])) as unknown as typeof fetch;
 	await notesStore.loadEntries();
-	await entities.load();
 	const saved = { ...old, name: 'Saved', data: { body: 'Saved body' } };
 	let finishRead!: (response: Response) => void;
 	globalThis.fetch = vi.fn()
 		.mockReturnValueOnce(new Promise<Response>(resolve => { finishRead = resolve; }))
-		.mockResolvedValueOnce(makeResponse(saved))
+		.mockResolvedValueOnce(makeResponse(mutation === 'delete' ? { ok: true } : saved))
 		.mockResolvedValue(makeResponse({}, false, 503)) as unknown as typeof fetch;
 
 	const oldRead = kind === 'load' ? entities.load() : entities.refreshAfterMutation();
-	const writing = notesStore.updateEntry(old.id, { name: saved.name, body: saved.data.body });
-	await vi.waitFor(() => expect(get(entities)).toEqual([saved]));
-	finishRead(makeResponse([old]));
+	const writing = mutation === 'create' ? notesStore.createEntry(saved.name, null)
+		: mutation === 'update' ? notesStore.updateEntry(old.id, { name: saved.name, body: saved.data.body })
+			: notesStore.deleteEntry(old.id);
+	await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+	finishRead(makeResponse(mutation === 'create' ? [unrelated] : [unrelated, old]));
 	await Promise.all([oldRead, writing]);
-	expect(get(entities)).toEqual([saved]);
+	expect(get(entities)).toEqual(mutation === 'delete' ? [unrelated] : [unrelated, saved]);
+	expect(get(entityLoadStatus)).toBe('error');
+});
+
+it('settles an already queued replacement before applying a saved note', async () => {
+	const old = { id: 'e1', name: 'Old', type: 'Note', data: { body: 'Old body' }, parentId: null, position: 0, createdAt: 0, updatedAt: 0 };
+	const unrelated = { ...old, id: 'character', name: 'Loaded later', type: 'Character', data: {} };
+	const saved = { ...old, name: 'Saved', data: { body: 'Saved body' } };
+	let finishActive!: (response: Response) => void;
+	let finishQueued!: (response: Response) => void;
+	globalThis.fetch = vi.fn()
+		.mockReturnValueOnce(new Promise<Response>(resolve => { finishActive = resolve; }))
+		.mockResolvedValueOnce(makeResponse(saved))
+		.mockReturnValueOnce(new Promise<Response>(resolve => { finishQueued = resolve; }))
+		.mockResolvedValue(makeResponse({}, false, 503)) as unknown as typeof fetch;
+
+	const active = entities.refreshAfterMutation();
+	const queued = entities.refreshAfterMutation();
+	const writing = notesStore.updateEntry(old.id, { name: saved.name, body: saved.data.body });
+	await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+	finishActive(makeResponse([old]));
+	await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(3));
+	finishQueued(makeResponse([unrelated, old]));
+	await Promise.all([active, queued, writing]);
+	expect(get(entities)).toEqual([unrelated, saved]);
+});
+
+it('keeps a newer EntityDetail save when an earlier Notes response waits for a snapshot', async () => {
+	const original = { id: 'note', name: 'Original', type: 'Note', data: { body: 'Original body' }, parentId: null, position: 0, createdAt: '2026-10-03T12:00:00.000Z', updatedAt: '2026-10-03T12:00:00.000Z' };
+	const notesSave = { ...original, name: 'Notes save', data: { body: 'Earlier body' }, updatedAt: '2026-10-03T12:00:01.000Z' };
+	const detailSave = { ...original, name: 'EntityDetail save', data: { body: 'Latest body' }, updatedAt: '2026-10-03T12:00:02.000Z' };
+	globalThis.fetch = vi.fn().mockResolvedValue(makeResponse([original])) as unknown as typeof fetch;
+	await notesStore.loadEntries();
+	await entities.load();
+	let finishSnapshot!: (response: Response) => void;
+	globalThis.fetch = vi.fn()
+		.mockReturnValueOnce(new Promise<Response>(resolve => { finishSnapshot = resolve; }))
+		.mockResolvedValueOnce(makeResponse(notesSave))
+		.mockResolvedValueOnce(makeResponse(detailSave))
+		.mockResolvedValue(makeResponse({}, false, 503)) as unknown as typeof fetch;
+
+	const snapshot = entities.load();
+	const notesWriting = notesStore.updateEntry(original.id, { name: notesSave.name, body: notesSave.data.body });
+	await vi.waitFor(() => expect(get(noteEntries)[0].name).toBe(notesSave.name));
+	await entities.updateEntity(original.id, { name: detailSave.name, data: detailSave.data });
+	expect(get(entities)).toEqual([detailSave]);
+	finishSnapshot(makeResponse([original]));
+	await Promise.all([snapshot, notesWriting]);
+	expect(get(entities)).toEqual([detailSave]);
+	expect(get(entityLoadStatus)).toBe('error');
 });
 
 

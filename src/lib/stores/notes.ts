@@ -154,7 +154,7 @@ function createNotesStore() {
 			parentId: data.parentId
 		};
 		folders.update((all) => [...all, folder]);
-		entities.applyNoteMutation({ saved: data });
+		await entities.applyNoteMutation({ saved: data });
 		await entities.refreshAfterMutation().catch(() => {});
 		return folder;
 	}
@@ -168,7 +168,7 @@ function createNotesStore() {
 		if (!res.ok) throw new Error('Failed to rename folder');
 		const data = await res.json();
 		folders.update((all) => all.map((f) => (f.id === id ? { ...f, name: data.name } : f)));
-		entities.applyNoteMutation({ saved: data });
+		await entities.applyNoteMutation({ saved: data });
 		await entities.refreshAfterMutation().catch(() => {});
 	}
 
@@ -185,7 +185,7 @@ function createNotesStore() {
 		updateSaveState();
 		folders.update((all) => all.filter((f) => f.id !== id));
 		entries.update((all) => all.filter((e) => e.folderId !== id));
-		entities.applyNoteMutation({ deletedId: id });
+		await entities.applyNoteMutation({ deletedId: id });
 		// A failed reference refresh must not turn a successful note write into an unsaved draft.
 		await entities.refreshAfterMutation().catch(() => {});
 	}
@@ -207,7 +207,7 @@ function createNotesStore() {
 		};
 		entryVersions.set(entry.id, ++version);
 		entries.update((all) => [...all, entry]);
-		entities.applyNoteMutation({ saved: data });
+		await entities.applyNoteMutation({ saved: data });
 		await entities.refreshAfterMutation().catch(() => {});
 		return entry;
 	}
@@ -238,7 +238,7 @@ function createNotesStore() {
 					: e
 			)
 		);
-		entities.applyNoteMutation({ saved: data });
+		await entities.applyNoteMutation({ saved: data });
 		await entities.refreshAfterMutation().catch(() => {});
 	}
 
@@ -251,7 +251,7 @@ function createNotesStore() {
 		entryVersions.set(id, ++version);
 		updateSaveState();
 		entries.update((all) => all.filter((e) => e.id !== id));
-		entities.applyNoteMutation({ deletedId: id });
+		await entities.applyNoteMutation({ deletedId: id });
 		await entities.refreshAfterMutation().catch(() => {});
 	}
 

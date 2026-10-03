@@ -151,9 +151,16 @@ function createEntityStore() {
 	}
 
 	/** Install confirmed Notes endpoint writes before their best-effort full refresh. */
-	function applyNoteMutation(mutation: { saved: Entity } | { deletedId: string }) {
+	async function applyNoteMutation(mutation: { saved: Entity } | { deletedId: string }) {
+		// Keep unrelated entities from a pending full snapshot, then overlay the confirmed write.
+		while (loadPromise || rollbackPromise || replacementPromise || mutationRefreshPromise) {
+			await Promise.allSettled([loadPromise, rollbackPromise, replacementPromise, mutationRefreshPromise]);
+		}
 		markMutationReady();
 		if ('saved' in mutation) {
+			const current = get({ subscribe }).find((entity) => entity.id === mutation.saved.id);
+			// Another editor may have saved this note while its earlier response waited for a snapshot.
+			if (current && new Date(current.updatedAt).getTime() > new Date(mutation.saved.updatedAt).getTime()) return;
 			upsertEntities([mutation.saved]);
 			return;
 		}
