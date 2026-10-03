@@ -72,6 +72,7 @@
 
 <script lang="ts">
 	import { onMount, untrack, type Snippet } from 'svelte';
+	import { colorHex, type GraphCapture } from '$lib/features/whiteboard/graph-import.js';
 	import { NODE_COLOR } from '$lib/relationship-colors.js';
 	import type { NodePosition } from '$lib/features/graph/radial-layout.js';
 
@@ -104,6 +105,7 @@
 		    Cancels any in-progress connect-drag automatically (per the locked
 		    C3 UX collision rule). */
 		onContextMenu?: (id: string, clientX: number, clientY: number) => void;
+		onCanvasContextMenu?: (clientX: number, clientY: number) => void;
 		/** When false, suppresses the per-edge label `<text>` element.
 		    Defaults to true for back-compat. Hosts wire a toggle UI to
 		    flip this — useful for dense graphs where edge labels stack
@@ -131,6 +133,7 @@
 		onNodeOpen,
 		onNodePositionChange,
 		onContextMenu,
+		onCanvasContextMenu,
 		showEdgeLabels = true,
 		onEdgeContextMenu,
 		onEdgeClick
@@ -617,6 +620,42 @@
 		return nodePos[id];
 	}
 
+	export function capture(): GraphCapture {
+		const capturedNodes: GraphCapture['nodes'] = nodes.flatMap(node => {
+			const p = nodePos[node.id];
+			const element = viewport.querySelector<HTMLElement>(`[data-entity-id="${CSS.escape(node.id)}"]`);
+			if (!p || !element) return [];
+			const style = getComputedStyle(element), nameStyle = getComputedStyle(element.querySelector('.node-name')!);
+			const typeStyle = getComputedStyle(element.querySelector('.node-type')!);
+			return [{ id: node.id, name: node.name, type: node.type, x: p.x, y: p.y,
+				width: element.offsetWidth, height: element.offsetHeight, color: colorHex(nameStyle.color),
+				fill: style.backgroundColor, border: style.borderColor, opacity: dimmedNodes.has(node.id) ? 0.18 : 1,
+				dashed: !!node.aliasMember, font: `${nameStyle.fontWeight} ${nameStyle.fontSize} ${nameStyle.fontFamily}`,
+				typeFont: `${typeStyle.fontSize} ${typeStyle.fontFamily}`, typeColor: typeStyle.color }];
+		});
+		const capturedEdges: GraphCapture['edges'] = screenEdges.map(edge => {
+			const line = viewport.querySelector<SVGLineElement>(`[data-graph-edge="${CSS.escape(edge.id)}"]`)!;
+			const style = getComputedStyle(line);
+			const hiddenLabel = !showEdgeLabels || edge.mysteryMode || edge.ghostMode;
+			return { id: edge.id, fromId: edge.fromId, toId: edge.toId,
+				x1: (edge.x1 - panX) / zoom, y1: (edge.y1 - panY) / zoom,
+				x2: (edge.x2 - panX) / zoom, y2: (edge.y2 - panY) / zoom,
+				color: colorHex(style.stroke), opacity: Number(style.opacity), width: Number.parseFloat(style.strokeWidth) / zoom,
+				dash: style.strokeDasharray === 'none' ? '' : style.strokeDasharray.replace(/px/g, '').split(/[ ,]+/).map(n => Number(n) / zoom).join(' '),
+				arrow: !!edge.arrow && !edge.mysteryMode, label: hiddenLabel ? '' : edge.label,
+				labelOpacity: edge.dimmed ? 0.15 : 0.75, labelSize: 10 / zoom };
+		});
+		return { background: getComputedStyle(viewport).backgroundColor, nodes: capturedNodes, edges: capturedEdges };
+	}
+
+	function canvasMenu(event: MouseEvent | KeyboardEvent) {
+		if (!onCanvasContextMenu || (event instanceof KeyboardEvent && (event.target !== viewport || !(event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10')))) return;
+		event.preventDefault();
+		if (connecting) { connecting = null; return; }
+		const rect = viewport.getBoundingClientRect();
+		onCanvasContextMenu(event instanceof MouseEvent ? event.clientX : rect.left + 24, event instanceof MouseEvent ? event.clientY : rect.top + 24);
+	}
+
 	export function focusNode(id: string) {
 		(viewport.querySelector<HTMLElement>(`[data-entity-id="${CSS.escape(id)}"]`) ?? viewport).focus();
 	}
@@ -668,12 +707,16 @@
 	}
 </script>
 
+<!-- Graph canvas has keyboard node movement and a keyboard context menu. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
 	class="viewport"
 	role="application"
 	aria-label="Graph canvas"
-	tabindex="-1"
+	tabindex="0"
 	bind:this={viewport}
+	oncontextmenu={canvasMenu}
+	onkeydown={canvasMenu}
 	onpointerdown={onViewportPointerDown}
 	onpointermove={onPointerMove}
 	onpointerup={onPointerUp}
@@ -730,6 +773,7 @@
 			{@const mx = (edge.x1 + edge.x2) / 2}
 			{@const my = (edge.y1 + edge.y2) / 2}
 			<line
+				data-graph-edge={edge.id}
 				x1={edge.x1}
 				y1={edge.y1}
 				x2={edge.x2}

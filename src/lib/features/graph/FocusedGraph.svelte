@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { boardImport, sendReferenceToBoard } from '$lib/features/whiteboard/send-to-board.js';
+  import { graphCaption } from '$lib/features/whiteboard/graph-import.js';
   import { getActs } from '$lib/story-structure.js';
 	import { storyFetch } from '$lib/story-fetch.js';
   import { registerDirtyField, unregisterDirtyField } from '$lib/util/pending-commit.js';
@@ -676,7 +678,9 @@
     const entity = $entities.find((e) => e.id === id);
     const hasLinkedMap =
       entity?.type === 'Location' && $worldMaps.some((m) => m.locationId === id);
-    const items: Array<{ label: string; onSelect: () => void }> = [
+    const items: Array<{ label: string; disabled?: boolean; onSelect: () => void }> = [
+      { label: 'Send entity to whiteboard…', onSelect: () => sendReferenceToBoard({ kind: 'entity', id }, entity?.name ?? 'Entity') },
+      ...graphMenuItems,
       {
         label: 'Open in window',
         onSelect: () => openEntity(id)
@@ -727,6 +731,24 @@
   let legendOpen = $state(true);
   let edgeLabelsVisible = $state(true);
   const currentTypeOrder = $derived<EntityType[]>(win?.typeOrder ?? DEFAULT_TYPE_ORDER);
+  let graphMenu = $state<{ x: number; y: number } | null>(null);
+  let exportError = $state('');
+  function sendGraph(kind: 'diagram' | 'snapshot') {
+    if (!canvas) return;
+    try {
+      const name = `Focused graph: ${focalSet.map(nameOf).join(', ')} (${viewMode === 'their_worlds' ? 'Immediate connections' : viewMode === 'shared' ? 'Intersections' : 'All'})`;
+      const graph = canvas.capture();
+      if (!graph.nodes.length) throw new Error('This graph has no visible entities to add.');
+      boardImport.set({ kind, name, graph, caption: graphCaption(name, { time: $playhead, hardFilter, hideOutOfScope: $hideOutOfScope,
+        ghostTrails: showGhostTrails, labels: edgeLabelsVisible, relationships: [...enabledRelTypes] }) });
+      exportError = '';
+    } catch (cause) { exportError = cause instanceof Error ? cause.message : 'Could not capture the graph. Try again.'; }
+  }
+  const graphMenuItems = $derived([
+    { label: 'Send graph snapshot to whiteboard…', disabled: !graphNodes.length, onSelect: () => sendGraph('snapshot') },
+    { label: 'Send editable diagram to whiteboard…', disabled: !graphNodes.length, onSelect: () => sendGraph('diagram') }
+  ]);
+
 </script>
 
 <svelte:window
@@ -781,6 +803,7 @@
         <span class="chip-empty">No focal entities yet — right-click an entity in Story Graph and choose "Open Focused Graph".</span>
       {/if}
     </div>
+    <button class="fg-settings-btn graph-send" aria-label="Send graph to whiteboard" title="Send graph to whiteboard" disabled={!graphNodes.length} onclick={event => { const rect = event.currentTarget.getBoundingClientRect(); graphMenu = { x: rect.left, y: rect.bottom }; }}>Whiteboard…</button>
     <button
       class="fg-settings-btn"
       title="Reset view (discard layout, return to default)"
@@ -822,6 +845,7 @@
       onNodeOpen={openEntity}
       {onNodePositionChange}
       onContextMenu={(id, x, y) => (contextMenu = { entityId: id, x, y })}
+  onCanvasContextMenu={(x, y) => (graphMenu = { x, y })}
       onEdgeContextMenu={(id, x, y) => (editRelMenu = { relationshipId: id, x, y })}
       onEdgeClick={(id) => jumpToCause($relationships.find((r) => r.id === id))}
       showEdgeLabels={edgeLabelsVisible}
@@ -927,6 +951,9 @@
   </div>
 </div>
 
+{#if exportError}<div class="graph-export-error" role="alert">{exportError}</div>{/if}
+{#if graphMenu}<ContextMenu items={graphMenuItems} x={graphMenu.x} y={graphMenu.y} onClose={() => (graphMenu = null)} />{/if}
+
 {#if contextMenu}
   <ContextMenu
     items={contextMenuItems}
@@ -981,6 +1008,8 @@
 {/if}
 
 <style>
+  .fg-settings-btn.graph-send { width: auto; padding: 0 8px; font-size: 11px; }
+  .graph-export-error { position: absolute; left: 12px; bottom: 12px; padding: 8px; background: var(--color-surface); color: var(--color-danger); }
 	.graph-load { min-height: 100%; display: grid; place-content: center; gap: 10px; color: var(--color-text-muted); }
 	.graph-refresh { position: absolute; z-index: 8; margin: 10px; padding: 8px; background: var(--color-surface-2); color: var(--color-text); }
   .fg {

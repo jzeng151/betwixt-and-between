@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SendToWhiteboard from '$lib/features/whiteboard/SendToWhiteboard.svelte';
   import { tick } from 'svelte';
   import { windowStore } from '$lib/os/windows-store.js';
   import {
@@ -68,6 +69,8 @@
     }
   ]);
 </script>
+
+<SendToWhiteboard />
 
 <div class="desktop" class:locked={hasVisibleWindows}>
     <main

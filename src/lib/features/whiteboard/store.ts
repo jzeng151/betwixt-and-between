@@ -1,7 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { storyFetch } from '$lib/story-fetch.js';
 import { failedWrites, trackCreation, trackWrite, writeRetryKey } from '$lib/stores/pending-writes.js';
-import { documentError, assignFrame, type Point, type Board, type BoardDocument } from './model.js';
+import { documentError, assignFrame, type Point, type Board, type BoardDocument, type BoardElement } from './model.js';
 
 type Snapshot = Pick<Board, 'name' | 'document'>;
 type Draft = Board & { dirty: boolean; saving: boolean; error: string; undo: Snapshot[]; redo: Snapshot[] };
@@ -56,6 +56,7 @@ export async function createBoard(name: string) {
   boardList.update(all => [...all.filter(b => b.id !== board.id), { id: board.id, name: board.name }]);
   patch(board.id, { ...board, dirty: false, saving: false, error: '', undo: [], redo: [] });
   activeBoardId.set(board.id);
+  return board.id;
 }
 export function editBoard(id: string, document: BoardDocument, name?: string, history = true) {
   const current = get(boardDrafts)[id];
@@ -98,15 +99,28 @@ export function saveBoard(id: string): Promise<boolean> {
   saves.set(id, task);
   return task;
 }
-export function uploadBoardImage(id: string, file: File, position: Point): Promise<void> {
+export function boardImageRetryKey(id: string, file: File) {
+  return writeRetryKey('whiteboard:upload', { id, name: file.name, size: file.size, lastModified: file.lastModified });
+}
+export function uploadBoardImage(id: string, file: File, position: Point, caption?: string): Promise<void> {
   const task = trackWrite((async () => {
     const form = new FormData(); form.set('file', file);
     const image = await responseData(await storyFetch(`/api/whiteboards/${id}/upload-image`, { method: 'POST', body: form }, { required: false }));
     const current = get(boardDrafts)[id];
     if (!current) throw new Error('The board closed before the image could be added. Upload it again.');
     const element = { id: crypto.randomUUID(), type: 'image' as const, ...position, url: image.url, text: file.name, color: '#c8942a', width: 320, height: Math.min(20000, Math.max(20, 320 * image.height / image.width)) };
-    editBoard(id, { ...current.document, elements: assignFrame([...current.document.elements, element], element.id) });
-  })(), writeRetryKey('whiteboard:upload', { id, name: file.name, size: file.size, lastModified: file.lastModified }));
+    if (caption !== undefined) {
+      const frameId = crypto.randomUUID(), captionHeight = Math.max(112, Math.ceil(caption.length / 100) * 22);
+      const width = 800, height = Math.min(20000 - captionHeight - 80, Math.max(20, width * image.height / image.width));
+      const added: BoardElement[] = [
+        { id: frameId, type: 'frame', ...position, width: width + 48, height: height + captionHeight + 80, color: '#c8942a', text: file.name.replace(/\.png$/, '') },
+        { ...element, x: position.x + 24, y: position.y + 48, width, height, frameId },
+        { id: crypto.randomUUID(), type: 'text', x: position.x + 24, y: position.y + height + 64, width, height: captionHeight, color: '#c8942a', text: caption, frameId }
+      ];
+      editBoard(id, { ...current.document, elements: [...current.document.elements, ...added],
+        viewport: { x: position.x - 24, y: position.y - 24, zoom: Math.max(0.1, Math.min(1, 850 / (width + 96), 480 / (height + captionHeight + 128))) } });
+    } else editBoard(id, { ...current.document, elements: assignFrame([...current.document.elements, element], element.id) });
+  })(), boardImageRetryKey(id, file));
   uploads.add(task); updateUnloadGuard();
   void task.finally(() => { uploads.delete(task); updateUnloadGuard(); }).catch(() => {});
   return task;

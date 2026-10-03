@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { sendReferenceToBoard } from '$lib/features/whiteboard/send-to-board.js';
 	import { tick } from 'svelte';
 	import { mapGeometrySaving } from './store.js';
 	// Map editor toolbar: switcher, rename, new/delete, image upload, linked-
@@ -131,6 +132,7 @@
 			</svg>
 		</button>
 	{/if}
+	<button class="btn-icon map-send" disabled={!activeMap} title="Send map to whiteboard" onclick={() => activeMap && sendReferenceToBoard({ kind: 'map', id: activeMap.id }, activeMap.name)}>Send to whiteboard…</button>
 	<button class="btn-icon" onclick={onCreateMap} title="New map">+</button>
 	<button
 		class="btn-icon btn-danger"
@@ -220,5 +222,6 @@
 </div>
 
 <style>
+  .btn-icon.map-send { width: auto; padding: 0 8px; font-size: 11px; }
 	button.grid-toggle { width: auto; padding: 0 8px; font-size: 12px; }
 </style>
