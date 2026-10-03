@@ -127,6 +127,25 @@ it('includes rendered label boxes in straight, curved and self-loop connector bo
     expect(connectorGeometry({ ...line, text: '' }, [first, second])!.bounds).toEqual(plain.bounds);
   }
 });
+it('fits the actual quadratic and cubic curves rather than their invisible control points', () => {
+  const first = element({ x: 0, y: 0, width: 100, height: 100 }), second = element({ x: 300, y: 0, width: 100, height: 100 });
+  for (const bend of [-2000, 0, 2000]) for (const toId of [first.id, second.id]) {
+    const geometry = connectorGeometry(element({ type: 'connector', fromId: first.id, toId, bend }), [first, second])!;
+    const values = geometry.path.match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi)!.map(Number);
+    const points = Array.from({ length: values.length / 2 }, (_, i) => ({ x: values[i * 2], y: values[i * 2 + 1] }));
+    const samples = Array.from({ length: 1001 }, (_, i) => {
+      const t = i / 1000;
+      let curve = points;
+      while (curve.length > 1) curve = curve.slice(1).map((p, j) => ({ x: curve[j].x * (1 - t) + p.x * t, y: curve[j].y * (1 - t) + p.y * t }));
+      return curve[0];
+    });
+    for (const axis of ['x', 'y'] as const) {
+      const minimum = Math.min(...samples.map(p => p[axis])), maximum = Math.max(...samples.map(p => p[axis]));
+      expect(geometry.bounds[axis]).toBeCloseTo(minimum, 2);
+      expect(geometry.bounds[axis] + geometry.bounds[axis === 'x' ? 'width' : 'height']).toBeCloseTo(Math.max(minimum + 1, maximum), 2);
+    }
+  }
+});
 it('keeps edits made during a save, retries failed drafts, and allows saving after a clean flush', async () => {
   const id = crypto.randomUUID(), document = emptyDocument();
   const pending = Promise.withResolvers<Response>();

@@ -220,3 +220,55 @@ for (const removal of ['delete', 'undo'] as const) test(`connector drawing recov
   const saved = await (await request.get(`/api/whiteboards/${id}`)).json();
   expect(saved.document.elements.find((e: BoardElement) => e.type === 'connector')).toMatchObject({ fromId: first.id, toId: second.id });
 });
+
+for (const movement of ['drag', 'nudge'] as const) test(`moving a selected frame and child by ${movement} preserves their membership across another frame`, async ({ page, request }) => {
+  const frame: BoardElement = { ...note('Evidence', 20, 20), type: 'frame', width: 300, height: 240 };
+  const child = { ...note('Framed clue', 60, 80), frameId: frame.id }, loose = note('Loose clue', 60, 280);
+  const otherFrame: BoardElement = { ...note('Other evidence', 70, 40), type: 'frame', width: 400, height: 360 };
+  const { id, app, canvas } = await openBoard(page, request, [frame, child, loose, otherFrame]);
+  const frameElement = app.locator(`[data-element-id="${frame.id}"]`), childElement = app.locator(`[data-element-id="${child.id}"]`);
+  await frameElement.press('Enter'); await childElement.press('Shift+Enter');
+  await app.locator(`[data-element-id="${loose.id}"]`).press('Shift+Enter');
+  if (movement === 'drag') {
+    const bounds = (await childElement.boundingBox())!;
+    await page.mouse.move(bounds.x + 50, bounds.y + 40); await page.mouse.down();
+    await page.mouse.move(bounds.x + 60, bounds.y + 40, { steps: 3 }); await page.mouse.up();
+  } else await canvas.press('ArrowRight');
+  await expect(frameElement).toHaveAttribute('transform', 'translate(30,20)');
+  await expect(childElement).toHaveAttribute('transform', 'translate(70,80)');
+  await expect(app.locator('.save-state')).toHaveText('Saved');
+  const saved = await (await request.get(`/api/whiteboards/${id}`)).json();
+  expect(saved.document.elements.find((e: BoardElement) => e.id === child.id).frameId).toBe(frame.id);
+  expect(saved.document.elements.find((e: BoardElement) => e.id === loose.id).frameId).toBe(otherFrame.id);
+  await frameElement.press('Enter'); await canvas.press('ArrowDown');
+  await expect(childElement).toHaveAttribute('transform', 'translate(70,90)');
+  await app.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(childElement).toHaveAttribute('transform', 'translate(70,80)');
+  await app.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(childElement).toHaveAttribute('transform', 'translate(60,80)');
+});
+
+for (const action of ['inspector', 'menu', 'palette'] as const) test(`connecting selected elements through the ${action} follows click order`, async ({ page, request }) => {
+  const earlier = note('The harbor', 70, 70), later = note('Mara', 370, 220);
+  const { id, app, canvas } = await openBoard(page, request, [earlier, later]);
+  await app.locator(`[data-element-id="${later.id}"]`).click();
+  await app.locator(`[data-element-id="${earlier.id}"]`).click({ modifiers: ['Shift'] });
+  if (action === 'inspector') await app.getByRole('button', { name: 'Connect selected elements', exact: true }).click();
+  else if (action === 'menu') {
+    await app.getByRole('button', { name: 'Canvas actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Bring to front', exact: true }).click();
+    await app.getByRole('button', { name: 'Canvas actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Connect selected elements', exact: true }).click();
+  } else {
+    await canvas.press('Control+k');
+    const search = page.getByRole('dialog', { name: 'Command palette', exact: true }).getByRole('combobox');
+    await search.fill('Connect selected elements'); await search.press('Enter');
+  }
+  await expect(app.getByRole('combobox', { name: 'Connector from' })).toHaveValue(later.id);
+  await expect(app.getByRole('combobox', { name: 'Connector to' })).toHaveValue(earlier.id);
+  await expect(app.getByRole('combobox', { name: 'Arrow direction' })).toHaveValue('end');
+  await expect(app.locator('.save-state')).toHaveText('Saved');
+  const saved = await (await request.get(`/api/whiteboards/${id}`)).json();
+  expect(saved.document.elements.find((e: BoardElement) => e.type === 'connector')).toMatchObject({ fromId: later.id, toId: earlier.id, arrow: 'end' });
+  expect(saved.document.elements.filter((e: BoardElement) => e.type === 'sticky').map((e: BoardElement) => e.id)).toEqual([earlier.id, later.id]);
+});

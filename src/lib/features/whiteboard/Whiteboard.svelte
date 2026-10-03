@@ -26,7 +26,7 @@
   let gesture: { id: number; start: Point; client: Point; original: BoardDocument; source: BoardDocument; boardId: string; selection: string[]; element?: string; resize?: boolean; additive?: boolean; mode: string } | null = null;
   const board = $derived($activeBoardId ? $boardDrafts[$activeBoardId] : undefined);
   const document = $derived(preview ?? board?.document ?? emptyDocument());
-  const selection = $derived(document.elements.filter(e => selected.includes(e.id)));
+  const selection = $derived(selected.map(id => document.elements.find(e => e.id === id)).filter((e): e is BoardElement => !!e));
   const chosen = $derived(selection.length === 1 ? selection[0] : undefined);
   const locked = $derived(!!chosen && isElementLocked(document.elements, chosen));
   const editable = $derived(selection.filter(e => !isElementLocked(document.elements, e)));
@@ -166,7 +166,7 @@
   }
   function closeReferences() { showReferences = false; referencePosition = null; void tick().then(() => canvas?.focus()); }
   function reorder(front: boolean) {
-    const moving = editable.filter(e => !['frame', 'connector'].includes(e.type));
+    const moving = document.elements.filter(e => editable.includes(e) && !['frame', 'connector'].includes(e.type));
     if (!moving.length) return;
     const others = document.elements.filter(e => !moving.includes(e));
     commit({ ...document, elements: front ? [...others, ...moving] : [...moving, ...others] }); canvas.focus();
@@ -245,7 +245,7 @@
     if (g.mode === 'frame') {
       const frame = next.elements.find(e => e.id === g.element)!;
       next = { ...next, elements: next.elements.map(e => !['frame', 'connector'].includes(e.type) && !isElementLocked(next!.elements, e) && !e.frameId && e.x >= frame.x && e.y >= frame.y + 28 && e.x + e.width <= frame.x + frame.width && e.y + e.height <= frame.y + frame.height ? { ...e, frameId: frame.id } : e) };
-    } else for (const id of g.mode === 'move' ? g.selection : g.element ? [g.element] : []) next = { ...next, elements: assignFrame(next.elements, id) };
+    } else for (const id of g.mode === 'move' ? alignmentRoots(g.original.elements, g.selection).map(e => e.id) : g.element ? [g.element] : []) next = { ...next, elements: assignFrame(next.elements, id) };
     commit(next, g.mode !== 'pan'); if (g.mode !== 'pan' && g.mode !== 'move' && g.mode !== 'pen') tool = 'select';
   }
   function zoom(factor: number, anchor = center()) {
@@ -282,7 +282,7 @@
       if (selection.length) {
         if (!editable.some(e => e.type !== 'connector')) return;
         let elements = moveElements(document.elements, selected, dx, dy);
-        for (const id of selected) elements = assignFrame(elements, id);
+        for (const e of alignmentRoots(document.elements, selected)) elements = assignFrame(elements, e.id);
         commit({ ...document, elements });
       } else commit({ ...document, viewport: { ...document.viewport, x: document.viewport.x + dx, y: document.viewport.y + dy } }, false);
     }
