@@ -3,6 +3,7 @@
   import { onMount, onDestroy } from 'svelte';
   import ContextMenu from '$lib/os/ContextMenu.svelte';
   import { windowStore } from '$lib/os/windows-store.js';
+  import { sendReferenceToBoard } from '$lib/features/whiteboard/send-to-board.js';
 
   let { entryId = null }: { entryId?: string | null } = $props();
 
@@ -169,6 +170,7 @@
 
   // Tweak 2: Context menu
   function onFolderContextMenu(e: MouseEvent, folderId: string) {
+    if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
     e.preventDefault();
     contextMenu = { folderId, x: e.clientX, y: e.clientY };
   }
@@ -247,7 +249,7 @@
   </div>
 
   <!-- Content area: entries list or editor -->
-  <div class="content">
+  <div class="content" data-entity-id={selectedEntryId ?? undefined}>
     {#if loadError}
       <div role="alert">Couldn't load notes. <button onclick={loadNotes}>Retry loading</button></div>
     {/if}
@@ -260,7 +262,10 @@
       {:else}Saved{/if}
     </div>
     {#if viewMode === 'editor' && selectedEntry}
-      <button class="back-to-notes" onclick={() => selectFolder(selectedFolderId)}>Back to notes</button>
+      <div class="entry-actions">
+        <button onclick={() => selectFolder(selectedFolderId)}>Back to notes</button>
+        <button onclick={() => selectedEntry && sendReferenceToBoard({ kind: 'entity', id: selectedEntry.id }, selectedEntry.name)}>Send to whiteboard…</button>
+      </div>
       <input
         class="entry-title"
         type="text"
@@ -283,6 +288,7 @@
         {#each folderEntries as entry (entry.id)}
           <div
             class="content-entry-item"
+            data-entity-id={entry.id}
             class:selected={selectedEntryId === entry.id}
             role="button"
             tabindex="0"
@@ -334,7 +340,7 @@
 
 <style>
   .save-status { padding: 8px 16px; color: var(--color-text-muted); }
-  .back-to-notes { align-self: flex-start; margin: 8px 16px; }
+  .entry-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 16px; }
   .notes-app {
     display: flex;
     height: 100%;
@@ -635,7 +641,7 @@
     gap: 8px;
   }
 
-  .dialog-btn {
+  .dialog-btn, .entry-actions button {
     border: none;
     border-radius: 4px;
     padding: 6px 14px;
@@ -645,7 +651,7 @@
     color: var(--color-text);
   }
 
-  .dialog-btn:hover {
+  .dialog-btn:hover, .entry-actions button:hover {
     opacity: 0.9;
   }
 

@@ -79,6 +79,7 @@ describe('Notes editing', () => {
     failSave = false;
     await fireEvent.click(ui.getByText('Retry saving'));
     await waitFor(() => expect(saved.data.body).toBe('Keep this'));
+    await waitFor(() => expect(get(notesStore.saveState)).toBe('saved'));
     expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(true);
     await fireEvent.click(ui.getByText('Drafts'));
     await fireEvent.click(await ui.findByText('Opening'));
@@ -288,6 +289,7 @@ it.each(['entry', 'folder'])('does not restore an error when a save retry fails 
   let finishRetry!: (response: Response) => void;
   let patches = 0;
   vi.mocked(fetch).mockImplementation((_url, init) => {
+    if (String(_url).endsWith('/api/entities')) return Promise.resolve(Response.json([]));
     if (init?.method === 'DELETE') return new Promise<Response>((resolve) => { finishDelete = resolve; });
     if (++patches === 1) return Promise.resolve(new Response('', { status: 500 }));
     return new Promise<Response>((resolve) => { finishRetry = resolve; });

@@ -59,7 +59,7 @@
   }
 </script>
 
-<span class="entity-chip" style="--chip-color: {chipColor}">
+<span class="entity-chip" data-entity-id={id} style="--chip-color: {chipColor}">
   <button
     type="button"
     class="entity-chip-name"

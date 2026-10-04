@@ -1,5 +1,6 @@
 <script lang="ts">
   import SendToWhiteboard from '$lib/features/whiteboard/SendToWhiteboard.svelte';
+  import EntityContextMenu from '$lib/components/EntityContextMenu.svelte';
   import { tick } from 'svelte';
   import { windowStore } from '$lib/os/windows-store.js';
   import {
@@ -71,6 +72,7 @@
 </script>
 
 <SendToWhiteboard />
+<EntityContextMenu />
 
 <div class="desktop" class:locked={hasVisibleWindows}>
     <main
@@ -104,7 +106,7 @@
                 <ul>
                   {#each section.entries as entity}
                     <li>
-                      <button data-workspace-return={entity.id} onclick={() => openEntity(entity)}>
+                      <button data-entity-id={entity.id} data-workspace-return={entity.id} onclick={() => openEntity(entity)}>
                         <span class="entry-name">{entity.name}</span>
                         <span class="entry-type">{entity.type}</span>
                       </button>

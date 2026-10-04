@@ -121,6 +121,12 @@
 		e.preventDefault();
 		contextMenu = { entityId, x: e.clientX, y: e.clientY };
 	}
+	function keyboardContextMenu(e: KeyboardEvent, entityId: string) {
+		if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
+		e.preventDefault();
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		contextMenu = { entityId, x: rect.left, y: rect.bottom };
+	}
 
 	const contextItems = $derived(
 		contextMenu
@@ -237,6 +243,7 @@
 								class:out-of-scope={outOfScopeIds.has(entry.id)}
 								onclick={() => navigate(entry.id)}
 								oncontextmenu={(e) => openContextMenu(e, entry.id)}
+								onkeydown={(e) => keyboardContextMenu(e, entry.id)}
 							>
 								{entry.name}
 							</button>

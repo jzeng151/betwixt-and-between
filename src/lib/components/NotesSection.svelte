@@ -95,7 +95,7 @@
 		<div class="notes-list">
 			{#each attachedNotes as note (note.id)}
 				{@const isOpen = openSet.has(note.id)}
-				<details class="note" open={isOpen}>
+				<details class="note" data-entity-id={note.id} open={isOpen}>
 					<summary
 						class="note-summary"
 						onclick={(e) => {

@@ -1,5 +1,6 @@
 import { storyFetch } from '$lib/story-fetch.js';
 import { get, writable } from 'svelte/store';
+import { entities } from '$lib/stores/entities.js';
 
 type NoteFolder = {
 	id: string;
@@ -153,6 +154,8 @@ function createNotesStore() {
 			parentId: data.parentId
 		};
 		folders.update((all) => [...all, folder]);
+		await entities.applyNoteMutation({ saved: data });
+		await entities.refreshAfterMutation().catch(() => {});
 		return folder;
 	}
 
@@ -165,6 +168,8 @@ function createNotesStore() {
 		if (!res.ok) throw new Error('Failed to rename folder');
 		const data = await res.json();
 		folders.update((all) => all.map((f) => (f.id === id ? { ...f, name: data.name } : f)));
+		await entities.applyNoteMutation({ saved: data });
+		await entities.refreshAfterMutation().catch(() => {});
 	}
 
 	async function deleteFolder(id: string): Promise<void> {
@@ -180,6 +185,9 @@ function createNotesStore() {
 		updateSaveState();
 		folders.update((all) => all.filter((f) => f.id !== id));
 		entries.update((all) => all.filter((e) => e.folderId !== id));
+		await entities.applyNoteMutation({ deletedId: id });
+		// A failed reference refresh must not turn a successful note write into an unsaved draft.
+		await entities.refreshAfterMutation().catch(() => {});
 	}
 
 	async function createEntry(name: string, folderId: string | null): Promise<NoteEntry> {
@@ -199,6 +207,8 @@ function createNotesStore() {
 		};
 		entryVersions.set(entry.id, ++version);
 		entries.update((all) => [...all, entry]);
+		await entities.applyNoteMutation({ saved: data });
+		await entities.refreshAfterMutation().catch(() => {});
 		return entry;
 	}
 
@@ -223,11 +233,13 @@ function createNotesStore() {
 							...e,
 							name: data.name ?? e.name,
 							body: ((data.data as Record<string, unknown>)?.body as string) ?? e.body,
-							folderId: data.parentId ?? e.folderId
+							folderId: data.parentId
 						}
 					: e
 			)
 		);
+		await entities.applyNoteMutation({ saved: data });
+		await entities.refreshAfterMutation().catch(() => {});
 	}
 
 	async function deleteEntry(id: string): Promise<void> {
@@ -239,6 +251,8 @@ function createNotesStore() {
 		entryVersions.set(id, ++version);
 		updateSaveState();
 		entries.update((all) => all.filter((e) => e.id !== id));
+		await entities.applyNoteMutation({ deletedId: id });
+		await entities.refreshAfterMutation().catch(() => {});
 	}
 
 	return {
