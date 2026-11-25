@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clearAll } from './helpers/db.js';
 import { E2E_USER_HEADERS } from './pglite-config.js';
 
 for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
@@ -23,7 +24,8 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
 
 test.describe('App route migration', () => {
   test.use({ extraHTTPHeaders: E2E_USER_HEADERS });
-  test('/app offers a useful empty workspace', async ({ page }) => {
+  test('/app offers a useful empty workspace', async ({ page, request }) => {
+    await clearAll(request);
     await page.addInitScript(() => localStorage.setItem('tutorial-dismissed', 'true'));
     await page.goto('/app');
     await expect(page.locator('.app-shell')).toBeVisible();
@@ -31,11 +33,17 @@ test.describe('App route migration', () => {
 
     const createCharacter = page.getByRole('button', { name: 'Create a character' });
     await createCharacter.click();
-    const characters = page.getByRole('dialog', { name: 'Characters' });
-    await expect(characters).toBeVisible();
-
-    await characters.getByRole('button', { name: 'Close' }).click();
+    const form = page.getByRole('dialog', { name: 'New Character' });
+    const name = form.locator('.entity-detail-title input');
+    await expect(name).toBeFocused();
+    await name.fill('Discard me');
+    await form.getByRole('button', { name: 'Cancel' }).click();
     await expect(createCharacter).toBeFocused();
+    await page.reload();
+    await expect(createCharacter).toBeVisible();
+    await page.getByTitle('Characters', { exact: true }).click();
+    await expect(page.getByPlaceholder('Search characters…')).toBeVisible();
+    await expect(page.getByText('No characters yet.')).toBeVisible();
   });
 
   test('/app loads project data after the viewport expands', async ({ page }) => {
