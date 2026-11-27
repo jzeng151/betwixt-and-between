@@ -848,4 +848,11 @@
 		z-index: 10;
 	}
 
+  @media (max-width: 600px) {
+    .tl2 { flex-direction: column; }
+    .tl2 :global(.palette) { width: 100%; max-height: 30%; }
+    .palette-toggle { width: 100%; height: 24px; }
+    .timeline-controls { display: flex; flex-wrap: wrap; }
+    .ctrl-spacer { display: none; }
+  }
 </style>

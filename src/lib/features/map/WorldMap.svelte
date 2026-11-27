@@ -2980,6 +2980,11 @@
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 	}
 
+  @media (max-width: 600px) {
+    .map-wrapper :global(.map-toolbar) { right: 4px; flex-wrap: wrap; }
+    .map-wrapper :global(.map-toolbar > *) { max-width: 100%; }
+  }
+
 	.map-wrapper.has-breadcrumb :global(.map-toolbar) {
 		/* Breadcrumb bar sits in normal flow above the canvas; nudge the
 		   absolutely-positioned toolbar below it so the two don't overlap. */

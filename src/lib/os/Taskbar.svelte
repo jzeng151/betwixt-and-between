@@ -161,7 +161,8 @@
               dismissNow();
             } else if (group.windows.length === 1) {
               const win = group.windows[0];
-              if (win.minimized) windowStore.focus(win.id);
+              const covered = window.matchMedia('(max-width: 600px)').matches && windowStore.focusedWindow()?.id !== win.id;
+              if (win.minimized || covered) windowStore.focus(win.id);
               else windowStore.minimize(win.id);
               dismissNow();
             } else {
@@ -391,5 +392,12 @@
     color: var(--color-text-muted);
     font-size: 9px;
     flex-shrink: 0;
+  }
+  @media (max-width: 600px) {
+    .taskbar { padding: 2px; }
+    .dock { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; gap: 2px; }
+    .dock-btn { width: 100%; padding: 0 2px; gap: 2px; }
+    .dock-label { font-size: 11px; }
+    .window-picker { position: fixed; bottom: var(--taskbar-height); }
   }
 </style>
