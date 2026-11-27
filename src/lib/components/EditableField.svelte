@@ -101,6 +101,7 @@
 		showLinkPreview
 	}: Props = $props();
 
+	const labelId = $props.id();
 	const entity = $derived(($entities as Entity[]).find((e) => e.id === entityId));
 
 	// entity.data is jsonb (object) post-T8a; no parse needed.
@@ -335,7 +336,7 @@
 <div class="field-row" data-field={field} class:readonly={readOnly}>
 	{#if label}
 		<div class="field-header">
-			<span class="field-label">{label}</span>
+			<span id={labelId} class="field-label">{label}</span>
 		</div>
 	{/if}
 
@@ -409,6 +410,7 @@
 		/>
 	{:else if kind === 'picklist'}
 		<select
+			aria-labelledby={label ? labelId : undefined}
 			class="field-input"
 			value={currentValue}
 			onchange={(e) => commitValue((e.target as HTMLSelectElement).value)}

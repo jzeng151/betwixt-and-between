@@ -16,6 +16,7 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import EntityFields from './EntityFields.svelte';
 	import EditableField from './EditableField.svelte';
 	import EntityLink from './EntityLink.svelte';
 	import { entities } from '$lib/stores/entities.js';
@@ -160,7 +161,7 @@
 	});
 </script>
 
-<div class="entity-detail location-editor" data-editor-type="Location">
+<EntityFields type="Location" {readOnly}>
 	<EditableField
 		{readOnly}
 		{entityId}
@@ -260,19 +261,9 @@
 			</div>
 		{/if}
 	</section>
-</div>
+</EntityFields>
 
 <style>
-	.location-editor {
-		display: flex;
-		flex-direction: column;
-		padding: 14px 18px;
-		flex: 1 1 0;
-		overflow-y: auto;
-		min-height: 0;
-		gap: 12px;
-	}
-
 	.maps-section,
 	.linked-section,
 	.hierarchy-section {
