@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MediaQuery } from 'svelte/reactivity';
   import type { Component } from 'svelte';
   import { windowStore, type AppId } from '$lib/os/windows-store.js';
   import { APP_CATALOG } from '$lib/os/app-catalog.js';
@@ -52,6 +53,11 @@
     }
   });
 
+  const phone = new MediaQuery('(max-width: 600px)');
+  const front = $derived($windowStore.filter(w => !w.minimized).reduce<typeof $windowStore[number] | undefined>(
+    (top, w) => !top || w.zIndex > top.zIndex ? w : top, undefined
+  ));
+
   function windowTitle(appId: AppId, entityId: string | null): string {
     const fallback = APP_CATALOG[appId].title;
     if (entityId && (appId === 'character-editor' || appId === 'entity-detail')) {
@@ -88,6 +94,8 @@
     zIndex={win.zIndex}
     minimized={win.minimized}
     maximized={win.maximized}
+    single={phone.current}
+    covered={phone.current && front?.id !== win.id}
     bare={APP_CATALOG[win.appId].bare === true}
     compact={win.appId === 'story-player'}
     alwaysOnTop={win.alwaysOnTop ?? false}

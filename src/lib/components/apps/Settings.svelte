@@ -38,6 +38,7 @@
     type ColorSwatch
   } from '$lib/settings-colors.js';
 
+  const accentColorId = $props.id();
   let activeSection = $state<string>('appearance');
 
   // Appearance is read reactively from the store; ALL appearance writes go
@@ -383,8 +384,9 @@
       </div>
 
       <div class="setting-group">
-        <span class="setting-label">Accent Color</span>
+        <label class="setting-label" for={accentColorId}>Accent Color</label>
         <input
+          id={accentColorId}
           type="color"
           class="color-picker"
           value={appearance.accentColor}

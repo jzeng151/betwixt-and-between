@@ -982,26 +982,23 @@
 		height: 0;
 	}
 
-	/* Mirrors the timeline bar styling (IntervalBar.svelte): 18%
-	   translucent fill of the entity color, 50% translucent stroke,
-	   name text in the full entity color. Same entity now reads as
-	   the same color across Timeline + StoryGraph + FocusedGraph. */
+	/* Keep the entity hue in the fill and border, not the text. Mix with
+	   the surface so edges or overlapping nodes cannot obscure labels. */
 	.node {
 		position: relative;
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		padding: 5px 10px;
-		background: color-mix(in srgb, var(--nc) 18%, transparent);
+		background: color-mix(in srgb, var(--nc) 18%, var(--color-surface));
 		border: 1.5px solid color-mix(in srgb, var(--nc) 50%, transparent);
 		border-radius: 6px;
 		box-shadow: 0 0 12px color-mix(in srgb, var(--nc) 12%, transparent);
 		cursor: grab;
 		font-family: var(--font-ui);
 		font-size: 13px;
-		color: var(--nc);
+		color: var(--color-text);
 		white-space: nowrap;
-		transition: opacity 200ms ease;
 	}
 
 	.node-shell {
@@ -1010,12 +1007,14 @@
 
 	.node-active {
 		border-color: var(--nc);
-		background: color-mix(in srgb, var(--nc) 28%, transparent);
+		background: color-mix(in srgb, var(--nc) 28%, var(--color-surface));
 		box-shadow: 0 0 16px color-mix(in srgb, var(--nc) 30%, transparent);
 	}
 
 	.node-out-of-scope {
-		opacity: 0.18;
+		background: var(--color-surface);
+		color: var(--color-text-muted);
+		box-shadow: none;
 	}
 
 	.node-alias-member {
@@ -1024,13 +1023,9 @@
 
 	.node-name {
 		font-weight: 600;
-		color: var(--nc);
 	}
 
-	/* Type label sits as a quieter tint of the same color so the node
-	   reads as one unit but the type chip doesn't fight the name. */
 	.node-type {
-		color: color-mix(in srgb, var(--nc) 70%, var(--color-text-muted));
 		font-size: 11px;
 	}
 

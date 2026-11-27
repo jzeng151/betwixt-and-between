@@ -15,6 +15,7 @@
 -->
 
 <script lang="ts">
+	import EntityFields from './EntityFields.svelte';
 	import EditableField from './EditableField.svelte';
 	import { CHARACTER_COLORS } from '$lib/features/timeline/timeline-helpers.js';
 
@@ -39,7 +40,7 @@
 	}));
 </script>
 
-<div class="entity-detail event-editor" data-editor-type="Event">
+<EntityFields type="Event" {readOnly}>
 	<EditableField
 		{readOnly}
 		{entityId}
@@ -74,15 +75,4 @@
 		kind="swatches"
 		swatchOptions={colorSwatches}
 	/>
-</div>
-
-<style>
-	.event-editor {
-		display: flex;
-		flex-direction: column;
-		padding: 14px 18px;
-		flex: 1 1 0;
-		overflow-y: auto;
-		min-height: 0;
-	}
-</style>
+</EntityFields>

@@ -70,7 +70,7 @@ test.describe('V2 Event editor (D5)', () => {
 		const panel = page.locator('.entity-detail-host');
 		await panel.locator('.mode-toggle').click();
 
-		const outcomeSelect = panel.locator('[data-field="outcome"]').locator('select');
+		const outcomeSelect = panel.getByRole('combobox', { name: 'Outcome', exact: true });
 		await outcomeSelect.selectOption('yes-but');
 
 		await expect(async () => {

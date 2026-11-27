@@ -41,6 +41,33 @@ async function openTimeline(page: Page) {
 }
 
 test.describe('Story Player window', () => {
+
+	test('covered Timeline leaves arrow keys to the focused Act details', async ({ page, request }) => {
+		await seed(request);
+		const timeline = await openTimeline(page);
+		await timeline.locator('.scrub-toggle').click();
+		const player = page.locator('.window[aria-label="Story Player"]');
+		const speed = player.locator('.speed-select');
+		await speed.selectOption('2');
+		await player.locator('.titlebar').press('ArrowDown');
+		await expect(speed).toHaveValue('4');
+
+		await page.setViewportSize({ width: 320, height: 650 });
+		await page.getByRole('button', { name: 'Continue at this size' }).click();
+		await page.getByRole('button', { name: 'Command palette', exact: true }).click();
+		const search = page.getByRole('dialog', { name: 'Command palette' }).getByRole('combobox');
+		await search.fill('Act A');
+		await search.press('Enter');
+		const act = page.getByRole('dialog', { name: 'Act A', exact: true });
+		const details = act.getByRole('region', { name: 'Act details' });
+		await act.getByRole('button', { name: 'Edit', exact: true }).press('Tab');
+		await expect(details).toBeFocused();
+		await expect(timeline).toBeHidden();
+		await page.keyboard.press('ArrowDown');
+		await expect.poll(() => details.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+		await expect(speed).toHaveValue('4');
+	});
+
 	test('Spotlight toggle opens a standalone Story Player window; closing it dismisses the playhead', async ({
 		page,
 		request

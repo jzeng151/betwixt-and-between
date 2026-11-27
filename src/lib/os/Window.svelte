@@ -15,14 +15,17 @@
     minimized: boolean;
     maximized: boolean;
     restoreBounds?: WindowBounds | null;
+    single?: boolean;
+    covered?: boolean;
     bare?: boolean;
     compact?: boolean;
     alwaysOnTop?: boolean;
     children?: import('svelte').Snippet;
   }
 
-  let { id, title, x, y, width, height, zIndex, minimized, maximized, restoreBounds = null, bare = false, compact = false, alwaysOnTop = false, children }: Props = $props();
+  let { id, title, x: storedX, y: storedY, width: storedWidth, height: storedHeight, zIndex, minimized, maximized, restoreBounds = null, single = false, covered = false, bare = false, compact = false, alwaysOnTop = false, children }: Props = $props();
 
+  const fixed = $derived(maximized || single);
   const effectiveZ = $derived(alwaysOnTop ? PIN_Z_BASE + zIndex : zIndex);
 
   let dragging = false;
@@ -35,6 +38,12 @@
   let dragRestoreBounds: WindowBounds | null = null;
   let preview = $state<WindowBounds | null>(null);
   let viewport = $state({ width: 0, height: 0 });
+
+  // Fit the displayed rectangle only. Resizing the viewport must not persist a move or resize.
+  const width = $derived(viewport.width ? Math.min(storedWidth, viewport.width) : storedWidth);
+  const height = $derived(viewport.height ? Math.min(storedHeight, viewport.height) : storedHeight);
+  const x = $derived(viewport.width ? Math.max(0, Math.min(storedX, viewport.width - width)) : storedX);
+  const y = $derived(viewport.height ? Math.max(0, Math.min(storedY, viewport.height - height)) : storedY);
 
   type ResizeDir = 'l' | 'r' | 'b' | 'bl' | 'br';
   let resizeDir: ResizeDir | null = null;
@@ -54,13 +63,14 @@
 
   function restoreFocus() {
     queueMicrotask(() => {
-      if (returnFocus?.isConnected && !returnFocus.closest('[aria-hidden="true"]')) {
+      if (returnFocus?.isConnected && !returnFocus.closest('.window.covered') && !returnFocus.closest('[aria-hidden="true"]')) {
         const owner = returnFocus.closest<HTMLElement>('.window');
         if (owner?.dataset.windowId) windowStore.focus(owner.dataset.windowId);
         returnFocus.focus();
         return;
       }
       const fallback = [...document.querySelectorAll<HTMLElement>('.window')]
+        .filter(el => !el.classList.contains('covered'))
         .sort((a, b) => Number(a.style.zIndex) - Number(b.style.zIndex))
         .at(-1);
       if (fallback?.dataset.windowId) windowStore.focus(fallback.dataset.windowId);
@@ -91,7 +101,7 @@
   // svelte-ignore state_referenced_locally
   const MIN_H = compact ? 88 : 200;
 
-  $effect(() => { if (minimized || maximized) endDrag(); });
+  $effect(() => { if (minimized || fixed) endDrag(); });
 
   function updateViewport() {
     viewport = { width: window.innerWidth, height: window.innerHeight - readTaskbarHeight() };
@@ -125,7 +135,7 @@
     } else if (Object.hasOwn(SNAP_LABELS, choice)) {
       const bounds = targetBounds(choice as SnapZone);
       if (!bounds) return;
-      if (!restoreBounds) windowStore.setRestoreBounds(id, { x, y, width, height });
+      if (!restoreBounds) windowStore.setRestoreBounds(id, { x: storedX, y: storedY, width: storedWidth, height: storedHeight });
       applyBounds(bounds);
     }
     windowStore.focus(id);
@@ -135,11 +145,11 @@
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('.win-control')) return;
     if ((e.target as HTMLElement).closest('.titlebar-action')) return;
-    if (maximized) return;
+    if (fixed) return;
     dragging = true;
     dragOffsetX = e.clientX - x;
     dragOffsetY = e.clientY - y;
-    dragStart = { x, y, width, height };
+    dragStart = { x: storedX, y: storedY, width: storedWidth, height: storedHeight };
     dragStartPointer = { x: e.clientX, y: e.clientY };
     dragRestoreBounds = restoreBounds;
     dragStarted = false;
@@ -148,7 +158,7 @@
   }
 
   function onTitlebarKeydown(e: KeyboardEvent) {
-    if (e.target !== e.currentTarget || !e.altKey || e.ctrlKey || e.metaKey || maximized) return;
+    if (e.target !== e.currentTarget || !e.altKey || e.ctrlKey || e.metaKey || fixed) return;
     const delta = 16;
     const direction = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1
       : e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1
@@ -283,10 +293,12 @@
     bind:this={windowElement}
     class="window"
 	data-window-id={id}
-    class:maximized
+    class:maximized={fixed}
+    class:covered
+    class:single
     class:compact
     class:pinned={alwaysOnTop}
-    style={maximized ? `z-index:${effectiveZ}` : `left:${x}px; top:${y}px; width:${width}px; height:${height}px; z-index:${effectiveZ}`}
+    style={fixed ? `z-index:${effectiveZ}` : `left:${x}px; top:${y}px; width:${width}px; height:${height}px; z-index:${effectiveZ}`}
     onmousedown={() => windowStore.focus(id)}
     role="dialog"
     aria-label={title}
@@ -297,10 +309,10 @@
       onmousedown={onTitlebarMousedown}
       onkeydown={onTitlebarKeydown}
       role="toolbar"
-      aria-label={maximized
+      aria-label={fixed
         ? `${title} window`
         : `${title} window. Alt plus arrow keys moves; Shift, Alt, and arrow keys resizes.`}
-      tabindex={maximized ? undefined : 0}
+      tabindex={fixed ? undefined : 0}
     >
       <span class="win-title">{title}</span>
       <label class="titlebar-action arrange" title="Arrange window">
@@ -382,6 +394,11 @@
     min-width: 240px;
     min-height: 88px;
   }
+
+  /* Keep inactive apps mounted (including drafts and canvases), but out of
+     the tab order. Phone layout never writes back to saved desktop bounds. */
+  .window.covered, .single .titlebar-action, .single .maximize-btn { display: none; }
+  .single .titlebar { cursor: default; }
 
   .window.pinned {
     box-shadow: 0 0 0 1px var(--color-accent, #c8942a), var(--window-shadow);

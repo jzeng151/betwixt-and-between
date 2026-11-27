@@ -254,7 +254,7 @@
   .palette-label {
     font-size: 11px;
     font-weight: 600;
-    color: var(--type-color, var(--color-text-muted, #6b7280));
+    color: var(--color-text);
     margin-bottom: 10px;
     display: flex;
     justify-content: space-between;

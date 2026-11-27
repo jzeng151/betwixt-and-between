@@ -141,8 +141,12 @@
 	}
 
 	.error {
-		color: #ff6b6b;
+		color: var(--color-danger);
 		margin-bottom: 1rem;
+	}
+
+	.error a {
+		color: inherit;
 	}
 
 	.sent {

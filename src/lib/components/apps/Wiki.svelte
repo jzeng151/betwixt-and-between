@@ -352,7 +352,7 @@
 	.type-divider-label {
 		font-size: 11px;
 		font-weight: 600;
-		color: var(--type-color, var(--color-text));
+		color: var(--color-text);
 	}
 
 	.entry {
@@ -411,11 +411,11 @@
 		cursor: pointer;
 	}
 	.type-pill.on {
-		color: var(--type-color, var(--color-accent));
+		color: var(--color-text);
 		border-color: var(--type-color, var(--color-accent));
 	}
 	.type-pill:hover {
-		color: var(--type-color, var(--color-text));
+		color: var(--color-text);
 	}
 
 	.wiki-content {

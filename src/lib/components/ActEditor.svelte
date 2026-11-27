@@ -14,6 +14,7 @@
 -->
 
 <script lang="ts">
+	import EntityFields from './EntityFields.svelte';
 	import EditableField from './EditableField.svelte';
 	import { CHARACTER_COLORS } from '$lib/features/timeline/timeline-helpers.js';
 
@@ -30,7 +31,7 @@
 	}));
 </script>
 
-<div class="entity-detail act-editor" data-editor-type="Act">
+<EntityFields type="Act" {readOnly}>
 	<EditableField
 		{readOnly}
 		{entityId}
@@ -72,18 +73,4 @@
 		kind="swatches"
 		swatchOptions={colorSwatches}
 	/>
-</div>
-
-<style>
-	.act-editor {
-		display: flex;
-		flex-direction: column;
-		padding: 14px 18px;
-		/* Consume the space between EntityDetail's header and footer and
-		   scroll internally when the field list overflows. Without this,
-		   the editor pushes the footer off-screen on narrow timelines. */
-		flex: 1 1 0;
-		overflow-y: auto;
-		min-height: 0;
-	}
-</style>
+</EntityFields>

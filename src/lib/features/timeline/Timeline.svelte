@@ -367,9 +367,17 @@
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
-		const target = e.target as HTMLElement;
-		if (target.closest('input, textarea, select, button, a[href], [role="button"], [role="slider"]') || target.isContentEditable) return;
-		if ($playhead == null) return;
+		if ($playhead == null || !(e.target instanceof Element)) return;
+		const target = e.target;
+		const front = windowStore.focusedWindow();
+		if (front?.appId !== 'timeline' && front?.appId !== 'story-player') return;
+
+		// Body receives unclaimed keys. Otherwise focus must belong to the
+		// foreground playback window, not another window, dialog or launcher.
+		if (target !== document.body && target !== document.documentElement &&
+			target.closest<HTMLElement>('dialog, [role="dialog"]')?.dataset.windowId !== front.id) return;
+		if (target.closest('input, textarea, select, button, a[href], [role="button"], [role="slider"], [role="region"]') ||
+			(target instanceof HTMLElement && target.isContentEditable)) return;
 		switch (e.key) {
 			case ' ':
 				e.preventDefault();
@@ -848,4 +856,11 @@
 		z-index: 10;
 	}
 
+  @media (max-width: 600px) {
+    .tl2 { flex-direction: column; }
+    .tl2 :global(.palette) { width: 100%; max-height: 30%; }
+    .palette-toggle { width: 100%; height: 24px; }
+    .timeline-controls { display: flex; flex-wrap: wrap; }
+    .ctrl-spacer { display: none; }
+  }
 </style>
