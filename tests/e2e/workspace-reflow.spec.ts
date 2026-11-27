@@ -16,13 +16,19 @@ for (const app of ['Notes', 'Timeline', 'World Map']) {
     await expect(win).toBeVisible();
     if (app === 'World Map') await win.getByRole('button', { name: 'Create your first map' }).click();
     const original = await win.boundingBox();
-    await page.setViewportSize(narrow);
-    await page.getByRole('button', { name: 'Continue at this size' }).click();
-    await expect(win).toBeInViewport({ ratio: 1 });
-    const action = app === 'Timeline' ? win.getByRole('button', {name: 'Add act'})
-      : app === 'World Map' ? win.getByTitle('New map', {exact:true}) : win.getByRole('button', {name:'Close', exact:true});
-    await expect(action).toBeInViewport({ ratio: 1 });
-    await action.click({ trial: true });
+    const close = win.getByRole('button', { name: 'Close', exact: true });
+    const actions = app === 'Timeline' ? [win.getByRole('button', { name: 'Add act' })]
+      : app === 'World Map' ? [win.getByTitle('New map', { exact: true }), win.getByRole('button', { name: 'Duplicate map' })]
+      : [win.getByTitle('New folder')];
+    for (const width of [768, 600, 601, narrow.width]) {
+      await page.setViewportSize({ width, height: narrow.height });
+      if (width === 768) await page.getByRole('button', { name: 'Continue at this size' }).click();
+      await expect(win).toBeInViewport({ ratio: 1 });
+      for (const action of [close, ...actions]) {
+        await expect(action).toBeInViewport({ ratio: 1 });
+        await action.click({ trial: true });
+      }
+    }
     await page.setViewportSize(desktop);
     await expect.poll(() => win.boundingBox()).toEqual(original);
   });

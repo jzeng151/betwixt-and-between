@@ -23,7 +23,7 @@
     children?: import('svelte').Snippet;
   }
 
-  let { id, title, x, y, width, height, zIndex, minimized, maximized, restoreBounds = null, single = false, covered = false, bare = false, compact = false, alwaysOnTop = false, children }: Props = $props();
+  let { id, title, x: storedX, y: storedY, width: storedWidth, height: storedHeight, zIndex, minimized, maximized, restoreBounds = null, single = false, covered = false, bare = false, compact = false, alwaysOnTop = false, children }: Props = $props();
 
   const fixed = $derived(maximized || single);
   const effectiveZ = $derived(alwaysOnTop ? PIN_Z_BASE + zIndex : zIndex);
@@ -38,6 +38,12 @@
   let dragRestoreBounds: WindowBounds | null = null;
   let preview = $state<WindowBounds | null>(null);
   let viewport = $state({ width: 0, height: 0 });
+
+  // Fit the displayed rectangle only. Resizing the viewport must not persist a move or resize.
+  const width = $derived(viewport.width ? Math.min(storedWidth, viewport.width) : storedWidth);
+  const height = $derived(viewport.height ? Math.min(storedHeight, viewport.height) : storedHeight);
+  const x = $derived(viewport.width ? Math.max(0, Math.min(storedX, viewport.width - width)) : storedX);
+  const y = $derived(viewport.height ? Math.max(0, Math.min(storedY, viewport.height - height)) : storedY);
 
   type ResizeDir = 'l' | 'r' | 'b' | 'bl' | 'br';
   let resizeDir: ResizeDir | null = null;
@@ -129,7 +135,7 @@
     } else if (Object.hasOwn(SNAP_LABELS, choice)) {
       const bounds = targetBounds(choice as SnapZone);
       if (!bounds) return;
-      if (!restoreBounds) windowStore.setRestoreBounds(id, { x, y, width, height });
+      if (!restoreBounds) windowStore.setRestoreBounds(id, { x: storedX, y: storedY, width: storedWidth, height: storedHeight });
       applyBounds(bounds);
     }
     windowStore.focus(id);
@@ -143,7 +149,7 @@
     dragging = true;
     dragOffsetX = e.clientX - x;
     dragOffsetY = e.clientY - y;
-    dragStart = { x, y, width, height };
+    dragStart = { x: storedX, y: storedY, width: storedWidth, height: storedHeight };
     dragStartPointer = { x: e.clientX, y: e.clientY };
     dragRestoreBounds = restoreBounds;
     dragStarted = false;
