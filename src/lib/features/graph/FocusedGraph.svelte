@@ -1069,7 +1069,7 @@
     gap: 4px;
     padding: 3px 4px 3px 10px;
     background: var(--color-accent);
-    color: white;
+    color: var(--color-on-accent);
     border-radius: 12px;
     font-family: var(--font-ui);
     font-size: 13px;
@@ -1081,8 +1081,8 @@
     height: 16px;
     border-radius: 50%;
     border: none;
-    background: rgba(255, 255, 255, 0.2);
-    color: white;
+    background: transparent;
+    color: inherit;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1093,7 +1093,7 @@
   }
 
   .chip-x:hover {
-    background: rgba(255, 255, 255, 0.4);
+    outline: 1px solid currentColor;
   }
 
   .chip-empty {
@@ -1124,7 +1124,7 @@
 
   .fg-settings-btn.open {
     background: var(--color-accent);
-    color: white;
+    color: var(--color-on-accent);
     border-color: var(--color-accent);
   }
 
@@ -1204,7 +1204,7 @@
   .add-focal-btn:hover {
     background: var(--color-accent);
     border-color: var(--color-accent);
-    color: var(--color-surface);
+    color: var(--color-on-accent);
   }
 
   /* Mode-specific hint banner (e.g. shared mode needs ≥2 focals to

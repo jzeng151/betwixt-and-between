@@ -195,8 +195,8 @@
 		justify-content: center;
 		transition: border-color 0.1s, color 0.1s;
 	}
-	.legend-edge-labels:hover { border-color: var(--color-accent); color: var(--color-accent); }
-	.legend-edge-labels.on { border-color: var(--color-accent); color: var(--color-accent); }
+	.legend-edge-labels:hover { border-color: var(--color-accent); color: var(--color-text); }
+	.legend-edge-labels.on { border-color: var(--color-accent); color: var(--color-text); }
 
 	.legend-list {
 		list-style: none;
@@ -221,19 +221,15 @@
 		font-size: inherit;
 		text-align: left;
 		cursor: pointer;
-		opacity: 0.4;
+		text-decoration: line-through;
 	}
 
 	.legend-toggle.on {
-		opacity: 1;
+		text-decoration: none;
 	}
 
-	/* Type has zero rendered edges on the current graph. Layered ON TOP
-	   of the on/off opacity above so a row that's both ON and ABSENT
-	   reads dimmer than a normal ON row, and a row that's both OFF and
-	   ABSENT reads dimmer still. Italic + reduced opacity. */
 	.legend-toggle.absent {
-		opacity: 0.3;
+		color: var(--color-text-muted);
 		font-style: italic;
 	}
 

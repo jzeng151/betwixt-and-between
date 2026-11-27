@@ -1272,7 +1272,6 @@
 		font-size: 10px;
 		color: var(--color-text-muted, #6b7280);
 		font-style: italic;
-		opacity: 0.5;
 		display: flex;
 		align-items: center;
 		justify-content: center;
