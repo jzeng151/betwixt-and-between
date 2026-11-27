@@ -37,7 +37,25 @@
     windowStore.openForEntity(entity.id, entity.type);
   }
 
-  function openApp(appId: 'character-editor' | 'wiki') {
+  let creatingCharacter = $state(false);
+  let createError = $state('');
+  async function createCharacter() {
+    if (creatingCharacter) return;
+    creatingCharacter = true;
+    createError = '';
+    try {
+      const { openNewCharacter } = await import('$lib/components/EntityDetail.svelte');
+      const created = await entities.createEntity('Character', 'New Character');
+      returnFocusKey = 'character-editor';
+      openNewCharacter(created.id);
+    } catch {
+      createError = "Couldn't create character. Please try again.";
+    } finally {
+      creatingCharacter = false;
+    }
+  }
+
+  function openApp(appId: 'wiki') {
     returnFocusKey = appId;
     windowStore.open(appId);
   }
@@ -122,9 +140,10 @@
 		{:else}
 		<div class="empty-state">
 		  <h1>Start with one true thing.</h1>
+		  {#if createError}<p role="alert">{createError}</p>{/if}
 		  <p>Give the story a person, a place, or a piece of the world. The shape can come later.</p>
 		  <div class="empty-actions">
-			<button data-workspace-return="character-editor" class="primary-action" onclick={() => openApp('character-editor')}>Create a character</button>
+			<button data-workspace-return="character-editor" class="primary-action" disabled={creatingCharacter} onclick={createCharacter}>Create a character</button>
 			<button data-workspace-return="wiki" class="secondary-action" onclick={() => openApp('wiki')}>Open the wiki</button>
 		  </div>
 		</div>

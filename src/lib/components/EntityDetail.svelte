@@ -28,6 +28,8 @@
 -->
 
 <script module lang="ts">
+
+	import { windowStore } from '$lib/os/windows-store.js';
 	// IDs of entities freshly created via a "+ New" affordance elsewhere.
 	// Callers add the id BEFORE calling windowStore.open('entity-detail', id);
 	// the next EntityDetail mount that matches consumes the entry and lands
@@ -35,12 +37,19 @@
 	// `pendingEditMode` in CharacterEditor.svelte:4 — same pattern for the
 	// universal entity-detail surface.
 	export const pendingEditMode = new Set<string>();
+	const discardableCharacters = new Set<string>();
+
+	// Like Wiki and Characters → + New, the autosaving detail form needs a real ID.
+	export function openNewCharacter(id: string) {
+		discardableCharacters.add(id);
+		pendingEditMode.add(id);
+		windowStore.openForEntity(id, 'Character');
+	}
 </script>
 
 <script lang="ts">
 	import { sendReferenceToBoard } from '$lib/features/whiteboard/send-to-board.js';
-	import { entities } from '$lib/stores/entities.js';
-	import type { Entity } from '$lib/stores/entities.js';
+	import { entities, type Entity } from '$lib/stores/entities.js';
 	import InlineEdit from './InlineEdit.svelte';
 	import ActEditor from './ActEditor.svelte';
 	import EventEditor from './EventEditor.svelte';
@@ -91,6 +100,9 @@
 	if (_initialPending && entityId != null) pendingEditMode.delete(entityId);
 	// svelte-ignore state_referenced_locally
 	let mode = $state<'view' | 'edit'>(_initialPending ? 'edit' : initialMode);
+	// Only the initial editing session launched from the empty workspace is discardable.
+	// svelte-ignore state_referenced_locally
+	let discardOnCancel = $state(isPopout && entityId != null && discardableCharacters.delete(entityId));
 	// Only reset when entityId changes to a different value — not on every
 	// prop re-evaluation. Using a plain variable (not $state) so the effect
 	// doesn't track it and avoids an extra re-run cycle.
@@ -99,6 +111,7 @@
 	$effect(() => {
 		if (entityId !== _prevEntityId) {
 			_prevEntityId = entityId;
+			discardOnCancel = false;
 			copyStatus = 'idle';
 			if (entityId && pendingEditMode.has(entityId)) {
 				pendingEditMode.delete(entityId);
@@ -233,7 +246,12 @@
 </script>
 
 {#if entity}
-	<div class="entity-detail-host" data-entity-id={entity.id} data-entity-type={entity.type}>
+	<!-- The scrollable character region must be reachable by keyboard in read-only mode. -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<div class="entity-detail-host" data-entity-id={entity.id} data-entity-type={entity.type}
+		role={entity.type === 'Character' ? 'region' : undefined}
+		aria-label={entity.type === 'Character' ? 'Character details' : undefined}
+		tabindex={entity.type === 'Character' ? 0 : undefined}>
 		<div class="entity-detail-header">
 			<div class="entity-detail-eyebrow-row">
 				<span class="entity-detail-eyebrow">{eyebrowFor(entity)}</span>
@@ -244,7 +262,9 @@
 						<button
 							type="button"
 							class="mode-cancel"
-							onmousedown={cancelEdit}
+							onmousedown={(event) => event.preventDefault()}
+							onclick={() => discardOnCancel ? confirmDelete() : cancelEdit()}
+							disabled={deleting}
 						>Cancel</button>
 					{/if}
 					<button
@@ -252,7 +272,8 @@
 						class="mode-toggle"
 						aria-label={mode === 'view' ? 'Edit' : 'Done editing'}
 						title={mode === 'view' ? 'Edit' : 'Done editing'}
-						onclick={() => (mode = mode === 'view' ? 'edit' : 'view')}
+						disabled={deleting}
+						onclick={() => { discardOnCancel = false; mode = mode === 'view' ? 'edit' : 'view'; }}
 					>
 						{mode === 'view' ? 'Edit' : 'Done'}
 					</button>
@@ -270,6 +291,7 @@
 			{#if copyStatus === 'failed'}
 				<input aria-label="Wiki link" readonly value={`[[#${entity.id}]]`} onclick={(event) => event.currentTarget.select()} />
 			{/if}
+			{#if discardOnCancel && deleteError}<p role="alert">Could not discard character. Please try again.</p>{/if}
 			<div class="entity-detail-title">
 				{#if mode === 'edit'}
 					<InlineEdit value={entity.name} onSave={rename} forceEditing />
@@ -390,6 +412,12 @@
 		height: 100%;
 		background: var(--color-surface-2, #1c1f28);
 		color: var(--color-text, #e8e0d0);
+	}
+	.entity-detail-host[data-entity-type='Character'] {
+		/* Scroll the whole entry, rather than squeezing the portrait and fields
+		   into the space left over after Style, Body, and Notes. */
+		display: block;
+		overflow-y: auto;
 	}
 	.entity-detail-header {
 		padding: 14px 18px 10px;
